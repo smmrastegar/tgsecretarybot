@@ -1,0 +1,25 @@
+{
+  "name": "tgsecretarybot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Telegram Business secretary bot: classifies incoming messages via OpenRouter and fires an alert webhook for urgent ones.",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "grammy": "^1.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
