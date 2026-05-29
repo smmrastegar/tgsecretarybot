@@ -29,4 +29,7 @@ export const config = {
 
   importanceThreshold: Number(optional("IMPORTANCE_THRESHOLD") ?? "7"),
   ownerNotifyChatId: optional("OWNER_NOTIFY_CHAT_ID"),
+
+  webhookSecretToken: optional("WEBHOOK_SECRET_TOKEN"),
+  setupSecret: optional("SETUP_SECRET"),
 } as const;

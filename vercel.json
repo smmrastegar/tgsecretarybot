@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/telegram.ts": {
+      "maxDuration": 30,
+      "memory": 512
+    },
+    "api/setup.ts": {
+      "maxDuration": 15,
+      "memory": 256
+    }
+  }
+}
