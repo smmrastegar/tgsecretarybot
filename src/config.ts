@@ -32,4 +32,13 @@ export const config = {
 
   webhookSecretToken: optional("WEBHOOK_SECRET_TOKEN"),
   setupSecret: optional("SETUP_SECRET"),
+
+  autoReplyEnabled:
+    (optional("AUTO_REPLY_ENABLED") ?? "true").toLowerCase() !== "false",
+  autoReplyText:
+    optional("AUTO_REPLY_TEXT") ??
+    "در حال حاضر قادر به پاسخ‌گویی نیستم. به محض اینکه بتوانم پاسخ می‌دهم.",
+  autoReplyCooldownMinutes: Number(
+    optional("AUTO_REPLY_COOLDOWN_MINUTES") ?? "60",
+  ),
 } as const;

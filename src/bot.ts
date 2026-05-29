@@ -8,6 +8,7 @@ export const bot = new Bot(config.telegramBotToken);
 
 type Connection = { userId: number; userChatId: number };
 const connections = new Map<string, Connection>();
+const autoReplyCache = new Map<string, number>();
 
 async function resolveOwnerId(bcId: string): Promise<number | undefined> {
   const cached = connections.get(bcId);
@@ -138,6 +139,32 @@ async function handleBusinessMessage(msg: Message): Promise<void> {
     } catch (err) {
       console.error("[notify] failed:", err);
     }
+  }
+
+  await maybeAutoReply(msg, bcId);
+}
+
+async function maybeAutoReply(msg: Message, bcId: string): Promise<void> {
+  if (!config.autoReplyEnabled || !config.autoReplyText) return;
+  if (msg.chat.type !== "private") return;
+
+  const key = `${bcId}:${msg.chat.id}`;
+  const cooldownMs = Math.max(0, config.autoReplyCooldownMinutes) * 60_000;
+  const last = autoReplyCache.get(key) ?? 0;
+  if (cooldownMs > 0 && Date.now() - last < cooldownMs) {
+    console.log(`[autoreply] suppressed (cooldown) chat=${msg.chat.id}`);
+    return;
+  }
+
+  try {
+    await bot.api.sendMessage(msg.chat.id, config.autoReplyText, {
+      business_connection_id: bcId,
+      reply_parameters: { message_id: msg.message_id },
+    });
+    autoReplyCache.set(key, Date.now());
+    console.log(`[autoreply] sent chat=${msg.chat.id}`);
+  } catch (err) {
+    console.error("[autoreply] failed:", err);
   }
 }
 
