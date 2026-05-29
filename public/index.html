@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>tgsecretarybot</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0b0b0c;
+        color: #e7e7ea;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+        padding: 1.5rem;
+      }
+      .card {
+        max-width: 32rem;
+        background: #161618;
+        border: 1px solid #26262a;
+        border-radius: 0.75rem;
+        padding: 2rem;
+      }
+      h1 { margin: 0 0 0.5rem; font-size: 1.25rem; }
+      p { color: #a0a0a8; line-height: 1.5; margin: 0.5rem 0; }
+      code {
+        background: #222226;
+        padding: 0.1rem 0.35rem;
+        border-radius: 0.25rem;
+        font-size: 0.9em;
+      }
+      .dot {
+        display: inline-block;
+        width: 0.6rem;
+        height: 0.6rem;
+        border-radius: 999px;
+        background: #2ecc71;
+        margin-right: 0.5rem;
+        box-shadow: 0 0 0.5rem #2ecc71;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1><span class="dot"></span>tgsecretarybot is running</h1>
+      <p>
+        This is a Telegram Business secretary bot. It has no public UI.
+      </p>
+      <p>
+        Telegram delivers updates to <code>/api/telegram</code> (POST only,
+        guarded by a secret token). The owner can manage the webhook via
+        <code>/api/setup?secret=…</code>.
+      </p>
+    </div>
+  </body>
+</html>
