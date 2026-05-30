@@ -5,13 +5,21 @@ import { classify } from "./classifier";
 import { fireAlert } from "./alert";
 import { getSettings } from "./settings";
 import {
+  endSecretarySession,
+  findActiveSecretarySessionForSender,
+  findOnlyActiveSessionForSecretary,
+  findSessionByLinkedMessage,
   getBusinessConnection,
   getChatRule,
   hasDb,
   isAllowedUser,
   lastOwnerMessageAt,
   logMessage,
+  openSecretarySession,
+  recordSecretaryLink,
+  touchSecretarySession,
   upsertBusinessConnection,
+  type SecretarySession,
 } from "./db";
 import { createMagicToken } from "./magic";
 
@@ -118,6 +126,12 @@ function buildBot(): Bot {
     );
   });
 
+  bot.on("message", async (ctx) => {
+    await handleSecretaryReply(ctx.update.message, bot).catch((err) =>
+      console.error("[secretary] handler error:", err),
+    );
+  });
+
   bot.catch((err) => {
     const e = err.error;
     if (e instanceof GrammyError) {
@@ -185,8 +199,26 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   const chatTitle =
     "title" in msg.chat && typeof msg.chat.title === "string" ? msg.chat.title : null;
 
-  // Owner sent this themselves: record their activity, then bail.
+  // Owner sent this themselves: record their activity, close any open
+  // secretary session for this chat, then bail.
   if (owner && msg.from && msg.from.id === owner.userId) {
+    const active = await findActiveSecretarySessionForSender({
+      bcId,
+      senderChatId: msg.chat.id,
+      idleMinutes: 24 * 60,
+    }).catch(() => null);
+    if (active) {
+      await endSecretarySession(active.id, "owner took over").catch(() => {});
+      try {
+        await bot.api.sendMessage(
+          active.secretaryChatId,
+          `🔚 Owner stepped in for ${active.senderName ?? "this thread"}. Session closed.`,
+          { reply_parameters: { message_id: active.headerMessageId } },
+        );
+      } catch (err) {
+        console.error("[secretary] takeover notice failed:", err);
+      }
+    }
     if (hasDb()) {
       try {
         await logMessage({
@@ -360,7 +392,23 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       }
     }
 
-    autoReplied = await maybeAutoReply(msg, bcId, rule?.customReply ?? null, bot);
+    const secretaryHandled = await maybeForwardToSecretary({
+      msg,
+      bcId,
+      senderName,
+      senderUsername,
+      chatTitle,
+      owner,
+      settings,
+      bot,
+    });
+
+    const suppressAuto =
+      secretaryHandled &&
+      (settings.secretarySuppressAutoReply ?? "true").toLowerCase() !== "false";
+    if (!suppressAuto) {
+      autoReplied = await maybeAutoReply(msg, bcId, rule?.customReply ?? null, bot);
+    }
   }
 
   if (hasDb()) {
@@ -421,5 +469,161 @@ async function maybeAutoReply(
   } catch (err) {
     console.error("[autoreply] failed:", err);
     return false;
+  }
+}
+
+async function maybeForwardToSecretary(args: {
+  msg: Message;
+  bcId: string;
+  senderName: string;
+  senderUsername: string | null;
+  chatTitle: string | null;
+  owner: OwnerCacheEntry | null;
+  settings: Awaited<ReturnType<typeof getSettings>>;
+  bot: Bot;
+}): Promise<boolean> {
+  const { msg, bcId, senderName, senderUsername, owner, settings, bot } = args;
+  if (msg.chat.type !== "private") return false;
+  const enabled = (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
+  if (!enabled) return false;
+  const secId = Number(settings.secretaryUserId);
+  if (!Number.isFinite(secId) || secId <= 0) return false;
+  if (!hasDb()) return false;
+  if (owner && secId === owner.userId) return false;
+
+  const idleMin = Math.max(Number(settings.secretarySessionMinutes) || 120, 1);
+  const text = msg.text ?? msg.caption ?? "";
+  let session = await findActiveSecretarySessionForSender({
+    bcId,
+    senderChatId: msg.chat.id,
+    idleMinutes: idleMin,
+  }).catch(() => null);
+
+  try {
+    if (!session) {
+      const handle = senderUsername ? ` (@${senderUsername})` : "";
+      const header = await bot.api.sendMessage(
+        secId,
+        `🆕 New urgent thread\n` +
+          `From: ${senderName}${handle}\n\n` +
+          `${text}\n\n` +
+          `↩️ Reply to any message in this thread to respond on behalf of the owner.`,
+      );
+      session = await openSecretarySession({
+        businessConnectionId: bcId,
+        senderChatId: msg.chat.id,
+        senderName,
+        senderUsername,
+        secretaryUserId: secId,
+        secretaryChatId: secId,
+        headerMessageId: header.message_id,
+        ownerUserId: owner?.userId ?? null,
+      });
+      await recordSecretaryLink({
+        sessionId: session.id,
+        secretaryChatId: secId,
+        secretaryMessageId: header.message_id,
+        direction: "inbound",
+      });
+    } else {
+      const forwarded = await bot.api.sendMessage(
+        secId,
+        `📩 ${senderName}: ${text}`,
+        { reply_parameters: { message_id: session.headerMessageId } },
+      );
+      await recordSecretaryLink({
+        sessionId: session.id,
+        secretaryChatId: secId,
+        secretaryMessageId: forwarded.message_id,
+        direction: "inbound",
+      });
+      await touchSecretarySession(session.id);
+    }
+    console.log(`[secretary] forwarded sender=${msg.chat.id} session=${session.id}`);
+    return true;
+  } catch (err) {
+    const e = err as { error_code?: number; description?: string };
+    if (e?.error_code === 403) {
+      console.error(
+        `[secretary] cannot DM secretary ${secId}: bot is blocked or /start was never sent.`,
+      );
+    } else {
+      console.error("[secretary] forward failed:", err);
+    }
+    return false;
+  }
+}
+
+async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
+  if (msg.chat.type !== "private") return;
+  if (!msg.from) return;
+  const text = msg.text ?? msg.caption;
+  if (!text) return;
+  if (text.startsWith("/")) return;
+  if (!hasDb()) return;
+
+  const settings = await getSettings();
+  const enabled = (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
+  if (!enabled) return;
+  const secId = Number(settings.secretaryUserId);
+  if (!Number.isFinite(secId) || secId <= 0) return;
+  if (msg.from.id !== secId) return;
+
+  const idleMin = Math.max(Number(settings.secretarySessionMinutes) || 120, 1);
+  let session: SecretarySession | null = null;
+  const replyTo = msg.reply_to_message;
+  if (replyTo) {
+    session = await findSessionByLinkedMessage(msg.chat.id, replyTo.message_id).catch(() => null);
+  }
+  if (!session) {
+    session = await findOnlyActiveSessionForSecretary(secId, idleMin).catch(() => null);
+  }
+  if (!session) {
+    await bot.api.sendMessage(
+      msg.chat.id,
+      "No active thread to relay to. Reply to a forwarded message to respond.",
+      { reply_parameters: { message_id: msg.message_id } },
+    );
+    return;
+  }
+  if (session.endedAt) {
+    await bot.api.sendMessage(
+      msg.chat.id,
+      "That thread is closed (owner took over or it expired).",
+      { reply_parameters: { message_id: msg.message_id } },
+    );
+    return;
+  }
+
+  try {
+    const sent = await bot.api.sendMessage(session.senderChatId, text, {
+      business_connection_id: session.businessConnectionId,
+    });
+    await recordSecretaryLink({
+      sessionId: session.id,
+      secretaryChatId: msg.chat.id,
+      secretaryMessageId: msg.message_id,
+      direction: "outbound",
+    });
+    await touchSecretarySession(session.id);
+    try {
+      await bot.api.setMessageReaction(msg.chat.id, msg.message_id, [
+        { type: "emoji", emoji: "👍" },
+      ]);
+    } catch {
+      // older Telegram clients / regions may reject; ignore
+    }
+    console.log(
+      `[secretary] relayed session=${session.id} to chat=${session.senderChatId} msg=${sent.message_id}`,
+    );
+  } catch (err) {
+    console.error("[secretary] relay failed:", err);
+    await bot.api
+      .sendMessage(
+        msg.chat.id,
+        `❌ Failed to relay: ${String(err).slice(0, 200)}`,
+        { reply_parameters: { message_id: msg.message_id } },
+      )
+      .catch(() => {});
   }
 }

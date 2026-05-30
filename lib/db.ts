@@ -110,6 +110,35 @@ export async function ensureSchema(): Promise<void> {
         details     JSONB
       )`;
     await q`CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_log (created_at DESC)`;
+    await q`
+      CREATE TABLE IF NOT EXISTS secretary_sessions (
+        id                     BIGSERIAL PRIMARY KEY,
+        business_connection_id TEXT    NOT NULL,
+        sender_chat_id         BIGINT  NOT NULL,
+        sender_name            TEXT,
+        sender_username        TEXT,
+        secretary_user_id      BIGINT  NOT NULL,
+        secretary_chat_id      BIGINT  NOT NULL,
+        header_message_id      BIGINT  NOT NULL,
+        owner_user_id          BIGINT,
+        created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_activity_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ended_at               TIMESTAMPTZ,
+        end_reason             TEXT
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS secretary_sessions_active_idx
+      ON secretary_sessions (business_connection_id, sender_chat_id)
+      WHERE ended_at IS NULL`;
+    await q`
+      CREATE TABLE IF NOT EXISTS secretary_message_links (
+        id                  BIGSERIAL PRIMARY KEY,
+        session_id          BIGINT NOT NULL REFERENCES secretary_sessions(id) ON DELETE CASCADE,
+        secretary_chat_id   BIGINT NOT NULL,
+        secretary_message_id BIGINT NOT NULL,
+        direction           TEXT   NOT NULL,
+        created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (secretary_chat_id, secretary_message_id)
+      )`;
   })().catch((err) => {
     schemaPromise = null;
     throw err;
@@ -652,4 +681,141 @@ export async function audit(args: {
     INSERT INTO audit_log (actor_id, actor_name, action, target, details)
     VALUES (${args.actorId ?? null}, ${args.actorName ?? null}, ${args.action},
             ${args.target ?? null}, ${JSON.stringify(args.details ?? null)}::jsonb)`;
+}
+
+// --- Secretary relay ---
+
+export type SecretarySession = {
+  id: number;
+  businessConnectionId: string;
+  senderChatId: number;
+  senderName: string | null;
+  senderUsername: string | null;
+  secretaryUserId: number;
+  secretaryChatId: number;
+  headerMessageId: number;
+  ownerUserId: number | null;
+  createdAt: Date;
+  lastActivityAt: Date;
+  endedAt: Date | null;
+  endReason: string | null;
+};
+
+function rowToSecretarySession(r: Record<string, unknown>): SecretarySession {
+  return {
+    id: Number(r.id),
+    businessConnectionId: r.business_connection_id as string,
+    senderChatId: Number(r.sender_chat_id),
+    senderName: (r.sender_name as string) ?? null,
+    senderUsername: (r.sender_username as string) ?? null,
+    secretaryUserId: Number(r.secretary_user_id),
+    secretaryChatId: Number(r.secretary_chat_id),
+    headerMessageId: Number(r.header_message_id),
+    ownerUserId: r.owner_user_id != null ? Number(r.owner_user_id) : null,
+    createdAt: r.created_at as Date,
+    lastActivityAt: r.last_activity_at as Date,
+    endedAt: (r.ended_at as Date) ?? null,
+    endReason: (r.end_reason as string) ?? null,
+  };
+}
+
+export async function findActiveSecretarySessionForSender(args: {
+  bcId: string;
+  senderChatId: number;
+  idleMinutes: number;
+}): Promise<SecretarySession | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM secretary_sessions
+    WHERE business_connection_id = ${args.bcId}
+      AND sender_chat_id = ${args.senderChatId}
+      AND ended_at IS NULL
+      AND last_activity_at > NOW() - make_interval(mins => ${args.idleMinutes})
+    ORDER BY last_activity_at DESC LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToSecretarySession(r) : null;
+}
+
+export async function openSecretarySession(args: {
+  businessConnectionId: string;
+  senderChatId: number;
+  senderName: string | null;
+  senderUsername: string | null;
+  secretaryUserId: number;
+  secretaryChatId: number;
+  headerMessageId: number;
+  ownerUserId: number | null;
+}): Promise<SecretarySession> {
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO secretary_sessions (
+      business_connection_id, sender_chat_id, sender_name, sender_username,
+      secretary_user_id, secretary_chat_id, header_message_id, owner_user_id
+    ) VALUES (
+      ${args.businessConnectionId}, ${args.senderChatId}, ${args.senderName}, ${args.senderUsername},
+      ${args.secretaryUserId}, ${args.secretaryChatId}, ${args.headerMessageId}, ${args.ownerUserId}
+    ) RETURNING *`;
+  return rowToSecretarySession(rows[0] as Record<string, unknown>);
+}
+
+export async function touchSecretarySession(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`UPDATE secretary_sessions SET last_activity_at = NOW() WHERE id = ${id}`;
+}
+
+export async function endSecretarySession(id: number, reason: string): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE secretary_sessions
+    SET ended_at = NOW(), end_reason = ${reason}
+    WHERE id = ${id} AND ended_at IS NULL`;
+}
+
+export async function recordSecretaryLink(args: {
+  sessionId: number;
+  secretaryChatId: number;
+  secretaryMessageId: number;
+  direction: "inbound" | "outbound";
+}): Promise<void> {
+  await ensureSchema();
+  await sql()`
+    INSERT INTO secretary_message_links (
+      session_id, secretary_chat_id, secretary_message_id, direction
+    ) VALUES (
+      ${args.sessionId}, ${args.secretaryChatId}, ${args.secretaryMessageId}, ${args.direction}
+    )
+    ON CONFLICT (secretary_chat_id, secretary_message_id) DO NOTHING`;
+}
+
+export async function findSessionByLinkedMessage(
+  secretaryChatId: number,
+  secretaryMessageId: number,
+): Promise<SecretarySession | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT s.* FROM secretary_sessions s
+    JOIN secretary_message_links l ON l.session_id = s.id
+    WHERE l.secretary_chat_id = ${secretaryChatId}
+      AND l.secretary_message_id = ${secretaryMessageId}
+    LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToSecretarySession(r) : null;
+}
+
+export async function findOnlyActiveSessionForSecretary(
+  secretaryUserId: number,
+  idleMinutes: number,
+): Promise<SecretarySession | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM secretary_sessions
+    WHERE secretary_user_id = ${secretaryUserId}
+      AND ended_at IS NULL
+      AND last_activity_at > NOW() - make_interval(mins => ${idleMinutes})
+    ORDER BY last_activity_at DESC LIMIT 2`;
+  if (rows.length !== 1) return null;
+  return rowToSecretarySession(rows[0] as Record<string, unknown>);
 }

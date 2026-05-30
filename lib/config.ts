@@ -53,6 +53,11 @@ export const DEFAULT_SETTINGS = {
   groupSummaryHourUTC: "3",
   dmActiveGraceMinutes: "5",
   groupActiveGraceMinutes: "30",
+  secretaryEnabled: "false",
+  secretaryUserId: "",
+  secretaryDisplayName: "",
+  secretarySessionMinutes: "120",
+  secretarySuppressAutoReply: "true",
 } as const satisfies Record<string, string>;
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
@@ -73,6 +78,11 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   groupSummaryHourUTC: optional("GROUP_SUMMARY_HOUR_UTC"),
   dmActiveGraceMinutes: optional("DM_ACTIVE_GRACE_MINUTES"),
   groupActiveGraceMinutes: optional("GROUP_ACTIVE_GRACE_MINUTES"),
+  secretaryEnabled: optional("SECRETARY_ENABLED"),
+  secretaryUserId: optional("SECRETARY_USER_ID"),
+  secretaryDisplayName: optional("SECRETARY_DISPLAY_NAME"),
+  secretarySessionMinutes: optional("SECRETARY_SESSION_MINUTES"),
+  secretarySuppressAutoReply: optional("SECRETARY_SUPPRESS_AUTO_REPLY"),
 };
 
 export function envOverride(key: SettingKey): string | undefined {

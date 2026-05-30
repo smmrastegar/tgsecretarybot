@@ -19,6 +19,11 @@ type Settings = {
   groupSummaryHourUTC: string;
   dmActiveGraceMinutes: string;
   groupActiveGraceMinutes: string;
+  secretaryEnabled: string;
+  secretaryUserId: string;
+  secretaryDisplayName: string;
+  secretarySessionMinutes: string;
+  secretarySuppressAutoReply: string;
 };
 
 type FieldConfig = {
@@ -119,6 +124,37 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         label: "Daily summary hour (UTC)",
         hint: "Vercel Cron is configured separately in vercel.json.",
         type: "number",
+      },
+    ],
+  },
+  {
+    title: "Human secretary relay",
+    fields: [
+      {
+        key: "secretaryEnabled",
+        label: "Enabled",
+        type: "toggle",
+      },
+      {
+        key: "secretaryUserId",
+        label: "Secretary Telegram user id",
+        hint: "Numeric Telegram id of the human who will handle urgent DMs. They MUST send /start to this bot once so the bot can DM them.",
+      },
+      {
+        key: "secretaryDisplayName",
+        label: "Display name (optional)",
+        hint: "Just for labels in the dashboard.",
+      },
+      {
+        key: "secretarySessionMinutes",
+        label: "Session idle timeout (minutes)",
+        hint: "After this much inactivity, the thread auto-closes and the next urgent message starts a fresh session.",
+        type: "number",
+      },
+      {
+        key: "secretarySuppressAutoReply",
+        label: "Suppress auto-reply when secretary is handling",
+        type: "toggle",
       },
     ],
   },
