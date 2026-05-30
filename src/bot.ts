@@ -3,6 +3,7 @@ import type { Message } from "grammy/types";
 import { config } from "./config.js";
 import { classify } from "./classifier.js";
 import { fireAlert } from "./alert.js";
+import { recordUrgentMessage } from "./db.js";
 
 export const bot = new Bot(config.telegramBotToken);
 
@@ -123,6 +124,24 @@ async function handleBusinessMessage(msg: Message): Promise<void> {
     console.log("[alert] fired");
   } catch (err) {
     console.error("[alert] failed:", err);
+  }
+
+  try {
+    await recordUrgentMessage({
+      businessConnectionId: bcId,
+      chatId: msg.chat.id,
+      chatType: msg.chat.type,
+      chatTitle: chatTitle ?? null,
+      senderId: msg.from?.id ?? null,
+      senderName,
+      messageId: msg.message_id,
+      messageText: text,
+      importance: verdict.importance,
+      reason: verdict.reason,
+    });
+    console.log("[db] urgent message stored");
+  } catch (err) {
+    console.error("[db] insert failed:", err);
   }
 
   if (config.ownerNotifyChatId) {

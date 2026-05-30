@@ -41,4 +41,9 @@ export const config = {
   autoReplyCooldownMinutes: Number(
     optional("AUTO_REPLY_COOLDOWN_MINUTES") ?? "60",
   ),
+
+  databaseUrl:
+    optional("DATABASE_URL") ??
+    optional("POSTGRES_URL") ??
+    optional("NEON_DATABASE_URL"),
 } as const;
