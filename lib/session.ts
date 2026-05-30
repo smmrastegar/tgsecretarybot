@@ -1,5 +1,4 @@
 import { SignJWT, jwtVerify } from "jose";
-import { config } from "./config";
 
 export const SESSION_COOKIE_NAME = "tgsb_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
@@ -12,8 +11,16 @@ export type Session = {
   photoUrl?: string | null;
 };
 
+function sessionSecret(): string {
+  return (
+    process.env.SESSION_SECRET ||
+    process.env.WEBHOOK_SECRET_TOKEN ||
+    "dev-session-secret-change-me"
+  );
+}
+
 function secretKey(): Uint8Array {
-  return new TextEncoder().encode(config.sessionSecret);
+  return new TextEncoder().encode(sessionSecret());
 }
 
 export async function createSession(session: Session): Promise<string> {
