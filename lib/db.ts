@@ -60,6 +60,9 @@ export async function ensureSchema(): Promise<void> {
     await q`CREATE INDEX IF NOT EXISTS messages_log_created_idx ON messages_log (created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_chat_idx ON messages_log (chat_id, created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_urgent_idx ON messages_log (urgent, created_at DESC) WHERE urgent = TRUE`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS from_owner BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS skipped_reason TEXT`;
+    await q`CREATE INDEX IF NOT EXISTS messages_log_owner_chat_idx ON messages_log (chat_id, created_at DESC) WHERE from_owner = TRUE`;
     await q`
       CREATE TABLE IF NOT EXISTS chat_rules (
         chat_id      BIGINT PRIMARY KEY,
@@ -225,6 +228,8 @@ export type LogMessage = {
   reason: string;
   alerted: boolean;
   autoReplied: boolean;
+  fromOwner?: boolean;
+  skippedReason?: string | null;
 };
 
 export async function logMessage(m: LogMessage): Promise<number> {
@@ -233,13 +238,25 @@ export async function logMessage(m: LogMessage): Promise<number> {
     INSERT INTO messages_log (
       business_connection_id, owner_user_id, chat_id, chat_type, chat_title,
       sender_id, sender_username, sender_name, message_id, message_text,
-      importance, urgent, concerns_owner, reason, alerted, auto_replied
+      importance, urgent, concerns_owner, reason, alerted, auto_replied,
+      from_owner, skipped_reason
     ) VALUES (
       ${m.businessConnectionId}, ${m.ownerUserId}, ${m.chatId}, ${m.chatType}, ${m.chatTitle},
       ${m.senderId}, ${m.senderUsername}, ${m.senderName}, ${m.messageId}, ${m.messageText},
-      ${m.importance}, ${m.urgent}, ${m.concernsOwner}, ${m.reason}, ${m.alerted}, ${m.autoReplied}
+      ${m.importance}, ${m.urgent}, ${m.concernsOwner}, ${m.reason}, ${m.alerted}, ${m.autoReplied},
+      ${m.fromOwner ?? false}, ${m.skippedReason ?? null}
     ) RETURNING id`;
   return Number((rows[0] as { id: string }).id);
+}
+
+export async function lastOwnerMessageAt(chatId: number): Promise<Date | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT MAX(created_at) AS at FROM messages_log
+    WHERE chat_id = ${chatId} AND from_owner = TRUE`;
+  const r = rows[0] as { at: Date | null } | undefined;
+  return r?.at ?? null;
 }
 
 export type MessageRow = {

@@ -9,6 +9,7 @@ import {
   getChatRule,
   hasDb,
   isAllowedUser,
+  lastOwnerMessageAt,
   logMessage,
   upsertBusinessConnection,
 } from "./db";
@@ -173,8 +174,6 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   if (!bcId) return;
 
   const owner = await resolveOwner(bcId, bot);
-  if (owner && msg.from && msg.from.id === owner.userId) return;
-
   const text = msg.text ?? msg.caption;
   if (!text) return;
 
@@ -185,6 +184,36 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   const senderUsername = msg.from?.username ?? null;
   const chatTitle =
     "title" in msg.chat && typeof msg.chat.title === "string" ? msg.chat.title : null;
+
+  // Owner sent this themselves: record their activity, then bail.
+  if (owner && msg.from && msg.from.id === owner.userId) {
+    if (hasDb()) {
+      try {
+        await logMessage({
+          businessConnectionId: bcId,
+          ownerUserId: owner.userId,
+          chatId: msg.chat.id,
+          chatType: msg.chat.type,
+          chatTitle,
+          senderId: msg.from.id,
+          senderUsername,
+          senderName,
+          messageId: msg.message_id,
+          messageText: text,
+          importance: 0,
+          urgent: false,
+          concernsOwner: false,
+          reason: "owner outgoing",
+          alerted: false,
+          autoReplied: false,
+          fromOwner: true,
+        });
+      } catch (err) {
+        console.error("[db] owner-log failed:", err);
+      }
+    }
+    return;
+  }
 
   const rule = await getChatRule(msg.chat.id).catch(() => null);
   const settings = await getSettings();
@@ -210,12 +239,59 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           reason: "muted chat",
           alerted: false,
           autoReplied: false,
+          skippedReason: "muted",
         });
       } catch (err) {
         console.error("[db] mute-log failed:", err);
       }
     }
     return;
+  }
+
+  // VIP bypasses the active-conversation grace period.
+  if (!rule?.vip) {
+    const isDm = msg.chat.type === "private";
+    const graceMinutes = Number(
+      isDm
+        ? settings.dmActiveGraceMinutes
+        : settings.groupActiveGraceMinutes,
+    );
+    if (graceMinutes > 0) {
+      const last = await lastOwnerMessageAt(msg.chat.id).catch(() => null);
+      if (last) {
+        const ageMin = (Date.now() - last.getTime()) / 60_000;
+        if (ageMin < graceMinutes) {
+          const reason = `owner active here ${ageMin.toFixed(0)}m ago (< ${graceMinutes}m grace)`;
+          console.log(`[grace] chat=${msg.chat.id} ${reason}`);
+          if (hasDb()) {
+            try {
+              await logMessage({
+                businessConnectionId: bcId,
+                ownerUserId: owner?.userId ?? null,
+                chatId: msg.chat.id,
+                chatType: msg.chat.type,
+                chatTitle,
+                senderId: msg.from?.id ?? null,
+                senderUsername,
+                senderName,
+                messageId: msg.message_id,
+                messageText: text,
+                importance: 0,
+                urgent: false,
+                concernsOwner: false,
+                reason,
+                alerted: false,
+                autoReplied: false,
+                skippedReason: "active_grace",
+              });
+            } catch (err) {
+              console.error("[db] grace-log failed:", err);
+            }
+          }
+          return;
+        }
+      }
+    }
   }
 
   let verdict;

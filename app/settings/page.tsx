@@ -17,6 +17,8 @@ type Settings = {
   autoReplyCooldownMinutes: string;
   groupAnalysisEnabled: string;
   groupSummaryHourUTC: string;
+  dmActiveGraceMinutes: string;
+  groupActiveGraceMinutes: string;
 };
 
 type FieldConfig = {
@@ -56,6 +58,23 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         key: "ownerNotifyChatId",
         label: "Telegram chat id for urgent heads-up",
         hint: "Usually your own user id. Receives a copy of every alert via this bot.",
+      },
+    ],
+  },
+  {
+    title: "Active-conversation grace",
+    fields: [
+      {
+        key: "dmActiveGraceMinutes",
+        label: "DM grace (minutes)",
+        hint: "If YOU sent any message in a DM within this window, incoming messages there are logged but NOT classified, alerted, or auto-replied. 0 disables. VIP chats bypass this.",
+        type: "number",
+      },
+      {
+        key: "groupActiveGraceMinutes",
+        label: "Group grace (minutes)",
+        hint: "Same idea for group chats. Defaults higher because group activity is bursty.",
+        type: "number",
       },
     ],
   },

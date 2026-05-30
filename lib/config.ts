@@ -51,6 +51,8 @@ export const DEFAULT_SETTINGS = {
   autoReplyCooldownMinutes: "60",
   groupAnalysisEnabled: "true",
   groupSummaryHourUTC: "3",
+  dmActiveGraceMinutes: "5",
+  groupActiveGraceMinutes: "30",
 } as const satisfies Record<string, string>;
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
@@ -69,6 +71,8 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   autoReplyCooldownMinutes: optional("AUTO_REPLY_COOLDOWN_MINUTES"),
   groupAnalysisEnabled: optional("GROUP_ANALYSIS_ENABLED"),
   groupSummaryHourUTC: optional("GROUP_SUMMARY_HOUR_UTC"),
+  dmActiveGraceMinutes: optional("DM_ACTIVE_GRACE_MINUTES"),
+  groupActiveGraceMinutes: optional("GROUP_ACTIVE_GRACE_MINUTES"),
 };
 
 export function envOverride(key: SettingKey): string | undefined {
