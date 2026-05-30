@@ -188,8 +188,20 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   if (!bcId) return;
 
   const owner = await resolveOwner(bcId, bot);
-  const text = msg.text ?? msg.caption;
-  if (!text) return;
+  const text = describeMessage(msg);
+  const hasContent = Boolean(
+    msg.text ||
+      msg.caption ||
+      msg.photo ||
+      msg.video ||
+      msg.voice ||
+      msg.audio ||
+      msg.document ||
+      msg.animation ||
+      msg.sticker ||
+      msg.video_note,
+  );
+  if (!hasContent) return;
 
   const senderName =
     [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ").trim() ||
@@ -277,6 +289,72 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         console.error("[db] mute-log failed:", err);
       }
     }
+    return;
+  }
+
+  // If a secretary session is already open for this sender, every message
+  // (text or media, urgent-classified or not) gets relayed through, and the
+  // urgent-classification / alert flow is skipped.
+  const secEnabled =
+    (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
+  const secId = Number(settings.secretaryUserId);
+  if (
+    secEnabled &&
+    Number.isFinite(secId) &&
+    secId > 0 &&
+    hasDb() &&
+    msg.chat.type === "private"
+  ) {
+    const idleMin = Math.max(
+      Number(settings.secretarySessionMinutes) || 120,
+      1,
+    );
+    const openSession = await findActiveSecretarySessionForSender({
+      bcId,
+      senderChatId: msg.chat.id,
+      idleMinutes: idleMin,
+    }).catch(() => null);
+    if (openSession) {
+      await maybeForwardToSecretary({
+        msg,
+        bcId,
+        senderName,
+        senderUsername,
+        chatTitle,
+        owner,
+        settings,
+        bot,
+        knownSession: openSession,
+      });
+      try {
+        await logMessage({
+          businessConnectionId: bcId,
+          ownerUserId: owner?.userId ?? null,
+          chatId: msg.chat.id,
+          chatType: msg.chat.type,
+          chatTitle,
+          senderId: msg.from?.id ?? null,
+          senderUsername,
+          senderName,
+          messageId: msg.message_id,
+          messageText: text,
+          importance: 0,
+          urgent: false,
+          concernsOwner: false,
+          reason: "secretary session active",
+          alerted: false,
+          autoReplied: false,
+          skippedReason: "secretary_relay",
+        });
+      } catch (err) {
+        console.error("[db] relay-log failed:", err);
+      }
+      return;
+    }
+  }
+
+  // Past this point the classify+alert path requires actual text.
+  if (!msg.text && !msg.caption) {
     return;
   }
 
@@ -472,6 +550,139 @@ async function maybeAutoReply(
   }
 }
 
+function describeMessage(msg: Message): string {
+  if (msg.text) return msg.text;
+  if (msg.caption) return msg.caption;
+  if (msg.photo) return "[photo]";
+  if (msg.video) return "[video]";
+  if (msg.voice) return "[voice]";
+  if (msg.audio) return "[audio]";
+  if (msg.document) return `[document: ${msg.document.file_name ?? "file"}]`;
+  if (msg.animation) return "[animation]";
+  if (msg.sticker)
+    return `[sticker${msg.sticker.emoji ? " " + msg.sticker.emoji : ""}]`;
+  if (msg.video_note) return "[video note]";
+  if (msg.location) return "[location]";
+  if (msg.contact) return "[contact]";
+  if (msg.poll) return `[poll: ${msg.poll.question.slice(0, 60)}]`;
+  return "[unsupported message type]";
+}
+
+type SendCommon = {
+  business_connection_id?: string;
+  reply_parameters?: { message_id: number };
+};
+
+async function relayAnyMessage(args: {
+  bot: Bot;
+  source: Message;
+  toChatId: number;
+  captionPrefix?: string;
+  businessConnectionId?: string;
+  replyToMessageId?: number;
+}): Promise<number[]> {
+  const { bot, source, toChatId, captionPrefix, businessConnectionId, replyToMessageId } = args;
+  const opts: SendCommon = {};
+  if (businessConnectionId) opts.business_connection_id = businessConnectionId;
+  if (replyToMessageId !== undefined) opts.reply_parameters = { message_id: replyToMessageId };
+
+  const prefix = captionPrefix ?? "";
+  const captionWith = (raw?: string | null): string | undefined => {
+    const text = prefix + (raw ?? "");
+    return text ? text.slice(0, 1024) : undefined;
+  };
+
+  const sent: number[] = [];
+
+  if (source.text) {
+    const text = (prefix + source.text).slice(0, 4096);
+    const m = await bot.api.sendMessage(toChatId, text, opts);
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.photo && source.photo.length > 0) {
+    const biggest = source.photo[source.photo.length - 1];
+    if (biggest) {
+      const m = await bot.api.sendPhoto(toChatId, biggest.file_id, {
+        ...opts,
+        caption: captionWith(source.caption),
+      });
+      sent.push(m.message_id);
+    }
+    return sent;
+  }
+  if (source.video) {
+    const m = await bot.api.sendVideo(toChatId, source.video.file_id, {
+      ...opts,
+      caption: captionWith(source.caption),
+    });
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.voice) {
+    const m = await bot.api.sendVoice(toChatId, source.voice.file_id, {
+      ...opts,
+      caption: captionWith(source.caption),
+    });
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.audio) {
+    const m = await bot.api.sendAudio(toChatId, source.audio.file_id, {
+      ...opts,
+      caption: captionWith(source.caption),
+    });
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.document) {
+    const m = await bot.api.sendDocument(toChatId, source.document.file_id, {
+      ...opts,
+      caption: captionWith(source.caption),
+    });
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.animation) {
+    const m = await bot.api.sendAnimation(toChatId, source.animation.file_id, {
+      ...opts,
+      caption: captionWith(source.caption),
+    });
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.sticker) {
+    if (prefix.trim()) {
+      const header = await bot.api.sendMessage(
+        toChatId,
+        `${prefix}[sticker${source.sticker.emoji ? " " + source.sticker.emoji : ""}]`,
+        opts,
+      );
+      sent.push(header.message_id);
+    }
+    const m = await bot.api.sendSticker(toChatId, source.sticker.file_id, opts);
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.video_note) {
+    if (prefix.trim()) {
+      const header = await bot.api.sendMessage(toChatId, `${prefix}[video note]`, opts);
+      sent.push(header.message_id);
+    }
+    const m = await bot.api.sendVideoNote(toChatId, source.video_note.file_id, opts);
+    sent.push(m.message_id);
+    return sent;
+  }
+  // Fallback: render a placeholder
+  const m = await bot.api.sendMessage(
+    toChatId,
+    prefix + describeMessage(source),
+    opts,
+  );
+  sent.push(m.message_id);
+  return sent;
+}
+
 async function maybeForwardToSecretary(args: {
   msg: Message;
   bcId: string;
@@ -481,6 +692,7 @@ async function maybeForwardToSecretary(args: {
   owner: OwnerCacheEntry | null;
   settings: Awaited<ReturnType<typeof getSettings>>;
   bot: Bot;
+  knownSession?: SecretarySession | null;
 }): Promise<boolean> {
   const { msg, bcId, senderName, senderUsername, owner, settings, bot } = args;
   if (msg.chat.type !== "private") return false;
@@ -492,12 +704,13 @@ async function maybeForwardToSecretary(args: {
   if (owner && secId === owner.userId) return false;
 
   const idleMin = Math.max(Number(settings.secretarySessionMinutes) || 120, 1);
-  const text = msg.text ?? msg.caption ?? "";
-  let session = await findActiveSecretarySessionForSender({
-    bcId,
-    senderChatId: msg.chat.id,
-    idleMinutes: idleMin,
-  }).catch(() => null);
+  let session =
+    args.knownSession ??
+    (await findActiveSecretarySessionForSender({
+      bcId,
+      senderChatId: msg.chat.id,
+      idleMinutes: idleMin,
+    }).catch(() => null));
 
   try {
     if (!session) {
@@ -506,7 +719,6 @@ async function maybeForwardToSecretary(args: {
         secId,
         `🆕 New urgent thread\n` +
           `From: ${senderName}${handle}\n\n` +
-          `${text}\n\n` +
           `↩️ Reply to any message in this thread to respond on behalf of the owner.`,
       );
       session = await openSecretarySession({
@@ -525,21 +737,27 @@ async function maybeForwardToSecretary(args: {
         secretaryMessageId: header.message_id,
         direction: "inbound",
       });
-    } else {
-      const forwarded = await bot.api.sendMessage(
-        secId,
-        `📩 ${senderName}: ${text}`,
-        { reply_parameters: { message_id: session.headerMessageId } },
-      );
+    }
+
+    const ids = await relayAnyMessage({
+      bot,
+      source: msg,
+      toChatId: secId,
+      captionPrefix: `📩 ${senderName}: `,
+      replyToMessageId: session.headerMessageId,
+    });
+    for (const id of ids) {
       await recordSecretaryLink({
         sessionId: session.id,
         secretaryChatId: secId,
-        secretaryMessageId: forwarded.message_id,
+        secretaryMessageId: id,
         direction: "inbound",
       });
-      await touchSecretarySession(session.id);
     }
-    console.log(`[secretary] forwarded sender=${msg.chat.id} session=${session.id}`);
+    await touchSecretarySession(session.id);
+    console.log(
+      `[secretary] forwarded sender=${msg.chat.id} session=${session.id} parts=${ids.length}`,
+    );
     return true;
   } catch (err) {
     const e = err as { error_code?: number; description?: string };
@@ -557,9 +775,7 @@ async function maybeForwardToSecretary(args: {
 async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
   if (msg.chat.type !== "private") return;
   if (!msg.from) return;
-  const text = msg.text ?? msg.caption;
-  if (!text) return;
-  if (text.startsWith("/")) return;
+  if (msg.text && msg.text.startsWith("/")) return;
   if (!hasDb()) return;
 
   const settings = await getSettings();
@@ -573,7 +789,9 @@ async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
   let session: SecretarySession | null = null;
   const replyTo = msg.reply_to_message;
   if (replyTo) {
-    session = await findSessionByLinkedMessage(msg.chat.id, replyTo.message_id).catch(() => null);
+    session = await findSessionByLinkedMessage(msg.chat.id, replyTo.message_id).catch(
+      () => null,
+    );
   }
   if (!session) {
     session = await findOnlyActiveSessionForSecretary(secId, idleMin).catch(() => null);
@@ -596,8 +814,11 @@ async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
   }
 
   try {
-    const sent = await bot.api.sendMessage(session.senderChatId, text, {
-      business_connection_id: session.businessConnectionId,
+    const sentIds = await relayAnyMessage({
+      bot,
+      source: msg,
+      toChatId: session.senderChatId,
+      businessConnectionId: session.businessConnectionId,
     });
     await recordSecretaryLink({
       sessionId: session.id,
@@ -611,10 +832,10 @@ async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
         { type: "emoji", emoji: "👍" },
       ]);
     } catch {
-      // older Telegram clients / regions may reject; ignore
+      // older clients may reject; ignore
     }
     console.log(
-      `[secretary] relayed session=${session.id} to chat=${session.senderChatId} msg=${sent.message_id}`,
+      `[secretary] relayed session=${session.id} to chat=${session.senderChatId} parts=${sentIds.length}`,
     );
   } catch (err) {
     console.error("[secretary] relay failed:", err);
