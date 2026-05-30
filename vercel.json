@@ -1,13 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "functions": {
-    "api/telegram.ts": {
-      "maxDuration": 30,
-      "memory": 512
-    },
-    "api/setup.ts": {
-      "maxDuration": 15,
-      "memory": 256
+  "crons": [
+    {
+      "path": "/api/cron/daily-summary?hours=24",
+      "schedule": "0 3 * * *"
     }
-  }
+  ]
 }

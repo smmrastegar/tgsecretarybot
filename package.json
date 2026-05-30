@@ -1,22 +1,31 @@
 {
   "name": "tgsecretarybot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Telegram Business secretary bot: classifies incoming messages via OpenRouter and fires an alert webhook for urgent ones.",
+  "description": "Telegram Business secretary bot with a Next.js dashboard.",
   "scripts": {
-    "compile": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts",
+    "dev:bot": "tsx watch src/index.ts",
+    "dev": "next dev",
+    "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
     "dotenv": "^16.4.7",
-    "grammy": "^1.30.0"
+    "grammy": "^1.30.0",
+    "jose": "^5.9.6",
+    "lucide-react": "^0.460.0",
+    "next": "^15.1.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0-beta.7",
     "@types/node": "^22.10.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0-beta.7",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   },

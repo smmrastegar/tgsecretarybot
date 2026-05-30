@@ -1,4 +1,6 @@
-import { bot, ALLOWED_UPDATES } from "./bot.js";
+import { getBot, ALLOWED_UPDATES } from "../lib/bot";
+
+const bot = getBot();
 
 await bot.start({
   allowed_updates: [...ALLOWED_UPDATES],
