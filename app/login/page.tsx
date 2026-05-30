@@ -100,13 +100,24 @@ function LoginInner() {
           </div>
         )}
 
-        <div className="mt-8 text-xs text-[var(--color-text-dim)] leading-relaxed">
-          The bot owner must run{" "}
-          <code className="bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">
-            /setdomain
-          </code>{" "}
-          in @BotFather once for this deployment's domain before the widget can
-          load.
+        <div className="mt-6 pt-6 border-t border-[var(--color-border)] text-xs text-[var(--color-text-dim)] leading-relaxed">
+          <p className="mb-2 font-medium text-[var(--color-text)]">
+            Widget not working? Use a magic link instead.
+          </p>
+          <p>
+            Open Telegram, message{" "}
+            <a
+              href={`https://t.me/${botUsername}`}
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              @{botUsername}
+            </a>{" "}
+            with <code className="bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">/login</code>
+            , and tap the link the bot replies with. Works around phone-OAuth
+            issues (e.g. some countries / restrictions).
+          </p>
         </div>
       </div>
     </div>

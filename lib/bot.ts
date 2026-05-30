@@ -8,9 +8,11 @@ import {
   getBusinessConnection,
   getChatRule,
   hasDb,
+  isAllowedUser,
   logMessage,
   upsertBusinessConnection,
 } from "./db";
+import { createMagicToken } from "./magic";
 
 let _bot: Bot | null = null;
 export function getBot(): Bot {
@@ -76,7 +78,42 @@ function buildBot(): Bot {
   bot.command("start", async (ctx) => {
     await ctx.reply(
       "Hi. I'm your Telegram secretary bot.\n\n" +
-        "Open Telegram Settings → Telegram Business → Chatbots and add me, then visit the dashboard to configure.",
+        "Open Telegram Settings → Telegram Business → Chatbots and add me, then send /login to get a dashboard link.",
+    );
+  });
+
+  bot.command("login", async (ctx) => {
+    const from = ctx.from;
+    if (!from) return;
+    if (!hasDb()) {
+      await ctx.reply(
+        "Dashboard is not configured (DATABASE_URL missing on the server).",
+      );
+      return;
+    }
+    const allowed = await isAllowedUser(from.id).catch(() => false);
+    if (!allowed) {
+      await ctx.reply(
+        "ابتدا توی Telegram Settings → Telegram Business → Chatbots این بات رو وصل کن، بعد دوباره /login بزن.",
+      );
+      return;
+    }
+    const token = await createMagicToken({
+      userId: from.id,
+      username: from.username ?? null,
+      firstName: from.first_name ?? null,
+      lastName: from.last_name ?? null,
+      photoUrl: null,
+    });
+    const base =
+      process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ??
+      (process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+        : "https://tgsecretarybot.vercel.app");
+    const url = `${base}/login/magic?token=${encodeURIComponent(token)}`;
+    await ctx.reply(
+      `🔐 لینک ورود به داشبورد (۵ دقیقه اعتبار داره، یک بار مصرف):\n${url}`,
+      { link_preview_options: { is_disabled: true } },
     );
   });
 
