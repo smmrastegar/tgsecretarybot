@@ -187,7 +187,7 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-4 md:gap-6">
         {SECTIONS.map((section) => (
           <Card key={section.title}>
             <h2 className="text-sm font-semibold mb-1">{section.title}</h2>

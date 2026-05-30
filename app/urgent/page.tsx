@@ -76,7 +76,7 @@ export default function UrgentPage() {
         <ul className="flex flex-col gap-3">
           {messages.map((m) => (
             <Card key={m.id}>
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-start sm:justify-between gap-3 sm:gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="text-xs text-[var(--color-text-dim)] mb-2 flex items-center gap-2 flex-wrap">
                     <span>{m.senderName}</span>
@@ -104,7 +104,7 @@ export default function UrgentPage() {
                     {m.handledAt && <Badge tone="success">handled</Badge>}
                   </div>
                 </div>
-                <div className="shrink-0">
+                <div className="shrink-0 self-end sm:self-auto">
                   {m.handledAt ? (
                     <button
                       onClick={() => setHandled(m.id, false)}

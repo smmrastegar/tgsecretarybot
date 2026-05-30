@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
-import { Card, PageTitle, Badge } from "@/components/Card";
+import { Card, PageTitle, Badge, TableWrap } from "@/components/Card";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
 type Message = {
@@ -52,7 +52,7 @@ export default function MessagesPage() {
         subtitle="Every classified message the bot has seen."
       />
 
-      <div className="flex gap-3 mb-4 items-center">
+      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mb-4 sm:items-center">
         <input
           type="text"
           value={search}
@@ -78,7 +78,8 @@ export default function MessagesPage() {
             No messages match.
           </p>
         ) : (
-          <table className="w-full text-sm">
+          <TableWrap>
+          <table className="w-full text-sm min-w-[640px]">
             <thead className="text-xs text-[var(--color-text-dim)]">
               <tr className="border-b border-[var(--color-border)]">
                 <th className="text-left font-normal pb-2 pr-3">When</th>
@@ -131,6 +132,7 @@ export default function MessagesPage() {
               ))}
             </tbody>
           </table>
+          </TableWrap>
         )}
       </Card>
     </Shell>

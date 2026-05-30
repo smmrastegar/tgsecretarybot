@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
-import { Card, PageTitle, Badge } from "@/components/Card";
+import { Card, PageTitle, Badge, TableWrap } from "@/components/Card";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
 type Chat = {
@@ -67,7 +67,8 @@ export default function ChatsPage() {
         </Card>
       ) : (
         <Card>
-          <table className="w-full text-sm">
+          <TableWrap>
+          <table className="w-full text-sm min-w-[640px]">
             <thead className="text-xs text-[var(--color-text-dim)]">
               <tr className="border-b border-[var(--color-border)]">
                 <th className="text-left font-normal pb-2 pr-3">Chat</th>
@@ -127,6 +128,7 @@ export default function ChatsPage() {
               ))}
             </tbody>
           </table>
+          </TableWrap>
         </Card>
       )}
 
