@@ -359,7 +359,11 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
 
   // If a secretary session is already open for this sender, every message
   // (text or media, urgent-classified or not) gets relayed through, and the
-  // urgent-classification / alert flow is skipped.
+  // urgent-classification / alert flow is skipped — but ONLY when this
+  // chat is still in 'secretary' mode. If the owner switched the chat to
+  // another mode (auto_reply / friendly / ai_chat / off), any leftover
+  // session is closed first so the new mode can run.
+  const currentMode: ChatMode = rule?.mode ?? "secretary";
   const secEnabled =
     (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
   const defaultSec = defaultSecretary(settings);
@@ -379,43 +383,58 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       idleMinutes: idleMin,
     }).catch(() => null);
     if (openSession) {
-      await maybeForwardToSecretary({
-        msg,
-        bcId,
-        senderName,
-        senderUsername,
-        chatTitle,
-        owner,
-        settings,
-        bot,
-        knownSession: openSession,
-      });
-      try {
-        await logMessage({
-          businessConnectionId: bcId,
-          ownerUserId: owner?.userId ?? null,
-          chatId: msg.chat.id,
-          chatType: msg.chat.type,
-          chatTitle,
-          senderId: msg.from?.id ?? null,
-          senderUsername,
+      if (currentMode !== "secretary") {
+        await endSecretarySession(openSession.id, `mode switched to ${currentMode}`).catch(
+          () => {},
+        );
+        try {
+          await bot.api.sendMessage(
+            openSession.secretaryChatId,
+            `🔚 Mode changed to "${currentMode}" for ${openSession.senderName ?? "this chat"}. Session closed; AI / auto-reply will handle from here.`,
+            { reply_parameters: { message_id: openSession.headerMessageId } },
+          );
+        } catch (err) {
+          console.error("[secretary] mode-switch notice failed:", err);
+        }
+      } else {
+        await maybeForwardToSecretary({
+          msg,
+          bcId,
           senderName,
-          messageId: msg.message_id,
-          messageText: text,
-          importance: 0,
-          urgent: false,
-          concernsOwner: false,
-          reason: "secretary session active",
-          alerted: false,
-          autoReplied: false,
-          skippedReason: "secretary_relay",
-          mediaFileId,
-          mediaKind,
+          senderUsername,
+          chatTitle,
+          owner,
+          settings,
+          bot,
+          knownSession: openSession,
         });
-      } catch (err) {
-        console.error("[db] relay-log failed:", err);
+        try {
+          await logMessage({
+            businessConnectionId: bcId,
+            ownerUserId: owner?.userId ?? null,
+            chatId: msg.chat.id,
+            chatType: msg.chat.type,
+            chatTitle,
+            senderId: msg.from?.id ?? null,
+            senderUsername,
+            senderName,
+            messageId: msg.message_id,
+            messageText: text,
+            importance: 0,
+            urgent: false,
+            concernsOwner: false,
+            reason: "secretary session active",
+            alerted: false,
+            autoReplied: false,
+            skippedReason: "secretary_relay",
+            mediaFileId,
+            mediaKind,
+          });
+        } catch (err) {
+          console.error("[db] relay-log failed:", err);
+        }
+        return;
       }
-      return;
     }
   }
 
