@@ -30,6 +30,7 @@ type Settings = {
   aiModelsCsv: string;
   aiChatModelsCsv: string;
   sttLanguage: string;
+  markMessagesAsRead: string;
 };
 
 type FieldConfig = {
@@ -162,6 +163,12 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         key: "sttLanguage",
         label: "Transcription language (ISO 639-1)",
         hint: 'Force the audio language instead of letting Whisper guess (Whisper misreads short Persian audio as English). Examples: "fa" Persian, "en" English, "ar" Arabic. Leave empty to auto-detect.',
+      },
+      {
+        key: "markMessagesAsRead",
+        label: "Mark sender's message as 'seen' after every reply",
+        hint: "When the bot answers via business connection (auto-reply, AI, friendly, secretary relay, or dashboard send), it also calls readBusinessMessage so the sender gets a seen tick. Requires the can_read_messages right in Telegram Business → Chatbots. Turn this OFF if you'd rather not show seen ticks.",
+        type: "toggle",
       },
     ],
   },

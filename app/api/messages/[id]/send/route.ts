@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { getBot } from "@/lib/bot";
-import { audit, hasDb, markMessageHandled, sql } from "@/lib/db";
+import {
+  audit,
+  CHAT_MODES,
+  hasDb,
+  markMessageHandled,
+  sql,
+  upsertChatRule,
+  type ChatMode,
+} from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +36,7 @@ export async function POST(
   const body = (await request.json()) as {
     text?: string;
     markHandled?: boolean;
+    setMode?: ChatMode;
   };
   const text = (body.text ?? "").trim();
   if (!text) {
@@ -35,10 +44,16 @@ export async function POST(
   }
 
   const rows = await sql()`
-    SELECT chat_id, message_id, business_connection_id
+    SELECT chat_id, chat_type, chat_title, message_id, business_connection_id
     FROM messages_log WHERE id = ${messageId} LIMIT 1`;
   const row = rows[0] as
-    | { chat_id: number; message_id: number; business_connection_id: string }
+    | {
+        chat_id: number;
+        chat_type: string;
+        chat_title: string | null;
+        message_id: number;
+        business_connection_id: string;
+      }
     | undefined;
   if (!row) {
     return NextResponse.json({ error: "message not found" }, { status: 404 });
@@ -68,6 +83,23 @@ export async function POST(
 
   if (body.markHandled !== false) {
     await markMessageHandled(messageId, session.userId, "replied via dashboard");
+  }
+
+  if (body.setMode && CHAT_MODES.includes(body.setMode)) {
+    try {
+      await upsertChatRule({
+        chatId: Number(row.chat_id),
+        chatType: row.chat_type,
+        chatTitle: row.chat_title,
+        vip: false,
+        muted: false,
+        customReply: null,
+        notes: null,
+        mode: body.setMode,
+      });
+    } catch (err) {
+      console.error("[send] mode update failed:", err);
+    }
   }
 
   await audit({

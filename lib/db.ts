@@ -146,6 +146,7 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE secretary_message_links ADD COLUMN IF NOT EXISTS sender_message_id BIGINT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'secretary'`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS secretary_user_id BIGINT`;
     await q`
       CREATE TABLE IF NOT EXISTS ai_usage (
         id                     BIGSERIAL PRIMARY KEY,
@@ -392,6 +393,7 @@ export type MessageRow = {
   mediaFileId: string | null;
   transcript: string | null;
   transcriptAt: Date | null;
+  fromOwner: boolean;
 };
 
 function rowToMessage(r: Record<string, unknown>): MessageRow {
@@ -420,6 +422,7 @@ function rowToMessage(r: Record<string, unknown>): MessageRow {
     mediaFileId: (r.media_file_id as string) ?? null,
     transcript: (r.transcript as string) ?? null,
     transcriptAt: (r.transcript_at as Date) ?? null,
+    fromOwner: Boolean(r.from_owner),
   };
 }
 
@@ -525,6 +528,7 @@ export type ChatRule = {
   notes: string | null;
   mode: ChatMode;
   modeChangedAt: Date;
+  secretaryUserId: number | null;
   updatedAt: Date;
 };
 
@@ -541,6 +545,8 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
     mode: (CHAT_MODES.includes(mode as ChatMode) ? mode : "secretary") as ChatMode,
     modeChangedAt:
       (r.mode_changed_at as Date) ?? (r.updated_at as Date) ?? new Date(),
+    secretaryUserId:
+      r.secretary_user_id != null ? Number(r.secretary_user_id) : null,
     updatedAt: r.updated_at as Date,
   };
 }
@@ -550,7 +556,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
   await ensureSchema();
   const rows = await sql()`
     SELECT chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
-           mode, mode_changed_at, updated_at
+           mode, mode_changed_at, secretary_user_id, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToChatRule(r) : null;
@@ -565,17 +571,19 @@ export async function upsertChatRule(rule: {
   customReply: string | null;
   notes: string | null;
   mode?: ChatMode;
+  secretaryUserId?: number | null;
 }): Promise<void> {
   await ensureSchema();
   const mode = rule.mode ?? "secretary";
+  const secretaryUserId = rule.secretaryUserId ?? null;
   await sql()`
     INSERT INTO chat_rules (
       chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
-      mode, mode_changed_at, updated_at
+      mode, mode_changed_at, secretary_user_id, updated_at
     )
     VALUES (
       ${rule.chatId}, ${rule.chatType}, ${rule.chatTitle}, ${rule.vip}, ${rule.muted},
-      ${rule.customReply}, ${rule.notes}, ${mode}, NOW(), NOW()
+      ${rule.customReply}, ${rule.notes}, ${mode}, NOW(), ${secretaryUserId}, NOW()
     )
     ON CONFLICT (chat_id) DO UPDATE SET
       chat_type = EXCLUDED.chat_type,
@@ -587,6 +595,7 @@ export async function upsertChatRule(rule: {
       mode = EXCLUDED.mode,
       mode_changed_at = CASE WHEN chat_rules.mode IS DISTINCT FROM EXCLUDED.mode
                               THEN NOW() ELSE chat_rules.mode_changed_at END,
+      secretary_user_id = EXCLUDED.secretary_user_id,
       updated_at = NOW()`;
 }
 

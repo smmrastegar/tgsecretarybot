@@ -80,6 +80,8 @@ async function markBusinessRead(
   chatId: number,
   messageId: number,
 ): Promise<void> {
+  const s = await getSettings();
+  if ((s.markMessagesAsRead ?? "true").toLowerCase() === "false") return;
   try {
     await bot.api.readBusinessMessage(bcId, chatId, messageId);
   } catch (err) {
@@ -1103,7 +1105,18 @@ async function maybeForwardToSecretary(args: {
   if (msg.chat.type !== "private") return false;
   const enabled = (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
   if (!enabled && !args.targetSecretary) return false;
-  const target = args.targetSecretary ?? defaultSecretary(settings);
+  // Per-chat override > explicit argument > default first-in-list secretary.
+  let target: Secretary | null = args.targetSecretary ?? null;
+  if (!target) {
+    const rule = await getChatRule(msg.chat.id).catch(() => null);
+    if (rule?.secretaryUserId) {
+      const found = getSecretaries(settings).find(
+        (s) => s.userId === rule.secretaryUserId,
+      );
+      if (found) target = found;
+    }
+  }
+  if (!target) target = defaultSecretary(settings);
   if (!target) return false;
   const secId = target.userId;
   if (!hasDb()) return false;

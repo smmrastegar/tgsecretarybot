@@ -30,6 +30,7 @@ type Message = {
   autoReplied: boolean;
   mediaKind: string | null;
   transcript: string | null;
+  fromOwner: boolean;
 };
 
 type Rule = {
@@ -42,6 +43,7 @@ type Rule = {
   notes: string | null;
   mode: ChatMode;
   modeChangedAt: string;
+  secretaryUserId: number | null;
   updatedAt: string;
 };
 
@@ -59,13 +61,20 @@ export default function ChatDetailPage() {
   const [rule, setRule] = useState<Rule | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [secretaries, setSecretaries] = useState<
+    { userId: number; name: string }[]
+  >([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const PAGE = 10;
 
   const load = useCallback(async () => {
     if (!Number.isFinite(chatId)) return;
     setLoading(true);
-    const r = await fetch(`/api/chats/${chatId}`);
+    const r = await fetch(`/api/chats/${chatId}?limit=${PAGE}&offset=0`);
     if (!r.ok) {
       setLoading(false);
       return;
@@ -74,31 +83,56 @@ export default function ChatDetailPage() {
       rule: Rule | null;
       messages: Message[];
       stats: Stats;
+      hasMore: boolean;
     };
     setRule(j.rule);
     setMessages(j.messages);
     setStats(j.stats);
+    setHasMore(j.hasMore);
     setLoading(false);
   }, [chatId]);
 
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const r = await fetch(
+        `/api/chats/${chatId}?limit=${PAGE}&offset=${messages.length}`,
+      );
+      if (!r.ok) return;
+      const j = (await r.json()) as {
+        messages: Message[];
+        hasMore: boolean;
+      };
+      setMessages((prev) => [...prev, ...j.messages]);
+      setHasMore(j.hasMore);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
   useEffect(() => {
     load();
+    fetch("/api/secretaries")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.secretaries && setSecretaries(d.secretaries))
+      .catch(() => {});
   }, [load]);
 
-  async function patchRule(patch: Partial<Rule>) {
+  async function patchRule(patch: Record<string, unknown>) {
     setSaving(true);
-    const sample = messages[0];
     await fetch(`/api/chats/${chatId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chatType: rule?.chatType ?? sample?.senderId ? "private" : "private",
+        chatType: rule?.chatType ?? "private",
         chatTitle: rule?.chatTitle ?? null,
         vip: rule?.vip ?? false,
         muted: rule?.muted ?? false,
         customReply: rule?.customReply ?? null,
         notes: rule?.notes ?? null,
         mode: rule?.mode ?? "secretary",
+        secretaryUserId: rule?.secretaryUserId ?? null,
         ...patch,
       }),
     });
@@ -213,9 +247,44 @@ export default function ChatDetailPage() {
                 {rule?.muted ? "🔕 muted" : "Mute"}
               </button>
             </div>
+
+            {(rule?.mode === "secretary" || !rule?.mode) &&
+              secretaries.length > 0 && (
+                <div className="mt-3 flex items-center gap-2 flex-wrap text-xs">
+                  <span className="text-[var(--color-text-dim)]">
+                    Forward to:
+                  </span>
+                  <select
+                    disabled={saving}
+                    value={String(rule?.secretaryUserId ?? "")}
+                    onChange={(e) =>
+                      patchRule({
+                        secretaryUserId: e.target.value
+                          ? Number(e.target.value)
+                          : null,
+                      })
+                    }
+                    className="px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                  >
+                    <option value="">
+                      Default ({secretaries[0]?.name ?? "—"})
+                    </option>
+                    {secretaries.map((s) => (
+                      <option key={s.userId} value={s.userId}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                  {rule?.secretaryUserId && (
+                    <span className="text-[10px] text-[var(--color-text-dim)]">
+                      override active
+                    </span>
+                  )}
+                </div>
+              )}
           </Card>
 
-          <PageTitle title="Last 10 messages" />
+          <PageTitle title="Conversation" />
 
           {messages.length === 0 ? (
             <Card>
@@ -225,41 +294,63 @@ export default function ChatDetailPage() {
             </Card>
           ) : (
             <div className="flex flex-col gap-2">
-              {messages.map((m) => (
-                <Card key={m.id} className="!p-3">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="text-xs text-[var(--color-text-dim)] flex items-center gap-2 flex-wrap min-w-0">
-                      <span>{m.senderName}</span>
-                      <span>·</span>
-                      <span>{relTime(m.createdAt)}</span>
+              {[...messages].reverse().map((m) => {
+                const mine = m.fromOwner;
+                return (
+                  <div
+                    key={m.id}
+                    className={`flex flex-col gap-1 max-w-[90%] ${
+                      mine ? "self-end items-end" : "self-start items-start"
+                    }`}
+                  >
+                    <div className="text-[10px] text-[var(--color-text-dim)] px-1">
+                      {mine ? "You" : m.senderName} · {relTime(m.createdAt)}
                     </div>
-                    <div className="flex gap-1 flex-wrap text-[10px]">
-                      <span className="text-[var(--color-text-dim)]">
-                        imp {m.importance}
-                      </span>
+                    <div
+                      className={`p-3 rounded-2xl text-sm whitespace-pre-wrap break-words ${
+                        mine
+                          ? "bg-[var(--color-accent)] text-white rounded-br-md"
+                          : "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-bl-md"
+                      }`}
+                    >
+                      {m.messageText}
+                      {m.transcript && (
+                        <div className="mt-2 pt-2 border-t border-white/10 text-[12px]">
+                          <span className="opacity-70 text-[10px] uppercase">
+                            transcript
+                          </span>
+                          <div className="mt-1 whitespace-pre-wrap break-words">
+                            {truncate(m.transcript, 400)}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex gap-1 flex-wrap text-[10px] px-1">
                       {m.urgent && <Badge tone="danger">urgent</Badge>}
                       {m.alerted && <Badge tone="warn">alert</Badge>}
                       {m.autoReplied && <Badge tone="info">replied</Badge>}
                       {m.mediaKind && (
                         <Badge tone="neutral">{m.mediaKind}</Badge>
                       )}
+                      {!mine && (
+                        <span className="text-[var(--color-text-dim)]">
+                          imp {m.importance}
+                        </span>
+                      )}
                     </div>
                   </div>
-                  <div className="mt-2 text-sm break-words whitespace-pre-wrap">
-                    {m.messageText}
-                  </div>
-                  {m.transcript && (
-                    <div className="mt-2 p-2 rounded-md bg-[var(--color-surface-2)] text-sm">
-                      <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
-                        transcript
-                      </div>
-                      <div className="whitespace-pre-wrap break-words">
-                        {truncate(m.transcript, 400)}
-                      </div>
-                    </div>
-                  )}
-                </Card>
-              ))}
+                );
+              })}
+
+              {hasMore && (
+                <button
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="self-center text-xs px-4 py-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 mt-3"
+                >
+                  {loadingMore ? "Loading…" : "Load 10 more older messages"}
+                </button>
+              )}
             </div>
           )}
         </>

@@ -72,9 +72,22 @@ export default function UrgentPage() {
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [sending, setSending] = useState<Set<number>>(new Set());
   const [forwarding, setForwarding] = useState<Set<number>>(new Set());
+  const [handingOver, setHandingOver] = useState<Set<number>>(new Set());
+  const [toast, setToast] = useState<Record<number, string>>({});
   const [secretaries, setSecretaries] = useState<
     { userId: number; name: string }[]
   >([]);
+
+  function showToast(id: number, text: string) {
+    setToast((t) => ({ ...t, [id]: text }));
+    setTimeout(() => {
+      setToast((t) => {
+        const n = { ...t };
+        delete n[id];
+        return n;
+      });
+    }, 3000);
+  }
 
   useEffect(() => {
     fetch("/api/secretaries")
@@ -113,7 +126,7 @@ export default function UrgentPage() {
       const r = await fetch(`/api/messages/${id}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, markHandled: true }),
+        body: JSON.stringify({ text, markHandled: true, setMode: "ai_chat" }),
       });
       const j = (await r.json()) as { error?: string };
       if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
@@ -122,6 +135,7 @@ export default function UrgentPage() {
         delete n[id];
         return n;
       });
+      showToast(id, "✅ Sent — AI will handle this chat from now on");
       load();
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
@@ -142,12 +156,40 @@ export default function UrgentPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ secretaryUserId }),
       });
-      const j = (await r.json()) as { error?: string };
+      const j = (await r.json()) as {
+        error?: string;
+        secretary?: { name: string };
+      };
       if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
+      showToast(id, `↗ Forwarded to ${j.secretary?.name ?? "secretary"}`);
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
     } finally {
       setForwarding((s) => {
+        const n = new Set(s);
+        n.delete(id);
+        return n;
+      });
+    }
+  }
+
+  async function handOverToAi(id: number, chatId: number, chatType: string) {
+    setHandingOver((s) => new Set(s).add(id));
+    try {
+      const r = await fetch(`/api/chats/${chatId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatType, mode: "ai_chat" }),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `failed (${r.status})`);
+      }
+      showToast(id, "🤖 AI will handle this chat from now on");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHandingOver((s) => {
         const n = new Set(s);
         n.delete(id);
         return n;
@@ -260,6 +302,11 @@ export default function UrgentPage() {
                     )}
                   </div>
 
+                  {toast[m.id] && (
+                    <div className="mt-2 p-2 rounded-md bg-emerald-900/40 border border-emerald-800 text-emerald-200 text-xs">
+                      {toast[m.id]}
+                    </div>
+                  )}
                   {drafts[m.id] !== undefined && (
                     <div className="mt-3 p-2 rounded-md bg-[var(--color-surface-2)]">
                       <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
@@ -334,6 +381,15 @@ export default function UrgentPage() {
                         </option>
                       ))}
                     </select>
+                  )}
+                  {!m.handledAt && (
+                    <button
+                      onClick={() => handOverToAi(m.id, m.chatId, m.chatType)}
+                      disabled={handingOver.has(m.id)}
+                      className="text-xs px-3 py-1.5 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+                    >
+                      {handingOver.has(m.id) ? "Switching…" : "🤖 Full AI"}
+                    </button>
                   )}
                   {m.handledAt ? (
                     <button

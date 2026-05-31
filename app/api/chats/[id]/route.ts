@@ -14,7 +14,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
@@ -27,12 +27,23 @@ export async function GET(
   if (!Number.isFinite(chatId)) {
     return NextResponse.json({ error: "invalid chat id" }, { status: 400 });
   }
+  const url = new URL(request.url);
+  const limit = Math.min(
+    Math.max(Number(url.searchParams.get("limit") ?? "10"), 1),
+    100,
+  );
+  const offset = Math.max(Number(url.searchParams.get("offset") ?? "0"), 0);
   const [rule, messages, stats] = await Promise.all([
     getChatRule(chatId),
-    listMessages({ chatId, limit: 10 }),
+    listMessages({ chatId, limit, offset }),
     getSenderStats(chatId),
   ]);
-  return NextResponse.json({ rule, messages, stats });
+  return NextResponse.json({
+    rule,
+    messages,
+    stats,
+    hasMore: messages.length === limit,
+  });
 }
 
 export async function PUT(
@@ -58,12 +69,17 @@ export async function PUT(
     customReply?: string | null;
     notes?: string | null;
     mode?: ChatMode;
+    secretaryUserId?: number | null;
   };
   const existing = await getChatRule(chatId);
   const mode: ChatMode =
     body.mode && CHAT_MODES.includes(body.mode)
       ? body.mode
       : existing?.mode ?? "secretary";
+  const secretaryUserId =
+    body.secretaryUserId === undefined
+      ? existing?.secretaryUserId ?? null
+      : body.secretaryUserId;
   await upsertChatRule({
     chatId,
     chatType: body.chatType ?? existing?.chatType ?? "private",
@@ -73,6 +89,7 @@ export async function PUT(
     customReply: body.customReply ?? existing?.customReply ?? null,
     notes: body.notes ?? existing?.notes ?? null,
     mode,
+    secretaryUserId,
   });
   await audit({
     actorId: session.userId,

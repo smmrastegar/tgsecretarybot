@@ -7,6 +7,7 @@ import {
   openSecretarySession,
   recordSecretaryLink,
   sql,
+  upsertChatRule,
 } from "@/lib/db";
 import { getSecretaries } from "@/lib/secretaries";
 import { getSettings } from "@/lib/settings";
@@ -240,6 +241,24 @@ export async function POST(
     console.error("[forward] content send failed:", err);
   }
 
+  // Switching to a manual forward implies the owner wants the secretary
+  // path for future incoming messages from this sender, so set the chat
+  // mode to 'secretary' (the default, but explicit if it was changed).
+  try {
+    await upsertChatRule({
+      chatId,
+      chatType: row.chat_type,
+      chatTitle: row.chat_title,
+      vip: false,
+      muted: false,
+      customReply: null,
+      notes: null,
+      mode: "secretary",
+    });
+  } catch (err) {
+    console.error("[forward] mode update failed:", err);
+  }
+
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,
@@ -247,5 +266,9 @@ export async function POST(
     target: String(messageId),
     details: { to: target.userId, name: target.name, sessionId: sessionRow.id },
   });
-  return NextResponse.json({ ok: true, sessionId: sessionRow.id });
+  return NextResponse.json({
+    ok: true,
+    sessionId: sessionRow.id,
+    secretary: { userId: target.userId, name: target.name },
+  });
 }

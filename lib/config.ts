@@ -66,6 +66,7 @@ export const DEFAULT_SETTINGS = {
   aiModelsCsv: "",
   aiChatModelsCsv: "",
   sttLanguage: "fa",
+  markMessagesAsRead: "true",
 } as const satisfies Record<string, string>;
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
@@ -97,6 +98,7 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   aiModelsCsv: optional("AI_MODELS_CSV"),
   aiChatModelsCsv: optional("AI_CHAT_MODELS_CSV"),
   sttLanguage: optional("STT_LANGUAGE"),
+  markMessagesAsRead: optional("MARK_MESSAGES_AS_READ"),
 };
 
 export function envOverride(key: SettingKey): string | undefined {
