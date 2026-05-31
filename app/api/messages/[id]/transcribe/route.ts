@@ -6,6 +6,7 @@ import {
   getMessageForTranscript,
   saveTranscript,
 } from "@/lib/db";
+import { getSettings } from "@/lib/settings";
 import { sttConfigured, transcribeAudio } from "@/lib/stt";
 
 export const runtime = "nodejs";
@@ -59,11 +60,17 @@ export async function POST(
     .json()
     .catch(() => ({}))) as { language?: string };
 
+  const settings = await getSettings();
+  const language =
+    body.language && body.language.trim()
+      ? body.language.trim()
+      : settings.sttLanguage || "fa";
+
   try {
     const result = await transcribeAudio({
       botToken: config.telegramBotToken,
       fileId: row.mediaFileId,
-      language: body.language,
+      language,
     });
     await saveTranscript(messageId, result.text);
     await audit({

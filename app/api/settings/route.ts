@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { getSettings, updateSettings } from "@/lib/settings";
-import { SETTING_KEYS, type SettingKey, envOverride } from "@/lib/config";
+import { SETTING_KEYS, type SettingKey, envOverride, config } from "@/lib/config";
 import { audit } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -17,7 +17,11 @@ export async function GET(): Promise<NextResponse> {
   const envLocked: SettingKey[] = SETTING_KEYS.filter(
     (k) => envOverride(k) !== undefined,
   );
-  return NextResponse.json({ values, envLocked });
+  return NextResponse.json({
+    values,
+    envLocked,
+    meta: { defaultModel: config.openrouterModel },
+  });
 }
 
 export async function PUT(request: Request): Promise<NextResponse> {

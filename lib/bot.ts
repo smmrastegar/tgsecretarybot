@@ -1037,6 +1037,7 @@ async function maybeForwardToSecretary(args: {
           const tr = await transcribeAudio({
             botToken: config.telegramBotToken,
             fileId: audioFileId,
+            language: settings.sttLanguage || "fa",
             chatId: msg.chat.id,
             businessConnectionId: bcId,
           });

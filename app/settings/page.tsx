@@ -28,6 +28,7 @@ type Settings = {
   secretaryAutoTranscribe: string;
   secretariesJson: string;
   aiModelsCsv: string;
+  sttLanguage: string;
 };
 
 type FieldConfig = {
@@ -132,7 +133,7 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
     ],
   },
   {
-    title: "Human secretary relay",
+    title: "Secretary",
     fields: [
       {
         key: "secretaryEnabled",
@@ -155,6 +156,11 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         label: "Auto-transcribe voice / audio / video notes for the secretary",
         hint: "When a voice or audio message is forwarded, the bot also sends the Groq / Gemini transcript as a reply in the same thread.",
         type: "toggle",
+      },
+      {
+        key: "sttLanguage",
+        label: "Transcription language (ISO 639-1)",
+        hint: 'Force the audio language instead of letting Whisper guess (Whisper misreads short Persian audio as English). Examples: "fa" Persian, "en" English, "ar" Arabic. Leave empty to auto-detect.',
       },
     ],
   },
@@ -215,8 +221,29 @@ export default function SettingsPage() {
     const j = (await r.json()) as {
       values: Settings;
       envLocked: Array<keyof Settings>;
+      meta?: { defaultModel?: string };
     };
-    setValues(j.values);
+
+    // Migrate legacy fields so the new editors are pre-populated:
+    //  - secretariesJson empty + legacy secretaryUserId set → seed the list
+    //  - aiModelsCsv empty + meta.defaultModel known → seed the list
+    const v = { ...j.values };
+    if (!v.secretariesJson || v.secretariesJson.trim() === "") {
+      const legacyId = Number(v.secretaryUserId);
+      if (Number.isFinite(legacyId) && legacyId > 0) {
+        v.secretariesJson = JSON.stringify([
+          { userId: legacyId, name: v.secretaryDisplayName || "Secretary" },
+        ]);
+      }
+    }
+    if (
+      (!v.aiModelsCsv || v.aiModelsCsv.trim() === "") &&
+      j.meta?.defaultModel
+    ) {
+      v.aiModelsCsv = j.meta.defaultModel;
+    }
+
+    setValues(v);
     setEnvLocked(new Set(j.envLocked));
   }, []);
 
