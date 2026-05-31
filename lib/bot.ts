@@ -577,8 +577,56 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     }
   }
 
-  // Past this point the classify+alert path requires actual text.
+  // Past this point we'd normally need text/caption to classify. But for
+  // secretary mode in a private DM, media-only messages (stickers, GIFs,
+  // photos without caption, voice notes, …) are still meaningful and should
+  // reach the secretary so they have context. Forward and bail.
   if (!msg.text && !msg.caption) {
+    const secEnabled =
+      (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
+    const mode: ChatMode = rule?.mode ?? "secretary";
+    if (
+      secEnabled &&
+      mode === "secretary" &&
+      msg.chat.type === "private" &&
+      hasDb()
+    ) {
+      const handled = await maybeForwardToSecretary({
+        msg,
+        bcId,
+        senderName,
+        senderUsername,
+        chatTitle,
+        owner,
+        settings,
+        bot,
+      });
+      try {
+        await logMessage({
+          businessConnectionId: bcId,
+          ownerUserId: owner?.userId ?? null,
+          chatId: msg.chat.id,
+          chatType: msg.chat.type,
+          chatTitle,
+          senderId: msg.from?.id ?? null,
+          senderUsername,
+          senderName,
+          messageId: msg.message_id,
+          messageText: text,
+          importance: 0,
+          urgent: false,
+          concernsOwner: false,
+          reason: "media-only forwarded to secretary",
+          alerted: false,
+          autoReplied: handled,
+          skippedReason: handled ? "secretary_relay" : "media_no_text",
+          mediaFileId,
+          mediaKind,
+        });
+      } catch (err) {
+        console.error("[db] media-log failed:", err);
+      }
+    }
     return;
   }
 
@@ -1403,8 +1451,11 @@ async function handleSecretaryReaction(
     return;
   }
 
-  // Direction B: reaction in the secretary's bot DM. Relay it to the original
-  // sender's message in the business chat.
+  // Direction B: reaction in the secretary's bot DM. Bot API's
+  // setMessageReaction does NOT support business_connection_id, so we can't
+  // mirror it as a real reaction on the sender's chat. Instead we send the
+  // emoji string as a short text reply to the original message — same
+  // visual effect from the sender's side.
   if (upd.chat.type !== "private") return;
   if (!secIds.has(upd.user.id)) return;
 
@@ -1416,33 +1467,12 @@ async function handleSecretaryReaction(
   if (!link.senderMessageIdLinked) return;
 
   const newReactions = (upd.new_reaction ?? []) as ReactionType[];
-
-  try {
-    await bot.api.setMessageReaction(
-      link.senderChatId,
-      link.senderMessageIdLinked,
-      newReactions,
-      { business_connection_id: link.businessConnectionId } as Parameters<
-        typeof bot.api.setMessageReaction
-      >[3],
-    );
-    await touchSecretarySession(link.id);
-    console.log(
-      `[reaction] relayed session=${link.id} to chat=${link.senderChatId} msg=${link.senderMessageIdLinked} count=${newReactions.length}`,
-    );
-    return;
-  } catch (err) {
-    console.warn(
-      "[reaction] setMessageReaction via business failed, trying text fallback:",
-      err,
-    );
-  }
-
   const emojis = newReactions
     .filter((r) => r.type === "emoji")
     .map((r) => (r as { type: "emoji"; emoji: string }).emoji)
     .join(" ");
-  if (!emojis) return;
+  if (!emojis) return; // removal — ignore
+
   try {
     await bot.api.sendMessage(link.senderChatId, emojis, {
       business_connection_id: link.businessConnectionId,
@@ -1450,10 +1480,10 @@ async function handleSecretaryReaction(
     });
     await touchSecretarySession(link.id);
     console.log(
-      `[reaction] relayed as text session=${link.id} to chat=${link.senderChatId}`,
+      `[reaction] relayed as text session=${link.id} to chat=${link.senderChatId} emojis=${emojis}`,
     );
   } catch (err) {
-    console.error("[reaction] text fallback failed:", err);
+    console.error("[reaction] text relay failed:", err);
   }
 }
 
