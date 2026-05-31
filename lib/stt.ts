@@ -67,21 +67,21 @@ export async function transcribeAudio(
 ): Promise<{ text: string; durationSeconds?: number; provider: string }> {
   const errors: string[] = [];
 
-  if (config.openrouterApiKey) {
-    try {
-      return await transcribeViaOpenRouter(args);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`OpenRouter: ${msg}`);
-      console.warn("[stt] OpenRouter failed:", msg);
-    }
-  }
   if (config.groqApiKey) {
     try {
       return await transcribeViaGroq(args);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`Groq: ${msg}`);
+      console.warn("[stt] Groq failed:", msg);
+    }
+  }
+  if (config.openrouterApiKey) {
+    try {
+      return await transcribeViaOpenRouter(args);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`OpenRouter: ${msg}`);
     }
   }
 
