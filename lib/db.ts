@@ -62,6 +62,10 @@ export async function ensureSchema(): Promise<void> {
     await q`CREATE INDEX IF NOT EXISTS messages_log_urgent_idx ON messages_log (urgent, created_at DESC) WHERE urgent = TRUE`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS from_owner BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS skipped_reason TEXT`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS media_file_id TEXT`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS media_kind TEXT`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS transcript TEXT`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS transcript_at TIMESTAMPTZ`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_owner_chat_idx ON messages_log (chat_id, created_at DESC) WHERE from_owner = TRUE`;
     await q`
       CREATE TABLE IF NOT EXISTS chat_rules (
@@ -277,6 +281,8 @@ export type LogMessage = {
   autoReplied: boolean;
   fromOwner?: boolean;
   skippedReason?: string | null;
+  mediaFileId?: string | null;
+  mediaKind?: string | null;
 };
 
 export async function logMessage(m: LogMessage): Promise<number> {
@@ -286,14 +292,57 @@ export async function logMessage(m: LogMessage): Promise<number> {
       business_connection_id, owner_user_id, chat_id, chat_type, chat_title,
       sender_id, sender_username, sender_name, message_id, message_text,
       importance, urgent, concerns_owner, reason, alerted, auto_replied,
-      from_owner, skipped_reason
+      from_owner, skipped_reason, media_file_id, media_kind
     ) VALUES (
       ${m.businessConnectionId}, ${m.ownerUserId}, ${m.chatId}, ${m.chatType}, ${m.chatTitle},
       ${m.senderId}, ${m.senderUsername}, ${m.senderName}, ${m.messageId}, ${m.messageText},
       ${m.importance}, ${m.urgent}, ${m.concernsOwner}, ${m.reason}, ${m.alerted}, ${m.autoReplied},
-      ${m.fromOwner ?? false}, ${m.skippedReason ?? null}
+      ${m.fromOwner ?? false}, ${m.skippedReason ?? null},
+      ${m.mediaFileId ?? null}, ${m.mediaKind ?? null}
     ) RETURNING id`;
   return Number((rows[0] as { id: string }).id);
+}
+
+export async function getMessageForTranscript(id: number): Promise<{
+  id: number;
+  mediaFileId: string | null;
+  mediaKind: string | null;
+  transcript: string | null;
+  transcriptAt: Date | null;
+} | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, media_file_id, media_kind, transcript, transcript_at
+    FROM messages_log WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as
+    | {
+        id: number;
+        media_file_id: string | null;
+        media_kind: string | null;
+        transcript: string | null;
+        transcript_at: Date | null;
+      }
+    | undefined;
+  if (!r) return null;
+  return {
+    id: Number(r.id),
+    mediaFileId: r.media_file_id ?? null,
+    mediaKind: r.media_kind ?? null,
+    transcript: r.transcript ?? null,
+    transcriptAt: r.transcript_at ?? null,
+  };
+}
+
+export async function saveTranscript(
+  id: number,
+  transcript: string,
+): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE messages_log
+    SET transcript = ${transcript}, transcript_at = NOW()
+    WHERE id = ${id}`;
 }
 
 export async function lastOwnerMessageAt(chatId: number): Promise<Date | null> {
@@ -327,6 +376,10 @@ export type MessageRow = {
   handledAt: Date | null;
   handledBy: number | null;
   notes: string | null;
+  mediaKind: string | null;
+  mediaFileId: string | null;
+  transcript: string | null;
+  transcriptAt: Date | null;
 };
 
 function rowToMessage(r: Record<string, unknown>): MessageRow {
@@ -351,6 +404,10 @@ function rowToMessage(r: Record<string, unknown>): MessageRow {
     handledAt: (r.handled_at as Date) ?? null,
     handledBy: r.handled_by != null ? Number(r.handled_by) : null,
     notes: (r.notes as string) ?? null,
+    mediaKind: (r.media_kind as string) ?? null,
+    mediaFileId: (r.media_file_id as string) ?? null,
+    transcript: (r.transcript as string) ?? null,
+    transcriptAt: (r.transcript_at as Date) ?? null,
   };
 }
 

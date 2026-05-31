@@ -105,7 +105,63 @@ export default function ChatsPage() {
           </p>
         </Card>
       ) : (
-        <Card>
+        <>
+        {/* Mobile: card list */}
+        <div className="md:hidden flex flex-col gap-2 mb-4">
+          {chats.map((c) => (
+            <Card key={c.chatId} className="!p-3">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="min-w-0">
+                  <div className="font-medium text-sm truncate">
+                    {c.chatTitle ?? `chat ${c.chatId}`}
+                  </div>
+                  <div className="text-[11px] text-[var(--color-text-dim)] mt-0.5">
+                    {chatTypeLabel(c.chatType)} · id {c.chatId} · {relTime(c.lastSeen)}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setEdit(c)}
+                  className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] shrink-0"
+                >
+                  Edit
+                </button>
+              </div>
+              <select
+                value={c.mode}
+                onChange={(e) => quickMode(c, e.target.value as ChatMode)}
+                className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-xs mb-2"
+              >
+                {(Object.keys(MODE_LABELS) as ChatMode[]).map((m) => (
+                  <option key={m} value={m}>
+                    {MODE_LABELS[m]}
+                  </option>
+                ))}
+              </select>
+              {c.modeChangedAt && (
+                <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
+                  switched {relTime(c.modeChangedAt)}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-1 items-center text-[10px]">
+                <span className="text-[var(--color-text-dim)]">
+                  {c.messages} msg
+                </span>
+                {c.urgent > 0 && <Badge tone="danger">{c.urgent} urg</Badge>}
+                {c.vip && <Badge tone="warn">VIP</Badge>}
+                {c.muted && <Badge tone="neutral">muted</Badge>}
+                {c.customReply && <Badge tone="info">custom</Badge>}
+                {c.aiCostUsd > 0 && (
+                  <span className="text-[var(--color-text-dim)] ml-auto">
+                    ${c.aiCostUsd.toFixed(4)}
+                  </span>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        {/* Desktop: table */}
+        <Card className="hidden md:block">
           <TableWrap>
           <table className="w-full text-sm min-w-[640px]">
             <thead className="text-xs text-[var(--color-text-dim)]">
@@ -195,6 +251,7 @@ export default function ChatsPage() {
           </table>
           </TableWrap>
         </Card>
+        </>
       )}
 
       {edit && (

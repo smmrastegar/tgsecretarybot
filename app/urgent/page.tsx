@@ -18,6 +18,8 @@ type Message = {
   alerted: boolean;
   autoReplied: boolean;
   handledAt: string | null;
+  mediaKind: string | null;
+  transcript: string | null;
 };
 
 export default function UrgentPage() {
@@ -46,6 +48,35 @@ export default function UrgentPage() {
     });
     load();
   }
+
+  const [transcribing, setTranscribing] = useState<Set<number>>(new Set());
+  async function transcribe(id: number) {
+    setTranscribing((s) => new Set(s).add(id));
+    try {
+      const r = await fetch(`/api/messages/${id}/transcribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const j = (await r.json()) as { transcript?: string; error?: string };
+      if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
+      setMessages((ms) =>
+        ms.map((m) =>
+          m.id === id ? { ...m, transcript: j.transcript ?? "" } : m,
+        ),
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTranscribing((s) => {
+        const n = new Set(s);
+        n.delete(id);
+        return n;
+      });
+    }
+  }
+  const canTranscribe = (kind: string | null) =>
+    kind === "voice" || kind === "audio" || kind === "video_note" || kind === "video";
 
   return (
     <Shell>
@@ -91,17 +122,37 @@ export default function UrgentPage() {
                     <span>·</span>
                     <span>{relTime(m.createdAt)}</span>
                   </div>
-                  <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                  <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
                     {m.messageText}
                   </div>
+                  {m.transcript && (
+                    <div className="mt-2 p-2 rounded-md bg-[var(--color-surface-2)] text-sm">
+                      <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
+                        transcript
+                      </div>
+                      <div className="whitespace-pre-wrap break-words">
+                        {m.transcript}
+                      </div>
+                    </div>
+                  )}
                   <div className="text-xs text-[var(--color-text-dim)] mt-2 italic">
                     {m.reason}
                   </div>
-                  <div className="mt-3 flex gap-2 flex-wrap">
+                  <div className="mt-3 flex gap-2 flex-wrap items-center">
                     <Badge tone="danger">imp {m.importance}/10</Badge>
                     {m.alerted && <Badge tone="warn">alerted</Badge>}
                     {m.autoReplied && <Badge tone="info">auto-replied</Badge>}
+                    {m.mediaKind && <Badge tone="neutral">{m.mediaKind}</Badge>}
                     {m.handledAt && <Badge tone="success">handled</Badge>}
+                    {canTranscribe(m.mediaKind) && !m.transcript && (
+                      <button
+                        onClick={() => transcribe(m.id)}
+                        disabled={transcribing.has(m.id)}
+                        className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                      >
+                        {transcribing.has(m.id) ? "Transcribing…" : "🎙 Transcribe"}
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="shrink-0 self-end sm:self-auto">

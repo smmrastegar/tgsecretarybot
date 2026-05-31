@@ -20,6 +20,8 @@ export const config = {
   openrouterAppName: optional("OPENROUTER_APP_NAME") ?? "tgsecretarybot",
   openrouterAppUrl: optional("OPENROUTER_APP_URL"),
 
+  groqApiKey: optional("GROQ_API_KEY"),
+
   webhookSecretToken: optional("WEBHOOK_SECRET_TOKEN"),
   setupSecret: optional("SETUP_SECRET"),
   cronSecret: optional("CRON_SECRET"),

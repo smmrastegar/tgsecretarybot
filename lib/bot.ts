@@ -225,6 +225,10 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   const chatTitle =
     "title" in msg.chat && typeof msg.chat.title === "string" ? msg.chat.title : null;
 
+  const media = extractMedia(msg);
+  const mediaFileId = media?.fileId ?? null;
+  const mediaKind = media?.kind ?? null;
+
   // Owner sent this themselves: record their activity, close any open
   // secretary session for this chat, then bail.
   if (owner && msg.from && msg.from.id === owner.userId) {
@@ -265,6 +269,8 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           alerted: false,
           autoReplied: false,
           fromOwner: true,
+          mediaFileId,
+          mediaKind,
         });
       } catch (err) {
         console.error("[db] owner-log failed:", err);
@@ -298,6 +304,8 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           alerted: false,
           autoReplied: false,
           skippedReason: "muted",
+          mediaFileId,
+          mediaKind,
         });
       } catch (err) {
         console.error("[db] mute-log failed:", err);
@@ -359,6 +367,8 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           alerted: false,
           autoReplied: false,
           skippedReason: "secretary_relay",
+          mediaFileId,
+          mediaKind,
         });
       } catch (err) {
         console.error("[db] relay-log failed:", err);
@@ -407,6 +417,8 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
                 alerted: false,
                 autoReplied: false,
                 skippedReason: "active_grace",
+                mediaFileId,
+                mediaKind,
               });
             } catch (err) {
               console.error("[db] grace-log failed:", err);
@@ -558,6 +570,8 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         reason: verdict.reason,
         alerted,
         autoReplied,
+        mediaFileId,
+        mediaKind,
       });
     } catch (err) {
       console.error("[db] log failed:", err);
@@ -658,6 +672,26 @@ async function buildSecretaryHeader(args: {
     `\n\n↩️ Reply to any message in this thread to respond as ${args.ownerName}.`;
 
   return title + idLine + meta + footer + instructions;
+}
+
+function extractMedia(
+  msg: Message,
+): { fileId: string; kind: string } | null {
+  if (msg.voice) return { fileId: msg.voice.file_id, kind: "voice" };
+  if (msg.audio) return { fileId: msg.audio.file_id, kind: "audio" };
+  if (msg.video_note)
+    return { fileId: msg.video_note.file_id, kind: "video_note" };
+  if (msg.video) return { fileId: msg.video.file_id, kind: "video" };
+  if (msg.document)
+    return { fileId: msg.document.file_id, kind: "document" };
+  if (msg.photo && msg.photo.length > 0) {
+    const biggest = msg.photo[msg.photo.length - 1];
+    if (biggest) return { fileId: biggest.file_id, kind: "photo" };
+  }
+  if (msg.animation)
+    return { fileId: msg.animation.file_id, kind: "animation" };
+  if (msg.sticker) return { fileId: msg.sticker.file_id, kind: "sticker" };
+  return null;
 }
 
 function describeMessage(msg: Message): string {
