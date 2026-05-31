@@ -11,6 +11,7 @@ import {
   findSessionByLinkedMessage,
   getBusinessConnection,
   getChatRule,
+  getSenderStats,
   hasDb,
   isAllowedUser,
   lastOwnerMessageAt,
@@ -550,6 +551,66 @@ async function maybeAutoReply(
   }
 }
 
+function relTime(d: Date): string {
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86400 * 30) return `${Math.floor(diff / 86400)}d ago`;
+  return d.toISOString().slice(0, 10);
+}
+
+async function buildSecretaryHeader(args: {
+  senderName: string;
+  senderUsername: string | null;
+  senderId: number | null;
+  chatId: number;
+  ownerName: string;
+}): Promise<string> {
+  const handle = args.senderUsername ? ` (@${args.senderUsername})` : "";
+  const title = `👤 ${args.senderName}${handle}`;
+
+  const tags: string[] = [];
+  let footer = "";
+  try {
+    const [rule, stats] = await Promise.all([
+      getChatRule(args.chatId).catch(() => null),
+      getSenderStats(args.chatId).catch(() => null),
+    ]);
+
+    if (rule?.vip) tags.push("⭐ VIP");
+    if (rule?.muted) tags.push("🔕 muted");
+    if (stats) {
+      if (stats.priorCount > 1) {
+        tags.push(`${stats.priorCount} prior msg${stats.priorCount === 1 ? "" : "s"}`);
+      }
+      if (stats.urgentCount > 0) {
+        tags.push(`${stats.urgentCount}× urgent`);
+      }
+      if (stats.firstSeen) {
+        tags.push(`known since ${relTime(stats.firstSeen)}`);
+      }
+    }
+    if (rule?.notes) {
+      footer += `\n📝 ${rule.notes}`;
+    }
+    if (rule?.customReply) {
+      footer += `\n💬 custom reply set for this chat`;
+    }
+  } catch {
+    // best-effort header enrichment; ignore failures
+  }
+
+  const idLine = args.senderId
+    ? `\n🆔 user ${args.senderId}`
+    : `\n🆔 chat ${args.chatId}`;
+  const meta = tags.length > 0 ? `\n${tags.join(" · ")}` : "";
+  const instructions =
+    `\n\n↩️ Reply to any message in this thread to respond as ${args.ownerName}.`;
+
+  return title + idLine + meta + footer + instructions;
+}
+
 function describeMessage(msg: Message): string {
   if (msg.text) return msg.text;
   if (msg.caption) return msg.caption;
@@ -714,13 +775,14 @@ async function maybeForwardToSecretary(args: {
 
   try {
     if (!session) {
-      const handle = senderUsername ? ` (@${senderUsername})` : "";
-      const header = await bot.api.sendMessage(
-        secId,
-        `🆕 New urgent thread\n` +
-          `From: ${senderName}${handle}\n\n` +
-          `↩️ Reply to any message in this thread to respond on behalf of the owner.`,
-      );
+      const headerText = await buildSecretaryHeader({
+        senderName,
+        senderUsername,
+        senderId: msg.from?.id ?? null,
+        chatId: msg.chat.id,
+        ownerName: settings.ownerName || "the owner",
+      });
+      const header = await bot.api.sendMessage(secId, headerText);
       session = await openSecretarySession({
         businessConnectionId: bcId,
         senderChatId: msg.chat.id,

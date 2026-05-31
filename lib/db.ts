@@ -819,3 +819,35 @@ export async function findOnlyActiveSessionForSecretary(
   if (rows.length !== 1) return null;
   return rowToSecretarySession(rows[0] as Record<string, unknown>);
 }
+
+export async function getSenderStats(chatId: number): Promise<{
+  priorCount: number;
+  urgentCount: number;
+  lastSeen: Date | null;
+  firstSeen: Date | null;
+}> {
+  if (!hasDb()) {
+    return { priorCount: 0, urgentCount: 0, lastSeen: null, firstSeen: null };
+  }
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT
+      COUNT(*) FILTER (WHERE from_owner = FALSE)::int AS n,
+      COUNT(*) FILTER (WHERE from_owner = FALSE AND urgent = TRUE)::int AS urgent_n,
+      MAX(created_at) FILTER (WHERE from_owner = FALSE) AS last_seen,
+      MIN(created_at) FILTER (WHERE from_owner = FALSE) AS first_seen
+    FROM messages_log
+    WHERE chat_id = ${chatId}`;
+  const r = (rows[0] as {
+    n: number;
+    urgent_n: number;
+    last_seen: Date | null;
+    first_seen: Date | null;
+  }) ?? { n: 0, urgent_n: 0, last_seen: null, first_seen: null };
+  return {
+    priorCount: Number(r.n) || 0,
+    urgentCount: Number(r.urgent_n) || 0,
+    lastSeen: r.last_seen ?? null,
+    firstSeen: r.first_seen ?? null,
+  };
+}
