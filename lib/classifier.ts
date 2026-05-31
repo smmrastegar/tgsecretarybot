@@ -304,36 +304,49 @@ HARD RULES — read these carefully, the most common failure mode is breaking
 them:
 1. ANTI-REPETITION (CRITICAL): if the payload includes "previous_replies",
    your output MUST be substantively different from every entry there —
-   different words, different angle, different verbs. Do NOT paraphrase a
+   different topic, different verbs, different angle. Do NOT paraphrase a
    previous reply, do NOT just shuffle the same words. If the person asks
    the same question twice, that means your earlier answer was unclear or
-   unsatisfying — give a NEW, more specific answer this time, ideally with
-   concrete details or by asking a sharp clarifying question.
-2. NO STALLING. Do not output any sentence that means "I'm checking", "I'm
-   investigating", "I'm looking into it", "I'll get back to you", "wait a
-   sec", "let me think", "I'm busy", "got it", "noted". Forbidden in any
-   language. Examples that are FORBIDDEN: "اوکی حواسم هست",
-   "هنوز در حال بررسی هستم", "دارم بررسی می‌کنم", "بعداً جواب می‌دم",
-   "صبر کن", "بذار ببینم", "let me think about it", "I'll get back to you".
-   These dodge the question. Always say something CONCRETE instead — even
-   if it's a specific follow-up question.
-3. ENGAGE THE LAST MESSAGE. Look at what they actually said and respond to
-   THAT. If they asked "what?", explain the what. If they greeted you,
-   greet back AND add a specific next step / question. If they pointed out
-   that you're stuck in a loop, acknowledge it directly and break the loop
-   with a real answer.
+   unsatisfying — give a NEW, more specific answer this time, ideally
+   with concrete details or by asking a sharp clarifying question.
+2. NO STALLING. Forbidden in any language: anything that means "I'm
+   checking", "I'm investigating", "I'm looking into it", "I'll get back
+   to you", "please wait", "please be patient", "try again later", "let
+   me think", "I'm busy", "got it", "noted". Specifically forbidden
+   Persian phrases (and any variant): "اوکی حواسم هست",
+   "(هنوز |سلام\\. |متاسفم،? )?(در حال بررسی هستم|دارم بررسی می‌کنم)",
+   "لطفا صبور باش", "بعداً دوباره تلاش کن", "بعداً جواب می‌دم", "صبر
+   کن", "بذار ببینم", "منتظر بمان", "let me think", "I'll get back".
+   These dodge the question. Always say something CONCRETE instead — a
+   real opinion, a specific follow-up question, or an explicit
+   acknowledgement of what they said with a new direction.
+3. ENGAGE THE LAST MESSAGE. Look at what they actually said and respond
+   to THAT. Examples:
+   - They wrote "چ خبر؟" → BAD: "سلام، در حال بررسی هستم." → GOOD:
+     "سلام، خبر خاصی نیست. خودت چه می‌کنی؟"
+   - They wrote "مشکل تویی" → BAD: "هنوز در حال بررسی هستم. لطفا صبور
+     باشید." → GOOD: "خب بگو دقیقاً چی شده؟ کجا مشکل دیدی؟"
+   - They wrote "چرا صبور باشم؟" → BAD: "متاسفم، در حال بررسی هستم." →
+     GOOD: "حق با تو، عجله داری. الان چی نیاز داری دقیقاً؟"
+   - They wrote "الو" → BAD: "در حال بررسی هستم." → GOOD: "سلام، جانم؟
+     چی شده؟"
 4. MATCH THE STYLE. Same language, same formality, same emoji density,
    same sentence length as the prior owner messages in the conversation.
-   If the owner uses Persian with emojis, you use Persian with emojis. If
-   they're terse, be terse.
 5. PERSONA. Reply in first person AS the owner. Never reveal you are an
    AI. Never apologise on the owner's behalf. Never refuse to answer.
 6. LENGTH. Usually 1-2 sentences. Greetings get greetings + a specific
    follow-up about something from context.
-7. RELATIONSHIP. If the payload provides "relationship_guidance", follow
+7. OWNER CONTEXT is BACKGROUND ONLY. The "owner_context" field is
+   reference info about the owner. Do NOT reference it directly unless
+   the other person asked about it. Do NOT use it as an excuse to stall.
+8. RELATIONSHIP. If the payload provides "relationship_guidance", follow
    that tone strictly — it overrides the prior conversation style when
    they conflict. If "nickname" is set, prefer addressing the person by
    that nickname (especially for close_friend / friend).
+9. CRITIQUE. If the payload includes "critique", the previous attempt
+   was rejected for the reason described there. Do NOT repeat that
+   failure. Read the critique carefully and write something that
+   addresses it directly.
 
 Output STRICT JSON only, no prose, no code fences:
 { "reply": "<the reply text>" }`;
@@ -342,15 +355,22 @@ Output STRICT JSON only, no prose, no code fences:
 // these (or something normalised to one), we reject the reply and retry
 // rather than send another empty filler to the user.
 const FORBIDDEN_STALL_PATTERNS: RegExp[] = [
-  /هنوز\s*در\s*حال\s*بررسی/i,
+  /در\s*حال\s*بررسی/i,
   /دارم\s*بررسی\s*می\s*کنم/i,
+  /بررسیش?\s*می\s*کنم/i,
   /حواسم\s*هست/i,
-  /بعد(ا|اً)\s*جواب\s*می\s*[‌\s]?دم/i,
+  /بعد(ا|اً)?\s*جواب\s*می\s*[‌\s]?دم/i,
+  /بعد(ا|اً)?\s*(دوباره\s*)?تلاش\s*کن/i,
+  /لطف(ا|اً)?\s*صبور\s*باش/i,
+  /لطف(ا|اً)?\s*منتظر/i,
+  /منتظر\s*بمان/i,
+  /صبر\s*داشته\s*باش/i,
+  /^\s*صبر\s*کن[\.!؟]?\s*$/i,
   /بذار\s*ببینم/i,
-  /صبر\s*کن/i,
   /let me (think|check|see)/i,
   /i('?| a)?m (still )?(checking|investigating|looking into)/i,
   /i'?ll get back to you/i,
+  /please (be patient|wait|try again)/i,
   /^got it\.?$/i,
   /^noted\.?$/i,
 ];
@@ -363,6 +383,31 @@ function looksLikeStall(reply: string): boolean {
 
 function normaliseForCompare(s: string): string {
   return s.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+// Pull out the specific stall keywords actually present in a rejected
+// reply so we can name them in the retry critique — the model handles
+// concrete "do not use the word X" much better than vague "don't stall".
+function listBannedTokens(reply: string): string[] {
+  const tokens = [
+    "بررسی",
+    "صبور",
+    "صبر کن",
+    "منتظر",
+    "بعدا",
+    "بعداً",
+    "تلاش کن",
+    "حواسم",
+    "investigating",
+    "checking",
+    "patient",
+    "get back",
+  ];
+  const out = new Set<string>();
+  for (const tok of tokens) {
+    if (reply.includes(tok)) out.add(tok);
+  }
+  return [...out];
 }
 
 const RELATIONSHIP_GUIDANCE: Record<string, string> = {
@@ -450,15 +495,45 @@ export async function aiConversationReply(input: {
   const previousSet = new Set(previousReplies.map(normaliseForCompare));
   const isRepeat = (r: string) => previousSet.has(normaliseForCompare(r));
 
+  // Up to 3 attempts. Almost every chat hits on the first call; the retries
+  // exist for the cases where the model latches onto a stall phrase that
+  // survived the prompt. Each retry gets a more specific critique with the
+  // actual offending tokens called out by name.
   let reply = await runOnce();
-  // If the model produced a stall or just copied a previous reply, give it
-  // one explicit second chance with a critique. This is enough to break
-  // most loops without paying for an extra call on the happy path.
-  if (!reply || looksLikeStall(reply) || isRepeat(reply)) {
-    const critique = looksLikeStall(reply)
-      ? "Your previous attempt was a generic stalling phrase. Forbidden. Write something concrete that engages the LAST message specifically — a real answer, a specific question, or an explicit acknowledgement and a new direction."
-      : "Your previous attempt was identical or near-identical to a reply you already sent. Write something materially different — different verbs, different angle, more specific information.";
-    reply = await runOnce({ critique });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (reply && !looksLikeStall(reply) && !isRepeat(reply)) break;
+    const banned = looksLikeStall(reply) ? listBannedTokens(reply) : [];
+    const reasons: string[] = [];
+    if (looksLikeStall(reply)) {
+      reasons.push(
+        `Your previous attempt ("${reply.slice(0, 120)}") was a generic stalling phrase. Forbidden — it dodges instead of answering.`,
+      );
+      if (banned.length > 0) {
+        reasons.push(
+          `Do NOT use any of these words in this reply: ${banned.join(", ")}. Pick a completely different angle.`,
+        );
+      }
+    }
+    if (isRepeat(reply)) {
+      reasons.push(
+        `Your previous attempt was identical or near-identical to a reply you already sent. Use different verbs, different topic, more specific info.`,
+      );
+    }
+    if (!reply) {
+      reasons.push("Your previous attempt was empty. Write a real reply.");
+    }
+    reasons.push(
+      "Read the LAST message from the other person again and answer THAT specific thing. If unsure what they want, ask a concrete clarifying question — never a generic delay.",
+    );
+    reply = await runOnce({ critique: reasons.join(" ") });
+  }
+  // Last-ditch: if it's STILL a stall after retries, refuse to send so the
+  // owner notices in the dashboard instead of seeing yet another loop reply.
+  if (looksLikeStall(reply) || isRepeat(reply)) {
+    console.warn(
+      `[ai_chat] gave up after retries; final attempt was a stall/repeat: "${reply.slice(0, 200)}"`,
+    );
+    return "";
   }
   return reply;
 }
