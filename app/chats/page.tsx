@@ -75,9 +75,12 @@ type Chat = {
   customReply: string | null;
   mode: ChatMode;
   modeChangedAt: string | null;
+  secretaryUserId: number | null;
   aiCostUsd: number;
   aiTokens: number;
 };
+
+type Secretary = { userId: number; name: string };
 
 function chatDisplayName(c: {
   chatId: number;
@@ -94,6 +97,7 @@ export default function ChatsPage() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState<Chat | null>(null);
+  const [secretaries, setSecretaries] = useState<Secretary[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,7 +109,16 @@ export default function ChatsPage() {
 
   useEffect(() => {
     load();
+    fetch("/api/secretaries")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.secretaries && setSecretaries(d.secretaries))
+      .catch(() => {});
   }, [load]);
+
+  function secretaryName(id: number | null): string {
+    if (id == null) return secretaries[0]?.name ?? "—";
+    return secretaries.find((s) => s.userId === id)?.name ?? `user ${id}`;
+  }
 
   async function save(c: Chat) {
     await fetch(`/api/chats/${c.chatId}`, {
@@ -118,6 +131,7 @@ export default function ChatsPage() {
         muted: c.muted,
         customReply: c.customReply || null,
         mode: c.mode,
+        secretaryUserId: c.secretaryUserId,
         firstName: c.firstName || null,
         lastName: c.lastName || null,
         nickname: c.nickname || null,
@@ -136,6 +150,19 @@ export default function ChatsPage() {
         chatType: c.chatType,
         chatTitle: c.chatTitle,
         mode,
+      }),
+    });
+    load();
+  }
+
+  async function quickSecretary(c: Chat, secretaryUserId: number | null) {
+    await fetch(`/api/chats/${c.chatId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chatType: c.chatType,
+        chatTitle: c.chatTitle,
+        secretaryUserId,
       }),
     });
     load();
@@ -204,6 +231,32 @@ export default function ChatsPage() {
                   </option>
                 ))}
               </select>
+              {c.mode === "secretary" && secretaries.length > 0 && (
+                <div className="flex items-center gap-1.5 mb-2 text-[11px]">
+                  <span className="text-[var(--color-text-dim)] shrink-0">
+                    →
+                  </span>
+                  <select
+                    value={String(c.secretaryUserId ?? "")}
+                    onChange={(e) =>
+                      quickSecretary(
+                        c,
+                        e.target.value ? Number(e.target.value) : null,
+                      )
+                    }
+                    className="flex-1 min-w-0 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-[11px]"
+                  >
+                    <option value="">
+                      Default ({secretaries[0]?.name ?? "—"})
+                    </option>
+                    {secretaries.map((s) => (
+                      <option key={s.userId} value={s.userId}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {c.modeChangedAt && (
                 <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
                   switched {relTime(c.modeChangedAt)}
@@ -302,6 +355,35 @@ export default function ChatsPage() {
                         </option>
                       ))}
                     </select>
+                    {c.mode === "secretary" && secretaries.length > 0 && (
+                      <div className="mt-1 flex items-center gap-1 text-[11px]">
+                        <span className="text-[var(--color-text-dim)]">→</span>
+                        <select
+                          value={String(c.secretaryUserId ?? "")}
+                          onChange={(e) =>
+                            quickSecretary(
+                              c,
+                              e.target.value ? Number(e.target.value) : null,
+                            )
+                          }
+                          className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1.5 py-0.5 text-[11px] max-w-[140px]"
+                          title={
+                            c.secretaryUserId
+                              ? `override: ${secretaryName(c.secretaryUserId)}`
+                              : `default: ${secretaryName(null)}`
+                          }
+                        >
+                          <option value="">
+                            {secretaries[0]?.name ?? "—"} (default)
+                          </option>
+                          {secretaries.map((s) => (
+                            <option key={s.userId} value={s.userId}>
+                              {s.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     {c.modeChangedAt && (
                       <div className="text-[10px] text-[var(--color-text-dim)] mt-1">
                         switched {relTime(c.modeChangedAt)}
@@ -455,6 +537,35 @@ export default function ChatsPage() {
                 </option>
               ))}
             </select>
+
+            {edit.mode === "secretary" && secretaries.length > 0 && (
+              <>
+                <label className="block text-xs text-[var(--color-text-dim)] mb-1">
+                  Forward to which secretary
+                </label>
+                <select
+                  value={String(edit.secretaryUserId ?? "")}
+                  onChange={(e) =>
+                    setEdit({
+                      ...edit,
+                      secretaryUserId: e.target.value
+                        ? Number(e.target.value)
+                        : null,
+                    })
+                  }
+                  className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm mb-4"
+                >
+                  <option value="">
+                    Default ({secretaries[0]?.name ?? "—"})
+                  </option>
+                  {secretaries.map((s) => (
+                    <option key={s.userId} value={s.userId}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
 
             <label className="flex items-center gap-2 mb-2 text-sm">
               <input

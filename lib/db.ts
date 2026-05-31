@@ -804,6 +804,7 @@ export async function listChats(): Promise<
     lastName: string | null;
     nickname: string | null;
     relationship: Relationship | null;
+    secretaryUserId: number | null;
     aiCostUsd: number;
     aiTokens: number;
   }>
@@ -826,6 +827,7 @@ export async function listChats(): Promise<
       MAX(r.last_name) AS last_name,
       MAX(r.nickname) AS nickname,
       MAX(r.relationship) AS relationship,
+      MAX(r.secretary_user_id) AS secretary_user_id,
       COALESCE(SUM(u.cost_usd), 0)::float8 AS ai_cost,
       COALESCE(SUM(u.total_tokens), 0)::int AS ai_tokens
     FROM messages_log m
@@ -856,6 +858,8 @@ export async function listChats(): Promise<
         rel && (RELATIONSHIPS as readonly string[]).includes(rel)
           ? (rel as Relationship)
           : null,
+      secretaryUserId:
+        r.secretary_user_id == null ? null : Number(r.secretary_user_id),
       aiCostUsd: Number(r.ai_cost) || 0,
       aiTokens: Number(r.ai_tokens) || 0,
     };
