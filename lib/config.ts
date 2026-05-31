@@ -64,6 +64,7 @@ export const DEFAULT_SETTINGS = {
   secretaryAutoTranscribe: "true",
   secretariesJson: "",
   aiModelsCsv: "",
+  aiChatModelsCsv: "",
   sttLanguage: "fa",
 } as const satisfies Record<string, string>;
 
@@ -94,6 +95,7 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   secretaryAutoTranscribe: optional("SECRETARY_AUTO_TRANSCRIBE"),
   secretariesJson: optional("SECRETARIES_JSON"),
   aiModelsCsv: optional("AI_MODELS_CSV"),
+  aiChatModelsCsv: optional("AI_CHAT_MODELS_CSV"),
   sttLanguage: optional("STT_LANGUAGE"),
 };
 

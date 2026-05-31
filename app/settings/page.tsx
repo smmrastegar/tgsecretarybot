@@ -28,6 +28,7 @@ type Settings = {
   secretaryAutoTranscribe: string;
   secretariesJson: string;
   aiModelsCsv: string;
+  aiChatModelsCsv: string;
   sttLanguage: string;
 };
 
@@ -348,7 +349,8 @@ export default function SettingsPage() {
           <p className="text-xs text-[var(--color-text-dim)] mb-4">
             The first one in the list handles automatic forwards. Add or
             remove anyone with a numeric Telegram user id (they must /start
-            the bot once so it can DM them).
+            the bot once so it can DM them). Or send them an invite link
+            below and they'll be added automatically when they tap it.
             {envLocked.has("secretariesJson") && (
               <span className="ml-2 italic">(locked by env)</span>
             )}
@@ -360,15 +362,17 @@ export default function SettingsPage() {
               update("secretariesJson", JSON.stringify(list))
             }
           />
+          <InviteLinkPanel disabled={envLocked.has("secretariesJson")} />
         </Card>
 
-        {/* Custom rich editor: AI Models */}
+        {/* Custom rich editor: AI Models — general (classify / summaries) */}
         <Card>
-          <h2 className="text-sm font-semibold mb-1">AI model priority</h2>
+          <h2 className="text-sm font-semibold mb-1">
+            AI models — classify &amp; summaries
+          </h2>
           <p className="text-xs text-[var(--color-text-dim)] mb-4">
-            The first model is tried for each call; on failure the bot falls
-            back to the next. Costs shown are OpenRouter input/output prices
-            per million tokens.
+            Used for urgent detection, group summaries, and transcription
+            metadata. Tried in order; falls back on failure.
             {envLocked.has("aiModelsCsv") && (
               <span className="ml-2 italic">(locked by env)</span>
             )}
@@ -380,6 +384,30 @@ export default function SettingsPage() {
               .filter(Boolean)}
             disabled={envLocked.has("aiModelsCsv")}
             onChange={(list) => update("aiModelsCsv", list.join(", "))}
+          />
+        </Card>
+
+        {/* Custom rich editor: AI Models — chat (ai_chat / friendly_reply) */}
+        <Card>
+          <h2 className="text-sm font-semibold mb-1">
+            AI models — chat &amp; friendly reply
+          </h2>
+          <p className="text-xs text-[var(--color-text-dim)] mb-4">
+            Separate list used only when a chat is in <strong>AI chat</strong>{" "}
+            or <strong>Friendly auto-reply</strong> mode. Put smarter models
+            here (Claude Sonnet, GPT-4o, …) — they only run when a real
+            conversation is happening. Leave empty to reuse the classify list.
+            {envLocked.has("aiChatModelsCsv") && (
+              <span className="ml-2 italic">(locked by env)</span>
+            )}
+          </p>
+          <ModelsEditor
+            value={(values.aiChatModelsCsv || "")
+              .split(",")
+              .map((m) => m.trim())
+              .filter(Boolean)}
+            disabled={envLocked.has("aiChatModelsCsv")}
+            onChange={(list) => update("aiChatModelsCsv", list.join(", "))}
           />
         </Card>
 
@@ -791,6 +819,87 @@ function HeadersEditor({
       >
         + Add header
       </button>
+    </div>
+  );
+}
+
+function InviteLinkPanel({ disabled }: { disabled: boolean }) {
+  const [pending, setPending] = useState(false);
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function generate() {
+    setPending(true);
+    setError(null);
+    setCopied(false);
+    try {
+      const r = await fetch("/api/secretaries/invite", { method: "POST" });
+      const j = (await r.json()) as { url?: string; error?: string };
+      if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
+      setUrl(j.url ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function copy() {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError("Copy failed; select the link manually.");
+    }
+  }
+
+  return (
+    <div className="mt-4 pt-4 border-t border-[var(--color-border)]">
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <button
+          type="button"
+          onClick={generate}
+          disabled={disabled || pending}
+          className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
+        >
+          {pending ? "Generating…" : "🔗 Generate invite link"}
+        </button>
+        <span className="text-[11px] text-[var(--color-text-dim)]">
+          Valid for 7 days, single use. Share it on Telegram to add a new
+          secretary.
+        </span>
+      </div>
+      {url && (
+        <div className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-md p-2">
+          <input
+            readOnly
+            value={url}
+            onFocus={(e) => e.currentTarget.select()}
+            className="flex-1 min-w-0 bg-transparent text-xs"
+          />
+          <button
+            type="button"
+            onClick={copy}
+            className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+          >
+            {copied ? "Copied ✓" : "Copy"}
+          </button>
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+          >
+            Open
+          </a>
+        </div>
+      )}
+      {error && (
+        <p className="text-xs text-red-400 mt-2">{error}</p>
+      )}
     </div>
   );
 }

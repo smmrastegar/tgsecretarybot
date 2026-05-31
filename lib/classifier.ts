@@ -66,10 +66,19 @@ type ChatCompletionResponse = {
   error?: { message?: string };
 };
 
-async function modelsToTry(): Promise<string[]> {
+async function modelsToTry(purpose?: string): Promise<string[]> {
   const s = await getSettings();
-  const csv = (s.aiModelsCsv ?? "").trim();
-  if (csv) {
+  // Chat / friendly replies benefit from a more capable model and the user
+  // can curate that list separately. Fall back to the general list if it's
+  // empty, and finally to the OPENROUTER_MODEL env value.
+  const candidates: string[] = [];
+  if (purpose === "ai_chat" || purpose === "friendly_reply") {
+    const chatCsv = (s.aiChatModelsCsv ?? "").trim();
+    if (chatCsv) candidates.push(chatCsv);
+  }
+  const generalCsv = (s.aiModelsCsv ?? "").trim();
+  if (generalCsv) candidates.push(generalCsv);
+  for (const csv of candidates) {
     const list = csv
       .split(",")
       .map((m) => m.trim())
@@ -97,7 +106,7 @@ async function callOpenRouter(
   };
   if (config.openrouterAppUrl) headers["HTTP-Referer"] = config.openrouterAppUrl;
 
-  const models = await modelsToTry();
+  const models = await modelsToTry(opts.purpose);
   let lastErr: unknown = null;
   for (const model of models) {
     const body: Record<string, unknown> = {

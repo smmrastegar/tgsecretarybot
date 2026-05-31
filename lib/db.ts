@@ -161,6 +161,18 @@ export async function ensureSchema(): Promise<void> {
       )`;
     await q`CREATE INDEX IF NOT EXISTS ai_usage_chat_idx ON ai_usage (chat_id, created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage (created_at DESC)`;
+    await q`
+      CREATE TABLE IF NOT EXISTS invites (
+        token        TEXT PRIMARY KEY,
+        purpose      TEXT NOT NULL,
+        payload      JSONB NOT NULL,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at   TIMESTAMPTZ NOT NULL,
+        used_at      TIMESTAMPTZ,
+        used_by      BIGINT,
+        created_by   BIGINT
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS invites_expires_idx ON invites (expires_at)`;
   })().catch((err) => {
     schemaPromise = null;
     throw err;
@@ -1245,4 +1257,42 @@ export async function aiUsageByDay(daysBack = 14): Promise<CostByDay[]> {
     totalCostUsd: Number(r.cost) || 0,
     calls: Number(r.calls) || 0,
   }));
+}
+
+// --- Invites (short tokens for /start payloads) ---
+
+export type InvitePayload = Record<string, unknown>;
+
+export async function createInvite(args: {
+  token: string;
+  purpose: string;
+  payload: InvitePayload;
+  ttlSeconds: number;
+  createdBy?: number | null;
+}): Promise<void> {
+  await ensureSchema();
+  await sql()`
+    INSERT INTO invites (token, purpose, payload, expires_at, created_by)
+    VALUES (
+      ${args.token}, ${args.purpose}, ${JSON.stringify(args.payload)}::jsonb,
+      NOW() + make_interval(secs => ${args.ttlSeconds}),
+      ${args.createdBy ?? null}
+    )`;
+}
+
+export async function consumeInvite(
+  token: string,
+  usedBy: number,
+): Promise<{ purpose: string; payload: InvitePayload } | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    UPDATE invites
+    SET used_at = NOW(), used_by = ${usedBy}
+    WHERE token = ${token}
+      AND used_at IS NULL
+      AND expires_at > NOW()
+    RETURNING purpose, payload`;
+  const r = rows[0] as { purpose: string; payload: InvitePayload } | undefined;
+  return r ? { purpose: r.purpose, payload: r.payload } : null;
 }

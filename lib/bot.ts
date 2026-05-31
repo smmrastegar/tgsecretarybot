@@ -10,8 +10,9 @@ import {
 } from "./secretaries";
 import { redisDelete, redisEnabled, redisGet, redisSet } from "./redis";
 import { fireAlert } from "./alert";
-import { getSettings } from "./settings";
+import { getSettings, invalidateSettingsCache, updateSettings } from "./settings";
 import {
+  consumeInvite,
   endSecretarySession,
   findActiveSecretarySessionForSender,
   findLinkWithSenderMessage,
@@ -31,6 +32,7 @@ import {
   recordSecretaryLink,
   touchSecretarySession,
   upsertBusinessConnection,
+  audit,
   type ChatMode,
   type SecretarySession,
 } from "./db";
@@ -136,6 +138,98 @@ function buildBot(): Bot {
   });
 
   bot.command("start", async (ctx) => {
+    const from = ctx.from;
+    const arg = ctx.match?.toString().trim() ?? "";
+
+    if (arg.startsWith("inv") && from && hasDb()) {
+      const invite = await consumeInvite(arg, from.id).catch(() => null);
+      if (!invite || invite.purpose !== "secretary_invite") {
+        await ctx.reply(
+          "این لینک دعوت معتبر نیست یا منقضی شده. از صاحب اکانت لینک جدید بخواه.",
+        );
+        return;
+      }
+      const ownerName =
+        (invite.payload as { ownerName?: string }).ownerName ?? "the owner";
+
+      const settings = await getSettings();
+      let list: Array<{ userId: number; name: string }> = [];
+      try {
+        const raw = settings.secretariesJson?.trim();
+        if (raw) {
+          const parsed = JSON.parse(raw) as unknown;
+          if (Array.isArray(parsed)) {
+            list = parsed
+              .map((s) => {
+                const o = s as { userId?: unknown; name?: unknown };
+                const id = Number(o.userId);
+                if (!Number.isFinite(id) || id <= 0) return null;
+                return {
+                  userId: id,
+                  name:
+                    typeof o.name === "string" && o.name
+                      ? o.name
+                      : `user ${id}`,
+                };
+              })
+              .filter((x): x is { userId: number; name: string } => x !== null);
+          }
+        }
+        // Migrate legacy single secretary into the list if it's still in use.
+        const legacyId = Number(settings.secretaryUserId);
+        if (
+          list.length === 0 &&
+          Number.isFinite(legacyId) &&
+          legacyId > 0 &&
+          legacyId !== from.id
+        ) {
+          list.push({
+            userId: legacyId,
+            name: settings.secretaryDisplayName || "Secretary",
+          });
+        }
+      } catch (err) {
+        console.error("[invite] parse secretaries failed:", err);
+      }
+
+      if (list.some((s) => s.userId === from.id)) {
+        await ctx.reply(
+          `سلام ${from.first_name ?? "دوست عزیز"} 👋\nشما از قبل به‌عنوان منشی ${ownerName} ثبت هستید. وقتی پیام فوری از طرف ایشون باشه براتون فروارد می‌کنم.`,
+        );
+        return;
+      }
+      const name =
+        [from.first_name, from.last_name].filter(Boolean).join(" ").trim() ||
+        from.username ||
+        `user ${from.id}`;
+      list.push({ userId: from.id, name });
+
+      try {
+        await updateSettings(
+          { secretariesJson: JSON.stringify(list) },
+          (invite.payload as { invitedBy?: number }).invitedBy,
+        );
+      } catch (err) {
+        console.error("[invite] updateSettings failed:", err);
+        await ctx.reply(
+          "ثبت موفق نبود. لطفاً به صاحب اکانت بگید تا دوباره لینک بفرسته.",
+        );
+        return;
+      }
+      invalidateSettingsCache();
+      await audit({
+        actorId: from.id,
+        actorName: name,
+        action: "secretary.joined",
+        target: arg,
+        details: { invitedBy: (invite.payload as { invitedBy?: number }).invitedBy },
+      }).catch(() => {});
+      await ctx.reply(
+        `✅ خوش اومدی ${name}!\nاز این به بعد به‌عنوان منشی ${ownerName} ثبت شدی. وقتی پیام فوری براشون بیاد، اینجا براتون فروارد می‌کنم. روی پیام reply بزن تا از طرف ایشون جواب بفرستی.`,
+      );
+      return;
+    }
+
     await ctx.reply(
       "Hi. I'm your Telegram secretary bot.\n\n" +
         "Open Telegram Settings → Telegram Business → Chatbots and add me, then send /login to get a dashboard link.",
