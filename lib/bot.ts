@@ -1512,6 +1512,13 @@ async function sendFriendlyReply(args: {
   } catch (err) {
     console.error("[friendly] history fetch failed:", err);
   }
+  const triggerText = msg.text ?? msg.caption;
+  if (triggerText) {
+    history = [
+      ...history,
+      { from: "other" as const, senderName, text: triggerText, at: new Date() },
+    ];
+  }
 
   let text = awayMessage;
   try {
@@ -1562,6 +1569,13 @@ async function sendAiConversation(args: {
   } catch (err) {
     console.error("[ai_chat] history fetch failed:", err);
   }
+  // The current incoming message isn't in messages_log yet (handleBusinessMessage
+  // logs at the end, after this runs). Append it so the AI replies to the
+  // latest input instead of the previous one.
+  history = [
+    ...history,
+    { from: "other" as const, senderName, text: userText, at: new Date() },
+  ];
 
   let reply = "";
   try {

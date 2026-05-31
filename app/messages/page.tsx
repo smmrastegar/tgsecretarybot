@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
+import MessageActions from "@/components/MessageActions";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
 type Message = {
@@ -32,7 +33,15 @@ export default function MessagesPage() {
   const [search, setSearch] = useState("");
   const [urgentOnly, setUrgentOnly] = useState(false);
 
-  const [transcribing, setTranscribing] = useState<Set<number>>(new Set());
+  const [secretaries, setSecretaries] = useState<
+    { userId: number; name: string }[]
+  >([]);
+  useEffect(() => {
+    fetch("/api/secretaries")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.secretaries && setSecretaries(d.secretaries))
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,36 +55,6 @@ export default function MessagesPage() {
     setLoading(false);
   }, [search, urgentOnly]);
 
-  async function transcribe(id: number) {
-    setTranscribing((s) => new Set(s).add(id));
-    try {
-      const r = await fetch(`/api/messages/${id}/transcribe`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const j = (await r.json()) as { transcript?: string; error?: string };
-      if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
-      setMessages((ms) =>
-        ms.map((m) =>
-          m.id === id
-            ? { ...m, transcript: j.transcript ?? "", transcriptAt: new Date().toISOString() }
-            : m,
-        ),
-      );
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTranscribing((s) => {
-        const n = new Set(s);
-        n.delete(id);
-        return n;
-      });
-    }
-  }
-
-  const canTranscribe = (kind: string | null) =>
-    kind === "voice" || kind === "audio" || kind === "video_note" || kind === "video";
 
   useEffect(() => {
     const id = setTimeout(load, 300);
@@ -160,15 +139,31 @@ export default function MessagesPage() {
                   </div>
                 </div>
               )}
-              {canTranscribe(m.mediaKind) && !m.transcript && (
-                <button
-                  onClick={() => transcribe(m.id)}
-                  disabled={transcribing.has(m.id)}
-                  className="mt-2 text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                >
-                  {transcribing.has(m.id) ? "Transcribing…" : "🎙 Transcribe"}
-                </button>
-              )}
+              <MessageActions
+                message={{
+                  id: m.id,
+                  chatId: m.chatId,
+                  chatType: m.chatType,
+                  mediaKind: m.mediaKind,
+                  transcript: m.transcript,
+                  handledAt: m.handledAt,
+                }}
+                secretaries={secretaries}
+                onChange={load}
+                onTranscript={(id, txt) =>
+                  setMessages((ms) =>
+                    ms.map((mm) =>
+                      mm.id === id
+                        ? {
+                            ...mm,
+                            transcript: txt,
+                            transcriptAt: new Date().toISOString(),
+                          }
+                        : mm,
+                    ),
+                  )
+                }
+              />
             </Card>
           ))}
         </div>
