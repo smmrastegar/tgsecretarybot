@@ -260,6 +260,49 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   );
   if (!hasContent) return;
 
+  // When the bot itself sends a message via business_connection_id (e.g.
+  // an ai_chat / auto_reply / friendly_reply / secretary relay), Telegram
+  // echoes the message back as a business_message update with
+  // sender_business_bot set. Without this guard we'd treat that echo as a
+  // brand-new incoming message and reply again, looping forever.
+  if (
+    (msg as unknown as { sender_business_bot?: unknown }).sender_business_bot
+  ) {
+    if (hasDb()) {
+      const senderName =
+        [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ").trim() ||
+        msg.from?.username ||
+        "owner";
+      try {
+        await logMessage({
+          businessConnectionId: bcId,
+          ownerUserId: owner?.userId ?? null,
+          chatId: msg.chat.id,
+          chatType: msg.chat.type,
+          chatTitle:
+            "title" in msg.chat && typeof msg.chat.title === "string"
+              ? msg.chat.title
+              : null,
+          senderId: msg.from?.id ?? null,
+          senderUsername: msg.from?.username ?? null,
+          senderName,
+          messageId: msg.message_id,
+          messageText: describeMessage(msg),
+          importance: 0,
+          urgent: false,
+          concernsOwner: false,
+          reason: "bot outgoing (business)",
+          alerted: false,
+          autoReplied: false,
+          fromOwner: true,
+        });
+      } catch (err) {
+        console.error("[db] bot-outgoing-log failed:", err);
+      }
+    }
+    return;
+  }
+
   const senderName =
     [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ").trim() ||
     msg.from?.username ||

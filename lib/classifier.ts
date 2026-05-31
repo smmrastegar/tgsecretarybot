@@ -300,9 +300,9 @@ export async function aiConversationReply(input: {
       { role: "user", content: JSON.stringify(payload) },
     ],
     {
-      maxTokens: 300,
+      maxTokens: 400,
       jsonObject: true,
-      temperature: 0.6,
+      temperature: 0.85,
       purpose: "ai_chat",
       chatId: input.chatId ?? null,
       businessConnectionId: input.businessConnectionId ?? null,
