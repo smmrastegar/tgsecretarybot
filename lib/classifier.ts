@@ -68,6 +68,26 @@ type ChatCompletionResponse = {
 
 async function modelsToTry(purpose?: string): Promise<string[]> {
   const s = await getSettings();
+  const parseCsv = (csv: string): string[] =>
+    csv
+      .split(",")
+      .map((m) => m.trim())
+      .filter(Boolean);
+
+  // For extract we want the most accurate model first. The user typically
+  // orders the list cheapest-first (via the "Sort cheapest first" button),
+  // so we reverse it to bias toward Sonnet / GPT-4o / Gemini Pro before
+  // falling back to the cheaper tiers.
+  if (purpose === "extract") {
+    const chat = parseCsv((s.aiChatModelsCsv ?? "").trim());
+    const general = parseCsv((s.aiModelsCsv ?? "").trim());
+    const merged = [...chat.reverse(), ...general.reverse()];
+    const seen = new Set<string>();
+    const ordered = merged.filter((m) => (seen.has(m) ? false : seen.add(m)));
+    if (ordered.length > 0) return ordered;
+    return [config.openrouterModel];
+  }
+
   // Chat / friendly replies benefit from a more capable model and the user
   // can curate that list separately. Fall back to the general list if it's
   // empty, and finally to the OPENROUTER_MODEL env value.
@@ -79,10 +99,7 @@ async function modelsToTry(purpose?: string): Promise<string[]> {
   const generalCsv = (s.aiModelsCsv ?? "").trim();
   if (generalCsv) candidates.push(generalCsv);
   for (const csv of candidates) {
-    const list = csv
-      .split(",")
-      .map((m) => m.trim())
-      .filter(Boolean);
+    const list = parseCsv(csv);
     if (list.length > 0) return list;
   }
   return [config.openrouterModel];
@@ -404,37 +421,53 @@ function parseSummary(raw: string): GroupSummary {
 }
 
 const EXTRACT_PROMPT = `You extract actionable items from a Telegram message
-for the owner's secretary dashboard. Look for events (meetings, calls,
-appointments), deadlines, reminders, tasks, decisions, or anything else the
-owner should not forget.
+for a Persian-speaking owner's secretary dashboard. Look for events
+(meetings, calls, appointments), deadlines, reminders, tasks, decisions, or
+anything else the owner should not forget.
+
+CRITICAL OUTPUT LANGUAGE: title, description, location, and participants
+MUST be written in natural Persian (فارسی). Translate any English / Arabic
+/ other text in the source message into Persian. Use natural Persian
+phrasing — not literal word-for-word translation. Latin digits inside
+Persian sentences are fine.
 
 Reply with STRICT JSON only, no prose, no code fences:
 {
   "items": [
     {
       "kind": "event" | "task" | "reminder" | "deadline" | "decision" | "note",
-      "title": "<short label, max 80 chars, same language as the message>",
-      "description": "<optional one-sentence elaboration>",
+      "title": "<عنوان کوتاه فارسی، حداکثر ۸۰ کاراکتر>",
+      "description": "<توضیح اختیاری یک‌جمله‌ای به فارسی>",
       "due_at": "<ISO 8601 timestamp WITH timezone, or null>",
-      "location": "<optional>",
-      "participants": ["<names mentioned, optional>"]
+      "location": "<مکان به فارسی، اختیاری>",
+      "participants": ["<نام افراد به فارسی، اختیاری>"]
     }
   ]
 }
 
 Rules:
 - Use due_at ONLY when the message specifies a concrete date or time
-  ("tomorrow at 3pm", "Tuesday", "next Monday morning", "10/05 14:00").
-  Resolve relative dates against the "now" timestamp provided. If the
-  message is vague ("soon", "later"), set due_at to null.
-- Persian dates ("فردا 4 بعدازظهر", "پنج‌شنبه ساعت ۸") should be resolved
-  to ISO 8601.
+  (e.g., "فردا ساعت ۴ بعدازظهر", "پنج‌شنبه صبح", "10/05 14:00",
+  "tomorrow at 3pm"). Resolve relative dates against the "now" timestamp
+  provided in the payload. Use the Asia/Tehran timezone offset
+  (+03:30 or +04:30 with DST) for due_at unless the message specifies
+  another timezone. If the message is vague ("بعداً", "زود", "soon"), set
+  due_at to null.
+- Persian dates like "فردا ۴ عصر", "پنج‌شنبه ساعت ۸ شب", "هفته‌ی بعد سه‌شنبه"
+  MUST be fully resolved to ISO 8601.
+- Persian numerals (۰-۹) and Arabic-Indic numerals are equivalent to
+  Latin numerals — interpret them the same way.
 - Don't invent items that aren't in the message. If there's nothing
   actionable, return {"items": []}.
-- For "kind": event = scheduled get-together, task = todo for the owner,
-  reminder = something to remember, deadline = something due, decision =
-  something agreed, note = info worth keeping.
-- Keep titles short and concrete.`;
+- "kind" meaning:
+    event = a scheduled get-together or appointment
+    task = something the owner has to do
+    reminder = something to remember
+    deadline = something that's due by a specific time
+    decision = something that was agreed
+    note = miscellaneous info worth keeping
+- Keep titles short and concrete; prefer noun phrases ("جلسه با علی",
+  "خرید نان", "تماس با پزشک") over full sentences.`;
 
 export type ExtractedItemPayload = {
   kind: string;
