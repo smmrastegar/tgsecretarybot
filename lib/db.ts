@@ -410,6 +410,7 @@ export type MessageRow = {
   transcriptAt: Date | null;
   fromOwner: boolean;
   source: string | null;
+  chatMode: ChatMode;
 };
 
 function rowToMessage(r: Record<string, unknown>): MessageRow {
@@ -440,6 +441,10 @@ function rowToMessage(r: Record<string, unknown>): MessageRow {
     transcriptAt: (r.transcript_at as Date) ?? null,
     fromOwner: Boolean(r.from_owner),
     source: (r.source as string) ?? null,
+    chatMode:
+      (CHAT_MODES.includes((r.chat_mode as ChatMode) ?? "secretary")
+        ? (r.chat_mode as ChatMode)
+        : "secretary"),
   };
 }
 
@@ -457,12 +462,14 @@ export async function listMessages(opts: {
   const q = sql();
   const search = opts.search ? `%${opts.search}%` : null;
   const rows = await q`
-    SELECT * FROM messages_log
-    WHERE (${opts.urgentOnly ?? false}::boolean = FALSE OR urgent = TRUE)
-      AND (${opts.unhandledOnly ?? false}::boolean = FALSE OR handled_at IS NULL)
-      AND (${opts.chatId ?? null}::bigint IS NULL OR chat_id = ${opts.chatId ?? null}::bigint)
-      AND (${search}::text IS NULL OR message_text ILIKE ${search} OR sender_name ILIKE ${search})
-    ORDER BY created_at DESC
+    SELECT m.*, COALESCE(r.mode, 'secretary') AS chat_mode
+    FROM messages_log m
+    LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
+    WHERE (${opts.urgentOnly ?? false}::boolean = FALSE OR m.urgent = TRUE)
+      AND (${opts.unhandledOnly ?? false}::boolean = FALSE OR m.handled_at IS NULL)
+      AND (${opts.chatId ?? null}::bigint IS NULL OR m.chat_id = ${opts.chatId ?? null}::bigint)
+      AND (${search}::text IS NULL OR m.message_text ILIKE ${search} OR m.sender_name ILIKE ${search})
+    ORDER BY m.created_at DESC
     LIMIT ${limit} OFFSET ${offset}`;
   return rows.map(rowToMessage);
 }
@@ -1325,4 +1332,23 @@ export async function consumeInvite(
     RETURNING purpose, payload`;
   const r = rows[0] as { purpose: string; payload: InvitePayload } | undefined;
   return r ? { purpose: r.purpose, payload: r.payload } : null;
+}
+
+export async function chatModeCounts(): Promise<Record<ChatMode, number>> {
+  const empty: Record<ChatMode, number> = {
+    off: 0,
+    secretary: 0,
+    auto_reply: 0,
+    friendly_reply: 0,
+    ai_chat: 0,
+  };
+  if (!hasDb()) return empty;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT mode, COUNT(*)::int AS n FROM chat_rules GROUP BY mode`;
+  for (const r of rows) {
+    const m = (r as { mode: string; n: number }).mode as ChatMode;
+    if (CHAT_MODES.includes(m)) empty[m] = Number((r as { n: number }).n) || 0;
+  }
+  return empty;
 }

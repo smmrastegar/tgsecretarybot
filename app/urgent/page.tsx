@@ -5,6 +5,19 @@ import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import { chatTypeLabel, relTime } from "@/lib/format";
 
+type ChatMode = "off" | "secretary" | "auto_reply" | "friendly_reply" | "ai_chat";
+
+const MODE_LABEL: Record<
+  ChatMode,
+  { label: string; tone: "success" | "warn" | "info" | "neutral" }
+> = {
+  off: { label: "Off", tone: "neutral" },
+  secretary: { label: "Secretary", tone: "warn" },
+  auto_reply: { label: "Auto-reply", tone: "info" },
+  friendly_reply: { label: "Friendly AI", tone: "info" },
+  ai_chat: { label: "AI chat", tone: "success" },
+};
+
 type Message = {
   id: number;
   createdAt: string;
@@ -20,6 +33,7 @@ type Message = {
   handledAt: string | null;
   mediaKind: string | null;
   transcript: string | null;
+  chatMode: ChatMode;
 };
 
 export default function UrgentPage() {
@@ -295,6 +309,9 @@ export default function UrgentPage() {
                   </div>
                   <div className="mt-3 flex gap-2 flex-wrap items-center">
                     <Badge tone="danger">imp {m.importance}/10</Badge>
+                    <Badge tone={MODE_LABEL[m.chatMode].tone}>
+                      {MODE_LABEL[m.chatMode].label}
+                    </Badge>
                     {m.alerted && <Badge tone="warn">alerted</Badge>}
                     {m.autoReplied && <Badge tone="info">auto-replied</Badge>}
                     {m.mediaKind && <Badge tone="neutral">{m.mediaKind}</Badge>}
@@ -390,15 +407,20 @@ export default function UrgentPage() {
                       ))}
                     </select>
                   )}
-                  {!m.handledAt && (
-                    <button
-                      onClick={() => handOverToAi(m.id)}
-                      disabled={handingOver.has(m.id)}
-                      className="text-xs px-3 py-1.5 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
-                    >
-                      {handingOver.has(m.id) ? "Switching…" : "🤖 Full AI"}
-                    </button>
-                  )}
+                  {!m.handledAt &&
+                    (m.chatMode === "ai_chat" ? (
+                      <span className="text-xs px-3 py-1.5 rounded-md border border-emerald-700 bg-emerald-900/30 text-emerald-300">
+                        ✓ AI handling
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handOverToAi(m.id)}
+                        disabled={handingOver.has(m.id)}
+                        className="text-xs px-3 py-1.5 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+                      >
+                        {handingOver.has(m.id) ? "Switching…" : "🤖 Full AI"}
+                      </button>
+                    ))}
                   {m.handledAt ? (
                     <button
                       onClick={() => setHandled(m.id, false)}

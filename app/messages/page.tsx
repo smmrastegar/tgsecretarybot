@@ -7,6 +7,30 @@ import { Card, PageTitle, Badge } from "@/components/Card";
 import MessageActions from "@/components/MessageActions";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
+function groupByChat(messages: Message[]): Array<{
+  chatId: number;
+  chatTitle: string | null;
+  senderName: string;
+  messages: Message[];
+}> {
+  const map = new Map<number, Message[]>();
+  for (const m of messages) {
+    if (!map.has(m.chatId)) map.set(m.chatId, []);
+    map.get(m.chatId)!.push(m);
+  }
+  return [...map.entries()]
+    .map(([chatId, msgs]) => ({
+      chatId,
+      chatTitle: msgs[0]!.chatTitle,
+      senderName:
+        msgs.find((m) => !m.fromOwner)?.senderName ?? msgs[0]!.senderName,
+      messages: msgs,
+    }))
+    .sort((a, b) =>
+      b.messages[0]!.createdAt.localeCompare(a.messages[0]!.createdAt),
+    );
+}
+
 const SOURCE_LABEL: Record<string, { label: string; tone: "info" | "success" | "warn" | "neutral" }> = {
   ai_chat: { label: "AI (auto)", tone: "success" },
   ai_dashboard: { label: "AI (manual)", tone: "success" },
@@ -36,6 +60,7 @@ type Message = {
   transcriptAt: string | null;
   fromOwner: boolean;
   source: string | null;
+  chatMode: "off" | "secretary" | "auto_reply" | "friendly_reply" | "ai_chat";
 };
 
 export default function MessagesPage() {
@@ -43,6 +68,7 @@ export default function MessagesPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [urgentOnly, setUrgentOnly] = useState(false);
+  const [threaded, setThreaded] = useState(false);
 
   const [secretaries, setSecretaries] = useState<
     { userId: number; name: string }[]
@@ -95,6 +121,14 @@ export default function MessagesPage() {
           />
           Urgent only
         </label>
+        <label className="text-xs text-[var(--color-text-dim)] flex items-center gap-2 px-3 py-2 border border-[var(--color-border)] rounded-md cursor-pointer hover:bg-[var(--color-surface-2)]">
+          <input
+            type="checkbox"
+            checked={threaded}
+            onChange={(e) => setThreaded(e.target.checked)}
+          />
+          Group by chat
+        </label>
       </div>
 
       {loading ? (
@@ -107,6 +141,59 @@ export default function MessagesPage() {
             No messages match.
           </p>
         </Card>
+      ) : threaded ? (
+        <div className="flex flex-col gap-3">
+          {groupByChat(messages).map((group) => (
+            <Card key={group.chatId} className="!p-3 md:!p-4">
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                <Link
+                  href={`/chats/${group.chatId}`}
+                  className="font-medium text-sm hover:underline"
+                >
+                  {group.chatTitle ?? group.senderName}
+                </Link>
+                <div className="flex gap-1 flex-wrap items-center text-[10px]">
+                  <Badge tone="neutral">{group.messages.length} msg</Badge>
+                  <Badge tone="neutral">
+                    last {relTime(group.messages[0]!.createdAt)}
+                  </Badge>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                {group.messages.slice(0, 5).map((m) => (
+                  <div
+                    key={m.id}
+                    className={`flex flex-col gap-0.5 max-w-[88%] ${
+                      m.fromOwner ? "self-end items-end" : "self-start items-start"
+                    }`}
+                  >
+                    <div className="text-[10px] text-[var(--color-text-dim)]">
+                      {m.fromOwner ? "you" : m.senderName} ·{" "}
+                      {relTime(m.createdAt)}
+                    </div>
+                    <div
+                      className={`px-2.5 py-1.5 rounded-2xl text-xs whitespace-pre-wrap break-words ${
+                        m.fromOwner
+                          ? "bg-[var(--color-accent)] text-white rounded-br-md"
+                          : "bg-[var(--color-surface-2)] rounded-bl-md"
+                      }`}
+                    >
+                      {truncate(m.messageText, 200)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {group.messages.length > 5 && (
+                <Link
+                  href={`/chats/${group.chatId}`}
+                  className="block mt-2 text-[11px] text-[var(--color-text-dim)] hover:text-white"
+                >
+                  View all {group.messages.length} messages →
+                </Link>
+              )}
+            </Card>
+          ))}
+        </div>
       ) : (
         <div className="flex flex-col gap-2">
           {messages.map((m) => {
@@ -169,6 +256,7 @@ export default function MessagesPage() {
                   mediaKind: m.mediaKind,
                   transcript: m.transcript,
                   handledAt: m.handledAt,
+                  chatMode: m.chatMode,
                 }}
                 secretaries={secretaries}
                 onChange={load}

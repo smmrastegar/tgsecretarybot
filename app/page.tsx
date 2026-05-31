@@ -3,6 +3,7 @@ import Shell from "@/components/Shell";
 import { Card, PageTitle, StatCard, Badge } from "@/components/Card";
 import {
   aiUsageOverview,
+  chatModeCounts,
   listBusinessConnections,
   listMessages,
   overviewStats,
@@ -12,14 +13,41 @@ import { requireSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
+function ModePill({
+  label,
+  count,
+  tone,
+}: {
+  label: string;
+  count: number;
+  tone: "success" | "warn" | "info" | "neutral";
+}) {
+  const toneCls = {
+    success: "border-emerald-700 text-emerald-300",
+    warn: "border-amber-700 text-amber-300",
+    info: "border-blue-700 text-blue-300",
+    neutral: "border-[var(--color-border)] text-[var(--color-text-dim)]",
+  }[tone];
+  return (
+    <Link
+      href="/chats"
+      className={`flex flex-col items-center justify-center p-3 rounded-md border ${toneCls} hover:bg-[var(--color-surface-2)]`}
+    >
+      <span className="text-xl font-semibold">{count}</span>
+      <span className="text-[11px] mt-1">{label}</span>
+    </Link>
+  );
+}
+
 export default async function OverviewPage() {
   await requireSession();
-  const [stats, latestUrgent, latest, ai, connections] = await Promise.all([
+  const [stats, latestUrgent, latest, ai, connections, modes] = await Promise.all([
     overviewStats().catch(() => null),
     listMessages({ urgentOnly: true, limit: 5 }).catch(() => []),
     listMessages({ limit: 8 }).catch(() => []),
     aiUsageOverview().catch(() => null),
     listBusinessConnections().catch(() => []),
+    chatModeCounts().catch(() => null),
   ]);
 
   return (
@@ -74,6 +102,29 @@ export default async function OverviewPage() {
             value={`$${ai.last24hCostUsd.toFixed(4)}`}
           />
         </div>
+      )}
+
+      {modes && (
+        <Card className="mb-6">
+          <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
+            Chats by mode
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
+            <ModePill label="Secretary" count={modes.secretary} tone="warn" />
+            <ModePill label="AI chat" count={modes.ai_chat} tone="success" />
+            <ModePill
+              label="Friendly AI"
+              count={modes.friendly_reply}
+              tone="info"
+            />
+            <ModePill
+              label="Auto-reply"
+              count={modes.auto_reply}
+              tone="info"
+            />
+            <ModePill label="Off" count={modes.off} tone="neutral" />
+          </div>
+        </Card>
       )}
 
       {connections.length > 0 && (

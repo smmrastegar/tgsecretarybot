@@ -5,6 +5,24 @@ import { Badge } from "@/components/Card";
 
 type Secretary = { userId: number; name: string };
 
+type ChatMode =
+  | "off"
+  | "secretary"
+  | "auto_reply"
+  | "friendly_reply"
+  | "ai_chat";
+
+const MODE_LABEL: Record<
+  ChatMode,
+  { label: string; tone: "success" | "warn" | "info" | "neutral" }
+> = {
+  off: { label: "Off", tone: "neutral" },
+  secretary: { label: "Secretary", tone: "warn" },
+  auto_reply: { label: "Auto-reply", tone: "info" },
+  friendly_reply: { label: "Friendly AI", tone: "info" },
+  ai_chat: { label: "AI chat", tone: "success" },
+};
+
 type MessageLike = {
   id: number;
   chatId: number;
@@ -12,6 +30,7 @@ type MessageLike = {
   mediaKind: string | null;
   transcript: string | null;
   handledAt: string | null;
+  chatMode?: ChatMode;
 };
 
 type Props = {
@@ -173,6 +192,11 @@ export default function MessageActions({
       )}
 
       <div className="mt-2 flex gap-1.5 flex-wrap items-center">
+        {m.chatMode && (
+          <Badge tone={MODE_LABEL[m.chatMode].tone}>
+            mode: {MODE_LABEL[m.chatMode].label}
+          </Badge>
+        )}
         {canTranscribe(m.mediaKind) && !m.transcript && (
           <button
             onClick={transcribe}
@@ -191,14 +215,20 @@ export default function MessageActions({
             {suggesting ? "…" : "🤖 AI suggest"}
           </button>
         )}
-        {!m.handledAt && (
-          <button
-            onClick={handOverToAi}
-            disabled={handing}
-            className="text-[11px] px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
-          >
-            {handing ? "…" : "🤖 Full AI"}
-          </button>
+        {!m.handledAt && m.chatMode === "ai_chat" ? (
+          <span className="text-[11px] px-2 py-1 rounded-md border border-emerald-700 bg-emerald-900/30 text-emerald-300">
+            ✓ AI handling
+          </span>
+        ) : (
+          !m.handledAt && (
+            <button
+              onClick={handOverToAi}
+              disabled={handing}
+              className="text-[11px] px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+            >
+              {handing ? "…" : "🤖 Full AI"}
+            </button>
+          )
         )}
         {!m.handledAt && secretaries.length > 0 && (
           <select
