@@ -5,12 +5,14 @@ import {
   CHAT_MODES,
   getChatRule,
   getSenderStats,
+  lastOwnerMessageAt,
   listMessages,
   RELATIONSHIPS,
   upsertChatRule,
   type ChatMode,
   type Relationship,
 } from "@/lib/db";
+import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,16 +37,31 @@ export async function GET(
     100,
   );
   const offset = Math.max(Number(url.searchParams.get("offset") ?? "0"), 0);
-  const [rule, messages, stats] = await Promise.all([
+  const [rule, messages, stats, lastOwnerSentAt, settings] = await Promise.all([
     getChatRule(chatId),
     listMessages({ chatId, limit, offset }),
     getSenderStats(chatId),
+    lastOwnerMessageAt(chatId).catch(() => null),
+    getSettings(),
   ]);
+  const isDm = (rule?.chatType ?? "private") === "private";
+  const graceMinutes = Math.max(
+    Number(
+      isDm ? settings.dmActiveGraceMinutes : settings.groupActiveGraceMinutes,
+    ) || 0,
+    0,
+  );
   return NextResponse.json({
     rule,
     messages,
     stats,
     hasMore: messages.length === limit,
+    grace: {
+      minutes: graceMinutes,
+      lastOwnerSentAt: lastOwnerSentAt
+        ? lastOwnerSentAt.toISOString()
+        : null,
+    },
   });
 }
 

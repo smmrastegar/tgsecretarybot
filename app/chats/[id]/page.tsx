@@ -80,7 +80,13 @@ type Rule = {
   lastName: string | null;
   nickname: string | null;
   relationship: Relationship | null;
+  graceSkippedAt: string | null;
   updatedAt: string;
+};
+
+type GraceInfo = {
+  minutes: number;
+  lastOwnerSentAt: string | null;
 };
 
 type Stats = {
@@ -97,6 +103,8 @@ export default function ChatDetailPage() {
   const [rule, setRule] = useState<Rule | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [grace, setGrace] = useState<GraceInfo | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [secretaries, setSecretaries] = useState<
     { userId: number; name: string }[]
   >([]);
@@ -138,11 +146,13 @@ export default function ChatDetailPage() {
       messages: Message[];
       stats: Stats;
       hasMore: boolean;
+      grace?: GraceInfo;
     };
     setRule(j.rule);
     setMessages(j.messages);
     setStats(j.stats);
     setHasMore(j.hasMore);
+    setGrace(j.grace ?? null);
     // Rehydrate the personal form so the inputs reflect what's persisted.
     setPersonal({
       firstName: j.rule?.firstName ?? "",
@@ -207,6 +217,18 @@ export default function ChatDetailPage() {
       .then((d) => d?.secretaries && setSecretaries(d.secretaries))
       .catch(() => {});
   }, [load]);
+
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  async function skipGrace() {
+    setSaving(true);
+    await fetch(`/api/chats/${chatId}/skip-grace`, { method: "POST" });
+    setSaving(false);
+    load();
+  }
 
   async function patchRule(patch: Record<string, unknown>) {
     setSaving(true);
@@ -419,13 +441,49 @@ export default function ChatDetailPage() {
               </div>
             </div>
 
+            {(() => {
+              const currentMode = rule?.mode ?? "off";
+              if (currentMode === "off" || rule?.vip) return null;
+              const last = grace?.lastOwnerSentAt
+                ? new Date(grace.lastOwnerSentAt).getTime()
+                : null;
+              const skipped = rule?.graceSkippedAt
+                ? new Date(rule.graceSkippedAt).getTime()
+                : null;
+              const graceMs = (grace?.minutes ?? 0) * 60_000;
+              if (!last || graceMs <= 0) return null;
+              const dismissed = skipped !== null && skipped > last;
+              if (dismissed) return null;
+              const endsAt = last + graceMs;
+              const remainingMs = endsAt - nowTick;
+              if (remainingMs <= 0) return null;
+              const remainingMin = Math.max(1, Math.ceil(remainingMs / 60_000));
+              return (
+                <div className="mt-4 p-3 rounded-lg border border-amber-700/50 bg-amber-900/20 flex items-center gap-3 flex-wrap">
+                  <div className="text-sm text-amber-200 flex-1 min-w-0">
+                    ⏸ بات تا {remainingMin} دقیقه دیگه ساکته (شما{" "}
+                    {relTime(grace!.lastOwnerSentAt!)} توی این چت پیام دادی).
+                    Mode "{MODE_LABELS[currentMode]}" بعد از این پنجره خودش
+                    دوباره فعال میشه.
+                  </div>
+                  <button
+                    onClick={skipGrace}
+                    disabled={saving}
+                    className="text-xs px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
+                  >
+                    ▶ Resume bot now
+                  </button>
+                </div>
+              );
+            })()}
+
             <div className="mt-4 flex items-center gap-2 flex-wrap">
               <label className="text-xs text-[var(--color-text-dim)]">
                 Mode:
               </label>
               <select
                 disabled={saving}
-                value={rule?.mode ?? "secretary"}
+                value={rule?.mode ?? "off"}
                 onChange={(e) =>
                   patchRule({ mode: e.target.value as ChatMode })
                 }
@@ -466,8 +524,7 @@ export default function ChatDetailPage() {
               </button>
             </div>
 
-            {(rule?.mode === "secretary" || !rule?.mode) &&
-              secretaries.length > 0 && (
+            {rule?.mode === "secretary" && secretaries.length > 0 && (
                 <div className="mt-3 flex items-center gap-2 flex-wrap text-xs">
                   <span className="text-[var(--color-text-dim)]">
                     Forward to:

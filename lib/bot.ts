@@ -766,7 +766,11 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     );
     if (graceMinutes > 0) {
       const last = await lastOwnerMessageAt(msg.chat.id).catch(() => null);
-      if (last) {
+      // Owner explicitly clicked "Resume bot now" after their last message
+      // — the grace window is dismissed until they speak again.
+      const graceDismissed =
+        !!rule?.graceSkippedAt && (!last || rule.graceSkippedAt > last);
+      if (last && !graceDismissed) {
         const ageMin = (Date.now() - last.getTime()) / 60_000;
         if (ageMin < graceMinutes) {
           const reason = `owner active here ${ageMin.toFixed(0)}m ago (< ${graceMinutes}m grace)`;
