@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import { chatTypeLabel, relTime } from "@/lib/format";
@@ -27,16 +27,32 @@ export default function UrgentPage() {
   const [loading, setLoading] = useState(true);
   const [showHandled, setShowHandled] = useState(false);
 
+  const firstLoadRef = useRef(true);
   const load = useCallback(async () => {
-    setLoading(true);
-    const url = `/api/messages?urgent=1${showHandled ? "" : "&unhandled=1"}`;
-    const r = await fetch(url);
-    const j = (await r.json()) as { messages: Message[] };
-    setMessages(j.messages);
-    setLoading(false);
+    if (firstLoadRef.current) setLoading(true);
+    try {
+      const url = `/api/messages?urgent=1${showHandled ? "" : "&unhandled=1"}`;
+      const r = await fetch(url);
+      if (!r.ok) return;
+      const j = (await r.json()) as { messages: Message[] };
+      // Merge new items into existing list, preserving any rows still present
+      // so React keeps per-card state (drafts, etc.) and the page doesn't blink.
+      setMessages((prev) => {
+        const incoming = new Map(j.messages.map((m) => [m.id, m]));
+        const kept = prev.filter((m) => incoming.has(m.id)).map((m) => incoming.get(m.id)!);
+        const keptIds = new Set(kept.map((m) => m.id));
+        const added = j.messages.filter((m) => !keptIds.has(m.id));
+        return [...added, ...kept];
+      });
+    } finally {
+      setLoading(false);
+      firstLoadRef.current = false;
+    }
   }, [showHandled]);
 
   useEffect(() => {
+    firstLoadRef.current = true;
+    setMessages([]);
     load();
     const id = setInterval(load, 20_000);
     return () => clearInterval(id);

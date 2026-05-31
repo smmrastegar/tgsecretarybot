@@ -243,6 +243,35 @@ export default function SettingsPage() {
     }
   }
 
+  // Approx OpenRouter input price ($/1M tokens) for the cost-sort button.
+  const MODEL_RATES_IN: Record<string, number> = {
+    "google/gemini-2.0-flash-lite-001": 0.075,
+    "google/gemini-2.0-flash-001": 0.1,
+    "google/gemini-2.5-flash": 0.3,
+    "anthropic/claude-haiku-4-5": 1.0,
+    "anthropic/claude-sonnet-4-6": 3.0,
+    "openai/gpt-4o-mini": 0.15,
+  };
+  function sortModelsCheapestFirst() {
+    if (!values) return;
+    const list = (values.aiModelsCsv || "")
+      .split(",")
+      .map((m) => m.trim())
+      .filter(Boolean);
+    if (list.length === 0) {
+      const ranked = Object.entries(MODEL_RATES_IN)
+        .sort((a, b) => a[1] - b[1])
+        .map(([m]) => m);
+      update("aiModelsCsv", ranked.join(", "));
+      return;
+    }
+    list.sort(
+      (a, b) =>
+        (MODEL_RATES_IN[a] ?? Infinity) - (MODEL_RATES_IN[b] ?? Infinity),
+    );
+    update("aiModelsCsv", list.join(", "));
+  }
+
   if (!values) {
     return (
       <Shell>
@@ -335,6 +364,16 @@ export default function SettingsPage() {
                       <p className="text-xs text-[var(--color-text-dim)] mt-1">
                         {f.hint}
                       </p>
+                    )}
+                    {f.key === "aiModelsCsv" && (
+                      <button
+                        type="button"
+                        onClick={sortModelsCheapestFirst}
+                        disabled={locked}
+                        className="mt-2 text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                      >
+                        💵 Sort cheapest first
+                      </button>
                     )}
                   </div>
                 );

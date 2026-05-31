@@ -1,7 +1,12 @@
 import Link from "next/link";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, StatCard, Badge } from "@/components/Card";
-import { aiUsageOverview, listMessages, overviewStats } from "@/lib/db";
+import {
+  aiUsageOverview,
+  listBusinessConnections,
+  listMessages,
+  overviewStats,
+} from "@/lib/db";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 import { requireSession } from "@/lib/auth";
 
@@ -9,11 +14,12 @@ export const dynamic = "force-dynamic";
 
 export default async function OverviewPage() {
   await requireSession();
-  const [stats, latestUrgent, latest, ai] = await Promise.all([
+  const [stats, latestUrgent, latest, ai, connections] = await Promise.all([
     overviewStats().catch(() => null),
     listMessages({ urgentOnly: true, limit: 5 }).catch(() => []),
     listMessages({ limit: 8 }).catch(() => []),
     aiUsageOverview().catch(() => null),
+    listBusinessConnections().catch(() => []),
   ]);
 
   return (
@@ -68,6 +74,54 @@ export default async function OverviewPage() {
             value={`$${ai.last24hCostUsd.toFixed(4)}`}
           />
         </div>
+      )}
+
+      {connections.length > 0 && (
+        <Card className="mb-6">
+          <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
+            Connected Telegram accounts
+          </div>
+          <div className="flex flex-col gap-2">
+            {connections.map((c) => (
+              <div
+                key={c.id}
+                className="flex items-center justify-between gap-2 text-sm flex-wrap"
+              >
+                <div className="min-w-0">
+                  <span className="font-medium">
+                    {[c.firstName, c.lastName].filter(Boolean).join(" ") ||
+                      c.username ||
+                      `user ${c.userId}`}
+                  </span>
+                  {c.username && (
+                    <span className="text-xs text-[var(--color-text-dim)] ml-2">
+                      @{c.username}
+                    </span>
+                  )}
+                  <span className="text-xs text-[var(--color-text-dim)] ml-2">
+                    id {c.userId}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-[11px]">
+                  {c.canReply ? (
+                    <span className="text-emerald-400">can reply ✓</span>
+                  ) : (
+                    <span className="text-amber-400">no reply right</span>
+                  )}
+                  {c.isEnabled ? (
+                    <span className="text-emerald-400">active</span>
+                  ) : (
+                    <span className="text-[var(--color-text-dim)]">disabled</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-[var(--color-text-dim)] mt-3">
+            Multiple Telegram users can connect this bot via Settings → Telegram
+            Business → Chatbots. The bot keeps a separate session per account.
+          </p>
+        </Card>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
