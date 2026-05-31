@@ -148,11 +148,11 @@ export default function MessagesPage() {
             // owner would act on next (suggest reply, forward, AI, transcribe).
             const target = group.messages.find((m) => !m.fromOwner) ?? group.messages[0]!;
             return (
-            <Card key={group.chatId} className="!p-3 md:!p-4">
-              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+            <Card key={group.chatId} className="!p-3 md:!p-4 overflow-hidden min-w-0">
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap min-w-0">
                 <Link
                   href={`/chats/${group.chatId}`}
-                  className="font-medium text-sm hover:underline"
+                  className="font-medium text-sm hover:underline truncate min-w-0 max-w-full"
                 >
                   {group.chatTitle ?? group.senderName}
                 </Link>
@@ -163,11 +163,11 @@ export default function MessagesPage() {
                   </Badge>
                 </div>
               </div>
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-1 min-w-0">
                 {group.messages.slice(0, 5).map((m) => (
                   <div
                     key={m.id}
-                    className={`flex flex-col gap-0.5 max-w-[88%] ${
+                    className={`flex flex-col gap-0.5 max-w-[88%] min-w-0 ${
                       m.fromOwner ? "self-end items-end" : "self-start items-start"
                     }`}
                   >
@@ -176,7 +176,8 @@ export default function MessagesPage() {
                       {relTime(m.createdAt)}
                     </div>
                     <div
-                      className={`px-2.5 py-1.5 rounded-2xl text-xs whitespace-pre-wrap break-words ${
+                      style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+                      className={`px-2.5 py-1.5 rounded-2xl text-xs whitespace-pre-wrap max-w-full ${
                         m.fromOwner
                           ? "bg-[var(--color-accent)] text-white rounded-br-md"
                           : "bg-[var(--color-surface-2)] rounded-bl-md"

@@ -299,7 +299,7 @@ export default function ChatDetailPage() {
                 return (
                   <div
                     key={m.id}
-                    className={`flex flex-col gap-1 max-w-[90%] ${
+                    className={`flex flex-col gap-1 max-w-[90%] min-w-0 ${
                       mine ? "self-end items-end" : "self-start items-start"
                     }`}
                   >
@@ -307,7 +307,8 @@ export default function ChatDetailPage() {
                       {mine ? "You" : m.senderName} · {relTime(m.createdAt)}
                     </div>
                     <div
-                      className={`p-3 rounded-2xl text-sm whitespace-pre-wrap break-words ${
+                      style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+                      className={`p-3 rounded-2xl text-sm whitespace-pre-wrap max-w-full ${
                         mine
                           ? "bg-[var(--color-accent)] text-white rounded-br-md"
                           : "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-bl-md"
@@ -319,7 +320,10 @@ export default function ChatDetailPage() {
                           <span className="opacity-70 text-[10px] uppercase">
                             transcript
                           </span>
-                          <div className="mt-1 whitespace-pre-wrap break-words">
+                          <div
+                            style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+                            className="mt-1 whitespace-pre-wrap"
+                          >
                             {truncate(m.transcript, 400)}
                           </div>
                         </div>
