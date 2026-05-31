@@ -104,11 +104,6 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         key: "alertWebhookMethod",
         label: "HTTP method",
       },
-      {
-        key: "alertWebhookHeaders",
-        label: "Extra headers (JSON object)",
-        type: "textarea",
-      },
     ],
   },
   {
@@ -145,16 +140,6 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         type: "toggle",
       },
       {
-        key: "secretaryUserId",
-        label: "Secretary Telegram user id",
-        hint: "Numeric Telegram id of the human who will handle urgent DMs. They MUST send /start to this bot once so the bot can DM them.",
-      },
-      {
-        key: "secretaryDisplayName",
-        label: "Display name (optional)",
-        hint: "Just for labels in the dashboard.",
-      },
-      {
         key: "secretarySessionMinutes",
         label: "Session idle timeout (minutes)",
         hint: "After this much inactivity, the thread auto-closes and the next urgent message starts a fresh session.",
@@ -185,6 +170,21 @@ const KNOWN_MODELS: Array<{ id: string; in: number; out: number; label: string }
 ];
 
 type Secretary = { userId: number; name: string };
+
+type HeaderPair = { key: string; value: string };
+
+function parseHeaders(json: string): HeaderPair[] {
+  try {
+    const obj = JSON.parse(json || "{}") as unknown;
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return [];
+    return Object.entries(obj as Record<string, unknown>).map(([key, v]) => ({
+      key,
+      value: typeof v === "string" ? v : JSON.stringify(v),
+    }));
+  } catch {
+    return [];
+  }
+}
 
 function parseSecretaries(json: string): Secretary[] {
   try {
@@ -353,6 +353,35 @@ export default function SettingsPage() {
               .filter(Boolean)}
             disabled={envLocked.has("aiModelsCsv")}
             onChange={(list) => update("aiModelsCsv", list.join(", "))}
+          />
+        </Card>
+
+        {/* Custom rich editor: Alert webhook headers */}
+        <Card>
+          <h2 className="text-sm font-semibold mb-1">
+            Alert webhook headers
+          </h2>
+          <p className="text-xs text-[var(--color-text-dim)] mb-4">
+            Extra HTTP headers sent with every alert webhook call.
+            {envLocked.has("alertWebhookHeaders") && (
+              <span className="ml-2 italic">(locked by env)</span>
+            )}
+          </p>
+          <HeadersEditor
+            value={parseHeaders(values.alertWebhookHeaders)}
+            disabled={envLocked.has("alertWebhookHeaders")}
+            onChange={(pairs) =>
+              update(
+                "alertWebhookHeaders",
+                JSON.stringify(
+                  Object.fromEntries(
+                    pairs
+                      .filter((p) => p.key)
+                      .map((p) => [p.key, p.value]),
+                  ),
+                ),
+              )
+            }
           />
         </Card>
 
@@ -668,6 +697,73 @@ function ModelsEditor({
           Models without a built-in price won't contribute to cost predictions.
         </p>
       )}
+    </div>
+  );
+}
+
+function HeadersEditor({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: HeaderPair[];
+  onChange: (pairs: HeaderPair[]) => void;
+  disabled: boolean;
+}) {
+  function update(idx: number, patch: Partial<HeaderPair>) {
+    onChange(value.map((p, i) => (i === idx ? { ...p, ...patch } : p)));
+  }
+  function remove(idx: number) {
+    onChange(value.filter((_, i) => i !== idx));
+  }
+  function add() {
+    onChange([...value, { key: "", value: "" }]);
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      {value.length === 0 && (
+        <p className="text-xs text-[var(--color-text-dim)]">
+          No extra headers.
+        </p>
+      )}
+      {value.map((p, idx) => (
+        <div
+          key={idx}
+          className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-md p-2"
+        >
+          <input
+            type="text"
+            disabled={disabled}
+            value={p.key}
+            placeholder="Header name (e.g. X-Auth)"
+            onChange={(e) => update(idx, { key: e.target.value })}
+            className="w-40 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
+          />
+          <input
+            type="text"
+            disabled={disabled}
+            value={p.value}
+            placeholder="Value"
+            onChange={(e) => update(idx, { value: e.target.value })}
+            className="flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
+          />
+          <button
+            disabled={disabled}
+            onClick={() => remove(idx)}
+            className="text-xs px-2 py-1 rounded text-red-400 hover:bg-red-900/30 disabled:opacity-30"
+            aria-label="remove"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      <button
+        disabled={disabled}
+        onClick={add}
+        className="text-xs px-3 py-2 rounded-md border border-dashed border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 self-start"
+      >
+        + Add header
+      </button>
     </div>
   );
 }
