@@ -680,11 +680,12 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     }
   }
 
-  // Past this point we'd normally need text/caption to classify. But for
-  // secretary mode in a private DM, media-only messages (stickers, GIFs,
-  // photos without caption, voice notes, …) are still meaningful and should
-  // reach the secretary so they have context. Forward and bail.
+  // Past this point we'd normally need text/caption to classify. But media
+  // (voice, photo, sticker, GIF, video, …) without a caption is still real
+  // content the owner should see in All Messages / chat detail, and in
+  // secretary mode it should also reach the secretary's thread.
   if (!msg.text && !msg.caption) {
+    let forwardedToSecretary = false;
     const secEnabled =
       (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
     const mode: ChatMode = rule?.mode ?? "secretary";
@@ -694,7 +695,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       msg.chat.type === "private" &&
       hasDb()
     ) {
-      const handled = await maybeForwardToSecretary({
+      forwardedToSecretary = await maybeForwardToSecretary({
         msg,
         bcId,
         senderName,
@@ -704,6 +705,10 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         settings,
         bot,
       });
+    }
+    // Always log so the message appears in All Messages / chat detail
+    // regardless of mode.
+    if (hasDb()) {
       try {
         await logMessage({
           businessConnectionId: bcId,
@@ -719,10 +724,14 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           importance: 0,
           urgent: false,
           concernsOwner: false,
-          reason: "media-only forwarded to secretary",
+          reason: forwardedToSecretary
+            ? "media forwarded to secretary"
+            : `media (${mediaKind ?? "no text"})`,
           alerted: false,
-          autoReplied: handled,
-          skippedReason: handled ? "secretary_relay" : "media_no_text",
+          autoReplied: forwardedToSecretary,
+          skippedReason: forwardedToSecretary
+            ? "secretary_relay"
+            : "media_no_text",
           mediaFileId,
           mediaKind,
         });
