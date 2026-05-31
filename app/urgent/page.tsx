@@ -38,6 +38,8 @@ export default function UrgentPage() {
 
   useEffect(() => {
     load();
+    const id = setInterval(load, 20_000);
+    return () => clearInterval(id);
   }, [load]);
 
   async function setHandled(id: number, handled: boolean) {

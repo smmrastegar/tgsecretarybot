@@ -1134,3 +1134,30 @@ export async function getSenderStats(chatId: number): Promise<{
     firstSeen: r.first_seen ?? null,
   };
 }
+
+export type AuditRow = {
+  id: number;
+  createdAt: Date;
+  actorId: number | null;
+  actorName: string | null;
+  action: string;
+  target: string | null;
+  details: unknown;
+};
+
+export async function listAudit(limit = 100): Promise<AuditRow[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, created_at, actor_id, actor_name, action, target, details
+    FROM audit_log ORDER BY created_at DESC LIMIT ${Math.min(limit, 500)}`;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    createdAt: r.created_at as Date,
+    actorId: r.actor_id != null ? Number(r.actor_id) : null,
+    actorName: (r.actor_name as string) ?? null,
+    action: r.action as string,
+    target: (r.target as string) ?? null,
+    details: r.details ?? null,
+  }));
+}

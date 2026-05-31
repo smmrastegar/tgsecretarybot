@@ -2,6 +2,7 @@ import { Bot, GrammyError, HttpError } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "./config";
 import { aiConversationReply, classify, friendlyAutoReply } from "./classifier";
+import { sttConfigured, transcribeAudio } from "./stt";
 import { fireAlert } from "./alert";
 import { getSettings } from "./settings";
 import {
@@ -965,6 +966,47 @@ async function maybeForwardToSecretary(args: {
     console.log(
       `[secretary] forwarded sender=${msg.chat.id} session=${session.id} parts=${ids.length}`,
     );
+
+    // Auto-transcribe voice/audio/video_note so the secretary doesn't have
+    // to play them. Best-effort; failures are logged but don't break the
+    // forward.
+    const autoTranscribe =
+      (settings.secretaryAutoTranscribe ?? "true").toLowerCase() !== "false";
+    if (autoTranscribe && sttConfigured()) {
+      const audioFileId =
+        msg.voice?.file_id ??
+        msg.audio?.file_id ??
+        msg.video_note?.file_id ??
+        null;
+      if (audioFileId) {
+        const lastSecretaryMsgId = ids[ids.length - 1] ?? session.headerMessageId;
+        try {
+          const tr = await transcribeAudio({
+            botToken: config.telegramBotToken,
+            fileId: audioFileId,
+            chatId: msg.chat.id,
+            businessConnectionId: bcId,
+          });
+          if (tr.text) {
+            const sent = await bot.api.sendMessage(
+              secId,
+              `📝 transcript:\n${tr.text}`.slice(0, 4096),
+              { reply_parameters: { message_id: lastSecretaryMsgId } },
+            );
+            await recordSecretaryLink({
+              sessionId: session.id,
+              secretaryChatId: secId,
+              secretaryMessageId: sent.message_id,
+              direction: "inbound",
+              senderMessageId: msg.message_id,
+            });
+          }
+        } catch (err) {
+          console.error("[secretary] auto-transcribe failed:", err);
+        }
+      }
+    }
+
     return true;
   } catch (err) {
     const e = err as { error_code?: number; description?: string };

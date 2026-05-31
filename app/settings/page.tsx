@@ -25,6 +25,7 @@ type Settings = {
   secretaryDisplayName: string;
   secretarySessionMinutes: string;
   secretarySuppressAutoReply: string;
+  secretaryAutoTranscribe: string;
 };
 
 type FieldConfig = {
@@ -160,6 +161,12 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
       {
         key: "secretarySuppressAutoReply",
         label: "Suppress auto-reply when secretary is handling",
+        type: "toggle",
+      },
+      {
+        key: "secretaryAutoTranscribe",
+        label: "Auto-transcribe voice / audio / video notes for the secretary",
+        hint: "When a voice or audio message is forwarded, the bot also sends the Groq / Gemini transcript as a reply in the same thread.",
         type: "toggle",
       },
     ],
