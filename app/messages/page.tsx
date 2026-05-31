@@ -143,7 +143,11 @@ export default function MessagesPage() {
         </Card>
       ) : threaded ? (
         <div className="flex flex-col gap-3">
-          {groupByChat(messages).map((group) => (
+          {groupByChat(messages).map((group) => {
+            // The most recent non-owner message in this group is what the
+            // owner would act on next (suggest reply, forward, AI, transcribe).
+            const target = group.messages.find((m) => !m.fromOwner) ?? group.messages[0]!;
+            return (
             <Card key={group.chatId} className="!p-3 md:!p-4">
               <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                 <Link
@@ -191,8 +195,41 @@ export default function MessagesPage() {
                   View all {group.messages.length} messages →
                 </Link>
               )}
+              <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
+                  Reply to last message from{" "}
+                  {target.fromOwner ? "you" : target.senderName}
+                </div>
+                <MessageActions
+                  message={{
+                    id: target.id,
+                    chatId: target.chatId,
+                    chatType: target.chatType,
+                    mediaKind: target.mediaKind,
+                    transcript: target.transcript,
+                    handledAt: target.handledAt,
+                    chatMode: target.chatMode,
+                  }}
+                  secretaries={secretaries}
+                  onChange={load}
+                  onTranscript={(id, txt) =>
+                    setMessages((ms) =>
+                      ms.map((mm) =>
+                        mm.id === id
+                          ? {
+                              ...mm,
+                              transcript: txt,
+                              transcriptAt: new Date().toISOString(),
+                            }
+                          : mm,
+                      ),
+                    )
+                  }
+                />
+              </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="flex flex-col gap-2">
