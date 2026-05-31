@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge, TableWrap } from "@/components/Card";
@@ -111,20 +112,23 @@ export default function ChatsPage() {
           {chats.map((c) => (
             <Card key={c.chatId} className="!p-3">
               <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="min-w-0">
+                <Link
+                  href={`/chats/${c.chatId}`}
+                  className="min-w-0 hover:opacity-90"
+                >
                   <div className="font-medium text-sm truncate">
                     {c.chatTitle ?? `chat ${c.chatId}`}
                   </div>
                   <div className="text-[11px] text-[var(--color-text-dim)] mt-0.5">
                     {chatTypeLabel(c.chatType)} · id {c.chatId} · {relTime(c.lastSeen)}
                   </div>
-                </div>
-                <button
-                  onClick={() => setEdit(c)}
+                </Link>
+                <Link
+                  href={`/chats/${c.chatId}`}
                   className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] shrink-0"
                 >
-                  Edit
-                </button>
+                  Open →
+                </Link>
               </div>
               <select
                 value={c.mode}
@@ -183,12 +187,17 @@ export default function ChatsPage() {
                   className="border-b border-[var(--color-border)] last:border-0"
                 >
                   <td className="py-3 pr-3">
-                    <div className="font-medium">
-                      {c.chatTitle ?? `chat ${c.chatId}`}
-                    </div>
-                    <div className="text-xs text-[var(--color-text-dim)]">
-                      {chatTypeLabel(c.chatType)} · id {c.chatId}
-                    </div>
+                    <Link
+                      href={`/chats/${c.chatId}`}
+                      className="block hover:opacity-90"
+                    >
+                      <div className="font-medium underline-offset-2 hover:underline">
+                        {c.chatTitle ?? `chat ${c.chatId}`}
+                      </div>
+                      <div className="text-xs text-[var(--color-text-dim)]">
+                        {chatTypeLabel(c.chatType)} · id {c.chatId}
+                      </div>
+                    </Link>
                   </td>
                   <td className="py-3 pr-3">
                     <select

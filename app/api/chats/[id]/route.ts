@@ -4,12 +4,36 @@ import {
   audit,
   CHAT_MODES,
   getChatRule,
+  getSenderStats,
+  listMessages,
   upsertChatRule,
   type ChatMode,
 } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function GET(
+  _request: Request,
+  ctx: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  try {
+    await requireSession();
+  } catch {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  const { id } = await ctx.params;
+  const chatId = Number(id);
+  if (!Number.isFinite(chatId)) {
+    return NextResponse.json({ error: "invalid chat id" }, { status: 400 });
+  }
+  const [rule, messages, stats] = await Promise.all([
+    getChatRule(chatId),
+    listMessages({ chatId, limit: 10 }),
+    getSenderStats(chatId),
+  ]);
+  return NextResponse.json({ rule, messages, stats });
+}
 
 export async function PUT(
   request: Request,
