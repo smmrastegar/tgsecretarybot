@@ -5,8 +5,10 @@ import {
   aiUsageOverview,
   chatModeCounts,
   listBusinessConnections,
+  listExtractedItems,
   listMessages,
   overviewStats,
+  upcomingReminderCount,
 } from "@/lib/db";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 import { requireSession } from "@/lib/auth";
@@ -41,14 +43,17 @@ function ModePill({
 
 export default async function OverviewPage() {
   await requireSession();
-  const [stats, latestUrgent, latest, ai, connections, modes] = await Promise.all([
-    overviewStats().catch(() => null),
-    listMessages({ urgentOnly: true, limit: 5 }).catch(() => []),
-    listMessages({ limit: 8 }).catch(() => []),
-    aiUsageOverview().catch(() => null),
-    listBusinessConnections().catch(() => []),
-    chatModeCounts().catch(() => null),
-  ]);
+  const [stats, latestUrgent, latest, ai, connections, modes, reminders, dueCount] =
+    await Promise.all([
+      overviewStats().catch(() => null),
+      listMessages({ urgentOnly: true, limit: 5 }).catch(() => []),
+      listMessages({ limit: 8 }).catch(() => []),
+      aiUsageOverview().catch(() => null),
+      listBusinessConnections().catch(() => []),
+      chatModeCounts().catch(() => null),
+      listExtractedItems({ upcoming: true, limit: 4 }).catch(() => []),
+      upcomingReminderCount().catch(() => 0),
+    ]);
 
   return (
     <Shell>
@@ -102,6 +107,38 @@ export default async function OverviewPage() {
             value={`$${ai.last24hCostUsd.toFixed(4)}`}
           />
         </div>
+      )}
+
+      {reminders.length > 0 && (
+        <Card className="mb-6">
+          <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+            <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
+              Upcoming reminders ({dueCount})
+            </div>
+            <Link
+              href="/reminders"
+              className="text-xs text-[var(--color-text-dim)] hover:text-white"
+            >
+              See all →
+            </Link>
+          </div>
+          <ul className="flex flex-col gap-1.5 text-sm">
+            {reminders.slice(0, 4).map((r) => (
+              <li
+                key={r.id}
+                className="flex items-center justify-between gap-2 flex-wrap"
+              >
+                <span className="truncate">{r.title}</span>
+                <span className="text-[11px] text-[var(--color-text-dim)] shrink-0">
+                  {r.kind} ·{" "}
+                  {r.dueAt
+                    ? new Date(r.dueAt).toLocaleString()
+                    : "no date"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
 
       {modes && (

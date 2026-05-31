@@ -1,7 +1,12 @@
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "./config";
-import { aiConversationReply, classify, friendlyAutoReply } from "./classifier";
+import {
+  aiConversationReply,
+  classify,
+  extractActions,
+  friendlyAutoReply,
+} from "./classifier";
 import { sttConfigured, transcribeAudio } from "./stt";
 import {
   defaultSecretary,
@@ -30,6 +35,7 @@ import {
   openSecretarySession,
   recentConversation,
   recordSecretaryLink,
+  saveExtractedItems,
   touchSecretarySession,
   upsertBusinessConnection,
   audit,
@@ -117,6 +123,58 @@ async function logOwnerSent(args: {
   } catch (err) {
     console.error(`[db] logOwnerSent (${args.source}) failed:`, err);
   }
+}
+
+async function autoExtractAndSave(args: {
+  text: string;
+  chatId: number;
+  chatTitle: string | null;
+  senderName: string;
+  messageId: number;
+  businessConnectionId: string;
+}): Promise<void> {
+  if (!hasDb()) return;
+  const s = await getSettings();
+  if ((s.autoExtractEnabled ?? "true").toLowerCase() === "false") return;
+  try {
+    const items = await extractActions({
+      text: args.text,
+      senderName: args.senderName,
+      chatId: args.chatId,
+      businessConnectionId: args.businessConnectionId,
+    });
+    const valid = items
+      .filter((it) => it && typeof it.title === "string" && it.title.trim())
+      .map((it) => ({
+        messageId: null, // we don't have messages_log.id here; link via chat/message_id is enough
+        chatId: args.chatId,
+        chatTitle: args.chatTitle,
+        senderName: args.senderName,
+        kind: typeof it.kind === "string" ? it.kind : "note",
+        title: it.title.trim().slice(0, 200),
+        description: it.description ?? null,
+        dueAt: it.due_at ? safeDate(it.due_at) : null,
+        location: it.location ?? null,
+        participants:
+          Array.isArray(it.participants) &&
+          it.participants.every((p) => typeof p === "string")
+            ? (it.participants as string[])
+            : null,
+      }));
+    if (valid.length > 0) {
+      await saveExtractedItems(valid);
+      console.log(
+        `[extract] auto-saved ${valid.length} item${valid.length === 1 ? "" : "s"} from chat=${args.chatId}`,
+      );
+    }
+  } catch (err) {
+    console.error("[extract] auto failed:", err);
+  }
+}
+
+function safeDate(input: string): Date | null {
+  const d = new Date(input);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 async function markBusinessRead(
@@ -753,6 +811,25 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   console.log(
     `[classify] imp=${verdict.importance} urg=${verdict.urgent} owner=${verdict.concernsOwner} chat=${msg.chat.type}:${msg.chat.id} from=${senderName} alert=${shouldAlert} | ${verdict.reason}`,
   );
+
+  // Auto-extract events / tasks / reminders for messages that look meaningful.
+  const extractMin = Number(settings.autoExtractMinImportance) || 4;
+  if (
+    (msg.text || msg.caption) &&
+    !msg.from?.is_bot &&
+    verdict.importance >= extractMin
+  ) {
+    // Fire and forget — the AI call shouldn't delay other handlers, and a
+    // failed extraction shouldn't break the reply path.
+    void autoExtractAndSave({
+      text: text,
+      chatId: msg.chat.id,
+      chatTitle,
+      senderName,
+      messageId: msg.message_id,
+      businessConnectionId: bcId,
+    });
+  }
 
   let alerted = false;
   let autoReplied = false;

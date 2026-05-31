@@ -31,6 +31,8 @@ type Settings = {
   aiChatModelsCsv: string;
   sttLanguage: string;
   markMessagesAsRead: string;
+  autoExtractEnabled: string;
+  autoExtractMinImportance: string;
 };
 
 type FieldConfig = {
@@ -169,6 +171,23 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         label: "Mark sender's message as 'seen' after every reply",
         hint: "When the bot answers via business connection (auto-reply, AI, friendly, secretary relay, or dashboard send), it also calls readBusinessMessage so the sender gets a seen tick. Requires the can_read_messages right in Telegram Business → Chatbots. Turn this OFF if you'd rather not show seen ticks.",
         type: "toggle",
+      },
+    ],
+  },
+  {
+    title: "Reminders & calendar (AI extract)",
+    fields: [
+      {
+        key: "autoExtractEnabled",
+        label: "Automatically extract events / tasks / reminders from messages",
+        hint: "After classifying each incoming message, the AI looks for dates, deadlines, and action items and adds them to /reminders. Turn off to extract only when you tap 🧠 Extract manually.",
+        type: "toggle",
+      },
+      {
+        key: "autoExtractMinImportance",
+        label: "Minimum importance to auto-extract (0-10)",
+        hint: "Skip messages classified below this importance to save AI cost. Default 4: ignores ads/spam, processes anything that looks like real conversation.",
+        type: "number",
       },
     ],
   },
