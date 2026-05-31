@@ -52,6 +52,93 @@ export default function UrgentPage() {
   }
 
   const [transcribing, setTranscribing] = useState<Set<number>>(new Set());
+  const [suggesting, setSuggesting] = useState<Set<number>>(new Set());
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [sending, setSending] = useState<Set<number>>(new Set());
+  const [forwarding, setForwarding] = useState<Set<number>>(new Set());
+  const [secretaries, setSecretaries] = useState<
+    { userId: number; name: string }[]
+  >([]);
+
+  useEffect(() => {
+    fetch("/api/secretaries")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.secretaries && setSecretaries(d.secretaries))
+      .catch(() => {});
+  }, []);
+
+  async function suggest(id: number) {
+    setSuggesting((s) => new Set(s).add(id));
+    try {
+      const r = await fetch(`/api/messages/${id}/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const j = (await r.json()) as { suggestion?: string; error?: string };
+      if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
+      setDrafts((d) => ({ ...d, [id]: j.suggestion ?? "" }));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSuggesting((s) => {
+        const n = new Set(s);
+        n.delete(id);
+        return n;
+      });
+    }
+  }
+
+  async function sendReply(id: number) {
+    const text = (drafts[id] ?? "").trim();
+    if (!text) return;
+    setSending((s) => new Set(s).add(id));
+    try {
+      const r = await fetch(`/api/messages/${id}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, markHandled: true }),
+      });
+      const j = (await r.json()) as { error?: string };
+      if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
+      setDrafts((d) => {
+        const n = { ...d };
+        delete n[id];
+        return n;
+      });
+      load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending((s) => {
+        const n = new Set(s);
+        n.delete(id);
+        return n;
+      });
+    }
+  }
+
+  async function forwardTo(id: number, secretaryUserId: number) {
+    setForwarding((s) => new Set(s).add(id));
+    try {
+      const r = await fetch(`/api/messages/${id}/forward`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secretaryUserId }),
+      });
+      const j = (await r.json()) as { error?: string };
+      if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setForwarding((s) => {
+        const n = new Set(s);
+        n.delete(id);
+        return n;
+      });
+    }
+  }
+
   async function transcribe(id: number) {
     setTranscribing((s) => new Set(s).add(id));
     try {
@@ -156,8 +243,82 @@ export default function UrgentPage() {
                       </button>
                     )}
                   </div>
+
+                  {drafts[m.id] !== undefined && (
+                    <div className="mt-3 p-2 rounded-md bg-[var(--color-surface-2)]">
+                      <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
+                        AI suggested reply (you can edit)
+                      </div>
+                      <textarea
+                        value={drafts[m.id]}
+                        onChange={(e) =>
+                          setDrafts((d) => ({ ...d, [m.id]: e.target.value }))
+                        }
+                        rows={3}
+                        className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-sm"
+                      />
+                      <div className="mt-2 flex gap-2 flex-wrap">
+                        <button
+                          onClick={() => sendReply(m.id)}
+                          disabled={sending.has(m.id) || !drafts[m.id]?.trim()}
+                          className="text-xs px-3 py-1.5 rounded-md bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-50"
+                        >
+                          {sending.has(m.id) ? "Sending…" : "✅ Send as me"}
+                        </button>
+                        <button
+                          onClick={() => suggest(m.id)}
+                          disabled={suggesting.has(m.id)}
+                          className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                        >
+                          {suggesting.has(m.id) ? "…" : "🔁 Regenerate"}
+                        </button>
+                        <button
+                          onClick={() =>
+                            setDrafts((d) => {
+                              const n = { ...d };
+                              delete n[m.id];
+                              return n;
+                            })
+                          }
+                          className="text-xs px-3 py-1.5 rounded-md text-[var(--color-text-dim)]"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="shrink-0 self-end sm:self-auto">
+                <div className="shrink-0 self-end sm:self-auto flex flex-col gap-1.5 items-stretch">
+                  {!m.handledAt && drafts[m.id] === undefined && (
+                    <button
+                      onClick={() => suggest(m.id)}
+                      disabled={suggesting.has(m.id)}
+                      className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
+                    >
+                      {suggesting.has(m.id) ? "Suggesting…" : "🤖 AI suggest"}
+                    </button>
+                  )}
+                  {!m.handledAt && secretaries.length > 0 && (
+                    <select
+                      defaultValue=""
+                      disabled={forwarding.has(m.id)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        e.target.value = "";
+                        if (Number.isFinite(v) && v > 0) forwardTo(m.id, v);
+                      }}
+                      className="text-xs px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
+                    >
+                      <option value="" disabled>
+                        {forwarding.has(m.id) ? "Forwarding…" : "↗ Forward to…"}
+                      </option>
+                      {secretaries.map((s) => (
+                        <option key={s.userId} value={s.userId}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   {m.handledAt ? (
                     <button
                       onClick={() => setHandled(m.id, false)}

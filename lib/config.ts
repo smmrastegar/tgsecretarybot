@@ -62,6 +62,8 @@ export const DEFAULT_SETTINGS = {
   secretarySessionMinutes: "120",
   secretarySuppressAutoReply: "true",
   secretaryAutoTranscribe: "true",
+  secretariesJson: "",
+  aiModelsCsv: "",
 } as const satisfies Record<string, string>;
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
@@ -89,6 +91,8 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   secretarySessionMinutes: optional("SECRETARY_SESSION_MINUTES"),
   secretarySuppressAutoReply: optional("SECRETARY_SUPPRESS_AUTO_REPLY"),
   secretaryAutoTranscribe: optional("SECRETARY_AUTO_TRANSCRIBE"),
+  secretariesJson: optional("SECRETARIES_JSON"),
+  aiModelsCsv: optional("AI_MODELS_CSV"),
 };
 
 export function envOverride(key: SettingKey): string | undefined {

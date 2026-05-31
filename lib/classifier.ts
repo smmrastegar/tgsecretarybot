@@ -66,6 +66,19 @@ type ChatCompletionResponse = {
   error?: { message?: string };
 };
 
+async function modelsToTry(): Promise<string[]> {
+  const s = await getSettings();
+  const csv = (s.aiModelsCsv ?? "").trim();
+  if (csv) {
+    const list = csv
+      .split(",")
+      .map((m) => m.trim())
+      .filter(Boolean);
+    if (list.length > 0) return list;
+  }
+  return [config.openrouterModel];
+}
+
 async function callOpenRouter(
   messages: Array<{ role: string; content: string }>,
   opts: {
@@ -84,46 +97,62 @@ async function callOpenRouter(
   };
   if (config.openrouterAppUrl) headers["HTTP-Referer"] = config.openrouterAppUrl;
 
-  const body: Record<string, unknown> = {
-    model: config.openrouterModel,
-    temperature: opts.temperature ?? 0,
-    max_tokens: opts.maxTokens ?? 200,
-    messages,
-  };
-  if (opts.jsonObject) body.response_format = { type: "json_object" };
+  const models = await modelsToTry();
+  let lastErr: unknown = null;
+  for (const model of models) {
+    const body: Record<string, unknown> = {
+      model,
+      temperature: opts.temperature ?? 0,
+      max_tokens: opts.maxTokens ?? 200,
+      messages,
+    };
+    if (opts.jsonObject) body.response_format = { type: "json_object" };
 
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+    let res: Response;
+    try {
+      res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      lastErr = err;
+      continue;
+    }
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      lastErr = new Error(`OpenRouter ${res.status} (${model}): ${txt.slice(0, 200)}`);
+      console.warn(`[ai] ${model} failed: ${res.status}, trying next.`);
+      continue;
+    }
+    const data = (await res.json()) as ChatCompletionResponse;
+    if (data.error) {
+      lastErr = new Error(`OpenRouter error (${model}): ${data.error.message}`);
+      console.warn(`[ai] ${model} error: ${data.error.message}, trying next.`);
+      continue;
+    }
 
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`OpenRouter ${res.status}: ${txt.slice(0, 300)}`);
+    const u = data.usage;
+    if (u) {
+      const promptTokens = u.prompt_tokens ?? 0;
+      const completionTokens = u.completion_tokens ?? 0;
+      const totalTokens = u.total_tokens ?? promptTokens + completionTokens;
+      const cost = estimateCost(model, promptTokens, completionTokens);
+      recordAiUsage({
+        chatId: opts.chatId ?? null,
+        businessConnectionId: opts.businessConnectionId ?? null,
+        model,
+        purpose: opts.purpose,
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        costUsd: cost,
+      }).catch((err) => console.error("[ai_usage] record failed:", err));
+    }
+
+    return data.choices?.[0]?.message?.content ?? "";
   }
-  const data = (await res.json()) as ChatCompletionResponse;
-  if (data.error) throw new Error(`OpenRouter error: ${data.error.message}`);
-
-  const u = data.usage;
-  if (u) {
-    const promptTokens = u.prompt_tokens ?? 0;
-    const completionTokens = u.completion_tokens ?? 0;
-    const totalTokens = u.total_tokens ?? promptTokens + completionTokens;
-    const cost = estimateCost(config.openrouterModel, promptTokens, completionTokens);
-    recordAiUsage({
-      chatId: opts.chatId ?? null,
-      businessConnectionId: opts.businessConnectionId ?? null,
-      model: config.openrouterModel,
-      purpose: opts.purpose,
-      promptTokens,
-      completionTokens,
-      totalTokens,
-      costUsd: cost,
-    }).catch((err) => console.error("[ai_usage] record failed:", err));
-  }
-
-  return data.choices?.[0]?.message?.content ?? "";
+  throw lastErr ?? new Error("no models succeeded");
 }
 
 export async function classify(input: {

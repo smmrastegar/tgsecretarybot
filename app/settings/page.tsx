@@ -26,6 +26,8 @@ type Settings = {
   secretarySessionMinutes: string;
   secretarySuppressAutoReply: string;
   secretaryAutoTranscribe: string;
+  secretariesJson: string;
+  aiModelsCsv: string;
 };
 
 type FieldConfig = {
@@ -168,6 +170,23 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         label: "Auto-transcribe voice / audio / video notes for the secretary",
         hint: "When a voice or audio message is forwarded, the bot also sends the Groq / Gemini transcript as a reply in the same thread.",
         type: "toggle",
+      },
+      {
+        key: "secretariesJson",
+        label: "Secretaries (JSON array)",
+        hint: `[{"userId": 12345, "name": "Moti"}, {"userId": 67890, "name": "Sara"}] — the first one handles automatic forwards. Each secretary must /start the bot once. If empty, the legacy secretaryUserId / secretaryDisplayName fields above are used.`,
+        type: "textarea",
+      },
+    ],
+  },
+  {
+    title: "AI model priority",
+    fields: [
+      {
+        key: "aiModelsCsv",
+        label: "Models in priority order (comma-separated)",
+        hint: 'e.g. "google/gemini-2.0-flash-lite-001, anthropic/claude-haiku-4-5". The first model is tried; on failure the bot falls back to the next. Sort cheapest first to save cost. Leave empty to use just OPENROUTER_MODEL.',
+        type: "textarea",
       },
     ],
   },

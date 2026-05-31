@@ -3,6 +3,11 @@ import type { Message } from "grammy/types";
 import { config } from "./config";
 import { aiConversationReply, classify, friendlyAutoReply } from "./classifier";
 import { sttConfigured, transcribeAudio } from "./stt";
+import {
+  defaultSecretary,
+  getSecretaries,
+  type Secretary,
+} from "./secretaries";
 import { fireAlert } from "./alert";
 import { getSettings } from "./settings";
 import {
@@ -320,11 +325,10 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   // urgent-classification / alert flow is skipped.
   const secEnabled =
     (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
-  const secId = Number(settings.secretaryUserId);
+  const defaultSec = defaultSecretary(settings);
   if (
     secEnabled &&
-    Number.isFinite(secId) &&
-    secId > 0 &&
+    defaultSec !== null &&
     hasDb() &&
     msg.chat.type === "private"
   ) {
@@ -899,13 +903,15 @@ async function maybeForwardToSecretary(args: {
   settings: Awaited<ReturnType<typeof getSettings>>;
   bot: Bot;
   knownSession?: SecretarySession | null;
+  targetSecretary?: Secretary | null;
 }): Promise<boolean> {
   const { msg, bcId, senderName, senderUsername, owner, settings, bot } = args;
   if (msg.chat.type !== "private") return false;
   const enabled = (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
-  if (!enabled) return false;
-  const secId = Number(settings.secretaryUserId);
-  if (!Number.isFinite(secId) || secId <= 0) return false;
+  if (!enabled && !args.targetSecretary) return false;
+  const target = args.targetSecretary ?? defaultSecretary(settings);
+  if (!target) return false;
+  const secId = target.userId;
   if (!hasDb()) return false;
   if (owner && secId === owner.userId) return false;
 
@@ -944,6 +950,36 @@ async function maybeForwardToSecretary(args: {
         secretaryMessageId: header.message_id,
         direction: "inbound",
       });
+      // Send last few messages so the secretary has context.
+      try {
+        const history = await recentConversation(msg.chat.id, 12);
+        if (history.length > 0) {
+          const lines = history
+            .slice(0, -1) // skip the just-arrived message; relayAnyMessage sends it next
+            .map((h) => {
+              const who = h.from === "owner"
+                ? settings.ownerDisplayName || settings.ownerName || "you"
+                : h.senderName;
+              return `[${relTime(h.at)}] ${who}: ${h.text.slice(0, 220)}`;
+            })
+            .join("\n");
+          if (lines.trim()) {
+            const ctxMsg = await bot.api.sendMessage(
+              secId,
+              `📜 Recent context:\n${lines}`.slice(0, 4096),
+              { reply_parameters: { message_id: header.message_id } },
+            );
+            await recordSecretaryLink({
+              sessionId: session.id,
+              secretaryChatId: secId,
+              secretaryMessageId: ctxMsg.message_id,
+              direction: "inbound",
+            });
+          }
+        }
+      } catch (err) {
+        console.error("[secretary] context send failed:", err);
+      }
     }
 
     const ids = await relayAnyMessage({
@@ -1030,9 +1066,11 @@ async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
   const settings = await getSettings();
   const enabled = (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
   if (!enabled) return;
-  const secId = Number(settings.secretaryUserId);
-  if (!Number.isFinite(secId) || secId <= 0) return;
-  if (msg.from.id !== secId) return;
+  const matchedSec = getSecretaries(settings).find(
+    (s) => s.userId === msg.from!.id,
+  );
+  if (!matchedSec) return;
+  const secId = matchedSec.userId;
 
   const idleMin = Math.max(Number(settings.secretarySessionMinutes) || 120, 1);
   let session: SecretarySession | null = null;
@@ -1108,8 +1146,9 @@ async function handleSecretaryReaction(
 
   const settings = await getSettings();
   if ((settings.secretaryEnabled ?? "false").toLowerCase() !== "true") return;
-  const secId = Number(settings.secretaryUserId);
-  if (!Number.isFinite(secId) || secId <= 0) return;
+  const secList = getSecretaries(settings);
+  if (secList.length === 0) return;
+  const secIds = new Set(secList.map((s) => s.userId));
 
   // Direction A: reaction inside a business chat (the sender reacted to a
   // message). Relay it to the corresponding message in the secretary's chat
@@ -1118,7 +1157,7 @@ async function handleSecretaryReaction(
     (upd as unknown as { business_connection_id?: string })
       .business_connection_id ?? null;
   if (bcId) {
-    if (upd.user.id === secId) return;
+    if (secIds.has(upd.user.id)) return;
     const link = await findSecretaryLinkForSenderMessage(
       bcId,
       upd.chat.id,
@@ -1143,7 +1182,7 @@ async function handleSecretaryReaction(
   // Direction B: reaction in the secretary's bot DM. Relay it to the original
   // sender's message in the business chat.
   if (upd.chat.type !== "private") return;
-  if (upd.user.id !== secId) return;
+  if (!secIds.has(upd.user.id)) return;
 
   const link = await findLinkWithSenderMessage(upd.chat.id, upd.message_id).catch(
     () => null,
