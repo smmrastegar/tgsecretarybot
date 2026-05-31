@@ -27,12 +27,46 @@ const MODE_TONES: Record<
   ai_chat: "success",
 };
 
+type Relationship =
+  | "close_friend"
+  | "friend"
+  | "work_acquaintance"
+  | "employer"
+  | "formal"
+  | "suspicious"
+  | "stranger";
+
+const RELATIONSHIP_LABELS: Record<Relationship, string> = {
+  close_friend: "دوست خیلی صمیمی",
+  friend: "دوست معمولی",
+  work_acquaintance: "آشنای کاری",
+  employer: "کارفرما",
+  formal: "رودروایسی",
+  suspicious: "آدم مشکوک",
+  stranger: "آدم ناشناس",
+};
+
+const RELATIONSHIP_TONES: Record<
+  Relationship,
+  "neutral" | "success" | "warn" | "danger" | "info"
+> = {
+  close_friend: "success",
+  friend: "info",
+  work_acquaintance: "neutral",
+  employer: "warn",
+  formal: "neutral",
+  suspicious: "danger",
+  stranger: "neutral",
+};
+
 type Chat = {
   chatId: number;
   chatType: string;
   chatTitle: string | null;
   firstName: string | null;
   lastName: string | null;
+  nickname: string | null;
+  relationship: Relationship | null;
   messages: number;
   urgent: number;
   lastSeen: string | null;
@@ -86,6 +120,8 @@ export default function ChatsPage() {
         mode: c.mode,
         firstName: c.firstName || null,
         lastName: c.lastName || null,
+        nickname: c.nickname || null,
+        relationship: c.relationship || null,
       }),
     });
     setEdit(null);
@@ -131,8 +167,13 @@ export default function ChatsPage() {
                   href={`/chats/${c.chatId}`}
                   className="min-w-0 hover:opacity-90"
                 >
-                  <div className="font-medium text-sm truncate">
+                  <div className="font-medium text-sm truncate" dir="auto">
                     {chatDisplayName(c)}
+                    {c.nickname && (
+                      <span className="ml-1 text-[11px] font-normal text-[var(--color-text-dim)]">
+                        ({c.nickname})
+                      </span>
+                    )}
                   </div>
                   {[c.firstName, c.lastName].filter(Boolean).length > 0 &&
                     c.chatTitle &&
@@ -175,6 +216,11 @@ export default function ChatsPage() {
                 {c.urgent > 0 && <Badge tone="danger">{c.urgent} urg</Badge>}
                 {c.vip && <Badge tone="warn">VIP</Badge>}
                 {c.muted && <Badge tone="neutral">muted</Badge>}
+                {c.relationship && (
+                  <Badge tone={RELATIONSHIP_TONES[c.relationship]}>
+                    {RELATIONSHIP_LABELS[c.relationship]}
+                  </Badge>
+                )}
                 {c.customReply && <Badge tone="info">custom</Badge>}
                 {c.aiCostUsd > 0 && (
                   <span className="text-[var(--color-text-dim)] ml-auto">
@@ -213,16 +259,32 @@ export default function ChatsPage() {
                       href={`/chats/${c.chatId}`}
                       className="block hover:opacity-90"
                     >
-                      <div className="font-medium underline-offset-2 hover:underline">
+                      <div
+                        className="font-medium underline-offset-2 hover:underline"
+                        dir="auto"
+                      >
                         {chatDisplayName(c)}
+                        {c.nickname && (
+                          <span className="ml-1 text-[11px] font-normal text-[var(--color-text-dim)]">
+                            ({c.nickname})
+                          </span>
+                        )}
                       </div>
-                      <div className="text-xs text-[var(--color-text-dim)]">
-                        {chatTypeLabel(c.chatType)} · id {c.chatId}
-                        {[c.firstName, c.lastName].filter(Boolean).length > 0 &&
-                          c.chatTitle &&
-                          c.chatTitle !== chatDisplayName(c) && (
-                            <> · tg: {c.chatTitle}</>
-                          )}
+                      <div className="text-xs text-[var(--color-text-dim)] flex flex-wrap gap-x-2 gap-y-0.5 items-center">
+                        <span>
+                          {chatTypeLabel(c.chatType)} · id {c.chatId}
+                          {[c.firstName, c.lastName].filter(Boolean).length >
+                            0 &&
+                            c.chatTitle &&
+                            c.chatTitle !== chatDisplayName(c) && (
+                              <> · tg: {c.chatTitle}</>
+                            )}
+                        </span>
+                        {c.relationship && (
+                          <Badge tone={RELATIONSHIP_TONES[c.relationship]}>
+                            {RELATIONSHIP_LABELS[c.relationship]}
+                          </Badge>
+                        )}
                       </div>
                     </Link>
                   </td>
@@ -309,12 +371,13 @@ export default function ChatsPage() {
               )}
             </p>
 
-            <div className="grid grid-cols-2 gap-2 mb-4">
+            <div className="grid grid-cols-2 gap-2 mb-2">
               <div>
                 <label className="block text-xs text-[var(--color-text-dim)] mb-1">
                   First name
                 </label>
                 <input
+                  dir="auto"
                   type="text"
                   value={edit.firstName ?? ""}
                   onChange={(e) =>
@@ -329,6 +392,7 @@ export default function ChatsPage() {
                   Last name
                 </label>
                 <input
+                  dir="auto"
                   type="text"
                   value={edit.lastName ?? ""}
                   onChange={(e) =>
@@ -339,6 +403,41 @@ export default function ChatsPage() {
                 />
               </div>
             </div>
+
+            <label className="block text-xs text-[var(--color-text-dim)] mb-1">
+              Nickname (اسم خودمونی)
+            </label>
+            <input
+              dir="auto"
+              type="text"
+              value={edit.nickname ?? ""}
+              onChange={(e) => setEdit({ ...edit, nickname: e.target.value })}
+              placeholder="مثلاً موتی / دادا"
+              className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm mb-2"
+            />
+
+            <label className="block text-xs text-[var(--color-text-dim)] mb-1">
+              Relationship
+            </label>
+            <select
+              value={edit.relationship ?? ""}
+              onChange={(e) =>
+                setEdit({
+                  ...edit,
+                  relationship: (e.target.value || null) as
+                    | Relationship
+                    | null,
+                })
+              }
+              className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm mb-4"
+            >
+              <option value="">— ست نشده —</option>
+              {(Object.keys(RELATIONSHIP_LABELS) as Relationship[]).map((r) => (
+                <option key={r} value={r}>
+                  {RELATIONSHIP_LABELS[r]}
+                </option>
+              ))}
+            </select>
 
             <label className="block text-xs text-[var(--color-text-dim)] mb-1">
               Mode for this chat

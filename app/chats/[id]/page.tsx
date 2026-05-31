@@ -17,6 +17,38 @@ const MODE_LABELS: Record<ChatMode, string> = {
   ai_chat: "AI chat (full)",
 };
 
+type Relationship =
+  | "close_friend"
+  | "friend"
+  | "work_acquaintance"
+  | "employer"
+  | "formal"
+  | "suspicious"
+  | "stranger";
+
+const RELATIONSHIP_LABELS: Record<Relationship, string> = {
+  close_friend: "دوست خیلی صمیمی",
+  friend: "دوست معمولی",
+  work_acquaintance: "آشنای کاری",
+  employer: "کارفرما",
+  formal: "رودروایسی",
+  suspicious: "آدم مشکوک",
+  stranger: "آدم ناشناس",
+};
+
+const RELATIONSHIP_TONES: Record<
+  Relationship,
+  "neutral" | "success" | "warn" | "danger" | "info"
+> = {
+  close_friend: "success",
+  friend: "info",
+  work_acquaintance: "neutral",
+  employer: "warn",
+  formal: "neutral",
+  suspicious: "danger",
+  stranger: "neutral",
+};
+
 type Message = {
   id: number;
   createdAt: string;
@@ -46,6 +78,8 @@ type Rule = {
   secretaryUserId: number | null;
   firstName: string | null;
   lastName: string | null;
+  nickname: string | null;
+  relationship: Relationship | null;
   updatedAt: string;
 };
 
@@ -71,6 +105,24 @@ export default function ChatDetailPage() {
   const [hasMore, setHasMore] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Personal-info form (firstName / lastName / nickname / relationship).
+  // Kept in a local draft so the owner can type freely; only commits on Save.
+  type Personal = {
+    firstName: string;
+    lastName: string;
+    nickname: string;
+    relationship: Relationship | "";
+  };
+  const blankPersonal: Personal = {
+    firstName: "",
+    lastName: "",
+    nickname: "",
+    relationship: "",
+  };
+  const [personal, setPersonal] = useState<Personal>(blankPersonal);
+  const [personalDirty, setPersonalDirty] = useState(false);
+  const [personalSaved, setPersonalSaved] = useState(false);
+
   const PAGE = 10;
 
   const load = useCallback(async () => {
@@ -91,8 +143,43 @@ export default function ChatDetailPage() {
     setMessages(j.messages);
     setStats(j.stats);
     setHasMore(j.hasMore);
+    // Rehydrate the personal form so the inputs reflect what's persisted.
+    setPersonal({
+      firstName: j.rule?.firstName ?? "",
+      lastName: j.rule?.lastName ?? "",
+      nickname: j.rule?.nickname ?? "",
+      relationship: j.rule?.relationship ?? "",
+    });
+    setPersonalDirty(false);
     setLoading(false);
   }, [chatId]);
+
+  async function savePersonal() {
+    setSaving(true);
+    await fetch(`/api/chats/${chatId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chatType: rule?.chatType ?? "private",
+        chatTitle: rule?.chatTitle ?? null,
+        vip: rule?.vip ?? false,
+        muted: rule?.muted ?? false,
+        customReply: rule?.customReply ?? null,
+        notes: rule?.notes ?? null,
+        mode: rule?.mode ?? "off",
+        secretaryUserId: rule?.secretaryUserId ?? null,
+        firstName: personal.firstName.trim() || null,
+        lastName: personal.lastName.trim() || null,
+        nickname: personal.nickname.trim() || null,
+        relationship: personal.relationship || null,
+      }),
+    });
+    setSaving(false);
+    setPersonalDirty(false);
+    setPersonalSaved(true);
+    setTimeout(() => setPersonalSaved(false), 2000);
+    load();
+  }
 
   async function loadMore() {
     if (loadingMore || !hasMore) return;
@@ -133,10 +220,12 @@ export default function ChatDetailPage() {
         muted: rule?.muted ?? false,
         customReply: rule?.customReply ?? null,
         notes: rule?.notes ?? null,
-        mode: rule?.mode ?? "secretary",
+        mode: rule?.mode ?? "off",
         secretaryUserId: rule?.secretaryUserId ?? null,
         firstName: rule?.firstName ?? null,
         lastName: rule?.lastName ?? null,
+        nickname: rule?.nickname ?? null,
+        relationship: rule?.relationship ?? null,
         ...patch,
       }),
     });
@@ -156,6 +245,10 @@ export default function ChatDetailPage() {
     (chatId ? `chat ${chatId}` : "—");
   const personHandle = headPerson?.senderUsername;
   const personId = headPerson?.senderId ?? chatId;
+  const updatePersonal = (patch: Partial<Personal>) => {
+    setPersonal((p) => ({ ...p, ...patch }));
+    setPersonalDirty(true);
+  };
 
   return (
     <Shell>
@@ -176,7 +269,14 @@ export default function ChatDetailPage() {
           <Card className="mb-4">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="min-w-0">
-                <div className="text-xl font-semibold truncate">{personName}</div>
+                <div className="text-xl font-semibold truncate" dir="auto">
+                  {personName}
+                  {rule?.nickname && (
+                    <span className="ml-2 text-base font-normal text-[var(--color-text-dim)]">
+                      ({rule.nickname})
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-[var(--color-text-dim)] mt-1 flex flex-wrap items-center gap-2">
                   {personHandle && <span>@{personHandle}</span>}
                   <span>id {personId}</span>
@@ -208,42 +308,112 @@ export default function ChatDetailPage() {
                   </div>
                 )}
 
-                <div className="mt-4 grid grid-cols-2 gap-2 max-w-md">
-                  <div>
-                    <label className="block text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
-                      First name
-                    </label>
-                    <input
-                      key={`fn-${rule?.firstName ?? ""}`}
-                      type="text"
-                      disabled={saving}
-                      defaultValue={rule?.firstName ?? ""}
-                      onBlur={(e) => {
-                        const v = e.target.value.trim();
-                        if ((rule?.firstName ?? "") === v) return;
-                        patchRule({ firstName: v || null });
-                      }}
-                      placeholder="—"
-                      className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
-                    />
+                {rule?.relationship && (
+                  <div className="mt-3">
+                    <Badge tone={RELATIONSHIP_TONES[rule.relationship]}>
+                      {RELATIONSHIP_LABELS[rule.relationship]}
+                    </Badge>
                   </div>
-                  <div>
-                    <label className="block text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
-                      Last name
-                    </label>
-                    <input
-                      key={`ln-${rule?.lastName ?? ""}`}
-                      type="text"
-                      disabled={saving}
-                      defaultValue={rule?.lastName ?? ""}
-                      onBlur={(e) => {
-                        const v = e.target.value.trim();
-                        if ((rule?.lastName ?? "") === v) return;
-                        patchRule({ lastName: v || null });
-                      }}
-                      placeholder="—"
-                      className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
-                    />
+                )}
+
+                <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
+                  <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
+                    Personal info (used by AI to adjust tone)
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                        First name
+                      </label>
+                      <input
+                        dir="auto"
+                        type="text"
+                        disabled={saving}
+                        value={personal.firstName}
+                        onChange={(e) =>
+                          updatePersonal({ firstName: e.target.value })
+                        }
+                        placeholder="—"
+                        className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                        Last name
+                      </label>
+                      <input
+                        dir="auto"
+                        type="text"
+                        disabled={saving}
+                        value={personal.lastName}
+                        onChange={(e) =>
+                          updatePersonal({ lastName: e.target.value })
+                        }
+                        placeholder="—"
+                        className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                        Nickname (اسم خودمونی که صداش می‌کنیم)
+                      </label>
+                      <input
+                        dir="auto"
+                        type="text"
+                        disabled={saving}
+                        value={personal.nickname}
+                        onChange={(e) =>
+                          updatePersonal({ nickname: e.target.value })
+                        }
+                        placeholder="مثلاً موتی / دادا"
+                        className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                        Relationship
+                      </label>
+                      <select
+                        disabled={saving}
+                        value={personal.relationship}
+                        onChange={(e) =>
+                          updatePersonal({
+                            relationship: e.target.value as
+                              | Relationship
+                              | "",
+                          })
+                        }
+                        className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                      >
+                        <option value="">— ست نشده —</option>
+                        {(Object.keys(RELATIONSHIP_LABELS) as Relationship[]).map(
+                          (r) => (
+                            <option key={r} value={r}>
+                              {RELATIONSHIP_LABELS[r]}
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={savePersonal}
+                      disabled={saving || !personalDirty}
+                      className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-40 hover:opacity-90"
+                    >
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                    {personalDirty && (
+                      <span className="text-[10px] text-amber-400">
+                        unsaved changes
+                      </span>
+                    )}
+                    {personalSaved && !personalDirty && (
+                      <span className="text-[10px] text-emerald-400">
+                        ✓ saved
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

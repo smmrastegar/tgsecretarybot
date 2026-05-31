@@ -307,9 +307,32 @@ HARD RULES:
   apologise on the owner's behalf. Never refuse to answer.
 - Keep it natural and conversational, usually 1-2 sentences. Greetings get
   greetings + a specific follow-up about something from context.
+- If the payload provides "relationship_guidance", follow that tone strictly
+  — it tells you how close / formal / cautious the owner is with this
+  person. The relationship label dominates over the prior style of the
+  conversation when they conflict.
+- If "nickname" is set, prefer addressing the person by that nickname when
+  natural, especially for close_friend / friend relationships.
 
 Output STRICT JSON only, no prose, no code fences:
 { "reply": "<the reply text>" }`;
+
+const RELATIONSHIP_GUIDANCE: Record<string, string> = {
+  close_friend:
+    "دوست خیلی صمیمی — کاملاً خودمونی و صمیمی، شوخی و طعنه آزاد، بدون تعارف. کوتاه و راحت بنویس.",
+  friend:
+    "دوست معمولی — لحن دوستانه و راحت ولی نه خیلی پررو. می‌توانی شوخی کنی اما حد نگه‌دار.",
+  work_acquaintance:
+    "آشنای کاری — مودب، حرفه‌ای، گرم ولی مرزدار. از تعارف بیش از حد پرهیز کن، روی موضوع کاری بمان.",
+  employer:
+    "کارفرما — کاملاً محترمانه و رسمی، با احترام بالا. لحن مودب با «شما» و فعل جمع. سریع و دقیق پاسخ بده.",
+  formal:
+    "رودروایسی — لحن مودبانه و کمی محتاط. تعارف معمول ولی نه خیلی صمیمی. کلمات سنگین‌تر استفاده کن.",
+  suspicious:
+    "آدم مشکوک — مختصر و سرد. هیچ اطلاعات شخصی نده، روی پاسخ‌های کلی و حداقلی بمان. اگر سوال خاصی پرسید جواب مستقیم نده.",
+  stranger:
+    "آدم ناشناس — مودب، خنثی، حداقلی. اطلاعات شخصی نده، فقط جواب مناسب جنرال بده.",
+};
 
 export async function aiConversationReply(input: {
   ownerName: string;
@@ -317,6 +340,8 @@ export async function aiConversationReply(input: {
   ownerContext: string;
   senderName: string;
   history: Array<{ from: "owner" | "other"; senderName: string; text: string }>;
+  nickname?: string | null;
+  relationship?: string | null;
   chatId?: number;
   businessConnectionId?: string;
 }): Promise<string> {
@@ -324,6 +349,11 @@ export async function aiConversationReply(input: {
     owner_name: input.ownerDisplayName || input.ownerName,
     owner_context: input.ownerContext || undefined,
     talking_to: input.senderName,
+    nickname: input.nickname || undefined,
+    relationship: input.relationship || undefined,
+    relationship_guidance: input.relationship
+      ? RELATIONSHIP_GUIDANCE[input.relationship]
+      : undefined,
     conversation: input.history.slice(-30).map((m) => ({
       role: m.from === "owner" ? "owner" : "them",
       name: m.senderName,
@@ -358,7 +388,14 @@ the recent conversation between the owner and the other person, then rewrite
 the away-message in the same language, tone, and formality the owner uses with
 THIS person. Keep the meaning of the away-message (that the owner is not
 available and will respond later), but make it feel personal, warm, and like
-something the owner would actually type. Output STRICT JSON: { "reply": "..." }`;
+something the owner would actually type.
+
+If "relationship_guidance" is set in the payload, follow that tone strictly
+— it overrides the prior conversation style when they conflict. If
+"nickname" is set, prefer it when addressing the person (especially for
+close_friend / friend).
+
+Output STRICT JSON: { "reply": "..." }`;
 
 export async function friendlyAutoReply(input: {
   ownerName: string;
@@ -367,6 +404,8 @@ export async function friendlyAutoReply(input: {
   senderName: string;
   awayMessage: string;
   history: Array<{ from: "owner" | "other"; senderName: string; text: string }>;
+  nickname?: string | null;
+  relationship?: string | null;
   chatId?: number;
   businessConnectionId?: string;
 }): Promise<string> {
@@ -374,6 +413,11 @@ export async function friendlyAutoReply(input: {
     owner_name: input.ownerDisplayName || input.ownerName,
     owner_context: input.ownerContext || undefined,
     talking_to: input.senderName,
+    nickname: input.nickname || undefined,
+    relationship: input.relationship || undefined,
+    relationship_guidance: input.relationship
+      ? RELATIONSHIP_GUIDANCE[input.relationship]
+      : undefined,
     away_message: input.awayMessage,
     conversation: input.history.slice(-20).map((m) => ({
       role: m.from === "owner" ? "owner" : "them",

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { sql, hasDb, recentConversation } from "@/lib/db";
+import { sql, hasDb, recentConversation, getChatRule } from "@/lib/db";
 import { aiConversationReply } from "@/lib/classifier";
 import { getSettings } from "@/lib/settings";
 
@@ -37,7 +37,10 @@ export async function POST(
   }
 
   const settings = await getSettings();
-  const history = await recentConversation(Number(row.chat_id), 40);
+  const [history, rule] = await Promise.all([
+    recentConversation(Number(row.chat_id), 40),
+    getChatRule(Number(row.chat_id)).catch(() => null),
+  ]);
 
   try {
     const text = await aiConversationReply({
@@ -46,6 +49,8 @@ export async function POST(
       ownerContext: settings.ownerContext,
       senderName: row.sender_name,
       history,
+      nickname: rule?.nickname ?? null,
+      relationship: rule?.relationship ?? null,
       chatId: Number(row.chat_id),
       businessConnectionId: row.business_connection_id,
     });

@@ -9,6 +9,7 @@ import { relTime } from "@/lib/format";
 type Item = {
   id: number;
   messageId: number | null;
+  tgMessageId: number | null;
   chatId: number | null;
   chatTitle: string | null;
   senderName: string | null;
@@ -18,9 +19,37 @@ type Item = {
   dueAt: string | null;
   location: string | null;
   participants: string[] | null;
+  sourceText: string | null;
   doneAt: string | null;
   createdAt: string;
 };
+
+function googleCalendarUrl(it: Item): string {
+  const params = new URLSearchParams();
+  params.set("action", "TEMPLATE");
+  params.set("text", it.title);
+  if (it.dueAt) {
+    // Google Calendar uses YYYYMMDDTHHmmssZ format. Default duration 1 hour
+    // when we have a start time.
+    const start = new Date(it.dueAt);
+    if (!Number.isNaN(start.getTime())) {
+      const end = new Date(start.getTime() + 60 * 60 * 1000);
+      const fmt = (d: Date) =>
+        d
+          .toISOString()
+          .replace(/[-:]/g, "")
+          .replace(/\.\d{3}/, "");
+      params.set("dates", `${fmt(start)}/${fmt(end)}`);
+    }
+  }
+  const details: string[] = [];
+  if (it.description) details.push(it.description);
+  if (it.senderName) details.push(`From: ${it.senderName}`);
+  if (it.sourceText) details.push(`\nOriginal:\n${it.sourceText}`);
+  if (details.length > 0) params.set("details", details.join("\n"));
+  if (it.location) params.set("location", it.location);
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
 
 const KIND_LABEL: Record<
   string,
@@ -57,6 +86,14 @@ export default function RemindersPage() {
   const [filter, setFilter] = useState<"upcoming" | "all" | "done">("upcoming");
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedSource, setExpandedSource] = useState<Set<number>>(new Set());
+  const toggleSource = (id: number) =>
+    setExpandedSource((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -162,6 +199,37 @@ export default function RemindersPage() {
                         </span>
                       )}
                       <span>{relTime(it.createdAt)}</span>
+                    </div>
+                    {it.sourceText && (
+                      <div className="mt-2">
+                        <button
+                          onClick={() => toggleSource(it.id)}
+                          className="text-[11px] text-[var(--color-text-dim)] hover:text-white underline-offset-2 hover:underline"
+                        >
+                          {expandedSource.has(it.id)
+                            ? "Hide original message ▴"
+                            : "Show original message ▾"}
+                        </button>
+                        {expandedSource.has(it.id) && (
+                          <div
+                            dir="auto"
+                            className="mt-1 p-2 rounded-md bg-[var(--color-surface-2)] text-xs whitespace-pre-wrap break-words border border-[var(--color-border)]"
+                          >
+                            {it.sourceText}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div className="mt-3 flex gap-2 flex-wrap">
+                      <a
+                        href={googleCalendarUrl(it)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                        title="Open prefilled Google Calendar event in a new tab"
+                      >
+                        📅 Add to Google Calendar
+                      </a>
                     </div>
                   </div>
                   <button

@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { getBot } from "@/lib/bot";
 import {
   audit,
+  getChatRule,
   hasDb,
   logMessage,
   markMessageHandled,
@@ -55,7 +56,10 @@ export async function POST(
   }
 
   const settings = await getSettings();
-  const history = await recentConversation(Number(row.chat_id), 40);
+  const [history, rule] = await Promise.all([
+    recentConversation(Number(row.chat_id), 40),
+    getChatRule(Number(row.chat_id)).catch(() => null),
+  ]);
 
   let reply: string;
   try {
@@ -65,6 +69,8 @@ export async function POST(
       ownerContext: settings.ownerContext,
       senderName: row.sender_name,
       history,
+      nickname: rule?.nickname ?? null,
+      relationship: rule?.relationship ?? null,
       chatId: Number(row.chat_id),
       businessConnectionId: row.business_connection_id,
     });
@@ -131,16 +137,22 @@ export async function POST(
   }
 
   // Switch the chat to ai_chat mode so future messages keep getting AI replies.
+  // Preserve every other rule field — only mode flips.
   try {
     await upsertChatRule({
       chatId: Number(row.chat_id),
       chatType: row.chat_type,
-      chatTitle: row.chat_title,
-      vip: false,
-      muted: false,
-      customReply: null,
-      notes: null,
+      chatTitle: row.chat_title ?? rule?.chatTitle ?? null,
+      vip: rule?.vip ?? false,
+      muted: rule?.muted ?? false,
+      customReply: rule?.customReply ?? null,
+      notes: rule?.notes ?? null,
       mode: "ai_chat",
+      secretaryUserId: rule?.secretaryUserId ?? null,
+      firstName: rule?.firstName ?? null,
+      lastName: rule?.lastName ?? null,
+      nickname: rule?.nickname ?? null,
+      relationship: rule?.relationship ?? null,
     });
   } catch (err) {
     console.error("[ai-handle] mode update failed:", err);

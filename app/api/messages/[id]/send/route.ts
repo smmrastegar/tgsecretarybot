@@ -4,6 +4,7 @@ import { getBot } from "@/lib/bot";
 import {
   audit,
   CHAT_MODES,
+  getChatRule,
   hasDb,
   logMessage,
   markMessageHandled,
@@ -118,15 +119,21 @@ export async function POST(
 
   if (body.setMode && CHAT_MODES.includes(body.setMode)) {
     try {
+      const existing = await getChatRule(Number(row.chat_id)).catch(() => null);
       await upsertChatRule({
         chatId: Number(row.chat_id),
         chatType: row.chat_type,
-        chatTitle: row.chat_title,
-        vip: false,
-        muted: false,
-        customReply: null,
-        notes: null,
+        chatTitle: row.chat_title ?? existing?.chatTitle ?? null,
+        vip: existing?.vip ?? false,
+        muted: existing?.muted ?? false,
+        customReply: existing?.customReply ?? null,
+        notes: existing?.notes ?? null,
         mode: body.setMode,
+        secretaryUserId: existing?.secretaryUserId ?? null,
+        firstName: existing?.firstName ?? null,
+        lastName: existing?.lastName ?? null,
+        nickname: existing?.nickname ?? null,
+        relationship: existing?.relationship ?? null,
       });
     } catch (err) {
       console.error("[send] mode update failed:", err);

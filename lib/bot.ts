@@ -148,6 +148,7 @@ async function autoExtractAndSave(args: {
       .filter((it) => it && typeof it.title === "string" && it.title.trim())
       .map((it) => ({
         messageId: null, // we don't have messages_log.id here; link via chat/message_id is enough
+        tgMessageId: args.messageId,
         chatId: args.chatId,
         chatTitle: args.chatTitle,
         senderName: args.senderName,
@@ -161,6 +162,7 @@ async function autoExtractAndSave(args: {
           it.participants.every((p) => typeof p === "string")
             ? (it.participants as string[])
             : null,
+        sourceText: args.text.slice(0, 4000),
       }));
     if (valid.length > 0) {
       await saveExtractedItems(valid);
@@ -617,7 +619,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   // chat is still in 'secretary' mode. If the owner switched the chat to
   // another mode (auto_reply / friendly / ai_chat / off), any leftover
   // session is closed first so the new mode can run.
-  const currentMode: ChatMode = rule?.mode ?? "secretary";
+  const currentMode: ChatMode = rule?.mode ?? "off";
   const secEnabled =
     (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
   const defaultSec = defaultSecretary(settings);
@@ -700,7 +702,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     let forwardedToSecretary = false;
     const secEnabled =
       (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
-    const mode: ChatMode = rule?.mode ?? "secretary";
+    const mode: ChatMode = rule?.mode ?? "off";
     if (
       secEnabled &&
       mode === "secretary" &&
@@ -856,7 +858,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   let autoReplied = false;
   const chatLabel = chatTitle ?? (msg.chat.type === "private" ? `DM from ${senderName}` : `chat ${msg.chat.id}`);
 
-  const mode: ChatMode = rule?.mode ?? "secretary";
+  const mode: ChatMode = rule?.mode ?? "off";
   const isDmPrivate = msg.chat.type === "private";
 
   // Alerts fire on urgent regardless of mode (except "off").
@@ -929,6 +931,8 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         senderName,
         settings,
         customReply: rule?.customReply ?? null,
+        nickname: rule?.nickname ?? null,
+        relationship: rule?.relationship ?? null,
         bot,
       });
     } else if (mode === "ai_chat") {
@@ -937,6 +941,8 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         bcId,
         senderName,
         settings,
+        nickname: rule?.nickname ?? null,
+        relationship: rule?.relationship ?? null,
         bot,
       });
     }
@@ -1648,9 +1654,11 @@ async function sendFriendlyReply(args: {
   senderName: string;
   settings: Awaited<ReturnType<typeof getSettings>>;
   customReply: string | null;
+  nickname: string | null;
+  relationship: import("./db").Relationship | null;
   bot: Bot;
 }): Promise<boolean> {
-  const { msg, bcId, senderName, settings, customReply, bot } = args;
+  const { msg, bcId, senderName, settings, customReply, nickname, relationship, bot } = args;
   if (msg.chat.type !== "private") return false;
   const awayMessage = customReply || settings.autoReplyText;
   if (!awayMessage) return false;
@@ -1685,6 +1693,8 @@ async function sendFriendlyReply(args: {
         senderName,
         awayMessage,
         history,
+        nickname,
+        relationship,
         chatId: msg.chat.id,
         businessConnectionId: bcId,
       })) || awayMessage;
@@ -1724,9 +1734,11 @@ async function sendAiConversation(args: {
   bcId: string;
   senderName: string;
   settings: Awaited<ReturnType<typeof getSettings>>;
+  nickname: string | null;
+  relationship: import("./db").Relationship | null;
   bot: Bot;
 }): Promise<boolean> {
-  const { msg, bcId, senderName, settings, bot } = args;
+  const { msg, bcId, senderName, settings, nickname, relationship, bot } = args;
   if (msg.chat.type !== "private") return false;
   const userText = msg.text ?? msg.caption;
   if (!userText) return false;
@@ -1753,6 +1765,8 @@ async function sendAiConversation(args: {
       ownerContext: settings.ownerContext,
       senderName,
       history,
+      nickname,
+      relationship,
       chatId: msg.chat.id,
       businessConnectionId: bcId,
     });

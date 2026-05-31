@@ -76,6 +76,7 @@ export async function POST(
           it.participants.every((p) => typeof p === "string")
             ? (it.participants as string[])
             : null,
+        sourceText: sourceText.slice(0, 4000),
       }));
     const n = await saveExtractedItems(valid);
     await audit({

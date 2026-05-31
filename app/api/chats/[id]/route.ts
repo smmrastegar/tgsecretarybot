@@ -6,8 +6,10 @@ import {
   getChatRule,
   getSenderStats,
   listMessages,
+  RELATIONSHIPS,
   upsertChatRule,
   type ChatMode,
+  type Relationship,
 } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -72,12 +74,14 @@ export async function PUT(
     secretaryUserId?: number | null;
     firstName?: string | null;
     lastName?: string | null;
+    nickname?: string | null;
+    relationship?: Relationship | null;
   };
   const existing = await getChatRule(chatId);
   const mode: ChatMode =
     body.mode && CHAT_MODES.includes(body.mode)
       ? body.mode
-      : existing?.mode ?? "secretary";
+      : existing?.mode ?? "off";
   const secretaryUserId =
     body.secretaryUserId === undefined
       ? existing?.secretaryUserId ?? null
@@ -96,6 +100,17 @@ export async function PUT(
     body.lastName === undefined
       ? existing?.lastName ?? null
       : normName(body.lastName);
+  const nickname =
+    body.nickname === undefined
+      ? existing?.nickname ?? null
+      : normName(body.nickname);
+  const relationship: Relationship | null =
+    body.relationship === undefined
+      ? existing?.relationship ?? null
+      : body.relationship &&
+          (RELATIONSHIPS as readonly string[]).includes(body.relationship)
+        ? body.relationship
+        : null;
   await upsertChatRule({
     chatId,
     chatType: body.chatType ?? existing?.chatType ?? "private",
@@ -108,6 +123,8 @@ export async function PUT(
     secretaryUserId,
     firstName,
     lastName,
+    nickname,
+    relationship,
   });
   await audit({
     actorId: session.userId,

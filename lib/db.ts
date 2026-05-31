@@ -146,11 +146,26 @@ export async function ensureSchema(): Promise<void> {
         UNIQUE (secretary_chat_id, secretary_message_id)
       )`;
     await q`ALTER TABLE secretary_message_links ADD COLUMN IF NOT EXISTS sender_message_id BIGINT`;
-    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'secretary'`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'off'`;
+    await q`ALTER TABLE chat_rules ALTER COLUMN mode SET DEFAULT 'off'`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS secretary_user_id BIGINT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS first_name TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS last_name TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS nickname TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS relationship TEXT`;
+    // One-time migration: the old default was 'secretary' which caused the
+    // bot to relay/auto-reply in every new chat. Owner wants the default to
+    // be silent (off); flip every existing 'secretary' row to 'off' exactly
+    // once, then leave them alone so future explicit choices stick.
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.default_mode_off.v1'`;
+      if ((flag as unknown[]).length === 0) {
+        await q`UPDATE chat_rules SET mode = 'off', mode_changed_at = NOW() WHERE mode = 'secretary'`;
+        await q`INSERT INTO settings (key, value) VALUES ('migration.default_mode_off.v1', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
     await q`
       CREATE TABLE IF NOT EXISTS ai_usage (
         id                     BIGSERIAL PRIMARY KEY,
@@ -184,6 +199,8 @@ export async function ensureSchema(): Promise<void> {
       )`;
     await q`CREATE INDEX IF NOT EXISTS extracted_items_due_idx ON extracted_items (due_at) WHERE done_at IS NULL`;
     await q`CREATE INDEX IF NOT EXISTS extracted_items_created_idx ON extracted_items (created_at DESC)`;
+    await q`ALTER TABLE extracted_items ADD COLUMN IF NOT EXISTS source_text TEXT`;
+    await q`ALTER TABLE extracted_items ADD COLUMN IF NOT EXISTS tg_message_id BIGINT`;
     await q`
       CREATE TABLE IF NOT EXISTS invites (
         token        TEXT PRIMARY KEY,
@@ -562,6 +579,17 @@ export const CHAT_MODES: ChatMode[] = [
   "ai_chat",
 ];
 
+export const RELATIONSHIPS = [
+  "close_friend",
+  "friend",
+  "work_acquaintance",
+  "employer",
+  "formal",
+  "suspicious",
+  "stranger",
+] as const;
+export type Relationship = (typeof RELATIONSHIPS)[number];
+
 export type ChatRule = {
   chatId: number;
   chatType: string;
@@ -575,11 +603,14 @@ export type ChatRule = {
   secretaryUserId: number | null;
   firstName: string | null;
   lastName: string | null;
+  nickname: string | null;
+  relationship: Relationship | null;
   updatedAt: Date;
 };
 
 function rowToChatRule(r: Record<string, unknown>): ChatRule {
-  const mode = (r.mode as string) ?? "secretary";
+  const mode = (r.mode as string) ?? "off";
+  const rel = (r.relationship as string) ?? null;
   return {
     chatId: Number(r.chat_id),
     chatType: r.chat_type as string,
@@ -588,13 +619,18 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
     muted: r.muted as boolean,
     customReply: (r.custom_reply as string) ?? null,
     notes: (r.notes as string) ?? null,
-    mode: (CHAT_MODES.includes(mode as ChatMode) ? mode : "secretary") as ChatMode,
+    mode: (CHAT_MODES.includes(mode as ChatMode) ? mode : "off") as ChatMode,
     modeChangedAt:
       (r.mode_changed_at as Date) ?? (r.updated_at as Date) ?? new Date(),
     secretaryUserId:
       r.secretary_user_id != null ? Number(r.secretary_user_id) : null,
     firstName: (r.first_name as string) ?? null,
     lastName: (r.last_name as string) ?? null,
+    nickname: (r.nickname as string) ?? null,
+    relationship:
+      rel && (RELATIONSHIPS as readonly string[]).includes(rel)
+        ? (rel as Relationship)
+        : null,
     updatedAt: r.updated_at as Date,
   };
 }
@@ -605,7 +641,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
   const rows = await sql()`
     SELECT chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
            mode, mode_changed_at, secretary_user_id,
-           first_name, last_name, updated_at
+           first_name, last_name, nickname, relationship, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToChatRule(r) : null;
@@ -623,22 +659,30 @@ export async function upsertChatRule(rule: {
   secretaryUserId?: number | null;
   firstName?: string | null;
   lastName?: string | null;
+  nickname?: string | null;
+  relationship?: Relationship | null;
 }): Promise<void> {
   await ensureSchema();
-  const mode = rule.mode ?? "secretary";
+  const mode = rule.mode ?? "off";
   const secretaryUserId = rule.secretaryUserId ?? null;
   const firstName = rule.firstName ?? null;
   const lastName = rule.lastName ?? null;
+  const nickname = rule.nickname ?? null;
+  const relationship =
+    rule.relationship &&
+    (RELATIONSHIPS as readonly string[]).includes(rule.relationship)
+      ? rule.relationship
+      : null;
   await sql()`
     INSERT INTO chat_rules (
       chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
       mode, mode_changed_at, secretary_user_id,
-      first_name, last_name, updated_at
+      first_name, last_name, nickname, relationship, updated_at
     )
     VALUES (
       ${rule.chatId}, ${rule.chatType}, ${rule.chatTitle}, ${rule.vip}, ${rule.muted},
       ${rule.customReply}, ${rule.notes}, ${mode}, NOW(), ${secretaryUserId},
-      ${firstName}, ${lastName}, NOW()
+      ${firstName}, ${lastName}, ${nickname}, ${relationship}, NOW()
     )
     ON CONFLICT (chat_id) DO UPDATE SET
       chat_type = EXCLUDED.chat_type,
@@ -653,6 +697,8 @@ export async function upsertChatRule(rule: {
       secretary_user_id = EXCLUDED.secretary_user_id,
       first_name = EXCLUDED.first_name,
       last_name = EXCLUDED.last_name,
+      nickname = EXCLUDED.nickname,
+      relationship = EXCLUDED.relationship,
       updated_at = NOW()`;
 }
 
@@ -685,7 +731,7 @@ export async function getChatMode(
 ): Promise<{ mode: ChatMode; changedAt: Date }> {
   const rule = await getChatRule(chatId).catch(() => null);
   return {
-    mode: rule?.mode ?? "secretary",
+    mode: rule?.mode ?? "off",
     changedAt: rule?.modeChangedAt ?? new Date(0),
   };
 }
@@ -705,6 +751,8 @@ export async function listChats(): Promise<
     modeChangedAt: Date | null;
     firstName: string | null;
     lastName: string | null;
+    nickname: string | null;
+    relationship: Relationship | null;
     aiCostUsd: number;
     aiTokens: number;
   }>
@@ -725,6 +773,8 @@ export async function listChats(): Promise<
       MAX(r.mode_changed_at) AS mode_changed_at,
       MAX(r.first_name) AS first_name,
       MAX(r.last_name) AS last_name,
+      MAX(r.nickname) AS nickname,
+      MAX(r.relationship) AS relationship,
       COALESCE(SUM(u.cost_usd), 0)::float8 AS ai_cost,
       COALESCE(SUM(u.total_tokens), 0)::int AS ai_tokens
     FROM messages_log m
@@ -734,7 +784,8 @@ export async function listChats(): Promise<
     ORDER BY last_seen DESC NULLS LAST
     LIMIT 200`;
   return rows.map((r) => {
-    const mode = (r.mode as string) ?? "secretary";
+    const mode = (r.mode as string) ?? "off";
+    const rel = (r.relationship as string) ?? null;
     return {
       chatId: Number(r.chat_id),
       chatType: r.chat_type as string,
@@ -745,10 +796,15 @@ export async function listChats(): Promise<
       vip: r.vip as boolean,
       muted: r.muted as boolean,
       customReply: (r.custom_reply as string) ?? null,
-      mode: (CHAT_MODES.includes(mode as ChatMode) ? mode : "secretary") as ChatMode,
+      mode: (CHAT_MODES.includes(mode as ChatMode) ? mode : "off") as ChatMode,
       modeChangedAt: (r.mode_changed_at as Date) ?? null,
       firstName: (r.first_name as string) ?? null,
       lastName: (r.last_name as string) ?? null,
+      nickname: (r.nickname as string) ?? null,
+      relationship:
+        rel && (RELATIONSHIPS as readonly string[]).includes(rel)
+          ? (rel as Relationship)
+          : null,
       aiCostUsd: Number(r.ai_cost) || 0,
       aiTokens: Number(r.ai_tokens) || 0,
     };
@@ -1421,6 +1477,7 @@ export async function chatModeCounts(): Promise<Record<ChatMode, number>> {
 export type ExtractedItem = {
   id: number;
   messageId: number | null;
+  tgMessageId: number | null;
   chatId: number | null;
   chatTitle: string | null;
   senderName: string | null;
@@ -1430,12 +1487,14 @@ export type ExtractedItem = {
   dueAt: Date | null;
   location: string | null;
   participants: string[] | null;
+  sourceText: string | null;
   doneAt: Date | null;
   createdAt: Date;
 };
 
 export async function saveExtractedItems(items: Array<{
   messageId: number | null;
+  tgMessageId?: number | null;
   chatId: number | null;
   chatTitle: string | null;
   senderName: string | null;
@@ -1445,6 +1504,7 @@ export async function saveExtractedItems(items: Array<{
   dueAt?: Date | null;
   location?: string | null;
   participants?: string[] | null;
+  sourceText?: string | null;
 }>): Promise<number> {
   if (!hasDb() || items.length === 0) return 0;
   await ensureSchema();
@@ -1453,14 +1513,15 @@ export async function saveExtractedItems(items: Array<{
   for (const it of items) {
     await q`
       INSERT INTO extracted_items (
-        message_id, chat_id, chat_title, sender_name,
-        kind, title, description, due_at, location, participants
+        message_id, tg_message_id, chat_id, chat_title, sender_name,
+        kind, title, description, due_at, location, participants, source_text
       ) VALUES (
-        ${it.messageId}, ${it.chatId}, ${it.chatTitle}, ${it.senderName},
+        ${it.messageId}, ${it.tgMessageId ?? null}, ${it.chatId}, ${it.chatTitle}, ${it.senderName},
         ${it.kind}, ${it.title}, ${it.description ?? null},
         ${it.dueAt ? it.dueAt.toISOString() : null},
         ${it.location ?? null},
-        ${it.participants ? JSON.stringify(it.participants) : null}::jsonb
+        ${it.participants ? JSON.stringify(it.participants) : null}::jsonb,
+        ${it.sourceText ?? null}
       )`;
     n++;
   }
@@ -1472,6 +1533,7 @@ function rowToExtracted(r: Record<string, unknown>): ExtractedItem {
   return {
     id: Number(r.id),
     messageId: r.message_id != null ? Number(r.message_id) : null,
+    tgMessageId: r.tg_message_id != null ? Number(r.tg_message_id) : null,
     chatId: r.chat_id != null ? Number(r.chat_id) : null,
     chatTitle: (r.chat_title as string) ?? null,
     senderName: (r.sender_name as string) ?? null,
@@ -1481,6 +1543,7 @@ function rowToExtracted(r: Record<string, unknown>): ExtractedItem {
     dueAt: (r.due_at as Date) ?? null,
     location: (r.location as string) ?? null,
     participants: Array.isArray(p) ? (p as string[]) : null,
+    sourceText: (r.source_text as string) ?? null,
     doneAt: (r.done_at as Date) ?? null,
     createdAt: r.created_at as Date,
   };

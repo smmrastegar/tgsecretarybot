@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { getBot } from "@/lib/bot";
 import {
   audit,
+  getChatRule,
   hasDb,
   openSecretarySession,
   recordSecretaryLink,
@@ -242,18 +243,24 @@ export async function POST(
   }
 
   // Switching to a manual forward implies the owner wants the secretary
-  // path for future incoming messages from this sender, so set the chat
-  // mode to 'secretary' (the default, but explicit if it was changed).
+  // path for future incoming messages from this sender. Preserve all other
+  // rule fields and just flip the mode.
   try {
+    const existing = await getChatRule(chatId).catch(() => null);
     await upsertChatRule({
       chatId,
       chatType: row.chat_type,
-      chatTitle: row.chat_title,
-      vip: false,
-      muted: false,
-      customReply: null,
-      notes: null,
+      chatTitle: row.chat_title ?? existing?.chatTitle ?? null,
+      vip: existing?.vip ?? false,
+      muted: existing?.muted ?? false,
+      customReply: existing?.customReply ?? null,
+      notes: existing?.notes ?? null,
       mode: "secretary",
+      secretaryUserId: existing?.secretaryUserId ?? null,
+      firstName: existing?.firstName ?? null,
+      lastName: existing?.lastName ?? null,
+      nickname: existing?.nickname ?? null,
+      relationship: existing?.relationship ?? null,
     });
   } catch (err) {
     console.error("[forward] mode update failed:", err);
