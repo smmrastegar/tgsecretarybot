@@ -139,6 +139,7 @@ export async function ensureSchema(): Promise<void> {
         created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (secretary_chat_id, secretary_message_id)
       )`;
+    await q`ALTER TABLE secretary_message_links ADD COLUMN IF NOT EXISTS sender_message_id BIGINT`;
   })().catch((err) => {
     schemaPromise = null;
     throw err;
@@ -777,15 +778,46 @@ export async function recordSecretaryLink(args: {
   secretaryChatId: number;
   secretaryMessageId: number;
   direction: "inbound" | "outbound";
+  senderMessageId?: number | null;
 }): Promise<void> {
   await ensureSchema();
   await sql()`
     INSERT INTO secretary_message_links (
-      session_id, secretary_chat_id, secretary_message_id, direction
+      session_id, secretary_chat_id, secretary_message_id, direction, sender_message_id
     ) VALUES (
-      ${args.sessionId}, ${args.secretaryChatId}, ${args.secretaryMessageId}, ${args.direction}
+      ${args.sessionId}, ${args.secretaryChatId}, ${args.secretaryMessageId},
+      ${args.direction}, ${args.senderMessageId ?? null}
     )
-    ON CONFLICT (secretary_chat_id, secretary_message_id) DO NOTHING`;
+    ON CONFLICT (secretary_chat_id, secretary_message_id) DO UPDATE
+      SET sender_message_id = COALESCE(EXCLUDED.sender_message_id,
+                                       secretary_message_links.sender_message_id)`;
+}
+
+export async function findLinkWithSenderMessage(
+  secretaryChatId: number,
+  secretaryMessageId: number,
+): Promise<
+  | (SecretarySession & { senderMessageIdLinked: number | null })
+  | null
+> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT s.*, l.sender_message_id AS linked_sender_message_id
+    FROM secretary_sessions s
+    JOIN secretary_message_links l ON l.session_id = s.id
+    WHERE l.secretary_chat_id = ${secretaryChatId}
+      AND l.secretary_message_id = ${secretaryMessageId}
+    LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  if (!r) return null;
+  const session = rowToSecretarySession(r);
+  const linked = r.linked_sender_message_id;
+  return {
+    ...session,
+    senderMessageIdLinked:
+      linked != null ? Number(linked as string | number) : null,
+  };
 }
 
 export async function findSessionByLinkedMessage(

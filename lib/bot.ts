@@ -7,6 +7,7 @@ import { getSettings } from "./settings";
 import {
   endSecretarySession,
   findActiveSecretarySessionForSender,
+  findLinkWithSenderMessage,
   findOnlyActiveSessionForSecretary,
   findSessionByLinkedMessage,
   getBusinessConnection,
@@ -22,6 +23,7 @@ import {
   upsertBusinessConnection,
   type SecretarySession,
 } from "./db";
+import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
 
 let _bot: Bot | null = null;
@@ -36,6 +38,7 @@ export const ALLOWED_UPDATES = [
   "business_message",
   "edited_business_message",
   "deleted_business_messages",
+  "message_reaction",
 ] as const;
 
 type OwnerCacheEntry = { userId: number; userChatId: number; canReply: boolean };
@@ -130,6 +133,12 @@ function buildBot(): Bot {
   bot.on("message", async (ctx) => {
     await handleSecretaryReply(ctx.update.message, bot).catch((err) =>
       console.error("[secretary] handler error:", err),
+    );
+  });
+
+  bot.on("message_reaction", async (ctx) => {
+    await handleSecretaryReaction(ctx.update.message_reaction, bot).catch(
+      (err) => console.error("[secretary] reaction error:", err),
     );
   });
 
@@ -875,6 +884,7 @@ async function maybeForwardToSecretary(args: {
         secretaryChatId: secId,
         secretaryMessageId: id,
         direction: "inbound",
+        senderMessageId: msg.message_id,
       });
     }
     await touchSecretarySession(session.id);
@@ -948,6 +958,7 @@ async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
       secretaryChatId: msg.chat.id,
       secretaryMessageId: msg.message_id,
       direction: "outbound",
+      senderMessageId: sentIds[0] ?? null,
     });
     await touchSecretarySession(session.id);
     try {
@@ -969,5 +980,68 @@ async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
         { reply_parameters: { message_id: msg.message_id } },
       )
       .catch(() => {});
+  }
+}
+
+async function handleSecretaryReaction(
+  upd: MessageReactionUpdated,
+  bot: Bot,
+): Promise<void> {
+  if (!upd.user) return;
+  if (upd.chat.type !== "private") return;
+  if (!hasDb()) return;
+
+  const settings = await getSettings();
+  if ((settings.secretaryEnabled ?? "false").toLowerCase() !== "true") return;
+  const secId = Number(settings.secretaryUserId);
+  if (!Number.isFinite(secId) || secId <= 0) return;
+  if (upd.user.id !== secId) return;
+
+  const link = await findLinkWithSenderMessage(upd.chat.id, upd.message_id).catch(
+    () => null,
+  );
+  if (!link) return;
+  if (link.endedAt) return;
+  if (!link.senderMessageIdLinked) return;
+
+  const newReactions = (upd.new_reaction ?? []) as ReactionType[];
+
+  try {
+    await bot.api.setMessageReaction(
+      link.senderChatId,
+      link.senderMessageIdLinked,
+      newReactions,
+      { business_connection_id: link.businessConnectionId } as Parameters<
+        typeof bot.api.setMessageReaction
+      >[3],
+    );
+    await touchSecretarySession(link.id);
+    console.log(
+      `[reaction] relayed session=${link.id} to chat=${link.senderChatId} msg=${link.senderMessageIdLinked} count=${newReactions.length}`,
+    );
+    return;
+  } catch (err) {
+    console.warn(
+      "[reaction] setMessageReaction via business failed, trying text fallback:",
+      err,
+    );
+  }
+
+  const emojis = newReactions
+    .filter((r) => r.type === "emoji")
+    .map((r) => (r as { type: "emoji"; emoji: string }).emoji)
+    .join(" ");
+  if (!emojis) return;
+  try {
+    await bot.api.sendMessage(link.senderChatId, emojis, {
+      business_connection_id: link.businessConnectionId,
+      reply_parameters: { message_id: link.senderMessageIdLinked },
+    });
+    await touchSecretarySession(link.id);
+    console.log(
+      `[reaction] relayed as text session=${link.id} to chat=${link.senderChatId}`,
+    );
+  } catch (err) {
+    console.error("[reaction] text fallback failed:", err);
   }
 }
