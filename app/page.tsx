@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, StatCard, Badge } from "@/components/Card";
-import { listMessages, overviewStats } from "@/lib/db";
+import { aiUsageOverview, listMessages, overviewStats } from "@/lib/db";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 import { requireSession } from "@/lib/auth";
 
@@ -9,10 +9,11 @@ export const dynamic = "force-dynamic";
 
 export default async function OverviewPage() {
   await requireSession();
-  const [stats, latestUrgent, latest] = await Promise.all([
+  const [stats, latestUrgent, latest, ai] = await Promise.all([
     overviewStats().catch(() => null),
     listMessages({ urgentOnly: true, limit: 5 }).catch(() => []),
     listMessages({ limit: 8 }).catch(() => []),
+    aiUsageOverview().catch(() => null),
   ]);
 
   return (
@@ -51,6 +52,20 @@ export default async function OverviewPage() {
             label="Connections"
             value={stats.connections}
             hint="business accounts"
+          />
+        </div>
+      )}
+
+      {ai && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-8">
+          <StatCard
+            label="AI cost total"
+            value={`$${ai.totalCostUsd.toFixed(4)}`}
+            hint={`${ai.totalCalls} calls · ${(ai.totalTokens / 1000).toFixed(1)}k tokens`}
+          />
+          <StatCard
+            label="AI cost (24h)"
+            value={`$${ai.last24hCostUsd.toFixed(4)}`}
           />
         </div>
       )}

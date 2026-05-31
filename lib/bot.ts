@@ -1,7 +1,7 @@
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "./config";
-import { classify } from "./classifier";
+import { aiConversationReply, classify, friendlyAutoReply } from "./classifier";
 import { fireAlert } from "./alert";
 import { getSettings } from "./settings";
 import {
@@ -9,8 +9,10 @@ import {
   findActiveSecretarySessionForSender,
   findLinkWithSenderMessage,
   findOnlyActiveSessionForSecretary,
+  findSecretaryLinkForSenderMessage,
   findSessionByLinkedMessage,
   getBusinessConnection,
+  getChatMode,
   getChatRule,
   getSenderStats,
   hasDb,
@@ -18,9 +20,11 @@ import {
   lastOwnerMessageAt,
   logMessage,
   openSecretarySession,
+  recentConversation,
   recordSecretaryLink,
   touchSecretarySession,
   upsertBusinessConnection,
+  type ChatMode,
   type SecretarySession,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
@@ -449,7 +453,11 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   let autoReplied = false;
   const chatLabel = chatTitle ?? (msg.chat.type === "private" ? `DM from ${senderName}` : `chat ${msg.chat.id}`);
 
-  if (shouldAlert) {
+  const mode: ChatMode = rule?.mode ?? "secretary";
+  const isDmPrivate = msg.chat.type === "private";
+
+  // Alerts fire on urgent regardless of mode (except "off").
+  if (shouldAlert && mode !== "off") {
     try {
       alerted = await fireAlert({
         text,
@@ -462,13 +470,12 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     } catch (err) {
       console.error("[alert] failed:", err);
     }
-
     const notifyChat = settings.ownerNotifyChatId;
     if (notifyChat) {
       try {
         await bot.api.sendMessage(
           notifyChat,
-          `🚨 Urgent message\n` +
+          `🚨 Urgent (mode: ${mode})\n` +
             `From: ${senderName}\n` +
             `In: ${chatLabel}\n` +
             `Importance: ${verdict.importance}/10\n` +
@@ -479,23 +486,56 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         console.error("[notify] failed:", err);
       }
     }
+  }
 
-    const secretaryHandled = await maybeForwardToSecretary({
-      msg,
-      bcId,
-      senderName,
-      senderUsername,
-      chatTitle,
-      owner,
-      settings,
-      bot,
-    });
-
-    const suppressAuto =
-      secretaryHandled &&
-      (settings.secretarySuppressAutoReply ?? "true").toLowerCase() !== "false";
-    if (!suppressAuto) {
-      autoReplied = await maybeAutoReply(msg, bcId, rule?.customReply ?? null, bot);
+  // Mode-based response path (DMs only; groups stay log-only).
+  if (isDmPrivate) {
+    if (mode === "secretary" && shouldAlert) {
+      const secretaryHandled = await maybeForwardToSecretary({
+        msg,
+        bcId,
+        senderName,
+        senderUsername,
+        chatTitle,
+        owner,
+        settings,
+        bot,
+      });
+      const suppressAuto =
+        secretaryHandled &&
+        (settings.secretarySuppressAutoReply ?? "true").toLowerCase() !== "false";
+      if (!suppressAuto) {
+        autoReplied = await maybeAutoReply(
+          msg,
+          bcId,
+          rule?.customReply ?? null,
+          bot,
+        );
+      }
+    } else if (mode === "auto_reply") {
+      autoReplied = await maybeAutoReply(
+        msg,
+        bcId,
+        rule?.customReply ?? null,
+        bot,
+      );
+    } else if (mode === "friendly_reply") {
+      autoReplied = await sendFriendlyReply({
+        msg,
+        bcId,
+        senderName,
+        settings,
+        customReply: rule?.customReply ?? null,
+        bot,
+      });
+    } else if (mode === "ai_chat") {
+      autoReplied = await sendAiConversation({
+        msg,
+        bcId,
+        senderName,
+        settings,
+        bot,
+      });
     }
   }
 
@@ -988,13 +1028,45 @@ async function handleSecretaryReaction(
   bot: Bot,
 ): Promise<void> {
   if (!upd.user) return;
-  if (upd.chat.type !== "private") return;
   if (!hasDb()) return;
 
   const settings = await getSettings();
   if ((settings.secretaryEnabled ?? "false").toLowerCase() !== "true") return;
   const secId = Number(settings.secretaryUserId);
   if (!Number.isFinite(secId) || secId <= 0) return;
+
+  // Direction A: reaction inside a business chat (the sender reacted to a
+  // message). Relay it to the corresponding message in the secretary's chat
+  // so the secretary can see what got reacted to.
+  const bcId =
+    (upd as unknown as { business_connection_id?: string })
+      .business_connection_id ?? null;
+  if (bcId) {
+    if (upd.user.id === secId) return;
+    const link = await findSecretaryLinkForSenderMessage(
+      bcId,
+      upd.chat.id,
+      upd.message_id,
+    ).catch(() => null);
+    if (!link) return;
+    try {
+      await bot.api.setMessageReaction(
+        link.session.secretaryChatId,
+        link.secretaryMessageId,
+        (upd.new_reaction ?? []) as ReactionType[],
+      );
+      console.log(
+        `[reaction] sender→secretary session=${link.session.id} msg=${link.secretaryMessageId}`,
+      );
+    } catch (err) {
+      console.error("[reaction] sender→secretary failed:", err);
+    }
+    return;
+  }
+
+  // Direction B: reaction in the secretary's bot DM. Relay it to the original
+  // sender's message in the business chat.
+  if (upd.chat.type !== "private") return;
   if (upd.user.id !== secId) return;
 
   const link = await findLinkWithSenderMessage(upd.chat.id, upd.message_id).catch(
@@ -1043,5 +1115,109 @@ async function handleSecretaryReaction(
     );
   } catch (err) {
     console.error("[reaction] text fallback failed:", err);
+  }
+}
+
+async function sendFriendlyReply(args: {
+  msg: Message;
+  bcId: string;
+  senderName: string;
+  settings: Awaited<ReturnType<typeof getSettings>>;
+  customReply: string | null;
+  bot: Bot;
+}): Promise<boolean> {
+  const { msg, bcId, senderName, settings, customReply, bot } = args;
+  if (msg.chat.type !== "private") return false;
+  const awayMessage = customReply || settings.autoReplyText;
+  if (!awayMessage) return false;
+
+  const key = `${bcId}:${msg.chat.id}`;
+  const cooldownMs =
+    Math.max(0, Number(settings.autoReplyCooldownMinutes) || 0) * 60_000;
+  const last = autoReplyCache.get(key) ?? 0;
+  if (cooldownMs > 0 && Date.now() - last < cooldownMs) return false;
+
+  let history: Awaited<ReturnType<typeof recentConversation>> = [];
+  try {
+    history = await recentConversation(msg.chat.id, 20);
+  } catch (err) {
+    console.error("[friendly] history fetch failed:", err);
+  }
+
+  let text = awayMessage;
+  try {
+    text =
+      (await friendlyAutoReply({
+        ownerName: settings.ownerName,
+        ownerDisplayName: settings.ownerDisplayName,
+        ownerContext: settings.ownerContext,
+        senderName,
+        awayMessage,
+        history,
+        chatId: msg.chat.id,
+        businessConnectionId: bcId,
+      })) || awayMessage;
+  } catch (err) {
+    console.error("[friendly] AI failed; falling back to literal:", err);
+  }
+
+  try {
+    await bot.api.sendMessage(msg.chat.id, text, {
+      business_connection_id: bcId,
+      reply_parameters: { message_id: msg.message_id },
+    });
+    autoReplyCache.set(key, Date.now());
+    return true;
+  } catch (err) {
+    console.error("[friendly] send failed:", err);
+    return false;
+  }
+}
+
+async function sendAiConversation(args: {
+  msg: Message;
+  bcId: string;
+  senderName: string;
+  settings: Awaited<ReturnType<typeof getSettings>>;
+  bot: Bot;
+}): Promise<boolean> {
+  const { msg, bcId, senderName, settings, bot } = args;
+  if (msg.chat.type !== "private") return false;
+  const userText = msg.text ?? msg.caption;
+  if (!userText) return false;
+
+  let history: Awaited<ReturnType<typeof recentConversation>> = [];
+  try {
+    history = await recentConversation(msg.chat.id, 40);
+  } catch (err) {
+    console.error("[ai_chat] history fetch failed:", err);
+  }
+
+  let reply = "";
+  try {
+    reply = await aiConversationReply({
+      ownerName: settings.ownerName,
+      ownerDisplayName: settings.ownerDisplayName,
+      ownerContext: settings.ownerContext,
+      senderName,
+      history,
+      chatId: msg.chat.id,
+      businessConnectionId: bcId,
+    });
+  } catch (err) {
+    console.error("[ai_chat] generation failed:", err);
+    return false;
+  }
+  if (!reply) return false;
+
+  try {
+    await bot.api.sendMessage(msg.chat.id, reply, {
+      business_connection_id: bcId,
+      reply_parameters: { message_id: msg.message_id },
+    });
+    return true;
+  } catch (err) {
+    console.error("[ai_chat] send failed:", err);
+    return false;
   }
 }

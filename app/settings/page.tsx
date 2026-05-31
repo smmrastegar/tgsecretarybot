@@ -6,6 +6,7 @@ import { Card, PageTitle } from "@/components/Card";
 
 type Settings = {
   ownerName: string;
+  ownerDisplayName: string;
   ownerContext: string;
   importanceThreshold: string;
   ownerNotifyChatId: string;
@@ -41,6 +42,11 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         key: "ownerName",
         label: "Your name",
         hint: "How people address you in chats. Helps the classifier identify messages directed at you.",
+      },
+      {
+        key: "ownerDisplayName",
+        label: "Display name used in replies",
+        hint: "The name you sign as in conversations (used by AI / friendly auto-reply when signing). Defaults to Your name.",
       },
       {
         key: "ownerContext",

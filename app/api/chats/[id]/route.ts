@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { audit, getChatRule, upsertChatRule } from "@/lib/db";
+import {
+  audit,
+  CHAT_MODES,
+  getChatRule,
+  upsertChatRule,
+  type ChatMode,
+} from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,8 +33,13 @@ export async function PUT(
     muted?: boolean;
     customReply?: string | null;
     notes?: string | null;
+    mode?: ChatMode;
   };
   const existing = await getChatRule(chatId);
+  const mode: ChatMode =
+    body.mode && CHAT_MODES.includes(body.mode)
+      ? body.mode
+      : existing?.mode ?? "secretary";
   await upsertChatRule({
     chatId,
     chatType: body.chatType ?? existing?.chatType ?? "private",
@@ -37,6 +48,7 @@ export async function PUT(
     muted: body.muted ?? existing?.muted ?? false,
     customReply: body.customReply ?? existing?.customReply ?? null,
     notes: body.notes ?? existing?.notes ?? null,
+    mode,
   });
   await audit({
     actorId: session.userId,

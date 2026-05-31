@@ -5,6 +5,27 @@ import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge, TableWrap } from "@/components/Card";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
+type ChatMode = "off" | "secretary" | "auto_reply" | "friendly_reply" | "ai_chat";
+
+const MODE_LABELS: Record<ChatMode, string> = {
+  off: "Off",
+  secretary: "Secretary",
+  auto_reply: "Auto-reply",
+  friendly_reply: "Friendly auto-reply (AI)",
+  ai_chat: "AI chat (full)",
+};
+
+const MODE_TONES: Record<
+  ChatMode,
+  "neutral" | "success" | "warn" | "danger" | "info"
+> = {
+  off: "neutral",
+  secretary: "warn",
+  auto_reply: "info",
+  friendly_reply: "info",
+  ai_chat: "success",
+};
+
 type Chat = {
   chatId: number;
   chatType: string;
@@ -15,6 +36,10 @@ type Chat = {
   vip: boolean;
   muted: boolean;
   customReply: string | null;
+  mode: ChatMode;
+  modeChangedAt: string | null;
+  aiCostUsd: number;
+  aiTokens: number;
 };
 
 export default function ChatsPage() {
@@ -44,9 +69,23 @@ export default function ChatsPage() {
         vip: c.vip,
         muted: c.muted,
         customReply: c.customReply || null,
+        mode: c.mode,
       }),
     });
     setEdit(null);
+    load();
+  }
+
+  async function quickMode(c: Chat, mode: ChatMode) {
+    await fetch(`/api/chats/${c.chatId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chatType: c.chatType,
+        chatTitle: c.chatTitle,
+        mode,
+      }),
+    });
     load();
   }
 
@@ -72,10 +111,12 @@ export default function ChatsPage() {
             <thead className="text-xs text-[var(--color-text-dim)]">
               <tr className="border-b border-[var(--color-border)]">
                 <th className="text-left font-normal pb-2 pr-3">Chat</th>
+                <th className="text-left font-normal pb-2 pr-3">Mode</th>
                 <th className="text-left font-normal pb-2 pr-3">Last seen</th>
                 <th className="text-right font-normal pb-2 pr-3">Messages</th>
                 <th className="text-right font-normal pb-2 pr-3">Urgent</th>
-                <th className="text-left font-normal pb-2 pr-3">Rule</th>
+                <th className="text-right font-normal pb-2 pr-3">AI $</th>
+                <th className="text-left font-normal pb-2 pr-3">Flags</th>
                 <th className="text-right font-normal pb-2"></th>
               </tr>
             </thead>
@@ -93,6 +134,26 @@ export default function ChatsPage() {
                       {chatTypeLabel(c.chatType)} · id {c.chatId}
                     </div>
                   </td>
+                  <td className="py-3 pr-3">
+                    <select
+                      value={c.mode}
+                      onChange={(e) =>
+                        quickMode(c, e.target.value as ChatMode)
+                      }
+                      className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs"
+                    >
+                      {(Object.keys(MODE_LABELS) as ChatMode[]).map((m) => (
+                        <option key={m} value={m}>
+                          {MODE_LABELS[m]}
+                        </option>
+                      ))}
+                    </select>
+                    {c.modeChangedAt && (
+                      <div className="text-[10px] text-[var(--color-text-dim)] mt-1">
+                        switched {relTime(c.modeChangedAt)}
+                      </div>
+                    )}
+                  </td>
                   <td className="py-3 pr-3 text-xs text-[var(--color-text-dim)]">
                     {relTime(c.lastSeen)}
                   </td>
@@ -104,16 +165,20 @@ export default function ChatsPage() {
                       <span className="text-[var(--color-text-dim)]">0</span>
                     )}
                   </td>
+                  <td className="py-3 pr-3 text-right text-xs">
+                    {c.aiCostUsd > 0 ? (
+                      <span title={`${c.aiTokens} tokens`}>
+                        ${c.aiCostUsd.toFixed(4)}
+                      </span>
+                    ) : (
+                      <span className="text-[var(--color-text-dim)]">—</span>
+                    )}
+                  </td>
                   <td className="py-3 pr-3">
-                    <div className="flex gap-1">
+                    <div className="flex gap-1 flex-wrap">
                       {c.vip && <Badge tone="warn">VIP</Badge>}
                       {c.muted && <Badge tone="neutral">muted</Badge>}
                       {c.customReply && <Badge tone="info">custom reply</Badge>}
-                      {!c.vip && !c.muted && !c.customReply && (
-                        <span className="text-xs text-[var(--color-text-dim)]">
-                          default
-                        </span>
-                      )}
                     </div>
                   </td>
                   <td className="py-3 text-right">
@@ -147,6 +212,23 @@ export default function ChatsPage() {
             <p className="text-xs text-[var(--color-text-dim)] mb-4">
               {chatTypeLabel(edit.chatType)} · id {edit.chatId}
             </p>
+
+            <label className="block text-xs text-[var(--color-text-dim)] mb-1">
+              Mode for this chat
+            </label>
+            <select
+              value={edit.mode}
+              onChange={(e) =>
+                setEdit({ ...edit, mode: e.target.value as ChatMode })
+              }
+              className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm mb-4"
+            >
+              {(Object.keys(MODE_LABELS) as ChatMode[]).map((m) => (
+                <option key={m} value={m}>
+                  {MODE_LABELS[m]}
+                </option>
+              ))}
+            </select>
 
             <label className="flex items-center gap-2 mb-2 text-sm">
               <input

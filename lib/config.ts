@@ -39,6 +39,7 @@ export const config = {
 
 export const DEFAULT_SETTINGS = {
   ownerName: "the owner",
+  ownerDisplayName: "",
   ownerContext: "",
   importanceThreshold: "7",
   ownerNotifyChatId: "",
@@ -65,6 +66,7 @@ export const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS) as SettingKey[];
 
 const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   ownerName: optional("OWNER_NAME"),
+  ownerDisplayName: optional("OWNER_DISPLAY_NAME"),
   ownerContext: optional("OWNER_CONTEXT"),
   importanceThreshold: optional("IMPORTANCE_THRESHOLD"),
   ownerNotifyChatId: optional("OWNER_NOTIFY_CHAT_ID"),

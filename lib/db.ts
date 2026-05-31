@@ -140,6 +140,23 @@ export async function ensureSchema(): Promise<void> {
         UNIQUE (secretary_chat_id, secretary_message_id)
       )`;
     await q`ALTER TABLE secretary_message_links ADD COLUMN IF NOT EXISTS sender_message_id BIGINT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'secretary'`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+    await q`
+      CREATE TABLE IF NOT EXISTS ai_usage (
+        id                     BIGSERIAL PRIMARY KEY,
+        created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        chat_id                BIGINT,
+        business_connection_id TEXT,
+        model                  TEXT NOT NULL,
+        purpose                TEXT NOT NULL,
+        prompt_tokens          INT NOT NULL DEFAULT 0,
+        completion_tokens      INT NOT NULL DEFAULT 0,
+        total_tokens           INT NOT NULL DEFAULT 0,
+        cost_usd               NUMERIC(12, 6) NOT NULL DEFAULT 0
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS ai_usage_chat_idx ON ai_usage (chat_id, created_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage (created_at DESC)`;
   })().catch((err) => {
     schemaPromise = null;
     throw err;
@@ -414,6 +431,21 @@ export async function overviewStats(): Promise<{
 
 // --- Chat rules ---
 
+export type ChatMode =
+  | "off"
+  | "secretary"
+  | "auto_reply"
+  | "friendly_reply"
+  | "ai_chat";
+
+export const CHAT_MODES: ChatMode[] = [
+  "off",
+  "secretary",
+  "auto_reply",
+  "friendly_reply",
+  "ai_chat",
+];
+
 export type ChatRule = {
   chatId: number;
   chatType: string;
@@ -422,17 +454,13 @@ export type ChatRule = {
   muted: boolean;
   customReply: string | null;
   notes: string | null;
+  mode: ChatMode;
+  modeChangedAt: Date;
   updatedAt: Date;
 };
 
-export async function getChatRule(chatId: number): Promise<ChatRule | null> {
-  if (!hasDb()) return null;
-  await ensureSchema();
-  const rows = await sql()`
-    SELECT chat_id, chat_type, chat_title, vip, muted, custom_reply, notes, updated_at
-    FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
-  const r = rows[0] as Record<string, unknown> | undefined;
-  if (!r) return null;
+function rowToChatRule(r: Record<string, unknown>): ChatRule {
+  const mode = (r.mode as string) ?? "secretary";
   return {
     chatId: Number(r.chat_id),
     chatType: r.chat_type as string,
@@ -441,8 +469,22 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
     muted: r.muted as boolean,
     customReply: (r.custom_reply as string) ?? null,
     notes: (r.notes as string) ?? null,
+    mode: (CHAT_MODES.includes(mode as ChatMode) ? mode : "secretary") as ChatMode,
+    modeChangedAt:
+      (r.mode_changed_at as Date) ?? (r.updated_at as Date) ?? new Date(),
     updatedAt: r.updated_at as Date,
   };
+}
+
+export async function getChatRule(chatId: number): Promise<ChatRule | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
+           mode, mode_changed_at, updated_at
+    FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToChatRule(r) : null;
 }
 
 export async function upsertChatRule(rule: {
@@ -453,11 +495,19 @@ export async function upsertChatRule(rule: {
   muted: boolean;
   customReply: string | null;
   notes: string | null;
+  mode?: ChatMode;
 }): Promise<void> {
   await ensureSchema();
+  const mode = rule.mode ?? "secretary";
   await sql()`
-    INSERT INTO chat_rules (chat_id, chat_type, chat_title, vip, muted, custom_reply, notes, updated_at)
-    VALUES (${rule.chatId}, ${rule.chatType}, ${rule.chatTitle}, ${rule.vip}, ${rule.muted}, ${rule.customReply}, ${rule.notes}, NOW())
+    INSERT INTO chat_rules (
+      chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
+      mode, mode_changed_at, updated_at
+    )
+    VALUES (
+      ${rule.chatId}, ${rule.chatType}, ${rule.chatTitle}, ${rule.vip}, ${rule.muted},
+      ${rule.customReply}, ${rule.notes}, ${mode}, NOW(), NOW()
+    )
     ON CONFLICT (chat_id) DO UPDATE SET
       chat_type = EXCLUDED.chat_type,
       chat_title = COALESCE(EXCLUDED.chat_title, chat_rules.chat_title),
@@ -465,7 +515,20 @@ export async function upsertChatRule(rule: {
       muted = EXCLUDED.muted,
       custom_reply = EXCLUDED.custom_reply,
       notes = EXCLUDED.notes,
+      mode = EXCLUDED.mode,
+      mode_changed_at = CASE WHEN chat_rules.mode IS DISTINCT FROM EXCLUDED.mode
+                              THEN NOW() ELSE chat_rules.mode_changed_at END,
       updated_at = NOW()`;
+}
+
+export async function getChatMode(
+  chatId: number,
+): Promise<{ mode: ChatMode; changedAt: Date }> {
+  const rule = await getChatRule(chatId).catch(() => null);
+  return {
+    mode: rule?.mode ?? "secretary",
+    changedAt: rule?.modeChangedAt ?? new Date(0),
+  };
 }
 
 export async function listChats(): Promise<
@@ -479,6 +542,10 @@ export async function listChats(): Promise<
     vip: boolean;
     muted: boolean;
     customReply: string | null;
+    mode: ChatMode;
+    modeChangedAt: Date | null;
+    aiCostUsd: number;
+    aiTokens: number;
   }>
 > {
   await ensureSchema();
@@ -492,23 +559,150 @@ export async function listChats(): Promise<
       MAX(m.created_at) AS last_seen,
       BOOL_OR(COALESCE(r.vip, FALSE)) AS vip,
       BOOL_OR(COALESCE(r.muted, FALSE)) AS muted,
-      MAX(r.custom_reply) AS custom_reply
+      MAX(r.custom_reply) AS custom_reply,
+      MAX(r.mode) AS mode,
+      MAX(r.mode_changed_at) AS mode_changed_at,
+      COALESCE(SUM(u.cost_usd), 0)::float8 AS ai_cost,
+      COALESCE(SUM(u.total_tokens), 0)::int AS ai_tokens
     FROM messages_log m
     LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
+    LEFT JOIN ai_usage  u ON u.chat_id = m.chat_id
     GROUP BY m.chat_id
     ORDER BY last_seen DESC NULLS LAST
     LIMIT 200`;
-  return rows.map((r) => ({
-    chatId: Number(r.chat_id),
-    chatType: r.chat_type as string,
-    chatTitle: (r.chat_title as string) ?? null,
-    messages: Number(r.messages),
-    urgent: Number(r.urgent),
-    lastSeen: (r.last_seen as Date) ?? null,
-    vip: r.vip as boolean,
-    muted: r.muted as boolean,
-    customReply: (r.custom_reply as string) ?? null,
-  }));
+  return rows.map((r) => {
+    const mode = (r.mode as string) ?? "secretary";
+    return {
+      chatId: Number(r.chat_id),
+      chatType: r.chat_type as string,
+      chatTitle: (r.chat_title as string) ?? null,
+      messages: Number(r.messages),
+      urgent: Number(r.urgent),
+      lastSeen: (r.last_seen as Date) ?? null,
+      vip: r.vip as boolean,
+      muted: r.muted as boolean,
+      customReply: (r.custom_reply as string) ?? null,
+      mode: (CHAT_MODES.includes(mode as ChatMode) ? mode : "secretary") as ChatMode,
+      modeChangedAt: (r.mode_changed_at as Date) ?? null,
+      aiCostUsd: Number(r.ai_cost) || 0,
+      aiTokens: Number(r.ai_tokens) || 0,
+    };
+  });
+}
+
+// --- AI usage tracking ---
+
+export type AiUsage = {
+  chatId?: number | null;
+  businessConnectionId?: string | null;
+  model: string;
+  purpose: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  costUsd: number;
+};
+
+export async function recordAiUsage(u: AiUsage): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO ai_usage (
+      chat_id, business_connection_id, model, purpose,
+      prompt_tokens, completion_tokens, total_tokens, cost_usd
+    ) VALUES (
+      ${u.chatId ?? null}, ${u.businessConnectionId ?? null}, ${u.model}, ${u.purpose},
+      ${u.promptTokens}, ${u.completionTokens}, ${u.totalTokens}, ${u.costUsd}
+    )`;
+}
+
+export async function aiUsageOverview(): Promise<{
+  totalCostUsd: number;
+  totalTokens: number;
+  totalCalls: number;
+  last24hCostUsd: number;
+}> {
+  if (!hasDb()) {
+    return { totalCostUsd: 0, totalTokens: 0, totalCalls: 0, last24hCostUsd: 0 };
+  }
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT
+      COALESCE(SUM(cost_usd), 0)::float8 AS total_cost,
+      COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
+      COUNT(*)::int AS total_calls,
+      COALESCE(SUM(cost_usd) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0)::float8 AS cost_24h
+    FROM ai_usage`;
+  const r = rows[0] as {
+    total_cost: number;
+    total_tokens: number;
+    total_calls: number;
+    cost_24h: number;
+  };
+  return {
+    totalCostUsd: Number(r.total_cost) || 0,
+    totalTokens: Number(r.total_tokens) || 0,
+    totalCalls: Number(r.total_calls) || 0,
+    last24hCostUsd: Number(r.cost_24h) || 0,
+  };
+}
+
+// --- Sender-side reaction lookup (inverse direction) ---
+
+export async function findSecretaryLinkForSenderMessage(
+  businessConnectionId: string,
+  senderChatId: number,
+  senderMessageId: number,
+): Promise<{
+  session: SecretarySession;
+  secretaryMessageId: number;
+} | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT s.*, l.secretary_message_id AS link_msg
+    FROM secretary_sessions s
+    JOIN secretary_message_links l ON l.session_id = s.id
+    WHERE s.business_connection_id = ${businessConnectionId}
+      AND s.sender_chat_id = ${senderChatId}
+      AND l.sender_message_id = ${senderMessageId}
+    ORDER BY l.created_at DESC LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  if (!r) return null;
+  return {
+    session: rowToSecretarySession(r),
+    secretaryMessageId: Number(r.link_msg),
+  };
+}
+
+// --- Recent conversation snapshot (for AI auto-reply) ---
+
+export async function recentConversation(
+  chatId: number,
+  limit = 30,
+): Promise<Array<{ from: "owner" | "other"; senderName: string; text: string; at: Date }>> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT created_at, from_owner, sender_name, message_text
+    FROM messages_log
+    WHERE chat_id = ${chatId}
+      AND (skipped_reason IS NULL OR skipped_reason <> 'muted')
+    ORDER BY created_at DESC LIMIT ${limit}`;
+  const r = rows as Array<{
+    created_at: Date;
+    from_owner: boolean;
+    sender_name: string;
+    message_text: string;
+  }>;
+  return r
+    .map((row) => ({
+      from: row.from_owner ? ("owner" as const) : ("other" as const),
+      senderName: row.sender_name,
+      text: row.message_text,
+      at: row.created_at,
+    }))
+    .reverse();
 }
 
 // --- Settings ---

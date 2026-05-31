@@ -1,5 +1,25 @@
 import { config } from "./config";
 import { getSettings } from "./settings";
+import { recordAiUsage } from "./db";
+
+const MODEL_RATES: Record<string, { in: number; out: number }> = {
+  "google/gemini-2.0-flash-lite-001": { in: 0.075, out: 0.3 },
+  "google/gemini-2.0-flash-001": { in: 0.1, out: 0.4 },
+  "google/gemini-2.5-flash": { in: 0.3, out: 2.5 },
+  "anthropic/claude-haiku-4-5": { in: 1.0, out: 5.0 },
+  "anthropic/claude-sonnet-4-6": { in: 3.0, out: 15.0 },
+  "openai/gpt-4o-mini": { in: 0.15, out: 0.6 },
+};
+
+function estimateCost(
+  model: string,
+  promptTokens: number,
+  completionTokens: number,
+): number {
+  const rate = MODEL_RATES[model];
+  if (!rate) return 0;
+  return (promptTokens / 1_000_000) * rate.in + (completionTokens / 1_000_000) * rate.out;
+}
 
 export type Classification = {
   importance: number;
@@ -38,13 +58,25 @@ Be conservative. False alarms train the owner to ignore the alert device.`;
 
 type ChatCompletionResponse = {
   choices?: Array<{ message?: { content?: string } }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
   error?: { message?: string };
 };
 
-async function callOpenRouter(messages: Array<{ role: string; content: string }>, opts: {
-  maxTokens?: number;
-  jsonObject?: boolean;
-}): Promise<string> {
+async function callOpenRouter(
+  messages: Array<{ role: string; content: string }>,
+  opts: {
+    maxTokens?: number;
+    jsonObject?: boolean;
+    temperature?: number;
+    purpose: string;
+    chatId?: number | null;
+    businessConnectionId?: string | null;
+  },
+): Promise<string> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${config.openrouterApiKey}`,
     "Content-Type": "application/json",
@@ -54,7 +86,7 @@ async function callOpenRouter(messages: Array<{ role: string; content: string }>
 
   const body: Record<string, unknown> = {
     model: config.openrouterModel,
-    temperature: 0,
+    temperature: opts.temperature ?? 0,
     max_tokens: opts.maxTokens ?? 200,
     messages,
   };
@@ -72,6 +104,25 @@ async function callOpenRouter(messages: Array<{ role: string; content: string }>
   }
   const data = (await res.json()) as ChatCompletionResponse;
   if (data.error) throw new Error(`OpenRouter error: ${data.error.message}`);
+
+  const u = data.usage;
+  if (u) {
+    const promptTokens = u.prompt_tokens ?? 0;
+    const completionTokens = u.completion_tokens ?? 0;
+    const totalTokens = u.total_tokens ?? promptTokens + completionTokens;
+    const cost = estimateCost(config.openrouterModel, promptTokens, completionTokens);
+    recordAiUsage({
+      chatId: opts.chatId ?? null,
+      businessConnectionId: opts.businessConnectionId ?? null,
+      model: config.openrouterModel,
+      purpose: opts.purpose,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      costUsd: cost,
+    }).catch((err) => console.error("[ai_usage] record failed:", err));
+  }
+
   return data.choices?.[0]?.message?.content ?? "";
 }
 
@@ -80,6 +131,8 @@ export async function classify(input: {
   chatTitle?: string;
   senderName: string;
   text: string;
+  chatId?: number;
+  businessConnectionId?: string;
 }): Promise<Classification> {
   const s = await getSettings();
   const userPayload = {
@@ -95,7 +148,13 @@ export async function classify(input: {
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: JSON.stringify(userPayload) },
     ],
-    { maxTokens: 200, jsonObject: true },
+    {
+      maxTokens: 200,
+      jsonObject: true,
+      purpose: "classify",
+      chatId: input.chatId ?? null,
+      businessConnectionId: input.businessConnectionId ?? null,
+    },
   );
   return parseVerdict(content);
 }
@@ -168,9 +227,115 @@ export async function summarizeGroup(input: {
       { role: "system", content: SUMMARY_PROMPT },
       { role: "user", content: JSON.stringify(payload) },
     ],
-    { maxTokens: 700, jsonObject: true },
+    { maxTokens: 700, jsonObject: true, purpose: "summary" },
   );
   return parseSummary(content);
+}
+
+const AI_CHAT_PROMPT = `You are impersonating the owner of a Telegram account in
+a private DM. Read the recent conversation between the owner and the other
+person and reply to the last incoming message AS the owner, in the owner's
+voice and language. Match the tone, formality, level of slang, emoji density,
+and language of the prior messages exactly. Keep the reply short and natural
+(usually 1-3 sentences), never reveal that you are an AI, never use generic
+greetings or boilerplate, never apologise on the owner's behalf, never refuse
+to answer. If you genuinely cannot answer because facts are missing, give a
+brief noncommittal reply ("بعداً جواب می‌دم", "اوکی، حواسم هست", etc.) in the
+matching language.
+
+Output STRICT JSON only, no prose, no code fences:
+{ "reply": "<the reply text>" }`;
+
+export async function aiConversationReply(input: {
+  ownerName: string;
+  ownerDisplayName: string;
+  ownerContext: string;
+  senderName: string;
+  history: Array<{ from: "owner" | "other"; senderName: string; text: string }>;
+  chatId?: number;
+  businessConnectionId?: string;
+}): Promise<string> {
+  const payload = {
+    owner_name: input.ownerDisplayName || input.ownerName,
+    owner_context: input.ownerContext || undefined,
+    talking_to: input.senderName,
+    conversation: input.history.slice(-30).map((m) => ({
+      role: m.from === "owner" ? "owner" : "them",
+      name: m.senderName,
+      text: m.text.slice(0, 600),
+    })),
+  };
+  const content = await callOpenRouter(
+    [
+      { role: "system", content: AI_CHAT_PROMPT },
+      { role: "user", content: JSON.stringify(payload) },
+    ],
+    {
+      maxTokens: 300,
+      jsonObject: true,
+      temperature: 0.6,
+      purpose: "ai_chat",
+      chatId: input.chatId ?? null,
+      businessConnectionId: input.businessConnectionId ?? null,
+    },
+  );
+  try {
+    const parsed = JSON.parse(content) as { reply?: string };
+    return (parsed.reply ?? "").trim();
+  } catch {
+    return content.trim();
+  }
+}
+
+const FRIENDLY_PROMPT = `You are impersonating the owner of a Telegram account.
+The owner has a default away-message they want sent to people right now. Read
+the recent conversation between the owner and the other person, then rewrite
+the away-message in the same language, tone, and formality the owner uses with
+THIS person. Keep the meaning of the away-message (that the owner is not
+available and will respond later), but make it feel personal, warm, and like
+something the owner would actually type. Output STRICT JSON: { "reply": "..." }`;
+
+export async function friendlyAutoReply(input: {
+  ownerName: string;
+  ownerDisplayName: string;
+  ownerContext: string;
+  senderName: string;
+  awayMessage: string;
+  history: Array<{ from: "owner" | "other"; senderName: string; text: string }>;
+  chatId?: number;
+  businessConnectionId?: string;
+}): Promise<string> {
+  const payload = {
+    owner_name: input.ownerDisplayName || input.ownerName,
+    owner_context: input.ownerContext || undefined,
+    talking_to: input.senderName,
+    away_message: input.awayMessage,
+    conversation: input.history.slice(-20).map((m) => ({
+      role: m.from === "owner" ? "owner" : "them",
+      name: m.senderName,
+      text: m.text.slice(0, 400),
+    })),
+  };
+  const content = await callOpenRouter(
+    [
+      { role: "system", content: FRIENDLY_PROMPT },
+      { role: "user", content: JSON.stringify(payload) },
+    ],
+    {
+      maxTokens: 200,
+      jsonObject: true,
+      temperature: 0.5,
+      purpose: "friendly_reply",
+      chatId: input.chatId ?? null,
+      businessConnectionId: input.businessConnectionId ?? null,
+    },
+  );
+  try {
+    const parsed = JSON.parse(content) as { reply?: string };
+    return (parsed.reply ?? "").trim() || input.awayMessage;
+  } catch {
+    return content.trim() || input.awayMessage;
+  }
 }
 
 function parseSummary(raw: string): GroupSummary {
