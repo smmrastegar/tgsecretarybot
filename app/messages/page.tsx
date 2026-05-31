@@ -176,6 +176,7 @@ export default function MessagesPage() {
                       {relTime(m.createdAt)}
                     </div>
                     <div
+                      dir="auto"
                       style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
                       className={`px-2.5 py-1.5 rounded-2xl text-xs whitespace-pre-wrap max-w-full ${
                         m.fromOwner
@@ -273,7 +274,10 @@ export default function MessagesPage() {
                   )}
                 </div>
               </div>
-              <div className="mt-2 text-sm break-words whitespace-pre-wrap">
+              <div
+                dir="auto"
+                className="mt-2 text-sm break-words whitespace-pre-wrap"
+              >
                 {m.messageText}
               </div>
               {m.transcript && (
@@ -281,7 +285,10 @@ export default function MessagesPage() {
                   <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
                     transcript
                   </div>
-                  <div className="whitespace-pre-wrap break-words">
+                  <div
+                    dir="auto"
+                    className="whitespace-pre-wrap break-words"
+                  >
                     {m.transcript}
                   </div>
                 </div>

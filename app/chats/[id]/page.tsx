@@ -44,6 +44,8 @@ type Rule = {
   mode: ChatMode;
   modeChangedAt: string;
   secretaryUserId: number | null;
+  firstName: string | null;
+  lastName: string | null;
   updatedAt: string;
 };
 
@@ -133,6 +135,8 @@ export default function ChatDetailPage() {
         notes: rule?.notes ?? null,
         mode: rule?.mode ?? "secretary",
         secretaryUserId: rule?.secretaryUserId ?? null,
+        firstName: rule?.firstName ?? null,
+        lastName: rule?.lastName ?? null,
         ...patch,
       }),
     });
@@ -141,7 +145,12 @@ export default function ChatDetailPage() {
   }
 
   const headPerson = messages.find((m) => m.senderId !== null && m.senderName);
+  const customFull = [rule?.firstName, rule?.lastName]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
   const personName =
+    (customFull.length > 0 ? customFull : null) ??
     rule?.chatTitle ??
     headPerson?.senderName ??
     (chatId ? `chat ${chatId}` : "—");
@@ -198,6 +207,45 @@ export default function ChatDetailPage() {
                     📝 {rule.notes}
                   </div>
                 )}
+
+                <div className="mt-4 grid grid-cols-2 gap-2 max-w-md">
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
+                      First name
+                    </label>
+                    <input
+                      key={`fn-${rule?.firstName ?? ""}`}
+                      type="text"
+                      disabled={saving}
+                      defaultValue={rule?.firstName ?? ""}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if ((rule?.firstName ?? "") === v) return;
+                        patchRule({ firstName: v || null });
+                      }}
+                      placeholder="—"
+                      className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
+                      Last name
+                    </label>
+                    <input
+                      key={`ln-${rule?.lastName ?? ""}`}
+                      type="text"
+                      disabled={saving}
+                      defaultValue={rule?.lastName ?? ""}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if ((rule?.lastName ?? "") === v) return;
+                        patchRule({ lastName: v || null });
+                      }}
+                      placeholder="—"
+                      className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -307,6 +355,7 @@ export default function ChatDetailPage() {
                       {mine ? "You" : m.senderName} · {relTime(m.createdAt)}
                     </div>
                     <div
+                      dir="auto"
                       style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
                       className={`p-3 rounded-2xl text-sm whitespace-pre-wrap max-w-full ${
                         mine
@@ -316,11 +365,15 @@ export default function ChatDetailPage() {
                     >
                       {m.messageText}
                       {m.transcript && (
-                        <div className="mt-2 pt-2 border-t border-white/10 text-[12px]">
+                        <div
+                          dir="auto"
+                          className="mt-2 pt-2 border-t border-white/10 text-[12px]"
+                        >
                           <span className="opacity-70 text-[10px] uppercase">
                             transcript
                           </span>
                           <div
+                            dir="auto"
                             style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
                             className="mt-1 whitespace-pre-wrap"
                           >

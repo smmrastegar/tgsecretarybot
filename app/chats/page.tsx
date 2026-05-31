@@ -31,6 +31,8 @@ type Chat = {
   chatId: number;
   chatType: string;
   chatTitle: string | null;
+  firstName: string | null;
+  lastName: string | null;
   messages: number;
   urgent: number;
   lastSeen: string | null;
@@ -42,6 +44,17 @@ type Chat = {
   aiCostUsd: number;
   aiTokens: number;
 };
+
+function chatDisplayName(c: {
+  chatId: number;
+  chatTitle: string | null;
+  firstName: string | null;
+  lastName: string | null;
+}): string {
+  const full = [c.firstName, c.lastName].filter(Boolean).join(" ").trim();
+  if (full) return full;
+  return c.chatTitle ?? `chat ${c.chatId}`;
+}
 
 export default function ChatsPage() {
   const [chats, setChats] = useState<Chat[]>([]);
@@ -71,6 +84,8 @@ export default function ChatsPage() {
         muted: c.muted,
         customReply: c.customReply || null,
         mode: c.mode,
+        firstName: c.firstName || null,
+        lastName: c.lastName || null,
       }),
     });
     setEdit(null);
@@ -117,8 +132,15 @@ export default function ChatsPage() {
                   className="min-w-0 hover:opacity-90"
                 >
                   <div className="font-medium text-sm truncate">
-                    {c.chatTitle ?? `chat ${c.chatId}`}
+                    {chatDisplayName(c)}
                   </div>
+                  {[c.firstName, c.lastName].filter(Boolean).length > 0 &&
+                    c.chatTitle &&
+                    c.chatTitle !== chatDisplayName(c) && (
+                      <div className="text-[10px] text-[var(--color-text-dim)] truncate">
+                        tg: {c.chatTitle}
+                      </div>
+                    )}
                   <div className="text-[11px] text-[var(--color-text-dim)] mt-0.5">
                     {chatTypeLabel(c.chatType)} · id {c.chatId} · {relTime(c.lastSeen)}
                   </div>
@@ -192,10 +214,15 @@ export default function ChatsPage() {
                       className="block hover:opacity-90"
                     >
                       <div className="font-medium underline-offset-2 hover:underline">
-                        {c.chatTitle ?? `chat ${c.chatId}`}
+                        {chatDisplayName(c)}
                       </div>
                       <div className="text-xs text-[var(--color-text-dim)]">
                         {chatTypeLabel(c.chatType)} · id {c.chatId}
+                        {[c.firstName, c.lastName].filter(Boolean).length > 0 &&
+                          c.chatTitle &&
+                          c.chatTitle !== chatDisplayName(c) && (
+                            <> · tg: {c.chatTitle}</>
+                          )}
                       </div>
                     </Link>
                   </td>
@@ -273,11 +300,45 @@ export default function ChatsPage() {
             className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md"
           >
             <h2 className="text-lg font-semibold mb-1">
-              {edit.chatTitle ?? `chat ${edit.chatId}`}
+              {chatDisplayName(edit)}
             </h2>
             <p className="text-xs text-[var(--color-text-dim)] mb-4">
               {chatTypeLabel(edit.chatType)} · id {edit.chatId}
+              {edit.chatTitle && edit.chatTitle !== chatDisplayName(edit) && (
+                <> · tg: {edit.chatTitle}</>
+              )}
             </p>
+
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <div>
+                <label className="block text-xs text-[var(--color-text-dim)] mb-1">
+                  First name
+                </label>
+                <input
+                  type="text"
+                  value={edit.firstName ?? ""}
+                  onChange={(e) =>
+                    setEdit({ ...edit, firstName: e.target.value })
+                  }
+                  placeholder="—"
+                  className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--color-text-dim)] mb-1">
+                  Last name
+                </label>
+                <input
+                  type="text"
+                  value={edit.lastName ?? ""}
+                  onChange={(e) =>
+                    setEdit({ ...edit, lastName: e.target.value })
+                  }
+                  placeholder="—"
+                  className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
 
             <label className="block text-xs text-[var(--color-text-dim)] mb-1">
               Mode for this chat
@@ -321,6 +382,7 @@ export default function ChatsPage() {
               Custom auto-reply (optional, overrides default)
             </label>
             <textarea
+              dir="auto"
               value={edit.customReply ?? ""}
               onChange={(e) => setEdit({ ...edit, customReply: e.target.value })}
               rows={3}

@@ -70,6 +70,8 @@ export async function PUT(
     notes?: string | null;
     mode?: ChatMode;
     secretaryUserId?: number | null;
+    firstName?: string | null;
+    lastName?: string | null;
   };
   const existing = await getChatRule(chatId);
   const mode: ChatMode =
@@ -80,6 +82,20 @@ export async function PUT(
     body.secretaryUserId === undefined
       ? existing?.secretaryUserId ?? null
       : body.secretaryUserId;
+  const normName = (v: string | null | undefined): string | null => {
+    if (v === undefined) return undefined as unknown as null;
+    if (v === null) return null;
+    const t = v.trim();
+    return t.length === 0 ? null : t;
+  };
+  const firstName =
+    body.firstName === undefined
+      ? existing?.firstName ?? null
+      : normName(body.firstName);
+  const lastName =
+    body.lastName === undefined
+      ? existing?.lastName ?? null
+      : normName(body.lastName);
   await upsertChatRule({
     chatId,
     chatType: body.chatType ?? existing?.chatType ?? "private",
@@ -90,6 +106,8 @@ export async function PUT(
     notes: body.notes ?? existing?.notes ?? null,
     mode,
     secretaryUserId,
+    firstName,
+    lastName,
   });
   await audit({
     actorId: session.userId,

@@ -17,6 +17,7 @@ import { redisDelete, redisEnabled, redisGet, redisSet } from "./redis";
 import { fireAlert } from "./alert";
 import { getSettings, invalidateSettingsCache, updateSettings } from "./settings";
 import {
+  autoFillChatNames,
   consumeInvite,
   endSecretarySession,
   findActiveSecretarySessionForSender,
@@ -566,6 +567,17 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
 
   const rule = await getChatRule(msg.chat.id).catch(() => null);
   const settings = await getSettings();
+
+  // Best-effort auto-fill of per-chat first/last name from the sender's
+  // Telegram profile, only when the owner hasn't set them yet.
+  if (msg.chat.type === "private" && msg.from) {
+    autoFillChatNames({
+      chatId: msg.chat.id,
+      chatType: msg.chat.type,
+      firstName: msg.from.first_name ?? null,
+      lastName: msg.from.last_name ?? null,
+    }).catch((err) => console.error("[db] autoFillChatNames failed:", err));
+  }
 
   if (rule?.muted) {
     console.log(`[mute] chat=${msg.chat.id} skipping`);

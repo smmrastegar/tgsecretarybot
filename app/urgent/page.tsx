@@ -291,7 +291,10 @@ export default function UrgentPage() {
                     <span>·</span>
                     <span>{relTime(m.createdAt)}</span>
                   </div>
-                  <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                  <div
+                    dir="auto"
+                    className="text-sm leading-relaxed whitespace-pre-wrap break-words"
+                  >
                     {m.messageText}
                   </div>
                   {m.transcript && (
@@ -299,7 +302,10 @@ export default function UrgentPage() {
                       <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
                         transcript
                       </div>
-                      <div className="whitespace-pre-wrap break-words">
+                      <div
+                        dir="auto"
+                        className="whitespace-pre-wrap break-words"
+                      >
                         {m.transcript}
                       </div>
                     </div>
@@ -338,6 +344,7 @@ export default function UrgentPage() {
                         AI suggested reply (you can edit)
                       </div>
                       <textarea
+                        dir="auto"
                         value={drafts[m.id]}
                         onChange={(e) =>
                           setDrafts((d) => ({ ...d, [m.id]: e.target.value }))

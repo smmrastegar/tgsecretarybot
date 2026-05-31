@@ -149,6 +149,8 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'secretary'`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS secretary_user_id BIGINT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS first_name TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS last_name TEXT`;
     await q`
       CREATE TABLE IF NOT EXISTS ai_usage (
         id                     BIGSERIAL PRIMARY KEY,
@@ -571,6 +573,8 @@ export type ChatRule = {
   mode: ChatMode;
   modeChangedAt: Date;
   secretaryUserId: number | null;
+  firstName: string | null;
+  lastName: string | null;
   updatedAt: Date;
 };
 
@@ -589,6 +593,8 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
       (r.mode_changed_at as Date) ?? (r.updated_at as Date) ?? new Date(),
     secretaryUserId:
       r.secretary_user_id != null ? Number(r.secretary_user_id) : null,
+    firstName: (r.first_name as string) ?? null,
+    lastName: (r.last_name as string) ?? null,
     updatedAt: r.updated_at as Date,
   };
 }
@@ -598,7 +604,8 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
   await ensureSchema();
   const rows = await sql()`
     SELECT chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
-           mode, mode_changed_at, secretary_user_id, updated_at
+           mode, mode_changed_at, secretary_user_id,
+           first_name, last_name, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToChatRule(r) : null;
@@ -614,18 +621,24 @@ export async function upsertChatRule(rule: {
   notes: string | null;
   mode?: ChatMode;
   secretaryUserId?: number | null;
+  firstName?: string | null;
+  lastName?: string | null;
 }): Promise<void> {
   await ensureSchema();
   const mode = rule.mode ?? "secretary";
   const secretaryUserId = rule.secretaryUserId ?? null;
+  const firstName = rule.firstName ?? null;
+  const lastName = rule.lastName ?? null;
   await sql()`
     INSERT INTO chat_rules (
       chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
-      mode, mode_changed_at, secretary_user_id, updated_at
+      mode, mode_changed_at, secretary_user_id,
+      first_name, last_name, updated_at
     )
     VALUES (
       ${rule.chatId}, ${rule.chatType}, ${rule.chatTitle}, ${rule.vip}, ${rule.muted},
-      ${rule.customReply}, ${rule.notes}, ${mode}, NOW(), ${secretaryUserId}, NOW()
+      ${rule.customReply}, ${rule.notes}, ${mode}, NOW(), ${secretaryUserId},
+      ${firstName}, ${lastName}, NOW()
     )
     ON CONFLICT (chat_id) DO UPDATE SET
       chat_type = EXCLUDED.chat_type,
@@ -638,7 +651,33 @@ export async function upsertChatRule(rule: {
       mode_changed_at = CASE WHEN chat_rules.mode IS DISTINCT FROM EXCLUDED.mode
                               THEN NOW() ELSE chat_rules.mode_changed_at END,
       secretary_user_id = EXCLUDED.secretary_user_id,
+      first_name = EXCLUDED.first_name,
+      last_name = EXCLUDED.last_name,
       updated_at = NOW()`;
+}
+
+// Auto-fill chat first/last name from Telegram's user info ONLY when the
+// owner hasn't set them yet (COALESCE keeps existing custom values).
+export async function autoFillChatNames(args: {
+  chatId: number;
+  chatType: string;
+  firstName?: string | null;
+  lastName?: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  if (!args.firstName && !args.lastName) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, first_name, last_name, updated_at)
+    VALUES (${args.chatId}, ${args.chatType},
+            ${args.firstName ?? null}, ${args.lastName ?? null}, NOW())
+    ON CONFLICT (chat_id) DO UPDATE SET
+      first_name = COALESCE(chat_rules.first_name, EXCLUDED.first_name),
+      last_name = COALESCE(chat_rules.last_name, EXCLUDED.last_name),
+      updated_at = CASE
+        WHEN chat_rules.first_name IS NULL OR chat_rules.last_name IS NULL
+          THEN NOW() ELSE chat_rules.updated_at
+      END`;
 }
 
 export async function getChatMode(
@@ -664,6 +703,8 @@ export async function listChats(): Promise<
     customReply: string | null;
     mode: ChatMode;
     modeChangedAt: Date | null;
+    firstName: string | null;
+    lastName: string | null;
     aiCostUsd: number;
     aiTokens: number;
   }>
@@ -682,6 +723,8 @@ export async function listChats(): Promise<
       MAX(r.custom_reply) AS custom_reply,
       MAX(r.mode) AS mode,
       MAX(r.mode_changed_at) AS mode_changed_at,
+      MAX(r.first_name) AS first_name,
+      MAX(r.last_name) AS last_name,
       COALESCE(SUM(u.cost_usd), 0)::float8 AS ai_cost,
       COALESCE(SUM(u.total_tokens), 0)::int AS ai_tokens
     FROM messages_log m
@@ -704,6 +747,8 @@ export async function listChats(): Promise<
       customReply: (r.custom_reply as string) ?? null,
       mode: (CHAT_MODES.includes(mode as ChatMode) ? mode : "secretary") as ChatMode,
       modeChangedAt: (r.mode_changed_at as Date) ?? null,
+      firstName: (r.first_name as string) ?? null,
+      lastName: (r.last_name as string) ?? null,
       aiCostUsd: Number(r.ai_cost) || 0,
       aiTokens: Number(r.ai_tokens) || 0,
     };

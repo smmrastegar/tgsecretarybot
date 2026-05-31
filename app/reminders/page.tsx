@@ -130,9 +130,17 @@ export default function RemindersPage() {
                       {due && <Badge tone={due.tone}>{due.text}</Badge>}
                       {it.doneAt && <Badge tone="success">done</Badge>}
                     </div>
-                    <div className="mt-2 font-medium break-words">{it.title}</div>
+                    <div
+                      dir="auto"
+                      className="mt-2 font-medium break-words"
+                    >
+                      {it.title}
+                    </div>
                     {it.description && (
-                      <div className="text-sm text-[var(--color-text-dim)] mt-1 break-words">
+                      <div
+                        dir="auto"
+                        className="text-sm text-[var(--color-text-dim)] mt-1 break-words"
+                      >
                         {it.description}
                       </div>
                     )}

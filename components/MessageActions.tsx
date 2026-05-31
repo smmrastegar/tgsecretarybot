@@ -312,6 +312,7 @@ export default function MessageActions({
             AI suggested reply (you can edit)
           </div>
           <textarea
+            dir="auto"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             rows={3}
