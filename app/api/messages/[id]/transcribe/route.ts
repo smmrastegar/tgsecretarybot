@@ -28,7 +28,7 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          "Transcription is not configured on the server. Set GROQ_API_KEY in Vercel env vars.",
+          "Transcription is not configured (needs OPENROUTER_API_KEY or GROQ_API_KEY).",
       },
       { status: 503 },
     );
@@ -71,12 +71,16 @@ export async function POST(
       actorName: session.username ?? null,
       action: "message.transcribe",
       target: String(messageId),
-      details: { durationSeconds: result.durationSeconds },
+      details: {
+        provider: result.provider,
+        durationSeconds: result.durationSeconds,
+      },
     });
     return NextResponse.json({
       ok: true,
       transcript: result.text,
       durationSeconds: result.durationSeconds,
+      provider: result.provider,
     });
   } catch (err) {
     return NextResponse.json(
