@@ -173,19 +173,27 @@ export default function UrgentPage() {
     }
   }
 
-  async function handOverToAi(id: number, chatId: number, chatType: string) {
+  async function handOverToAi(id: number) {
     setHandingOver((s) => new Set(s).add(id));
     try {
-      const r = await fetch(`/api/chats/${chatId}`, {
-        method: "PUT",
+      const r = await fetch(`/api/messages/${id}/ai-handle`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatType, mode: "ai_chat" }),
+        body: JSON.stringify({}),
       });
-      if (!r.ok) {
-        const j = (await r.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error ?? `failed (${r.status})`);
-      }
-      showToast(id, "🤖 AI will handle this chat from now on");
+      const j = (await r.json().catch(() => ({}))) as {
+        reply?: string;
+        error?: string;
+      };
+      if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
+      const preview = (j.reply ?? "").slice(0, 140);
+      showToast(
+        id,
+        preview
+          ? `🤖 AI replied: ${preview}${(j.reply ?? "").length > 140 ? "…" : ""}`
+          : "🤖 AI handled this chat. Future messages will get AI replies too.",
+      );
+      load();
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
     } finally {
@@ -384,7 +392,7 @@ export default function UrgentPage() {
                   )}
                   {!m.handledAt && (
                     <button
-                      onClick={() => handOverToAi(m.id, m.chatId, m.chatType)}
+                      onClick={() => handOverToAi(m.id)}
                       disabled={handingOver.has(m.id)}
                       className="text-xs px-3 py-1.5 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
                     >
