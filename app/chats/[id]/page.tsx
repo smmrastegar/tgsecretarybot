@@ -443,7 +443,14 @@ export default function ChatDetailPage() {
 
             {(() => {
               const currentMode = rule?.mode ?? "off";
-              if (currentMode === "off" || rule?.vip) return null;
+              // ai_chat ignores grace (the owner opted in for AI to
+              // handle this chat). off doesn't talk anyway. VIP bypasses.
+              if (
+                currentMode === "off" ||
+                currentMode === "ai_chat" ||
+                rule?.vip
+              )
+                return null;
               const last = grace?.lastOwnerSentAt
                 ? new Date(grace.lastOwnerSentAt).getTime()
                 : null;

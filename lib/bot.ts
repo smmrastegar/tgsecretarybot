@@ -761,8 +761,14 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     return;
   }
 
-  // VIP bypasses the active-conversation grace period.
-  if (!rule?.vip) {
+  // Grace period silences the bot for a few minutes after the owner
+  // types in a chat — useful for secretary / auto_reply / friendly_reply
+  // so the bot doesn't talk over an active human conversation. NOT
+  // useful for ai_chat: the whole point of ai_chat is that the AI is
+  // explicitly handling the conversation, so it should answer the next
+  // incoming message even if the owner just typed. VIP also bypasses.
+  const currentModeForGrace: ChatMode = rule?.mode ?? "off";
+  if (!rule?.vip && currentModeForGrace !== "ai_chat") {
     const isDm = msg.chat.type === "private";
     const graceMinutes = Number(
       isDm
