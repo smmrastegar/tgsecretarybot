@@ -625,8 +625,12 @@ function describeMessage(msg: Message): string {
   if (msg.video_note) return "[video note]";
   if (msg.location) return "[location]";
   if (msg.contact) return "[contact]";
+  if (msg.venue) return `[venue: ${msg.venue.title}]`;
+  if (msg.dice) return `[dice ${msg.dice.emoji}]`;
   if (msg.poll) return `[poll: ${msg.poll.question.slice(0, 60)}]`;
-  return "[unsupported message type]";
+  if (msg.story) return "[story]";
+  if (msg.paid_media) return "[paid media]";
+  return "[media]";
 }
 
 type SendCommon = {
@@ -734,13 +738,70 @@ async function relayAnyMessage(args: {
     sent.push(m.message_id);
     return sent;
   }
-  // Fallback: render a placeholder
-  const m = await bot.api.sendMessage(
-    toChatId,
-    prefix + describeMessage(source),
-    opts,
+  if (source.location) {
+    const m = await bot.api.sendLocation(
+      toChatId,
+      source.location.latitude,
+      source.location.longitude,
+      opts,
+    );
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.contact) {
+    const m = await bot.api.sendContact(
+      toChatId,
+      source.contact.phone_number,
+      source.contact.first_name,
+      {
+        ...opts,
+        last_name: source.contact.last_name,
+        vcard: source.contact.vcard,
+      },
+    );
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.dice) {
+    const m = await bot.api.sendDice(toChatId, source.dice.emoji, opts);
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.venue) {
+    const v = source.venue;
+    const m = await bot.api.sendVenue(
+      toChatId,
+      v.location.latitude,
+      v.location.longitude,
+      v.title,
+      v.address,
+      opts,
+    );
+    sent.push(m.message_id);
+    return sent;
+  }
+  if (source.poll) {
+    const text = `${prefix}[poll] ${source.poll.question}`.slice(0, 4096);
+    const m = await bot.api.sendMessage(toChatId, text, opts);
+    sent.push(m.message_id);
+    return sent;
+  }
+  // Unknown / unhandled type: log and stay silent (no noisy placeholder).
+  const keys = Object.keys(source).filter(
+    (k) =>
+      ![
+        "message_id",
+        "date",
+        "chat",
+        "from",
+        "business_connection_id",
+        "reply_to_message",
+        "edit_date",
+      ].includes(k),
   );
-  sent.push(m.message_id);
+  console.warn(
+    `[relay] no handler for message type; payload keys: ${keys.join(", ")}`,
+  );
   return sent;
 }
 
