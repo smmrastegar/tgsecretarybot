@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import {
   Activity,
   AlertOctagon,
+  DollarSign,
   History,
   LayoutDashboard,
   LogOut,
@@ -28,6 +29,7 @@ const NAV = [
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/chats", label: "Chats", icon: Users2 },
   { href: "/groups", label: "Groups", icon: Activity },
+  { href: "/costs", label: "Costs", icon: DollarSign },
   { href: "/audit", label: "Audit", icon: History },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;

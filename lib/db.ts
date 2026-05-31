@@ -1161,3 +1161,88 @@ export async function listAudit(limit = 100): Promise<AuditRow[]> {
     details: r.details ?? null,
   }));
 }
+
+export type CostByPurpose = {
+  purpose: string;
+  calls: number;
+  totalCostUsd: number;
+  totalTokens: number;
+};
+
+export async function aiUsageByPurpose(
+  daysBack = 30,
+): Promise<CostByPurpose[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT purpose,
+           COUNT(*)::int AS calls,
+           COALESCE(SUM(cost_usd), 0)::float8 AS cost,
+           COALESCE(SUM(total_tokens), 0)::int AS tokens
+    FROM ai_usage
+    WHERE created_at > NOW() - make_interval(days => ${daysBack})
+    GROUP BY purpose
+    ORDER BY cost DESC`;
+  return rows.map((r) => ({
+    purpose: r.purpose as string,
+    calls: Number(r.calls) || 0,
+    totalCostUsd: Number(r.cost) || 0,
+    totalTokens: Number(r.tokens) || 0,
+  }));
+}
+
+export type CostByModel = {
+  model: string;
+  calls: number;
+  totalCostUsd: number;
+  totalTokens: number;
+};
+
+export async function aiUsageByModel(
+  daysBack = 30,
+): Promise<CostByModel[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT model,
+           COUNT(*)::int AS calls,
+           COALESCE(SUM(cost_usd), 0)::float8 AS cost,
+           COALESCE(SUM(total_tokens), 0)::int AS tokens
+    FROM ai_usage
+    WHERE created_at > NOW() - make_interval(days => ${daysBack})
+    GROUP BY model
+    ORDER BY cost DESC`;
+  return rows.map((r) => ({
+    model: r.model as string,
+    calls: Number(r.calls) || 0,
+    totalCostUsd: Number(r.cost) || 0,
+    totalTokens: Number(r.tokens) || 0,
+  }));
+}
+
+export type CostByDay = {
+  day: string;
+  totalCostUsd: number;
+  calls: number;
+};
+
+export async function aiUsageByDay(daysBack = 14): Promise<CostByDay[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT DATE(created_at AT TIME ZONE 'UTC') AS day,
+           COALESCE(SUM(cost_usd), 0)::float8 AS cost,
+           COUNT(*)::int AS calls
+    FROM ai_usage
+    WHERE created_at > NOW() - make_interval(days => ${daysBack})
+    GROUP BY 1
+    ORDER BY 1`;
+  return rows.map((r) => ({
+    day:
+      r.day instanceof Date
+        ? (r.day as Date).toISOString().slice(0, 10)
+        : String(r.day),
+    totalCostUsd: Number(r.cost) || 0,
+    calls: Number(r.calls) || 0,
+  }));
+}

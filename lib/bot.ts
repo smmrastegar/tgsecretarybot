@@ -8,6 +8,7 @@ import {
   getSecretaries,
   type Secretary,
 } from "./secretaries";
+import { redisDelete, redisEnabled, redisGet, redisSet } from "./redis";
 import { fireAlert } from "./alert";
 import { getSettings } from "./settings";
 import {
@@ -54,6 +55,22 @@ export const ALLOWED_UPDATES = [
 type OwnerCacheEntry = { userId: number; userChatId: number; canReply: boolean };
 const ownerCache = new Map<string, OwnerCacheEntry>();
 const autoReplyCache = new Map<string, number>();
+
+async function getAutoReplyLast(key: string): Promise<number> {
+  if (redisEnabled()) {
+    const v = await redisGet<number>(`tgsb:autoreply:${key}`);
+    if (typeof v === "number") return v;
+  }
+  return autoReplyCache.get(key) ?? 0;
+}
+
+async function setAutoReplyLast(key: string, ttlSeconds: number): Promise<void> {
+  const now = Date.now();
+  autoReplyCache.set(key, now);
+  if (redisEnabled()) {
+    await redisSet(`tgsb:autoreply:${key}`, now, Math.max(ttlSeconds, 60));
+  }
+}
 
 function buildBot(): Bot {
   const bot = new Bot(config.telegramBotToken);
@@ -599,7 +616,7 @@ async function maybeAutoReply(
   const key = `${bcId}:${msg.chat.id}`;
   const cooldownMin = Number(s.autoReplyCooldownMinutes) || 0;
   const cooldownMs = Math.max(0, cooldownMin) * 60_000;
-  const last = autoReplyCache.get(key) ?? 0;
+  const last = await getAutoReplyLast(key);
   if (cooldownMs > 0 && Date.now() - last < cooldownMs) {
     console.log(`[autoreply] cooldown chat=${msg.chat.id}`);
     return false;
@@ -610,7 +627,7 @@ async function maybeAutoReply(
       business_connection_id: bcId,
       reply_parameters: { message_id: msg.message_id },
     });
-    autoReplyCache.set(key, Date.now());
+    await setAutoReplyLast(key, Math.max(cooldownMin * 60, 60));
     console.log(`[autoreply] sent chat=${msg.chat.id}`);
     return true;
   } catch (err) {
@@ -1247,9 +1264,9 @@ async function sendFriendlyReply(args: {
   if (!awayMessage) return false;
 
   const key = `${bcId}:${msg.chat.id}`;
-  const cooldownMs =
-    Math.max(0, Number(settings.autoReplyCooldownMinutes) || 0) * 60_000;
-  const last = autoReplyCache.get(key) ?? 0;
+  const cooldownMin = Number(settings.autoReplyCooldownMinutes) || 0;
+  const cooldownMs = Math.max(0, cooldownMin) * 60_000;
+  const last = await getAutoReplyLast(key);
   if (cooldownMs > 0 && Date.now() - last < cooldownMs) return false;
 
   let history: Awaited<ReturnType<typeof recentConversation>> = [];
@@ -1281,7 +1298,7 @@ async function sendFriendlyReply(args: {
       business_connection_id: bcId,
       reply_parameters: { message_id: msg.message_id },
     });
-    autoReplyCache.set(key, Date.now());
+    await setAutoReplyLast(key, Math.max(cooldownMin * 60, 60));
     return true;
   } catch (err) {
     console.error("[friendly] send failed:", err);

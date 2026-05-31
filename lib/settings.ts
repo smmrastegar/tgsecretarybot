@@ -5,10 +5,12 @@ import {
   type SettingKey,
 } from "./config";
 import { getAllSettings, setSetting, hasDb } from "./db";
+import { redisDelete, redisEnabled, redisGet, redisSet } from "./redis";
 
 type SettingsCache = { values: Record<SettingKey, string>; expiresAt: number };
 let cache: SettingsCache | null = null;
-const TTL_MS = 30_000;
+const TTL_SECONDS = 30;
+const REDIS_KEY = "tgsb:settings";
 
 async function loadSettings(): Promise<Record<SettingKey, string>> {
   const out = { ...DEFAULT_SETTINGS } as Record<SettingKey, string>;
@@ -31,13 +33,29 @@ async function loadSettings(): Promise<Record<SettingKey, string>> {
 
 export async function getSettings(): Promise<Record<SettingKey, string>> {
   if (cache && Date.now() < cache.expiresAt) return cache.values;
+
+  if (redisEnabled()) {
+    const cached = await redisGet<Record<SettingKey, string>>(REDIS_KEY);
+    if (cached && typeof cached === "object") {
+      const values = { ...DEFAULT_SETTINGS, ...cached } as Record<SettingKey, string>;
+      cache = { values, expiresAt: Date.now() + TTL_SECONDS * 1000 };
+      return values;
+    }
+  }
+
   const values = await loadSettings();
-  cache = { values, expiresAt: Date.now() + TTL_MS };
+  cache = { values, expiresAt: Date.now() + TTL_SECONDS * 1000 };
+  if (redisEnabled()) {
+    await redisSet(REDIS_KEY, values, TTL_SECONDS);
+  }
   return values;
 }
 
 export function invalidateSettingsCache(): void {
   cache = null;
+  if (redisEnabled()) {
+    void redisDelete(REDIS_KEY);
+  }
 }
 
 export async function get<K extends SettingKey>(key: K): Promise<string> {
