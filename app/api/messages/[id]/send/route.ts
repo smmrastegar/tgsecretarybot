@@ -5,11 +5,13 @@ import {
   audit,
   CHAT_MODES,
   hasDb,
+  logMessage,
   markMessageHandled,
   sql,
   upsertChatRule,
   type ChatMode,
 } from "@/lib/db";
+import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,19 +62,48 @@ export async function POST(
   }
 
   const bot = getBot();
+  const settings = await getSettings();
   try {
-    await bot.api.sendMessage(Number(row.chat_id), text, {
+    const sent = await bot.api.sendMessage(Number(row.chat_id), text, {
       business_connection_id: row.business_connection_id,
       reply_parameters: { message_id: Number(row.message_id) },
     });
+    if ((settings.markMessagesAsRead ?? "true").toLowerCase() !== "false") {
+      try {
+        await bot.api.readBusinessMessage(
+          row.business_connection_id,
+          Number(row.chat_id),
+          Number(row.message_id),
+        );
+      } catch (err) {
+        console.warn("[send] mark-read failed:", err);
+      }
+    }
+    // Log the outgoing reply so it appears in All Messages / chat detail.
     try {
-      await bot.api.readBusinessMessage(
-        row.business_connection_id,
-        Number(row.chat_id),
-        Number(row.message_id),
-      );
+      await logMessage({
+        businessConnectionId: row.business_connection_id,
+        ownerUserId: session.userId,
+        chatId: Number(row.chat_id),
+        chatType: row.chat_type,
+        chatTitle: row.chat_title,
+        senderId: session.userId,
+        senderUsername: session.username ?? null,
+        senderName:
+          settings.ownerDisplayName || settings.ownerName || "owner",
+        messageId: sent.message_id,
+        messageText: text,
+        importance: 0,
+        urgent: false,
+        concernsOwner: false,
+        reason: "manual send via dashboard",
+        alerted: false,
+        autoReplied: false,
+        fromOwner: true,
+        source: body.setMode === "ai_chat" ? "ai_dashboard" : "owner_dashboard",
+      });
     } catch (err) {
-      console.warn("[send] mark-read failed:", err);
+      console.error("[send] log failed:", err);
     }
   } catch (err) {
     return NextResponse.json(

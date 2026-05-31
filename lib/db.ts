@@ -66,6 +66,8 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS media_kind TEXT`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS transcript TEXT`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS transcript_at TIMESTAMPTZ`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS source TEXT`;
+    await q`CREATE INDEX IF NOT EXISTS messages_log_source_idx ON messages_log (source) WHERE source IS NOT NULL`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_owner_chat_idx ON messages_log (chat_id, created_at DESC) WHERE from_owner = TRUE`;
     await q`
       CREATE TABLE IF NOT EXISTS chat_rules (
@@ -296,22 +298,35 @@ export type LogMessage = {
   skippedReason?: string | null;
   mediaFileId?: string | null;
   mediaKind?: string | null;
+  source?: string | null;
 };
 
 export async function logMessage(m: LogMessage): Promise<number> {
   await ensureSchema();
+  // Dedupe: the same outgoing message can reach us via both the send-call
+  // (we log it) and a sender_business_bot echo (the bot's own outgoing
+  // arrives as a business_message). Return the existing id if so.
+  const existing = await sql()`
+    SELECT id FROM messages_log
+    WHERE business_connection_id = ${m.businessConnectionId}
+      AND chat_id = ${m.chatId}
+      AND message_id = ${m.messageId}
+    LIMIT 1`;
+  if (existing.length > 0) {
+    return Number((existing[0] as { id: string }).id);
+  }
   const rows = await sql()`
     INSERT INTO messages_log (
       business_connection_id, owner_user_id, chat_id, chat_type, chat_title,
       sender_id, sender_username, sender_name, message_id, message_text,
       importance, urgent, concerns_owner, reason, alerted, auto_replied,
-      from_owner, skipped_reason, media_file_id, media_kind
+      from_owner, skipped_reason, media_file_id, media_kind, source
     ) VALUES (
       ${m.businessConnectionId}, ${m.ownerUserId}, ${m.chatId}, ${m.chatType}, ${m.chatTitle},
       ${m.senderId}, ${m.senderUsername}, ${m.senderName}, ${m.messageId}, ${m.messageText},
       ${m.importance}, ${m.urgent}, ${m.concernsOwner}, ${m.reason}, ${m.alerted}, ${m.autoReplied},
       ${m.fromOwner ?? false}, ${m.skippedReason ?? null},
-      ${m.mediaFileId ?? null}, ${m.mediaKind ?? null}
+      ${m.mediaFileId ?? null}, ${m.mediaKind ?? null}, ${m.source ?? null}
     ) RETURNING id`;
   return Number((rows[0] as { id: string }).id);
 }
@@ -394,6 +409,7 @@ export type MessageRow = {
   transcript: string | null;
   transcriptAt: Date | null;
   fromOwner: boolean;
+  source: string | null;
 };
 
 function rowToMessage(r: Record<string, unknown>): MessageRow {
@@ -423,6 +439,7 @@ function rowToMessage(r: Record<string, unknown>): MessageRow {
     transcript: (r.transcript as string) ?? null,
     transcriptAt: (r.transcript_at as Date) ?? null,
     fromOwner: Boolean(r.from_owner),
+    source: (r.source as string) ?? null,
   };
 }
 

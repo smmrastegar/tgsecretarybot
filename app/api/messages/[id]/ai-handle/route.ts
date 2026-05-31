@@ -4,6 +4,7 @@ import { getBot } from "@/lib/bot";
 import {
   audit,
   hasDb,
+  logMessage,
   markMessageHandled,
   recentConversation,
   sql,
@@ -82,7 +83,7 @@ export async function POST(
 
   const bot = getBot();
   try {
-    await bot.api.sendMessage(Number(row.chat_id), reply.trim(), {
+    const sent = await bot.api.sendMessage(Number(row.chat_id), reply.trim(), {
       business_connection_id: row.business_connection_id,
       reply_parameters: { message_id: Number(row.message_id) },
     });
@@ -96,6 +97,31 @@ export async function POST(
       }
     } catch (err) {
       console.warn("[ai-handle] mark-read failed:", err);
+    }
+    try {
+      await logMessage({
+        businessConnectionId: row.business_connection_id,
+        ownerUserId: session.userId,
+        chatId: Number(row.chat_id),
+        chatType: row.chat_type,
+        chatTitle: row.chat_title,
+        senderId: session.userId,
+        senderUsername: session.username ?? null,
+        senderName:
+          settings.ownerDisplayName || settings.ownerName || "owner",
+        messageId: sent.message_id,
+        messageText: reply.trim(),
+        importance: 0,
+        urgent: false,
+        concernsOwner: false,
+        reason: "AI handle via dashboard",
+        alerted: false,
+        autoReplied: false,
+        fromOwner: true,
+        source: "ai_dashboard",
+      });
+    } catch (err) {
+      console.error("[ai-handle] log failed:", err);
     }
   } catch (err) {
     return NextResponse.json(

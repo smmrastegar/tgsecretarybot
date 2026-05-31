@@ -74,6 +74,51 @@ async function setAutoReplyLast(key: string, ttlSeconds: number): Promise<void> 
   }
 }
 
+function chatTitleOf(msg: Message): string | null {
+  const chat = msg.chat as { title?: unknown };
+  return typeof chat.title === "string" ? chat.title : null;
+}
+
+async function logOwnerSent(args: {
+  bcId: string;
+  chatId: number;
+  chatType: string;
+  chatTitle: string | null;
+  ownerUserId: number | null;
+  sentMessageId: number;
+  text: string;
+  source: string;
+  ownerLabel: string;
+  mediaKind?: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  try {
+    await logMessage({
+      businessConnectionId: args.bcId,
+      ownerUserId: args.ownerUserId,
+      chatId: args.chatId,
+      chatType: args.chatType,
+      chatTitle: args.chatTitle,
+      senderId: args.ownerUserId,
+      senderUsername: null,
+      senderName: args.ownerLabel,
+      messageId: args.sentMessageId,
+      messageText: args.text,
+      importance: 0,
+      urgent: false,
+      concernsOwner: false,
+      reason: `outgoing via ${args.source}`,
+      alerted: false,
+      autoReplied: false,
+      fromOwner: true,
+      mediaKind: args.mediaKind ?? null,
+      source: args.source,
+    });
+  } catch (err) {
+    console.error(`[db] logOwnerSent (${args.source}) failed:`, err);
+  }
+}
+
 async function markBusinessRead(
   bot: Bot,
   bcId: string,
@@ -849,12 +894,24 @@ async function maybeAutoReply(
   }
 
   try {
-    await bot.api.sendMessage(msg.chat.id, text, {
+    const sent = await bot.api.sendMessage(msg.chat.id, text, {
       business_connection_id: bcId,
       reply_parameters: { message_id: msg.message_id },
     });
     await setAutoReplyLast(key, Math.max(cooldownMin * 60, 60));
     await markBusinessRead(bot, bcId, msg.chat.id, msg.message_id);
+    const chatTitle = chatTitleOf(msg);
+    await logOwnerSent({
+      bcId,
+      chatId: msg.chat.id,
+      chatType: msg.chat.type,
+      chatTitle,
+      ownerUserId: null,
+      sentMessageId: sent.message_id,
+      text,
+      source: "auto_reply",
+      ownerLabel: s.ownerDisplayName || s.ownerName || "owner",
+    });
     console.log(`[autoreply] sent chat=${msg.chat.id}`);
     return true;
   } catch (err) {
@@ -1538,12 +1595,25 @@ async function sendFriendlyReply(args: {
   }
 
   try {
-    await bot.api.sendMessage(msg.chat.id, text, {
+    const sent = await bot.api.sendMessage(msg.chat.id, text, {
       business_connection_id: bcId,
       reply_parameters: { message_id: msg.message_id },
     });
     await setAutoReplyLast(key, Math.max(cooldownMin * 60, 60));
     await markBusinessRead(bot, bcId, msg.chat.id, msg.message_id);
+    const chatTitle = chatTitleOf(msg);
+    await logOwnerSent({
+      bcId,
+      chatId: msg.chat.id,
+      chatType: msg.chat.type,
+      chatTitle,
+      ownerUserId: null,
+      sentMessageId: sent.message_id,
+      text,
+      source: "friendly_reply",
+      ownerLabel:
+        settings.ownerDisplayName || settings.ownerName || "owner",
+    });
     return true;
   } catch (err) {
     console.error("[friendly] send failed:", err);
@@ -1595,11 +1665,24 @@ async function sendAiConversation(args: {
   if (!reply) return false;
 
   try {
-    await bot.api.sendMessage(msg.chat.id, reply, {
+    const sent = await bot.api.sendMessage(msg.chat.id, reply, {
       business_connection_id: bcId,
       reply_parameters: { message_id: msg.message_id },
     });
     await markBusinessRead(bot, bcId, msg.chat.id, msg.message_id);
+    const chatTitle = chatTitleOf(msg);
+    await logOwnerSent({
+      bcId,
+      chatId: msg.chat.id,
+      chatType: msg.chat.type,
+      chatTitle,
+      ownerUserId: null,
+      sentMessageId: sent.message_id,
+      text: reply,
+      source: "ai_chat",
+      ownerLabel:
+        settings.ownerDisplayName || settings.ownerName || "owner",
+    });
     return true;
   } catch (err) {
     console.error("[ai_chat] send failed:", err);

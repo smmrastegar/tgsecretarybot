@@ -1,10 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import MessageActions from "@/components/MessageActions";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
+
+const SOURCE_LABEL: Record<string, { label: string; tone: "info" | "success" | "warn" | "neutral" }> = {
+  ai_chat: { label: "AI (auto)", tone: "success" },
+  ai_dashboard: { label: "AI (manual)", tone: "success" },
+  friendly_reply: { label: "Friendly", tone: "info" },
+  auto_reply: { label: "Auto-reply", tone: "info" },
+  owner_dashboard: { label: "Dashboard", tone: "neutral" },
+};
 
 type Message = {
   id: number;
@@ -25,6 +34,8 @@ type Message = {
   mediaFileId: string | null;
   transcript: string | null;
   transcriptAt: string | null;
+  fromOwner: boolean;
+  source: string | null;
 };
 
 export default function MessagesPage() {
@@ -98,26 +109,37 @@ export default function MessagesPage() {
         </Card>
       ) : (
         <div className="flex flex-col gap-2">
-          {messages.map((m) => (
+          {messages.map((m) => {
+            const srcInfo = m.source ? SOURCE_LABEL[m.source] : null;
+            return (
             <Card key={m.id} className="!p-3 md:!p-4">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div className="text-xs text-[var(--color-text-dim)] flex items-center gap-2 flex-wrap min-w-0">
-                  <span>{m.senderName}</span>
+                  <Link
+                    href={`/chats/${m.chatId}`}
+                    className="hover:underline font-medium text-[var(--color-text)]"
+                  >
+                    {m.senderName}
+                  </Link>
+                  {m.fromOwner && <Badge tone="info">you</Badge>}
                   <span>·</span>
-                  <span>{chatTypeLabel(m.chatType)}</span>
-                  {m.chatTitle && (
-                    <>
-                      <span>·</span>
-                      <span className="truncate">{truncate(m.chatTitle, 28)}</span>
-                    </>
-                  )}
+                  <Link
+                    href={`/chats/${m.chatId}`}
+                    className="hover:underline"
+                  >
+                    {chatTypeLabel(m.chatType)}
+                    {m.chatTitle && ` · ${truncate(m.chatTitle, 28)}`}
+                  </Link>
                   <span>·</span>
                   <span>{relTime(m.createdAt)}</span>
                 </div>
                 <div className="flex gap-1 flex-wrap text-[10px]">
-                  <span className="text-[var(--color-text-dim)]">
-                    imp {m.importance}
-                  </span>
+                  {!m.fromOwner && (
+                    <span className="text-[var(--color-text-dim)]">
+                      imp {m.importance}
+                    </span>
+                  )}
+                  {srcInfo && <Badge tone={srcInfo.tone}>{srcInfo.label}</Badge>}
                   {m.urgent && <Badge tone="danger">urgent</Badge>}
                   {m.alerted && <Badge tone="warn">alert</Badge>}
                   {m.autoReplied && <Badge tone="info">replied</Badge>}
@@ -165,7 +187,8 @@ export default function MessagesPage() {
                 }
               />
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </Shell>
