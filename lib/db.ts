@@ -1105,13 +1105,17 @@ export async function findOnlyActiveSessionForSecretary(
 ): Promise<SecretarySession | null> {
   if (!hasDb()) return null;
   await ensureSchema();
+  // Return the most recent active session for this secretary. When several
+  // are open simultaneously we assume the secretary means the one they
+  // touched last — they can always tap "reply" on a specific thread to be
+  // explicit.
   const rows = await sql()`
     SELECT * FROM secretary_sessions
     WHERE secretary_user_id = ${secretaryUserId}
       AND ended_at IS NULL
       AND last_activity_at > NOW() - make_interval(mins => ${idleMinutes})
-    ORDER BY last_activity_at DESC LIMIT 2`;
-  if (rows.length !== 1) return null;
+    ORDER BY last_activity_at DESC LIMIT 1`;
+  if (rows.length === 0) return null;
   return rowToSecretarySession(rows[0] as Record<string, unknown>);
 }
 
