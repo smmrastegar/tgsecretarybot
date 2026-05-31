@@ -402,3 +402,79 @@ function parseSummary(raw: string): GroupSummary {
     mentionsOwner: parsed.mentions_owner === true,
   };
 }
+
+const EXTRACT_PROMPT = `You extract actionable items from a Telegram message
+for the owner's secretary dashboard. Look for events (meetings, calls,
+appointments), deadlines, reminders, tasks, decisions, or anything else the
+owner should not forget.
+
+Reply with STRICT JSON only, no prose, no code fences:
+{
+  "items": [
+    {
+      "kind": "event" | "task" | "reminder" | "deadline" | "decision" | "note",
+      "title": "<short label, max 80 chars, same language as the message>",
+      "description": "<optional one-sentence elaboration>",
+      "due_at": "<ISO 8601 timestamp WITH timezone, or null>",
+      "location": "<optional>",
+      "participants": ["<names mentioned, optional>"]
+    }
+  ]
+}
+
+Rules:
+- Use due_at ONLY when the message specifies a concrete date or time
+  ("tomorrow at 3pm", "Tuesday", "next Monday morning", "10/05 14:00").
+  Resolve relative dates against the "now" timestamp provided. If the
+  message is vague ("soon", "later"), set due_at to null.
+- Persian dates ("فردا 4 بعدازظهر", "پنج‌شنبه ساعت ۸") should be resolved
+  to ISO 8601.
+- Don't invent items that aren't in the message. If there's nothing
+  actionable, return {"items": []}.
+- For "kind": event = scheduled get-together, task = todo for the owner,
+  reminder = something to remember, deadline = something due, decision =
+  something agreed, note = info worth keeping.
+- Keep titles short and concrete.`;
+
+export type ExtractedItemPayload = {
+  kind: string;
+  title: string;
+  description?: string | null;
+  due_at?: string | null;
+  location?: string | null;
+  participants?: string[] | null;
+};
+
+export async function extractActions(input: {
+  text: string;
+  senderName?: string;
+  nowIso?: string;
+  chatId?: number;
+  businessConnectionId?: string;
+}): Promise<ExtractedItemPayload[]> {
+  const payload = {
+    now: input.nowIso ?? new Date().toISOString(),
+    from: input.senderName,
+    message: input.text,
+  };
+  const content = await callOpenRouter(
+    [
+      { role: "system", content: EXTRACT_PROMPT },
+      { role: "user", content: JSON.stringify(payload) },
+    ],
+    {
+      maxTokens: 600,
+      jsonObject: true,
+      temperature: 0.1,
+      purpose: "extract",
+      chatId: input.chatId ?? null,
+      businessConnectionId: input.businessConnectionId ?? null,
+    },
+  );
+  try {
+    const parsed = JSON.parse(content) as { items?: ExtractedItemPayload[] };
+    return Array.isArray(parsed.items) ? parsed.items : [];
+  } catch {
+    return [];
+  }
+}

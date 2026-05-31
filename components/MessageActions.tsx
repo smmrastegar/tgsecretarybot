@@ -60,6 +60,7 @@ export default function MessageActions({
   const [forwarding, setForwarding] = useState(false);
   const [handing, setHanding] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [extracting, setExtracting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   function showToast(text: string) {
@@ -174,6 +175,35 @@ export default function MessageActions({
     }
   }
 
+  async function extract() {
+    setExtracting(true);
+    try {
+      const r = await fetch(`/api/messages/${m.id}/extract`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const j = (await r.json()) as {
+        saved?: number;
+        items?: Array<{ title: string }>;
+        error?: string;
+      };
+      if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
+      if (!j.saved) {
+        showToast("🧠 Nothing actionable found in this message.");
+      } else {
+        const first = j.items?.[0]?.title;
+        showToast(
+          `🧠 Saved ${j.saved} item${j.saved === 1 ? "" : "s"}${first ? `: ${first}` : ""} → Reminders`,
+        );
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExtracting(false);
+    }
+  }
+
   async function setHandled(handled: boolean) {
     await fetch(`/api/messages/${m.id}`, {
       method: "PATCH",
@@ -206,6 +236,13 @@ export default function MessageActions({
             {transcribing ? "Transcribing…" : "🎙 Transcribe"}
           </button>
         )}
+        <button
+          onClick={extract}
+          disabled={extracting}
+          className="text-[11px] px-2 py-1 rounded-md border border-purple-700 text-purple-300 hover:bg-purple-900/30 disabled:opacity-50"
+        >
+          {extracting ? "Extracting…" : "🧠 Extract"}
+        </button>
         {!m.handledAt && draft === null && (
           <button
             onClick={suggest}

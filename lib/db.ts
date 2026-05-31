@@ -165,6 +165,24 @@ export async function ensureSchema(): Promise<void> {
     await q`CREATE INDEX IF NOT EXISTS ai_usage_chat_idx ON ai_usage (chat_id, created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage (created_at DESC)`;
     await q`
+      CREATE TABLE IF NOT EXISTS extracted_items (
+        id           BIGSERIAL PRIMARY KEY,
+        message_id   BIGINT,
+        chat_id      BIGINT,
+        chat_title   TEXT,
+        sender_name  TEXT,
+        kind         TEXT NOT NULL,
+        title        TEXT NOT NULL,
+        description  TEXT,
+        due_at       TIMESTAMPTZ,
+        location     TEXT,
+        participants JSONB,
+        done_at      TIMESTAMPTZ,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS extracted_items_due_idx ON extracted_items (due_at) WHERE done_at IS NULL`;
+    await q`CREATE INDEX IF NOT EXISTS extracted_items_created_idx ON extracted_items (created_at DESC)`;
+    await q`
       CREATE TABLE IF NOT EXISTS invites (
         token        TEXT PRIMARY KEY,
         purpose      TEXT NOT NULL,
@@ -1351,4 +1369,120 @@ export async function chatModeCounts(): Promise<Record<ChatMode, number>> {
     if (CHAT_MODES.includes(m)) empty[m] = Number((r as { n: number }).n) || 0;
   }
   return empty;
+}
+
+// --- Extracted reminders/events/tasks ---
+
+export type ExtractedItem = {
+  id: number;
+  messageId: number | null;
+  chatId: number | null;
+  chatTitle: string | null;
+  senderName: string | null;
+  kind: string;
+  title: string;
+  description: string | null;
+  dueAt: Date | null;
+  location: string | null;
+  participants: string[] | null;
+  doneAt: Date | null;
+  createdAt: Date;
+};
+
+export async function saveExtractedItems(items: Array<{
+  messageId: number | null;
+  chatId: number | null;
+  chatTitle: string | null;
+  senderName: string | null;
+  kind: string;
+  title: string;
+  description?: string | null;
+  dueAt?: Date | null;
+  location?: string | null;
+  participants?: string[] | null;
+}>): Promise<number> {
+  if (!hasDb() || items.length === 0) return 0;
+  await ensureSchema();
+  let n = 0;
+  const q = sql();
+  for (const it of items) {
+    await q`
+      INSERT INTO extracted_items (
+        message_id, chat_id, chat_title, sender_name,
+        kind, title, description, due_at, location, participants
+      ) VALUES (
+        ${it.messageId}, ${it.chatId}, ${it.chatTitle}, ${it.senderName},
+        ${it.kind}, ${it.title}, ${it.description ?? null},
+        ${it.dueAt ? it.dueAt.toISOString() : null},
+        ${it.location ?? null},
+        ${it.participants ? JSON.stringify(it.participants) : null}::jsonb
+      )`;
+    n++;
+  }
+  return n;
+}
+
+function rowToExtracted(r: Record<string, unknown>): ExtractedItem {
+  const p = r.participants as unknown;
+  return {
+    id: Number(r.id),
+    messageId: r.message_id != null ? Number(r.message_id) : null,
+    chatId: r.chat_id != null ? Number(r.chat_id) : null,
+    chatTitle: (r.chat_title as string) ?? null,
+    senderName: (r.sender_name as string) ?? null,
+    kind: r.kind as string,
+    title: r.title as string,
+    description: (r.description as string) ?? null,
+    dueAt: (r.due_at as Date) ?? null,
+    location: (r.location as string) ?? null,
+    participants: Array.isArray(p) ? (p as string[]) : null,
+    doneAt: (r.done_at as Date) ?? null,
+    createdAt: r.created_at as Date,
+  };
+}
+
+export async function listExtractedItems(opts: {
+  upcoming?: boolean;
+  doneOnly?: boolean;
+  limit?: number;
+}): Promise<ExtractedItem[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const limit = Math.min(opts.limit ?? 100, 500);
+  const rows = opts.upcoming
+    ? await sql()`
+        SELECT * FROM extracted_items
+        WHERE done_at IS NULL
+          AND (due_at IS NULL OR due_at > NOW() - INTERVAL '1 day')
+        ORDER BY
+          COALESCE(due_at, created_at + INTERVAL '100 years') ASC,
+          created_at DESC
+        LIMIT ${limit}`
+    : opts.doneOnly
+      ? await sql()`
+          SELECT * FROM extracted_items
+          WHERE done_at IS NOT NULL
+          ORDER BY done_at DESC LIMIT ${limit}`
+      : await sql()`
+          SELECT * FROM extracted_items
+          ORDER BY created_at DESC LIMIT ${limit}`;
+  return rows.map(rowToExtracted);
+}
+
+export async function markExtractedDone(id: number, done: boolean): Promise<void> {
+  if (!hasDb()) return;
+  if (done) {
+    await sql()`UPDATE extracted_items SET done_at = NOW() WHERE id = ${id}`;
+  } else {
+    await sql()`UPDATE extracted_items SET done_at = NULL WHERE id = ${id}`;
+  }
+}
+
+export async function upcomingReminderCount(): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT COUNT(*)::int AS n FROM extracted_items
+    WHERE done_at IS NULL AND due_at IS NOT NULL AND due_at > NOW()`;
+  return Number((rows[0] as { n: number })?.n) || 0;
 }
