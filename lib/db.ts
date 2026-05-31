@@ -167,6 +167,24 @@ export async function ensureSchema(): Promise<void> {
                 ON CONFLICT (key) DO NOTHING`;
       }
     }
+    // One-time migration: previously, bot-echoed business messages (the
+    // AI / auto / friendly replies that Telegram bounces back as
+    // business_message with sender_business_bot set) were logged with
+    // from_owner=TRUE and source=NULL — which made `lastOwnerMessageAt`
+    // treat the bot's own reply as the owner being "active" and silenced
+    // any further response via the grace window. Backfill those rows
+    // with source='bot_echo' so the grace check ignores them.
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.bot_echo_source.v1'`;
+      if ((flag as unknown[]).length === 0) {
+        await q`UPDATE messages_log SET source = 'bot_echo'
+                WHERE from_owner = TRUE
+                  AND source IS NULL
+                  AND reason = 'bot outgoing (business)'`;
+        await q`INSERT INTO settings (key, value) VALUES ('migration.bot_echo_source.v1', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
     await q`
       CREATE TABLE IF NOT EXISTS ai_usage (
         id                     BIGSERIAL PRIMARY KEY,
@@ -411,12 +429,22 @@ export async function saveTranscript(
     WHERE id = ${id}`;
 }
 
+// "Owner active in this chat" for the grace window means the owner
+// actually typed something in Telegram — NOT the bot's own AI/auto reply
+// (those land in messages_log with from_owner=TRUE because Telegram
+// attributes business outgoing to the user). Bot-generated rows have a
+// non-null `source` (ai_chat, auto_reply, friendly_reply, bot_echo,
+// ai_dashboard, owner_dashboard, ...) so we ignore anything with a
+// source set. Owner-typed messages from the Telegram client are logged
+// with source IS NULL.
 export async function lastOwnerMessageAt(chatId: number): Promise<Date | null> {
   if (!hasDb()) return null;
   await ensureSchema();
   const rows = await sql()`
     SELECT MAX(created_at) AS at FROM messages_log
-    WHERE chat_id = ${chatId} AND from_owner = TRUE`;
+    WHERE chat_id = ${chatId}
+      AND from_owner = TRUE
+      AND source IS NULL`;
   const r = rows[0] as { at: Date | null } | undefined;
   return r?.at ?? null;
 }

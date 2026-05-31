@@ -497,6 +497,11 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           alerted: false,
           autoReplied: false,
           fromOwner: true,
+          // Tag the source so lastOwnerMessageAt can tell this apart from
+          // a message the owner actually typed — otherwise the bot's own
+          // AI/auto reply would trigger the active-conversation grace
+          // window and block the next reply.
+          source: "bot_echo",
         });
       } catch (err) {
         console.error("[db] bot-outgoing-log failed:", err);
