@@ -72,6 +72,26 @@ async function setAutoReplyLast(key: string, ttlSeconds: number): Promise<void> 
   }
 }
 
+async function markBusinessRead(
+  bot: Bot,
+  bcId: string,
+  chatId: number,
+  messageId: number,
+): Promise<void> {
+  try {
+    await bot.api.readBusinessMessage(bcId, chatId, messageId);
+  } catch (err) {
+    const e = err as { error_code?: number; description?: string };
+    if (e?.error_code === 400 || e?.error_code === 403) {
+      console.warn(
+        `[read] cannot mark message read (likely missing can_read_messages right): ${e.description}`,
+      );
+    } else {
+      console.error("[read] failed:", err);
+    }
+  }
+}
+
 function buildBot(): Bot {
   const bot = new Bot(config.telegramBotToken);
 
@@ -628,6 +648,7 @@ async function maybeAutoReply(
       reply_parameters: { message_id: msg.message_id },
     });
     await setAutoReplyLast(key, Math.max(cooldownMin * 60, 60));
+    await markBusinessRead(bot, bcId, msg.chat.id, msg.message_id);
     console.log(`[autoreply] sent chat=${msg.chat.id}`);
     return true;
   } catch (err) {
@@ -1125,6 +1146,22 @@ async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
       toChatId: session.senderChatId,
       businessConnectionId: session.businessConnectionId,
     });
+    // Mark the original sender message (the one the secretary is replying
+    // to) as read so the sender gets a "seen" tick now that we've answered.
+    if (replyTo) {
+      const linked = await findLinkWithSenderMessage(
+        msg.chat.id,
+        replyTo.message_id,
+      ).catch(() => null);
+      if (linked?.senderMessageIdLinked) {
+        await markBusinessRead(
+          bot,
+          session.businessConnectionId,
+          session.senderChatId,
+          linked.senderMessageIdLinked,
+        );
+      }
+    }
     await recordSecretaryLink({
       sessionId: session.id,
       secretaryChatId: msg.chat.id,
@@ -1300,6 +1337,7 @@ async function sendFriendlyReply(args: {
       reply_parameters: { message_id: msg.message_id },
     });
     await setAutoReplyLast(key, Math.max(cooldownMin * 60, 60));
+    await markBusinessRead(bot, bcId, msg.chat.id, msg.message_id);
     return true;
   } catch (err) {
     console.error("[friendly] send failed:", err);
@@ -1348,6 +1386,7 @@ async function sendAiConversation(args: {
       business_connection_id: bcId,
       reply_parameters: { message_id: msg.message_id },
     });
+    await markBusinessRead(bot, bcId, msg.chat.id, msg.message_id);
     return true;
   } catch (err) {
     console.error("[ai_chat] send failed:", err);

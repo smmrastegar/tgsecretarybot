@@ -50,6 +50,15 @@ export async function POST(
       business_connection_id: row.business_connection_id,
       reply_parameters: { message_id: Number(row.message_id) },
     });
+    try {
+      await bot.api.readBusinessMessage(
+        row.business_connection_id,
+        Number(row.chat_id),
+        Number(row.message_id),
+      );
+    } catch (err) {
+      console.warn("[send] mark-read failed:", err);
+    }
   } catch (err) {
     return NextResponse.json(
       { error: String(err).slice(0, 400) },
