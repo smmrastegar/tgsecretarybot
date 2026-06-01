@@ -3,13 +3,26 @@ import { getSettings } from "./settings";
 import { recordAiUsage } from "./db";
 
 const MODEL_RATES: Record<string, { in: number; out: number }> = {
-  "google/gemini-2.0-flash-lite-001": { in: 0.075, out: 0.3 },
-  "google/gemini-2.0-flash-001": { in: 0.1, out: 0.4 },
+  "google/gemini-2.5-flash-lite": { in: 0.1, out: 0.4 },
   "google/gemini-2.5-flash": { in: 0.3, out: 2.5 },
+  "google/gemini-2.5-pro": { in: 1.25, out: 10.0 },
   "anthropic/claude-haiku-4-5": { in: 1.0, out: 5.0 },
   "anthropic/claude-sonnet-4-6": { in: 3.0, out: 15.0 },
   "openai/gpt-4o-mini": { in: 0.15, out: 0.6 },
 };
+
+// OpenRouter retires model IDs without warning. Map dead IDs we
+// previously shipped (or that users have saved in their settings CSV)
+// to the closest current successor, so things keep working without
+// forcing the user to edit settings.
+const RETIRED_MODELS: Record<string, string> = {
+  "google/gemini-2.0-flash-lite-001": "google/gemini-2.5-flash-lite",
+  "google/gemini-2.0-flash-001": "google/gemini-2.5-flash",
+};
+
+function resolveModel(model: string): string {
+  return RETIRED_MODELS[model] ?? model;
+}
 
 function estimateCost(
   model: string,
@@ -126,7 +139,11 @@ async function callOpenRouter(
   };
   if (config.openrouterAppUrl) headers["HTTP-Referer"] = config.openrouterAppUrl;
 
-  const models = await modelsToTry(opts.purpose);
+  const requested = await modelsToTry(opts.purpose);
+  const seen = new Set<string>();
+  const models = requested
+    .map(resolveModel)
+    .filter((m) => (seen.has(m) ? false : seen.add(m)));
   let lastErr: unknown = null;
   for (const model of models) {
     const body: Record<string, unknown> = {

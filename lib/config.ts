@@ -16,7 +16,7 @@ export const config = {
 
   openrouterApiKey: required("OPENROUTER_API_KEY"),
   openrouterModel:
-    optional("OPENROUTER_MODEL") ?? "google/gemini-2.0-flash-lite-001",
+    optional("OPENROUTER_MODEL") ?? "google/gemini-2.5-flash-lite",
   openrouterAppName: optional("OPENROUTER_APP_NAME") ?? "tgsecretarybot",
   openrouterAppUrl: optional("OPENROUTER_APP_URL"),
 

@@ -194,9 +194,9 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
 ];
 
 const KNOWN_MODELS: Array<{ id: string; in: number; out: number; label: string }> = [
-  { id: "google/gemini-2.0-flash-lite-001", in: 0.075, out: 0.3, label: "Gemini 2.0 Flash Lite" },
-  { id: "google/gemini-2.0-flash-001", in: 0.1, out: 0.4, label: "Gemini 2.0 Flash" },
+  { id: "google/gemini-2.5-flash-lite", in: 0.1, out: 0.4, label: "Gemini 2.5 Flash Lite" },
   { id: "google/gemini-2.5-flash", in: 0.3, out: 2.5, label: "Gemini 2.5 Flash" },
+  { id: "google/gemini-2.5-pro", in: 1.25, out: 10.0, label: "Gemini 2.5 Pro" },
   { id: "anthropic/claude-haiku-4-5", in: 1.0, out: 5.0, label: "Claude Haiku 4.5" },
   { id: "anthropic/claude-sonnet-4-6", in: 3.0, out: 15.0, label: "Claude Sonnet 4.6" },
   { id: "openai/gpt-4o-mini", in: 0.15, out: 0.6, label: "GPT-4o mini" },
@@ -310,9 +310,9 @@ export default function SettingsPage() {
 
   // Approx OpenRouter input price ($/1M tokens) for the cost-sort button.
   const MODEL_RATES_IN: Record<string, number> = {
-    "google/gemini-2.0-flash-lite-001": 0.075,
-    "google/gemini-2.0-flash-001": 0.1,
+    "google/gemini-2.5-flash-lite": 0.1,
     "google/gemini-2.5-flash": 0.3,
+    "google/gemini-2.5-pro": 1.25,
     "anthropic/claude-haiku-4-5": 1.0,
     "anthropic/claude-sonnet-4-6": 3.0,
     "openai/gpt-4o-mini": 0.15,
