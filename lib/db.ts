@@ -560,6 +560,60 @@ export async function listMessages(opts: {
   return rows.map(rowToMessage);
 }
 
+// Cluster a chat's messages into threads by time gap (default: a >5min
+// silence starts a new thread). Used by the ai_listen mode dashboard so
+// the owner can scan what happened during periods they weren't looking
+// at the chat. Returns one row per message, tagged with the thread it
+// belongs to; callers group by threadNo client-side.
+export type ThreadedMessageRow = MessageRow & { threadNo: number };
+
+export async function listChatThreaded(opts: {
+  chatId: number;
+  gapMinutes?: number;
+  limit?: number;
+}): Promise<ThreadedMessageRow[]> {
+  await ensureSchema();
+  const gap = Math.max(1, Math.min(opts.gapMinutes ?? 5, 240));
+  const limit = Math.min(Math.max(opts.limit ?? 500, 1), 2000);
+  const rows = await sql()`
+    WITH ordered AS (
+      SELECT m.*, LAG(m.created_at) OVER (ORDER BY m.created_at) AS prev_at
+      FROM messages_log m
+      WHERE m.chat_id = ${opts.chatId}
+        AND COALESCE(m.skipped_reason, '') <> 'muted'
+    ),
+    flagged AS (
+      SELECT *,
+        CASE
+          WHEN prev_at IS NULL
+            OR EXTRACT(EPOCH FROM (created_at - prev_at)) > ${gap * 60}
+          THEN 1 ELSE 0
+        END AS is_new_thread
+      FROM ordered
+    ),
+    numbered AS (
+      SELECT *,
+        SUM(is_new_thread) OVER (ORDER BY created_at) AS thread_no
+      FROM flagged
+    ),
+    latest_threads AS (
+      SELECT DISTINCT thread_no
+      FROM numbered
+      ORDER BY thread_no DESC
+      LIMIT 30
+    )
+    SELECT n.*, COALESCE(r.mode, 'off') AS chat_mode
+    FROM numbered n
+    LEFT JOIN chat_rules r ON r.chat_id = n.chat_id
+    WHERE n.thread_no IN (SELECT thread_no FROM latest_threads)
+    ORDER BY n.created_at DESC
+    LIMIT ${limit}`;
+  return rows.map((r) => ({
+    ...rowToMessage(r),
+    threadNo: Number((r as { thread_no: number }).thread_no),
+  }));
+}
+
 export async function markMessageHandled(
   id: number,
   actorId: number,
@@ -618,7 +672,8 @@ export type ChatMode =
   | "secretary"
   | "auto_reply"
   | "friendly_reply"
-  | "ai_chat";
+  | "ai_chat"
+  | "ai_listen";
 
 export const CHAT_MODES: ChatMode[] = [
   "off",
@@ -626,6 +681,7 @@ export const CHAT_MODES: ChatMode[] = [
   "auto_reply",
   "friendly_reply",
   "ai_chat",
+  "ai_listen",
 ];
 
 export const RELATIONSHIPS = [
@@ -1535,6 +1591,7 @@ export async function chatModeCounts(): Promise<Record<ChatMode, number>> {
     auto_reply: 0,
     friendly_reply: 0,
     ai_chat: 0,
+    ai_listen: 0,
   };
   if (!hasDb()) return empty;
   await ensureSchema();

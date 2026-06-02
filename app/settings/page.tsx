@@ -8,6 +8,9 @@ type Settings = {
   ownerName: string;
   ownerDisplayName: string;
   ownerContext: string;
+  ownerAliasesCsv: string;
+  ownerJobDescription: string;
+  groupPriorityKeywordsCsv: string;
   importanceThreshold: string;
   ownerNotifyChatId: string;
   alertWebhookUrl: string;
@@ -61,6 +64,22 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         label: "Personal context",
         hint: "One or two sentences about you (role, family, common topics).",
         type: "textarea",
+      },
+      {
+        key: "ownerAliasesCsv",
+        label: "Aliases / nicknames (comma-separated)",
+        hint: "Every variant people use to refer to you in groups — first name, family name, common typos, nicknames, @-handles without the @. Example: مهدی, موتی, راستگار, mahdi. The classifier treats any match as you being addressed.",
+      },
+      {
+        key: "ownerJobDescription",
+        label: "What you do for work",
+        hint: "One short line. Used by the classifier to judge whether a group message is relevant to your job.",
+        type: "textarea",
+      },
+      {
+        key: "groupPriorityKeywordsCsv",
+        label: "Priority keywords (comma-separated)",
+        hint: "Project names, products, deadlines, anything you want flagged automatically. A match bumps importance by ~2 and marks the message as concerning you.",
       },
     ],
   },

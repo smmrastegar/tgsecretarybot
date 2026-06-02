@@ -7,7 +7,13 @@ import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
-type ChatMode = "off" | "secretary" | "auto_reply" | "friendly_reply" | "ai_chat";
+type ChatMode =
+  | "off"
+  | "secretary"
+  | "auto_reply"
+  | "friendly_reply"
+  | "ai_chat"
+  | "ai_listen";
 
 const MODE_LABELS: Record<ChatMode, string> = {
   off: "Off",
@@ -15,6 +21,7 @@ const MODE_LABELS: Record<ChatMode, string> = {
   auto_reply: "Auto-reply",
   friendly_reply: "Friendly auto-reply (AI)",
   ai_chat: "AI chat (full)",
+  ai_listen: "AI listen (silent, summarises)",
 };
 
 type Relationship =
@@ -96,6 +103,28 @@ type Stats = {
   firstSeen: string | null;
 };
 
+type ThreadMsg = {
+  id: number;
+  createdAt: string;
+  senderName: string;
+  messageText: string;
+  transcript: string | null;
+  mediaKind: string | null;
+  mediaFileId: string | null;
+  importance: number;
+  urgent: boolean;
+  fromOwner: boolean;
+};
+
+type ThreadGroup = {
+  threadNo: number;
+  startedAt: string;
+  endedAt: string;
+  messageCount: number;
+  senders: string[];
+  messages: ThreadMsg[];
+};
+
 export default function ChatDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -130,6 +159,67 @@ export default function ChatDetailPage() {
   const [personal, setPersonal] = useState<Personal>(blankPersonal);
   const [personalDirty, setPersonalDirty] = useState(false);
   const [personalSaved, setPersonalSaved] = useState(false);
+
+  const [threads, setThreads] = useState<ThreadGroup[] | null>(null);
+  const [threadsLoading, setThreadsLoading] = useState(false);
+  const [threadGap, setThreadGap] = useState(5);
+  const [expandedThreads, setExpandedThreads] = useState<Set<number>>(
+    new Set(),
+  );
+  const [summaries, setSummaries] = useState<Record<number, string>>({});
+  const [summarizing, setSummarizing] = useState<Set<number>>(new Set());
+
+  const loadThreads = useCallback(
+    async (gap: number) => {
+      if (!Number.isFinite(chatId)) return;
+      setThreadsLoading(true);
+      try {
+        const r = await fetch(
+          `/api/chats/${chatId}/threads?gap=${gap}&limit=500`,
+        );
+        if (r.ok) {
+          const j = (await r.json()) as { threads: ThreadGroup[] };
+          setThreads(j.threads);
+        }
+      } finally {
+        setThreadsLoading(false);
+      }
+    },
+    [chatId],
+  );
+
+  async function summarizeThread(threadNo: number) {
+    if (summarizing.has(threadNo) || summaries[threadNo]) return;
+    setSummarizing((prev) => new Set(prev).add(threadNo));
+    try {
+      const r = await fetch(`/api/chats/${chatId}/threads/summarize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadNo, gapMinutes: threadGap }),
+      });
+      if (r.ok) {
+        const j = (await r.json()) as {
+          summary?: { summary?: string; topics?: string[]; actionItems?: string[] };
+        };
+        const parts: string[] = [];
+        if (j.summary?.summary) parts.push(j.summary.summary);
+        if (j.summary?.topics?.length)
+          parts.push(`موضوعات: ${j.summary.topics.join(" · ")}`);
+        if (j.summary?.actionItems?.length)
+          parts.push(`Action items:\n• ${j.summary.actionItems.join("\n• ")}`);
+        setSummaries((prev) => ({
+          ...prev,
+          [threadNo]: parts.join("\n\n") || "(no summary)",
+        }));
+      }
+    } finally {
+      setSummarizing((prev) => {
+        const next = new Set(prev);
+        next.delete(threadNo);
+        return next;
+      });
+    }
+  }
 
   const PAGE = 10;
 
@@ -558,6 +648,163 @@ export default function ChatDetailPage() {
                 </div>
               )}
           </Card>
+
+          <PageTitle
+            title="Threads"
+            subtitle="هر فاصله‌ی سکوتِ بیشتر از چند دقیقه یه thread جدید درست می‌کنه. خلاصه‌ی هر کدوم رو با AI بگیر."
+            actions={
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-[var(--color-text-dim)]">
+                  gap
+                </label>
+                <select
+                  value={threadGap}
+                  onChange={(e) => {
+                    const g = Number(e.target.value);
+                    setThreadGap(g);
+                    void loadThreads(g);
+                  }}
+                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs"
+                >
+                  <option value="2">۲ دقیقه</option>
+                  <option value="5">۵ دقیقه</option>
+                  <option value="15">۱۵ دقیقه</option>
+                  <option value="60">۱ ساعت</option>
+                </select>
+                <button
+                  onClick={() => loadThreads(threadGap)}
+                  disabled={threadsLoading}
+                  className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                >
+                  {threadsLoading
+                    ? "Loading…"
+                    : threads
+                      ? "Refresh"
+                      : "Load threads"}
+                </button>
+              </div>
+            }
+          />
+
+          {!threads && !threadsLoading && (
+            <Card>
+              <p className="text-sm text-[var(--color-text-dim)]">
+                هنوز thread‌ها لود نشدن. روی «Load threads» بزن.
+              </p>
+            </Card>
+          )}
+          {threads && threads.length === 0 && (
+            <Card>
+              <p className="text-sm text-[var(--color-text-dim)]">
+                پیامی در این چت نیست.
+              </p>
+            </Card>
+          )}
+          {threads && threads.length > 0 && (
+            <div className="flex flex-col gap-2 mb-6">
+              {threads.map((t) => {
+                const expanded = expandedThreads.has(t.threadNo);
+                const started = new Date(t.startedAt);
+                const ended = new Date(t.endedAt);
+                const durationMs =
+                  ended.getTime() - started.getTime();
+                const durationMin = Math.round(durationMs / 60000);
+                return (
+                  <Card key={t.threadNo} className="!p-3">
+                    <div className="flex items-start justify-between gap-2 flex-wrap">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium">
+                          {started.toLocaleString()}{" "}
+                          <span className="text-[var(--color-text-dim)]">
+                            → {relTime(t.endedAt)}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-[var(--color-text-dim)] mt-0.5">
+                          {t.messageCount} پیام · {durationMin}m ·{" "}
+                          {t.senders.join("، ")}
+                        </div>
+                      </div>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => summarizeThread(t.threadNo)}
+                          disabled={
+                            summarizing.has(t.threadNo) ||
+                            Boolean(summaries[t.threadNo])
+                          }
+                          className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                        >
+                          {summarizing.has(t.threadNo)
+                            ? "Summarising…"
+                            : summaries[t.threadNo]
+                              ? "✓ Summary"
+                              : "Summarise"}
+                        </button>
+                        <button
+                          onClick={() =>
+                            setExpandedThreads((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(t.threadNo))
+                                next.delete(t.threadNo);
+                              else next.add(t.threadNo);
+                              return next;
+                            })
+                          }
+                          className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                        >
+                          {expanded ? "بستن" : "نمایش"}
+                        </button>
+                      </div>
+                    </div>
+                    {summaries[t.threadNo] && (
+                      <div
+                        dir="auto"
+                        className="mt-2 text-xs whitespace-pre-wrap bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md p-2"
+                      >
+                        {summaries[t.threadNo]}
+                      </div>
+                    )}
+                    {expanded && (
+                      <div className="mt-2 flex flex-col gap-1.5">
+                        {t.messages.map((m) => (
+                          <div
+                            key={m.id}
+                            className={`text-xs p-2 rounded-md border ${
+                              m.fromOwner
+                                ? "border-blue-900/40 bg-blue-900/10"
+                                : "border-[var(--color-border)] bg-[var(--color-surface-2)]/40"
+                            }`}
+                          >
+                            <div className="flex justify-between gap-2 text-[10px] text-[var(--color-text-dim)]">
+                              <span>
+                                {m.fromOwner ? "you" : m.senderName}
+                                {m.urgent && (
+                                  <Badge tone="danger">urgent</Badge>
+                                )}
+                              </span>
+                              <span>{relTime(m.createdAt)}</span>
+                            </div>
+                            <div
+                              dir="auto"
+                              className="mt-1 whitespace-pre-wrap break-words"
+                            >
+                              {m.mediaKind && (
+                                <span className="text-[var(--color-text-dim)]">
+                                  [{m.mediaKind}]{" "}
+                                </span>
+                              )}
+                              {m.transcript
+                                ? m.transcript
+                                : m.messageText || "(no text)"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+          )}
 
           <PageTitle title="Conversation" />
 

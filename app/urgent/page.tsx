@@ -5,7 +5,13 @@ import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import { chatTypeLabel, relTime } from "@/lib/format";
 
-type ChatMode = "off" | "secretary" | "auto_reply" | "friendly_reply" | "ai_chat";
+type ChatMode =
+  | "off"
+  | "secretary"
+  | "auto_reply"
+  | "friendly_reply"
+  | "ai_chat"
+  | "ai_listen";
 
 const MODE_LABEL: Record<
   ChatMode,
@@ -16,6 +22,7 @@ const MODE_LABEL: Record<
   auto_reply: { label: "Auto-reply", tone: "info" },
   friendly_reply: { label: "Friendly AI", tone: "info" },
   ai_chat: { label: "AI chat", tone: "success" },
+  ai_listen: { label: "AI listen", tone: "info" },
 };
 
 type Message = {

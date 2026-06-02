@@ -976,8 +976,11 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     return;
   }
 
-  // VIP bypasses the active-conversation grace period.
-  if (!rule?.vip) {
+  // VIP bypasses the active-conversation grace period. So does ai_listen:
+  // listen-mode never replies, so there's nothing to silence — but we
+  // DO want to keep classifying + logging messages so the dashboard's
+  // thread view stays complete during an active conversation.
+  if (!rule?.vip && (rule?.mode ?? "off") !== "ai_listen") {
     const isDm = msg.chat.type === "private";
     const graceMinutes = Number(
       isDm

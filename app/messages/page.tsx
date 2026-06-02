@@ -60,7 +60,13 @@ type Message = {
   transcriptAt: string | null;
   fromOwner: boolean;
   source: string | null;
-  chatMode: "off" | "secretary" | "auto_reply" | "friendly_reply" | "ai_chat";
+  chatMode:
+    | "off"
+    | "secretary"
+    | "auto_reply"
+    | "friendly_reply"
+    | "ai_chat"
+    | "ai_listen";
 };
 
 export default function MessagesPage() {

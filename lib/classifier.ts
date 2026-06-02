@@ -48,6 +48,20 @@ the owner next opens Telegram.
 
 You will receive ONE message at a time as JSON with metadata about the chat and sender.
 
+The payload MAY include these owner-context fields:
+- owner_name: the owner's canonical name
+- owner_aliases: ALL the names/nicknames people might use to refer to the
+  owner (formal name, family name, common typos, nicknames they're called
+  in groups). If you see any of these as a mention, address, or @-tag in
+  the message, treat that as the owner being addressed even if it's a
+  group chat.
+- owner_job: short description of what the owner does for work. Use this
+  to judge relevance: a logistics question matters to a logistics manager,
+  not to a dentist.
+- priority_keywords: project names, product names, deadlines, or other
+  terms the owner has flagged as high-priority. If the message contains
+  ANY of them, bump importance by ~2 and set concerns_owner=true.
+
 Reply with STRICT JSON only, no prose, no code fences:
 {
   "importance": <integer 0-10>,
@@ -63,9 +77,9 @@ Scoring rubric:
 - 9-10: real emergencies (medical, security, family crisis, severe financial/legal threat).
 
 Set "urgent" = true ONLY if the message cannot wait a few hours.
-Set "concerns_owner" = true if the message is addressed to the owner, mentions them
-by name, or clearly expects them to act. In group chats default to false unless the
-owner is explicitly tagged or named.
+Set "concerns_owner" = true if the message is addressed to the owner, mentions
+them by any owner_alias, contains a priority_keyword, or clearly expects them
+to act. In group chats default to false UNLESS one of those signals fires.
 
 Be conservative. False alarms train the owner to ignore the alert device.`;
 
@@ -215,12 +229,22 @@ export async function classify(input: {
   businessConnectionId?: string;
 }): Promise<Classification> {
   const s = await getSettings();
+  const parseList = (csv: string | undefined): string[] =>
+    (csv ?? "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean);
+  const aliases = parseList(s.ownerAliasesCsv);
+  const keywords = parseList(s.groupPriorityKeywordsCsv);
   const userPayload = {
     chat_type: input.chatType,
     chat_title: input.chatTitle,
     sender_name: input.senderName,
     owner_name: s.ownerName,
     owner_context: s.ownerContext || undefined,
+    owner_aliases: aliases.length > 0 ? aliases : undefined,
+    owner_job: s.ownerJobDescription || undefined,
+    priority_keywords: keywords.length > 0 ? keywords : undefined,
     message: input.text,
   };
   const content = await callOpenRouter(
