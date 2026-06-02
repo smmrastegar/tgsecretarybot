@@ -51,6 +51,9 @@ export async function POST(
       history,
       nickname: rule?.nickname ?? null,
       relationship: rule?.relationship ?? null,
+      relationshipNotes: rule?.relationshipNotes ?? null,
+      talkStyleNotes: rule?.talkStyleNotes ?? null,
+      toneProfile: rule?.toneProfile ?? null,
       chatId: Number(row.chat_id),
       businessConnectionId: row.business_connection_id,
     });

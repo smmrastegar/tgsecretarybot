@@ -161,6 +161,12 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS nickname TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS relationship TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS grace_skipped_at TIMESTAMPTZ`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS relationship_notes TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS talk_style_notes TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS tone_profile TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS tone_profile_at TIMESTAMPTZ`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS flood_cooldown_until TIMESTAMPTZ`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS flood_deflected_at TIMESTAMPTZ`;
     // One-time migration: the old default was 'secretary' which caused the
     // bot to relay/auto-reply in every new chat. Owner wants the default to
     // be silent (off); flip every existing 'secretary' row to 'off' exactly
@@ -727,6 +733,12 @@ export type ChatRule = {
   lastName: string | null;
   nickname: string | null;
   relationship: Relationship | null;
+  relationshipNotes: string | null;
+  talkStyleNotes: string | null;
+  toneProfile: string | null;
+  toneProfileAt: Date | null;
+  floodCooldownUntil: Date | null;
+  floodDeflectedAt: Date | null;
   graceSkippedAt: Date | null;
   updatedAt: Date;
 };
@@ -754,6 +766,12 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
       rel && (RELATIONSHIPS as readonly string[]).includes(rel)
         ? (rel as Relationship)
         : null,
+    relationshipNotes: (r.relationship_notes as string) ?? null,
+    talkStyleNotes: (r.talk_style_notes as string) ?? null,
+    toneProfile: (r.tone_profile as string) ?? null,
+    toneProfileAt: (r.tone_profile_at as Date) ?? null,
+    floodCooldownUntil: (r.flood_cooldown_until as Date) ?? null,
+    floodDeflectedAt: (r.flood_deflected_at as Date) ?? null,
     graceSkippedAt: (r.grace_skipped_at as Date) ?? null,
     updatedAt: r.updated_at as Date,
   };
@@ -766,6 +784,9 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
     SELECT chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
            mode, mode_changed_at, secretary_user_id,
            first_name, last_name, nickname, relationship,
+           relationship_notes, talk_style_notes,
+           tone_profile, tone_profile_at,
+           flood_cooldown_until, flood_deflected_at,
            grace_skipped_at, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -786,6 +807,8 @@ export async function upsertChatRule(rule: {
   lastName?: string | null;
   nickname?: string | null;
   relationship?: Relationship | null;
+  relationshipNotes?: string | null;
+  talkStyleNotes?: string | null;
 }): Promise<void> {
   await ensureSchema();
   const mode = rule.mode ?? "off";
@@ -798,16 +821,20 @@ export async function upsertChatRule(rule: {
     (RELATIONSHIPS as readonly string[]).includes(rule.relationship)
       ? rule.relationship
       : null;
+  const relationshipNotes = rule.relationshipNotes ?? null;
+  const talkStyleNotes = rule.talkStyleNotes ?? null;
   await sql()`
     INSERT INTO chat_rules (
       chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
       mode, mode_changed_at, secretary_user_id,
-      first_name, last_name, nickname, relationship, updated_at
+      first_name, last_name, nickname, relationship,
+      relationship_notes, talk_style_notes, updated_at
     )
     VALUES (
       ${rule.chatId}, ${rule.chatType}, ${rule.chatTitle}, ${rule.vip}, ${rule.muted},
       ${rule.customReply}, ${rule.notes}, ${mode}, NOW(), ${secretaryUserId},
-      ${firstName}, ${lastName}, ${nickname}, ${relationship}, NOW()
+      ${firstName}, ${lastName}, ${nickname}, ${relationship},
+      ${relationshipNotes}, ${talkStyleNotes}, NOW()
     )
     ON CONFLICT (chat_id) DO UPDATE SET
       chat_type = EXCLUDED.chat_type,
@@ -824,7 +851,61 @@ export async function upsertChatRule(rule: {
       last_name = EXCLUDED.last_name,
       nickname = EXCLUDED.nickname,
       relationship = EXCLUDED.relationship,
+      relationship_notes = EXCLUDED.relationship_notes,
+      talk_style_notes = EXCLUDED.talk_style_notes,
       updated_at = NOW()`;
+}
+
+// Persist a fine-tuned tone profile for a chat. Separate from
+// upsertChatRule so we can update it without overwriting any of the
+// per-chat metadata.
+export async function saveToneProfile(
+  chatId: number,
+  toneProfile: string,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE chat_rules
+    SET tone_profile = ${toneProfile},
+        tone_profile_at = NOW(),
+        updated_at = NOW()
+    WHERE chat_id = ${chatId}`;
+}
+
+// Cooldown helpers for the flood-protection / waitlist logic. Once we
+// send the "I'm busy" deflection, we stay silent in that chat for the
+// duration of the cooldown.
+export async function setFloodCooldown(
+  chatId: number,
+  cooldownUntil: Date,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE chat_rules
+    SET flood_cooldown_until = ${cooldownUntil.toISOString()},
+        flood_deflected_at = NOW(),
+        updated_at = NOW()
+    WHERE chat_id = ${chatId}`;
+}
+
+// Count how many non-owner, non-bot messages this chat received in the
+// last N seconds. Used by the AI reply path to decide whether the
+// person is flooding.
+export async function recentIncomingCount(
+  chatId: number,
+  windowSeconds: number,
+): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT COUNT(*)::int AS n FROM messages_log
+    WHERE chat_id = ${chatId}
+      AND from_owner = FALSE
+      AND source IS NULL
+      AND created_at > NOW() - (${windowSeconds} || ' seconds')::INTERVAL`;
+  return Number((rows[0] as { n: number })?.n) || 0;
 }
 
 // Owner clicked "Resume bot now" — mark grace as skipped at this instant.
@@ -1071,6 +1152,37 @@ export async function recentConversation(
       text: row.message_text,
       at: row.created_at,
     }))
+    .reverse();
+}
+
+// Owner-typed messages only — strictly things the owner physically
+// typed into Telegram, with NO bot-generated rows included. Used by
+// the per-chat fine-tune button: feeding AI-generated replies back
+// into the tone extractor would slowly poison the profile and the
+// owner's "voice" would drift into whatever the model made up. The
+// guard is `source IS NULL`: every bot send-path
+// (ai_chat / friendly_reply / auto_reply / bot_echo / ai_dashboard /
+// owner_dashboard) writes a non-null source, while messages actually
+// typed by the owner from the Telegram client come in via the
+// business_message echo with source IS NULL.
+export async function ownerTypedMessages(
+  chatId: number,
+  limit = 300,
+): Promise<string[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const cap = Math.min(Math.max(limit, 1), 1000);
+  const rows = await sql()`
+    SELECT message_text FROM messages_log
+    WHERE chat_id = ${chatId}
+      AND from_owner = TRUE
+      AND source IS NULL
+      AND message_text IS NOT NULL
+      AND message_text <> ''
+    ORDER BY created_at DESC
+    LIMIT ${cap}`;
+  return (rows as Array<{ message_text: string }>)
+    .map((r) => r.message_text)
     .reverse();
 }
 

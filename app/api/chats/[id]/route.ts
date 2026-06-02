@@ -93,6 +93,8 @@ export async function PUT(
     lastName?: string | null;
     nickname?: string | null;
     relationship?: Relationship | null;
+    relationshipNotes?: string | null;
+    talkStyleNotes?: string | null;
   };
   const existing = await getChatRule(chatId);
   const mode: ChatMode =
@@ -128,6 +130,14 @@ export async function PUT(
           (RELATIONSHIPS as readonly string[]).includes(body.relationship)
         ? body.relationship
         : null;
+  const relationshipNotes =
+    body.relationshipNotes === undefined
+      ? existing?.relationshipNotes ?? null
+      : normName(body.relationshipNotes);
+  const talkStyleNotes =
+    body.talkStyleNotes === undefined
+      ? existing?.talkStyleNotes ?? null
+      : normName(body.talkStyleNotes);
   await upsertChatRule({
     chatId,
     chatType: body.chatType ?? existing?.chatType ?? "private",
@@ -142,6 +152,8 @@ export async function PUT(
     lastName,
     nickname,
     relationship,
+    relationshipNotes,
+    talkStyleNotes,
   });
   await audit({
     actorId: session.userId,

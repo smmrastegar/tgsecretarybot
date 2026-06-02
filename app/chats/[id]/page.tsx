@@ -87,6 +87,12 @@ type Rule = {
   lastName: string | null;
   nickname: string | null;
   relationship: Relationship | null;
+  relationshipNotes: string | null;
+  talkStyleNotes: string | null;
+  toneProfile: string | null;
+  toneProfileAt: string | null;
+  floodCooldownUntil: string | null;
+  floodDeflectedAt: string | null;
   graceSkippedAt: string | null;
   updatedAt: string;
 };
@@ -150,12 +156,16 @@ export default function ChatDetailPage() {
     lastName: string;
     nickname: string;
     relationship: Relationship | "";
+    relationshipNotes: string;
+    talkStyleNotes: string;
   };
   const blankPersonal: Personal = {
     firstName: "",
     lastName: "",
     nickname: "",
     relationship: "",
+    relationshipNotes: "",
+    talkStyleNotes: "",
   };
   const [personal, setPersonal] = useState<Personal>(blankPersonal);
   const [personalDirty, setPersonalDirty] = useState(false);
@@ -250,6 +260,8 @@ export default function ChatDetailPage() {
       lastName: j.rule?.lastName ?? "",
       nickname: j.rule?.nickname ?? "",
       relationship: j.rule?.relationship ?? "",
+      relationshipNotes: j.rule?.relationshipNotes ?? "",
+      talkStyleNotes: j.rule?.talkStyleNotes ?? "",
     });
     setPersonalDirty(false);
     setLoading(false);
@@ -273,6 +285,8 @@ export default function ChatDetailPage() {
         lastName: personal.lastName.trim() || null,
         nickname: personal.nickname.trim() || null,
         relationship: personal.relationship || null,
+        relationshipNotes: personal.relationshipNotes.trim() || null,
+        talkStyleNotes: personal.talkStyleNotes.trim() || null,
       }),
     });
     setSaving(false);
@@ -280,6 +294,38 @@ export default function ChatDetailPage() {
     setPersonalSaved(true);
     setTimeout(() => setPersonalSaved(false), 2000);
     load();
+  }
+
+  const [fineTuning, setFineTuning] = useState(false);
+  const [fineTuneMsg, setFineTuneMsg] = useState<string | null>(null);
+
+  async function runFineTune() {
+    setFineTuning(true);
+    setFineTuneMsg(null);
+    try {
+      const r = await fetch(`/api/chats/${chatId}/fine-tune`, {
+        method: "POST",
+      });
+      const j = (await r.json()) as {
+        ok?: boolean;
+        toneProfile?: string;
+        sampleCount?: number;
+        error?: string;
+      };
+      if (!r.ok) {
+        setFineTuneMsg(j.error ?? `error ${r.status}`);
+      } else {
+        setFineTuneMsg(
+          `Tone profile updated from ${j.sampleCount ?? "?"} owner messages.`,
+        );
+        await load();
+      }
+    } catch (err) {
+      setFineTuneMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFineTuning(false);
+      setTimeout(() => setFineTuneMsg(null), 4000);
+    }
   }
 
   async function loadMore() {
@@ -508,6 +554,40 @@ export default function ChatDetailPage() {
                         )}
                       </select>
                     </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                        شرح رابطه (آزاد) — به AI کمک می‌کنه بدونه طرف کیه
+                      </label>
+                      <textarea
+                        dir="auto"
+                        disabled={saving}
+                        value={personal.relationshipNotes}
+                        onChange={(e) =>
+                          updatePersonal({
+                            relationshipNotes: e.target.value,
+                          })
+                        }
+                        rows={2}
+                        placeholder="مثلاً: همکار قدیمی شرکت X، اعتماد کامل، با هم پروژه Y رو می‌بریم"
+                        className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                        نحوه‌ی صحبت با این فرد — قواعد سفت
+                      </label>
+                      <textarea
+                        dir="auto"
+                        disabled={saving}
+                        value={personal.talkStyleNotes}
+                        onChange={(e) =>
+                          updatePersonal({ talkStyleNotes: e.target.value })
+                        }
+                        rows={2}
+                        placeholder="مثلاً: رسمی، بدون شوخی، همیشه «شما». یا: خودمونی، با اموجی، کوتاه."
+                        className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                      />
+                    </div>
                   </div>
                   <div className="mt-3 flex items-center gap-2 flex-wrap">
                     <button
@@ -526,6 +606,58 @@ export default function ChatDetailPage() {
                       <span className="text-[10px] text-emerald-400">
                         ✓ saved
                       </span>
+                    )}
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium">
+                          🎯 Fine-tune لحن AI روی پیام‌های قبلی شما
+                        </div>
+                        <div className="text-[10px] text-[var(--color-text-dim)] mt-0.5">
+                          فقط پیام‌هایی که خودت تایپ کردی بررسی می‌شه — پیام‌های
+                          AI کنار گذاشته میشن.
+                          {rule?.toneProfileAt
+                            ? ` آخرین تنظیم: ${relTime(rule.toneProfileAt)}`
+                            : " هنوز تنظیم نشده."}
+                        </div>
+                      </div>
+                      <button
+                        onClick={runFineTune}
+                        disabled={fineTuning}
+                        className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                      >
+                        {fineTuning
+                          ? "در حال تحلیل…"
+                          : rule?.toneProfile
+                            ? "Re-tune"
+                            : "Fine-tune now"}
+                      </button>
+                    </div>
+                    {fineTuneMsg && (
+                      <div
+                        className={`text-[11px] mt-2 ${
+                          fineTuneMsg.toLowerCase().includes("updat")
+                            ? "text-emerald-400"
+                            : "text-amber-400"
+                        }`}
+                      >
+                        {fineTuneMsg}
+                      </div>
+                    )}
+                    {rule?.toneProfile && (
+                      <details className="mt-2">
+                        <summary className="text-[11px] text-[var(--color-text-dim)] cursor-pointer">
+                          نمایش tone profile فعلی
+                        </summary>
+                        <pre
+                          dir="auto"
+                          className="mt-2 text-[11px] whitespace-pre-wrap bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md p-2"
+                        >
+                          {rule.toneProfile}
+                        </pre>
+                      </details>
                     )}
                   </div>
                 </div>

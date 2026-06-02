@@ -36,8 +36,10 @@ import {
   lastOwnerMessageAt,
   logMessage,
   openSecretarySession,
+  recentIncomingCount,
   saveMediaDescription,
   saveTranscript,
+  setFloodCooldown,
   recentConversation,
   recordSecretaryLink,
   saveExtractedItems,
@@ -1230,6 +1232,10 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         settings,
         nickname: rule?.nickname ?? null,
         relationship: rule?.relationship ?? null,
+        relationshipNotes: rule?.relationshipNotes ?? null,
+        talkStyleNotes: rule?.talkStyleNotes ?? null,
+        toneProfile: rule?.toneProfile ?? null,
+        floodCooldownUntil: rule?.floodCooldownUntil ?? null,
         bot,
       });
     }
@@ -2220,6 +2226,53 @@ async function sendFriendlyReply(args: {
   }
 }
 
+// One-shot "I'm busy" reply we send when the other person is flooding
+// the chat. Tries to match the language the owner has been using in
+// this chat so it doesn't read like a system message. We do NOT use AI
+// here on purpose — flood-deflection is exactly the moment we want
+// short, predictable, and free.
+async function pickFloodDeflection(args: {
+  senderName: string;
+  toneProfile: string | null;
+  relationshipNotes: string | null;
+  talkStyleNotes: string | null;
+  relationship: import("./db").Relationship | null;
+  nickname: string | null;
+  settings: Awaited<ReturnType<typeof getSettings>>;
+  chatId: number;
+}): Promise<string | null> {
+  let ownerWritesPersian = true; // default for this codebase's user
+  try {
+    const history = await recentConversation(args.chatId, 30);
+    const ownerTexts = history
+      .filter((m) => m.from === "owner")
+      .slice(-10)
+      .map((m) => m.text)
+      .join(" ");
+    if (ownerTexts) {
+      const hasPersian = /[؀-ۿ]/.test(ownerTexts);
+      const hasLatin = /[A-Za-z]/.test(ownerTexts);
+      if (hasLatin && !hasPersian) ownerWritesPersian = false;
+    }
+  } catch {}
+  const formal =
+    args.relationship === "formal" ||
+    args.relationship === "employer" ||
+    args.relationship === "work_acquaintance";
+  if (!ownerWritesPersian) {
+    return formal
+      ? "Sorry, in the middle of something — I'll get back to you in a bit."
+      : "Sorry, busy right now, ttyl 🙏";
+  }
+  if (formal) {
+    return "ببخشید الان درگیر یه کاری هستم، یکم بعد برمی‌گردم 🙏";
+  }
+  if (args.nickname) {
+    return `${args.nickname} جان الان درگیرم، یکم دیگه میام جوابتو میدم 🙏`;
+  }
+  return "الان درگیرم، یکم بعد میام جواب میدم 🙏";
+}
+
 async function sendAiConversation(args: {
   msg: Message;
   bcId: string;
@@ -2227,12 +2280,93 @@ async function sendAiConversation(args: {
   settings: Awaited<ReturnType<typeof getSettings>>;
   nickname: string | null;
   relationship: import("./db").Relationship | null;
+  relationshipNotes: string | null;
+  talkStyleNotes: string | null;
+  toneProfile: string | null;
+  floodCooldownUntil: Date | null;
   bot: Bot;
 }): Promise<boolean> {
-  const { msg, bcId, senderName, settings, nickname, relationship, bot } = args;
+  const {
+    msg,
+    bcId,
+    senderName,
+    settings,
+    nickname,
+    relationship,
+    relationshipNotes,
+    talkStyleNotes,
+    toneProfile,
+    floodCooldownUntil,
+    bot,
+  } = args;
   if (msg.chat.type !== "private") return false;
   const userText = msg.text ?? msg.caption;
   if (!userText) return false;
+
+  // Flood waitlist: if we already sent the "I'm busy" deflection in this
+  // chat and the cooldown hasn't passed, stay silent. The dashboard
+  // still shows the messages (they're logged downstream).
+  if (floodCooldownUntil && floodCooldownUntil.getTime() > Date.now()) {
+    console.log(
+      `[ai_chat] in flood cooldown for chat=${msg.chat.id} until ${floodCooldownUntil.toISOString()}`,
+    );
+    return false;
+  }
+
+  // Rate check: how many user-typed messages have we received in the
+  // last 60 seconds? If well above what a normal conversation produces
+  // and there's already a recent bot reply, treat it as flooding and
+  // send ONE deflection that locks us out for ~5 min.
+  const incomingLast60s = await recentIncomingCount(msg.chat.id, 60).catch(
+    () => 0,
+  );
+  const FLOOD_THRESHOLD = 5;
+  if (incomingLast60s >= FLOOD_THRESHOLD) {
+    const deflection = await pickFloodDeflection({
+      senderName,
+      toneProfile,
+      relationshipNotes,
+      talkStyleNotes,
+      relationship,
+      nickname,
+      settings,
+      chatId: msg.chat.id,
+    });
+    if (deflection) {
+      await humanTypingDelay(bot, {
+        chatId: msg.chat.id,
+        bcId,
+        replyText: deflection,
+      });
+      try {
+        const sent = await bot.api.sendMessage(msg.chat.id, deflection, {
+          business_connection_id: bcId,
+          reply_parameters: { message_id: msg.message_id },
+        });
+        await setFloodCooldown(
+          msg.chat.id,
+          new Date(Date.now() + 5 * 60 * 1000),
+        );
+        await markBusinessRead(bot, bcId, msg.chat.id, msg.message_id);
+        await logOwnerSent({
+          bcId,
+          chatId: msg.chat.id,
+          chatType: msg.chat.type,
+          chatTitle: chatTitleOf(msg),
+          ownerUserId: null,
+          sentMessageId: sent.message_id,
+          text: deflection,
+          source: "ai_chat",
+          ownerLabel:
+            settings.ownerDisplayName || settings.ownerName || "owner",
+        });
+        return true;
+      } catch (err) {
+        console.error("[ai_chat] flood-deflection send failed:", err);
+      }
+    }
+    return false;
+  }
 
   let history: Awaited<ReturnType<typeof recentConversation>> = [];
   try {
@@ -2258,6 +2392,9 @@ async function sendAiConversation(args: {
       history,
       nickname,
       relationship,
+      relationshipNotes,
+      talkStyleNotes,
+      toneProfile,
       chatId: msg.chat.id,
       businessConnectionId: bcId,
     });
