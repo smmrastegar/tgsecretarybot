@@ -22,7 +22,7 @@ const MODE_LABEL: Record<
   auto_reply: { label: "Auto-reply", tone: "info" },
   friendly_reply: { label: "Friendly AI", tone: "info" },
   ai_chat: { label: "AI chat", tone: "success" },
-  ai_listen: { label: "🤐 AI silent", tone: "info" },
+  ai_listen: { label: "AI listen", tone: "info" },
 };
 
 type MessageLike = {
