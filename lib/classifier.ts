@@ -546,6 +546,23 @@ CRITICAL — SEMANTIC MATCHING (most important rule):
   "این ماه ۱۷۸ ساعت کارکردم" is exactly what the question
   "ساعت کاری" is asking about.
 
+Attribution rules (CRITICAL — most common failure mode):
+- The "sender" field is the SOURCE OF TRUTH for who said the
+  message. Always attribute findings to that exact sender name.
+- The "chat" field is just where the conversation happens — it is
+  NOT the person who spoke unless sender_name matches it. A message
+  in chat "دنیا گودرزی" sent by "زهرا ایوبی" → that's Zahra's hour,
+  NOT Donya's. NEVER use the chat name as the person.
+- Sender names are PRIMARY KEYS. Two different sender strings =
+  two different people. NEVER merge:
+    * "امیر" and "امیرحسین امانی" are TWO different people
+    * "علی" and "علی رضایی" are TWO different people
+    * "M" and "Mahdi" are TWO different people
+  Even if they sound related, list them separately.
+- Don't invent a sender. If a message has no clear sender mentioned
+  for the hours, attribute to whoever SENT the message
+  (sender_name), not anyone they reference.
+
 Output rules:
 - ALWAYS output in Persian (فارسی), in clean Markdown if it helps
   (bullets, bold, headings).
@@ -554,15 +571,17 @@ Output rules:
   references to working, hours, hours-worked phrasings, etc.) →
   include them. The semantic-matching rule above is the source of
   truth; this rule is only about what to PRINT.
-- The ONLY thing you should DROP is the "not found" callouts. NEVER
+- The ONLY thing you should DROP is "not found" callouts. NEVER
   write "از X چیزی نبود" or "اطلاعاتی یافت نشد" for a specific
-  person. Just leave them out silently. If LITERALLY no one in the
-  payload had a single relevant signal, end the answer with one
-  line: "هیچ نتیجه‌ای پیدا نشد." — and nothing else.
-- For each person you DO have data on, group ALL of their related
-  messages together consecutively under one heading.
-- Quote senders by name. For numerical questions extract the NUMBER
-  and unit prominently (e.g., **علی: ۱۷۸ ساعت**).
+  person. Just leave them out silently. If LITERALLY no one had a
+  single relevant signal, end with: "هیچ نتیجه‌ای پیدا نشد." —
+  and nothing else.
+- Group findings BY SENDER NAME. One heading per UNIQUE sender,
+  with ALL their relevant messages under it. If the same person
+  appears in multiple chats, you can mention the chat name as
+  context line ("از چت X") but the heading stays the sender name.
+- For numerical questions extract the NUMBER and unit prominently
+  (e.g., **سروش: ۱۷۸ ساعت**).
 - Plain text only. NO JSON, NO code fences, NO "reply": keys.`;
 
 export async function askMessages(input: {
