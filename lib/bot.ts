@@ -1196,13 +1196,29 @@ function buildBot(): Bot {
     );
   });
 
-  // Channels deliver posts via channel_post, NOT message. Same routing
-  // logic for inbox replies; we don't have a "channel classifier" so
-  // anything else just gets ignored.
+  // Channels deliver posts via channel_post, NOT message. First we
+  // give the inbox-reply router a chance (owner-typed replies to our
+  // summary posts), otherwise the post goes through the same
+  // classify-and-log path we use for groups so news / archive
+  // channels show up in /messages and /chats too.
   bot.on("channel_post", async (ctx) => {
     const m = ctx.update.channel_post;
-    await handleInboxReply(m, bot).catch((err) =>
-      console.error("[inbox_reply] channel handler error:", err),
+    const routed = await handleInboxReply(m, bot).catch((err) => {
+      console.error("[inbox_reply] channel handler error:", err);
+      return false;
+    });
+    if (routed) return;
+    await handleChannelPost(m, bot).catch((err) =>
+      console.error("[channel_post] handler error:", err),
+    );
+  });
+
+  bot.on("edited_channel_post", async (ctx) => {
+    const m = ctx.update.edited_channel_post;
+    // Treat edits in channels as fresh classifies — for news channels
+    // an edit is often a correction the owner should see.
+    await handleChannelPost(m, bot).catch((err) =>
+      console.error("[edited_channel_post] handler error:", err),
     );
   });
 
@@ -2336,9 +2352,23 @@ async function maybeForwardToSecretary(args: {
 // classifier says it's urgent and concerns the owner. Mute and VIP
 // chat-rules still apply. The bot never replies in groups — that's
 // intentional, groups stay log-only.
+// Channels and supergroup-channels deliver posts via channel_post,
+// not message. They have no `from` (the post is from the channel
+// itself) and the bot must be a member/admin to see them at all.
+// Same flow as handleGroupMessage minus the per-sender bits, so news
+// channels show up in /messages and the dashboard.
+async function handleChannelPost(msg: Message, bot: Bot): Promise<void> {
+  if (msg.chat.type !== "channel") return;
+  await handleAnyChatPost(msg, bot);
+}
+
 async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
   if (msg.chat.type !== "group" && msg.chat.type !== "supergroup") return;
   if (msg.from?.is_bot) return;
+  await handleAnyChatPost(msg, bot);
+}
+
+async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
 
   const hasContent = Boolean(
     msg.text ||
@@ -2355,13 +2385,18 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
   if (!hasContent) return;
 
   const text = describeMessage(msg);
+  const chatTitle =
+    "title" in msg.chat && typeof msg.chat.title === "string" ? msg.chat.title : null;
+  // Channel posts have no `from` — the post belongs to the channel
+  // itself. Fall back to the channel title so the row is recognisable.
   const senderName =
     [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ").trim() ||
     msg.from?.username ||
+    msg.sender_chat?.title ||
+    chatTitle ||
     "unknown sender";
-  const senderUsername = msg.from?.username ?? null;
-  const chatTitle =
-    "title" in msg.chat && typeof msg.chat.title === "string" ? msg.chat.title : null;
+  const senderUsername =
+    msg.from?.username ?? msg.sender_chat?.username ?? null;
 
   const media = extractMedia(msg);
   const mediaFileId = media?.fileId ?? null;

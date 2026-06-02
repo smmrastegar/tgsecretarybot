@@ -2481,12 +2481,33 @@ export async function deleteKnowledge(id: number): Promise<void> {
 // in JS because the table is small (single-user app, expected <few-
 // hundred entries) and matching with proper word boundaries across
 // Persian + English at SQL level would be more code than it's worth.
+// Persian/Arabic text written in Telegram is full of variants the
+// human eye reads as the same letter but JS sees as different bytes:
+// ي vs ی, ك vs ک, ة vs ه, plus invisible ZWNJ / diacritics. Without
+// folding all of that into a canonical form, substring matching
+// against KB titles silently misses. We also strip the standard
+// Arabic harakat and the ZWNJ since they're rarely typed
+// consistently.
+function normaliseForMatch(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[يى]/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[ةۀ]/g, "ه")
+    .replace(/[ؤئ]/g, "ی")
+    .replace(/[إأآا]/g, "ا")
+    .replace(/[ً-ْٰ‌‍‎‏]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export async function findKnowledgeMatches(
   text: string,
   limit = 6,
 ): Promise<KnowledgeEntry[]> {
   if (!text) return [];
-  const haystack = text.toLowerCase();
+  const haystack = normaliseForMatch(text);
+  if (!haystack) return [];
   const all = await listKnowledge();
   const hits: Array<{ entry: KnowledgeEntry; matched: string }> = [];
   for (const e of all) {
@@ -2495,8 +2516,10 @@ export async function findKnowledgeMatches(
       .filter((s) => s.length >= 2);
     let best: string | null = null;
     for (const n of needles) {
-      if (haystack.includes(n.toLowerCase())) {
-        if (!best || n.length > best.length) best = n;
+      const needle = normaliseForMatch(n);
+      if (!needle) continue;
+      if (haystack.includes(needle)) {
+        if (!best || needle.length > best.length) best = needle;
       }
     }
     if (best) hits.push({ entry: e, matched: best });

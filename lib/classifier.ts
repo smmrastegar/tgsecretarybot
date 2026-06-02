@@ -520,6 +520,15 @@ owner's voice and language.
 
 HARD RULES — read these carefully, the most common failure mode is breaking
 them:
+0. USE THE KNOWLEDGE BASE (CRITICAL). If the payload sets
+   "relevant_knowledge", each entry is a fact the owner has personally
+   written about something that appears in this conversation. Treat
+   the entry's "body" as ground truth — answer using it, reference
+   specific details from it, do NOT give a generic answer that ignores
+   it. If the other person asks something the KB entry answers, the
+   reply MUST be derived from that entry. Persian KB entries: read the
+   body and reply in the owner's own voice, do not paraphrase the
+   body into something vaguer.
 1. ANTI-REPETITION (CRITICAL): if the payload includes "previous_replies",
    your output MUST be substantively different from every entry there —
    different topic, different verbs, different angle. Do NOT paraphrase a
@@ -821,11 +830,22 @@ export async function aiConversationReply(input: {
     ? looksLikePromptInjection(lastIncoming.text)
     : false;
 
-  // Knowledge-base lookup against the LAST few exchanged messages —
-  // not the whole history, since older turns aren't usually what the
-  // current reply hinges on.
-  const lookupText = input.history.slice(-6).map((m) => m.text).join("\n");
+  // Knowledge-base lookup: prioritise the just-arrived message but
+  // also scan the recent history so terms introduced earlier in the
+  // thread still match. We log the matched titles so debugging
+  // "AI ignored my KB entry" is one log-line away.
+  const lookupTextParts: string[] = [];
+  if (lastIncoming?.text) lookupTextParts.push(lastIncoming.text);
+  for (const m of input.history.slice(-10)) lookupTextParts.push(m.text);
+  const lookupText = lookupTextParts.filter(Boolean).join("\n");
   const knowledge = await relevantKnowledgeFor(lookupText);
+  if (knowledge && knowledge.length > 0) {
+    console.log(
+      `[ai_chat] KB matched ${knowledge.length} entries: ${knowledge
+        .map((k) => k.title)
+        .join(" / ")}`,
+    );
+  }
 
   const buildPayload = (extra?: { critique?: string }) => ({
     owner_name: input.ownerDisplayName || input.ownerName,
