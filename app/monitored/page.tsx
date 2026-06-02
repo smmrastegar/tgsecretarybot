@@ -82,6 +82,7 @@ export default function MonitoredPage() {
     const u = newUsername.trim().replace(/^@/, "");
     if (!u) return;
     setAdding(true);
+    setImportMsg(null);
     try {
       const r = await fetch("/api/monitored", {
         method: "POST",
@@ -89,7 +90,20 @@ export default function MonitoredPage() {
         body: JSON.stringify({ username: u }),
       });
       if (r.ok) {
+        const j = (await r.json()) as {
+          detected?: number;
+          forwarded?: number;
+          errors?: string[];
+        };
         setNewUsername("");
+        if (j.forwarded && j.forwarded > 0) {
+          setImportMsg(`@${u} اضافه شد + ${j.forwarded} مورد forward شد`);
+        } else if (j.errors && j.errors.length > 0) {
+          setImportMsg(`@${u} اضافه شد ولی خطا: ${j.errors[0]}`);
+        } else {
+          setImportMsg(`@${u} اضافه شد`);
+        }
+        setTimeout(() => setImportMsg(null), 8000);
         await load();
       } else {
         const j = (await r.json().catch(() => ({}))) as { error?: string };
@@ -119,9 +133,16 @@ export default function MonitoredPage() {
       };
       if (!r.ok) setImportMsg(`خطا: ${j.error ?? r.status}`);
       else {
-        setImportMsg(
-          `${j.inserted ?? 0} اضافه شد · ${j.updated ?? 0} آپدیت شد (از ${j.parsed} ردیف، ${j.valid} معتبر)`,
-        );
+        const jx = j as typeof j & {
+          immediatelyProcessed?: number;
+          detected?: number;
+          forwarded?: number;
+        };
+        let msg = `${jx.inserted ?? 0} اضافه شد · ${jx.updated ?? 0} آپدیت شد`;
+        if (jx.immediatelyProcessed && jx.immediatelyProcessed > 0) {
+          msg += ` · ${jx.immediatelyProcessed} مورد فوراً پردازش شد (${jx.forwarded ?? 0} forward)`;
+        }
+        setImportMsg(msg);
         await load();
       }
     } catch (err) {

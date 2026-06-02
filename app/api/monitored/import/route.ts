@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { audit, upsertMonitoredAccounts } from "@/lib/db";
+import { getBot } from "@/lib/bot";
+import { config } from "@/lib/config";
+import {
+  audit,
+  getMonitoredAccount,
+  upsertMonitoredAccounts,
+} from "@/lib/db";
+import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -106,18 +113,58 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 400 },
     );
   }
-  const { inserted, updated } = await upsertMonitoredAccounts(items);
+  const { inserted, updated, insertedIds } = await upsertMonitoredAccounts(items);
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,
     action: "monitor.import",
     details: { inserted, updated, parsed: parsed.length },
   });
+
+  // Immediate on-add processing for newly inserted accounts. We cap
+  // to a handful so a 47-row CSV doesn't try to fan out 47 × 4
+  // HikerAPI calls inside a 60s function — the cron picks up the
+  // rest within 5 minutes.
+  const IMMEDIATE_ON_ADD = 5;
+  let detected = 0;
+  let forwarded = 0;
+  const errors: string[] = [];
+  if (insertedIds.length > 0 && config.hikerApiKey) {
+    const target = await resolveTargetChat();
+    if (target) {
+      const bot = getBot();
+      const slice = insertedIds.slice(0, IMMEDIATE_ON_ADD);
+      for (const id of slice) {
+        const acc = await getMonitoredAccount(id);
+        if (!acc) continue;
+        try {
+          const result = await processAccount({
+            account: acc,
+            target,
+            bot,
+            forceAllKinds: true,
+            postsLimit: 3,
+            reelsLimit: 0,
+          });
+          detected += result.detected;
+          forwarded += result.forwarded;
+          errors.push(...result.errors);
+        } catch (err) {
+          errors.push(err instanceof Error ? err.message : String(err));
+        }
+      }
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     inserted,
     updated,
     parsed: parsed.length,
     valid: items.length,
+    immediatelyProcessed: Math.min(insertedIds.length, IMMEDIATE_ON_ADD),
+    detected,
+    forwarded,
+    errors: errors.slice(0, 10),
   });
 }

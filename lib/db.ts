@@ -2994,11 +2994,13 @@ export async function upsertMonitoredAccounts(
     externalId?: string | null;
     topicId?: string | null;
   }>,
-): Promise<{ inserted: number; updated: number }> {
-  if (!hasDb() || items.length === 0) return { inserted: 0, updated: 0 };
+): Promise<{ inserted: number; updated: number; insertedIds: number[] }> {
+  if (!hasDb() || items.length === 0)
+    return { inserted: 0, updated: 0, insertedIds: [] };
   await ensureSchema();
   let inserted = 0;
   let updated = 0;
+  const insertedIds: number[] = [];
   for (const it of items) {
     const username = it.username.trim().toLowerCase();
     if (!username) continue;
@@ -3011,12 +3013,17 @@ export async function upsertMonitoredAccounts(
         external_id = COALESCE(EXCLUDED.external_id, monitored_accounts.external_id),
         topic_id = COALESCE(EXCLUDED.topic_id, monitored_accounts.topic_id),
         updated_at = NOW()
-      RETURNING (xmax = 0) AS was_inserted`;
-    const r = rows[0] as { was_inserted: boolean } | undefined;
-    if (r?.was_inserted) inserted++;
-    else updated++;
+      RETURNING id, (xmax = 0) AS was_inserted`;
+    const r = rows[0] as { id: string; was_inserted: boolean } | undefined;
+    if (!r) continue;
+    if (r.was_inserted) {
+      inserted++;
+      insertedIds.push(Number(r.id));
+    } else {
+      updated++;
+    }
   }
-  return { inserted, updated };
+  return { inserted, updated, insertedIds };
 }
 
 export async function setMonitoredAccountEnabled(
