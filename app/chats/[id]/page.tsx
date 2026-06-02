@@ -612,6 +612,7 @@ export default function ChatDetailPage() {
                   </div>
                 )}
 
+                {rule?.chatType === "private" && (
                 <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
                   <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
                     Personal info (used by AI to adjust tone)
@@ -816,6 +817,51 @@ export default function ChatDetailPage() {
                     )}
                   </div>
                 </div>
+                )}
+
+                {rule?.chatType !== "private" && (
+                  <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
+                    <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
+                      Channel / Group context
+                    </div>
+                    <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                      📝 Context / Notes — هر چی اینجا بنویسی، توی همه‌ی
+                      تحلیل‌های بعدی این چت (classify / summarise) به prompt
+                      تزریق می‌شه. مثلاً: «این کانال خبری‌ست — هر چه مربوط به
+                      شرکت X باشد مهم است.»
+                    </label>
+                    <textarea
+                      dir="auto"
+                      disabled={saving}
+                      value={personal.notes}
+                      onChange={(e) =>
+                        updatePersonal({ notes: e.target.value })
+                      }
+                      rows={4}
+                      placeholder="توضیح اینکه این کانال/گروه چی هست، چی توش مهمه، آدم‌های کلیدی، …"
+                      className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                    />
+                    <div className="mt-3 flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={savePersonal}
+                        disabled={saving || !personalDirty}
+                        className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-40 hover:opacity-90"
+                      >
+                        {saving ? "Saving…" : "Save"}
+                      </button>
+                      {personalDirty && (
+                        <span className="text-[10px] text-amber-400">
+                          unsaved changes
+                        </span>
+                      )}
+                      {personalSaved && !personalDirty && (
+                        <span className="text-[10px] text-emerald-400">
+                          ✓ saved
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

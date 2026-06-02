@@ -1263,12 +1263,28 @@ export async function setChatFunction(
   const normalisedRole =
     role && (FUNCTION_ROLES as readonly string[]).includes(role) ? role : null;
   const configJson = config ? JSON.stringify(config) : null;
+  // Fresh channels/groups may not have a chat_rules row yet, so a
+  // plain UPDATE would silently noop and the role would never stick.
+  // Derive chat_type/title from messages_log if any rows exist, else
+  // default to "channel" since that's the only common case where the
+  // owner tags a chat with no prior messages logged.
   await sql()`
-    UPDATE chat_rules
-    SET function_role = ${normalisedRole},
-        function_config = ${configJson}::jsonb,
-        updated_at = NOW()
-    WHERE chat_id = ${chatId}`;
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title, function_role, function_config, updated_at)
+    VALUES (
+      ${chatId},
+      COALESCE(
+        (SELECT MAX(chat_type) FROM messages_log WHERE chat_id = ${chatId}),
+        'channel'
+      ),
+      (SELECT MAX(chat_title) FROM messages_log WHERE chat_id = ${chatId}),
+      ${normalisedRole},
+      ${configJson}::jsonb,
+      NOW()
+    )
+    ON CONFLICT (chat_id) DO UPDATE SET
+      function_role = ${normalisedRole},
+      function_config = ${configJson}::jsonb,
+      updated_at = NOW()`;
 }
 
 // Bulk versions for the chats list page. Each is INSERT-from-
@@ -1366,12 +1382,26 @@ export async function setAutoSummarize(
   if (!hasDb()) return;
   await ensureSchema();
   const gap = Math.max(1, Math.min(Math.round(gapMinutes), 240));
+  // Same trick as setChatFunction: bootstrap a chat_rules row from
+  // messages_log (or default to "private") so a plain UPDATE doesn't
+  // noop when no row exists yet.
   await sql()`
-    UPDATE chat_rules
-    SET auto_summarize_enabled = ${enabled},
-        auto_summarize_gap_minutes = ${gap},
-        updated_at = NOW()
-    WHERE chat_id = ${chatId}`;
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title, auto_summarize_enabled, auto_summarize_gap_minutes, updated_at)
+    VALUES (
+      ${chatId},
+      COALESCE(
+        (SELECT MAX(chat_type) FROM messages_log WHERE chat_id = ${chatId}),
+        'private'
+      ),
+      (SELECT MAX(chat_title) FROM messages_log WHERE chat_id = ${chatId}),
+      ${enabled},
+      ${gap},
+      NOW()
+    )
+    ON CONFLICT (chat_id) DO UPDATE SET
+      auto_summarize_enabled = ${enabled},
+      auto_summarize_gap_minutes = ${gap},
+      updated_at = NOW()`;
 }
 
 export async function markAutoSummaryDelivered(chatId: number): Promise<void> {

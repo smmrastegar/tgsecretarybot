@@ -58,6 +58,7 @@ type Message = {
   mediaFileId: string | null;
   transcript: string | null;
   transcriptAt: string | null;
+  mediaDescription: string | null;
   deletedAt: string | null;
   editedAt: string | null;
   editCount: number;
@@ -78,6 +79,53 @@ export default function MessagesPage() {
   const [search, setSearch] = useState("");
   const [urgentOnly, setUrgentOnly] = useState(false);
   const [threaded, setThreaded] = useState(false);
+  const [transcribing, setTranscribing] = useState<Set<number>>(new Set());
+  const [transcribeMsg, setTranscribeMsg] = useState<Record<number, string>>({});
+
+  async function transcribeAllInChat(chatId: number) {
+    setTranscribing((s) => new Set(s).add(chatId));
+    setTranscribeMsg((m) => ({ ...m, [chatId]: "" }));
+    try {
+      const r = await fetch(`/api/chats/${chatId}/transcribe-all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const j = (await r.json()) as {
+        candidates?: number;
+        done?: number;
+        failed?: number;
+        error?: string;
+      };
+      if (!r.ok) {
+        setTranscribeMsg((m) => ({
+          ...m,
+          [chatId]: j.error ?? `error ${r.status}`,
+        }));
+      } else {
+        setTranscribeMsg((m) => ({
+          ...m,
+          [chatId]: `${j.done ?? 0} ترانسکریپت شد${j.failed ? ` (${j.failed} ناموفق)` : ""}`,
+        }));
+        await load();
+      }
+    } catch (err) {
+      setTranscribeMsg((m) => ({
+        ...m,
+        [chatId]: err instanceof Error ? err.message : String(err),
+      }));
+    } finally {
+      setTranscribing((s) => {
+        const next = new Set(s);
+        next.delete(chatId);
+        return next;
+      });
+      setTimeout(
+        () => setTranscribeMsg((m) => ({ ...m, [chatId]: "" })),
+        5000,
+      );
+    }
+  }
 
   const [secretaries, setSecretaries] = useState<
     { userId: number; name: string }[]
@@ -170,10 +218,37 @@ export default function MessagesPage() {
                   <Badge tone="neutral">
                     last {relTime(group.messages[0]!.createdAt)}
                   </Badge>
+                  {group.messages.some(
+                    (m) =>
+                      !m.transcript &&
+                      m.mediaKind &&
+                      ["voice", "audio", "video_note"].includes(m.mediaKind),
+                  ) && (
+                    <button
+                      onClick={() => transcribeAllInChat(group.chatId)}
+                      disabled={transcribing.has(group.chatId)}
+                      className="text-[11px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                    >
+                      {transcribing.has(group.chatId)
+                        ? "در حال..."
+                        : "🎙 Transcribe همه"}
+                    </button>
+                  )}
                 </div>
               </div>
+              {transcribeMsg[group.chatId] && (
+                <div className="text-[11px] text-[var(--color-text-dim)] mb-2">
+                  {transcribeMsg[group.chatId]}
+                </div>
+              )}
               <div className="flex flex-col gap-1 min-w-0">
-                {group.messages.slice(0, 5).map((m) => (
+                {group.messages.slice(0, 5).map((m) => {
+                  const visibleText = m.transcript
+                    ? m.transcript
+                    : m.mediaDescription
+                      ? m.mediaDescription
+                      : m.messageText;
+                  return (
                   <div
                     key={m.id}
                     className={`flex flex-col gap-0.5 max-w-[88%] min-w-0 ${
@@ -185,6 +260,14 @@ export default function MessagesPage() {
                         {m.fromOwner ? "you" : m.senderName} ·{" "}
                         {relTime(m.createdAt)}
                       </span>
+                      {m.mediaKind && (
+                        <span className="text-[var(--color-text-dim)]">
+                          [{m.mediaKind}
+                          {m.transcript ? " · 📝" : ""}
+                          {m.mediaDescription ? " · 🖼" : ""}
+                          ]
+                        </span>
+                      )}
                       {m.deletedAt && (
                         <Badge tone="danger">
                           🗑 Deleted {relTime(m.deletedAt)}
@@ -207,10 +290,11 @@ export default function MessagesPage() {
                             : "bg-[var(--color-surface-2)] rounded-bl-md"
                       }`}
                     >
-                      {truncate(m.messageText, 200)}
+                      {truncate(visibleText, 200)}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
               {group.messages.length > 5 && (
                 <Link
