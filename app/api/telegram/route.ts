@@ -12,29 +12,87 @@ const handler = webhookCallback(getBot(), "std/http", {
   timeoutMilliseconds: 25_000,
 });
 
-export async function POST(request: Request): Promise<Response> {
-  // Read once, peek at update_id for idempotency, then forward a fresh
-  // Request to grammy with the same body. Without this, Telegram's
-  // 25s-timeout retries get processed a second time and the user sees
-  // duplicate replies (sometimes attached to an older message because
-  // the chat had moved on by the time the retry was handled).
-  const text = await request.text();
-  let updateId: number | null = null;
+// Subset of Telegram Update fields we care about for diagnostics —
+// matched to ALLOWED_UPDATES. The Health page reads these counts to
+// confirm whether the channel really is delivering channel_post events.
+const TRACKED_UPDATE_KEYS = [
+  "message",
+  "edited_message",
+  "channel_post",
+  "edited_channel_post",
+  "business_connection",
+  "business_message",
+  "edited_business_message",
+  "deleted_business_messages",
+  "message_reaction",
+  "callback_query",
+  "my_chat_member",
+  "chat_member",
+] as const;
+
+function summariseUpdate(raw: string): {
+  updateId: number | null;
+  updateType: string | null;
+  chatId: number | null;
+  preview: string | null;
+} {
   try {
-    const u = JSON.parse(text) as { update_id?: unknown };
-    if (typeof u.update_id === "number") updateId = u.update_id;
-  } catch {}
-  if (updateId !== null) {
+    const u = JSON.parse(raw) as Record<string, unknown> & {
+      update_id?: number;
+    };
+    const updateId = typeof u.update_id === "number" ? u.update_id : null;
+    let updateType: string | null = null;
+    let payload: Record<string, unknown> | null = null;
+    for (const k of TRACKED_UPDATE_KEYS) {
+      if (u[k]) {
+        updateType = k;
+        payload = u[k] as Record<string, unknown>;
+        break;
+      }
+    }
+    let chatId: number | null = null;
+    let preview: string | null = null;
+    if (payload) {
+      const direct = payload.chat as { id?: number } | undefined;
+      const nestedMsg = payload.message as
+        | { chat?: { id?: number } }
+        | undefined;
+      const chatIdRaw = direct?.id ?? nestedMsg?.chat?.id;
+      if (typeof chatIdRaw === "number") chatId = chatIdRaw;
+      const text =
+        (payload.text as string | undefined) ??
+        (payload.caption as string | undefined) ??
+        (payload.data as string | undefined) ??
+        null;
+      if (text) preview = text.slice(0, 200);
+    }
+    return { updateId, updateType, chatId, preview };
+  } catch {
+    return { updateId: null, updateType: null, chatId: null, preview: null };
+  }
+}
+
+export async function POST(request: Request): Promise<Response> {
+  const text = await request.text();
+  const meta = summariseUpdate(text);
+  if (meta.updateId !== null) {
     try {
-      const isNew = await markUpdateProcessed(updateId);
+      const isNew = await markUpdateProcessed(meta.updateId, {
+        updateType: meta.updateType,
+        chatId: meta.chatId,
+        preview: meta.preview,
+      });
       if (!isNew) {
-        console.warn(`[webhook] dup update_id=${updateId}, skipping`);
+        console.warn(`[webhook] dup update_id=${meta.updateId}, skipping`);
         return new Response("OK (dup)", { status: 200 });
       }
     } catch (err) {
       console.warn("[webhook] dedup check failed, processing anyway:", err);
     }
   }
+  console.log(
+    `[webhook] received type=${meta.updateType ?? "?"} chat=${meta.chatId ?? "?"} update_id=${meta.updateId ?? "?"}`,
+  );
   const cloned = new Request(request.url, {
     method: "POST",
     headers: request.headers,

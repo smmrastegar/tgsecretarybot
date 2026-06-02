@@ -326,6 +326,14 @@ export async function ensureSchema(): Promise<void> {
         processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await q`CREATE INDEX IF NOT EXISTS processed_updates_at_idx ON processed_updates (processed_at)`;
+    // Diagnostic: record the update TYPE so the dashboard can show
+    // "we got 0 channel_post events" instead of leaving the user
+    // guessing whether Telegram is even sending them. chat_id and a
+    // tiny preview snippet help match against a specific channel.
+    await q`ALTER TABLE processed_updates ADD COLUMN IF NOT EXISTS update_type TEXT`;
+    await q`ALTER TABLE processed_updates ADD COLUMN IF NOT EXISTS chat_id BIGINT`;
+    await q`ALTER TABLE processed_updates ADD COLUMN IF NOT EXISTS preview TEXT`;
+    await q`CREATE INDEX IF NOT EXISTS processed_updates_type_idx ON processed_updates (update_type, processed_at DESC) WHERE update_type IS NOT NULL`;
   })().catch((err) => {
     schemaPromise = null;
     throw err;
@@ -2616,13 +2624,72 @@ export async function findKnowledgeMatches(
 // (sometimes landing several messages later in the chat). Insert
 // every update_id once; if it's already there, drop the retry.
 // Returns true if the update is new, false if it's a duplicate.
-export async function markUpdateProcessed(updateId: number): Promise<boolean> {
+export async function markUpdateProcessed(
+  updateId: number,
+  meta?: {
+    updateType?: string | null;
+    chatId?: number | null;
+    preview?: string | null;
+  },
+): Promise<boolean> {
   if (!hasDb()) return true;
   await ensureSchema();
   const rows = await sql()`
-    INSERT INTO processed_updates (update_id)
-    VALUES (${updateId})
+    INSERT INTO processed_updates (update_id, update_type, chat_id, preview)
+    VALUES (
+      ${updateId},
+      ${meta?.updateType ?? null},
+      ${meta?.chatId ?? null},
+      ${(meta?.preview ?? null)?.slice(0, 200) ?? null}
+    )
     ON CONFLICT (update_id) DO NOTHING
     RETURNING update_id`;
   return rows.length > 0;
+}
+
+export async function recentUpdateCounts(
+  windowMinutes = 60,
+): Promise<{
+  total: number;
+  byType: Record<string, number>;
+  recent: Array<{
+    updateId: number;
+    updateType: string | null;
+    chatId: number | null;
+    preview: string | null;
+    processedAt: Date;
+  }>;
+}> {
+  if (!hasDb()) {
+    return { total: 0, byType: {}, recent: [] };
+  }
+  await ensureSchema();
+  const rows = (await sql()`
+    SELECT update_id, update_type, chat_id, preview, processed_at
+    FROM processed_updates
+    WHERE processed_at > NOW() - (${windowMinutes} || ' minutes')::INTERVAL
+    ORDER BY processed_at DESC
+    LIMIT 50`) as Array<{
+    update_id: string;
+    update_type: string | null;
+    chat_id: string | null;
+    preview: string | null;
+    processed_at: Date;
+  }>;
+  const byType: Record<string, number> = {};
+  for (const r of rows) {
+    const k = r.update_type ?? "(unknown)";
+    byType[k] = (byType[k] ?? 0) + 1;
+  }
+  return {
+    total: rows.length,
+    byType,
+    recent: rows.map((r) => ({
+      updateId: Number(r.update_id),
+      updateType: r.update_type,
+      chatId: r.chat_id != null ? Number(r.chat_id) : null,
+      preview: r.preview,
+      processedAt: r.processed_at,
+    })),
+  };
 }

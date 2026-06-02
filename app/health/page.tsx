@@ -11,6 +11,17 @@ type HealthResponse = {
   ok: boolean;
   checks: Record<string, Check>;
   activity: Record<string, string | number | null>;
+  updates?: {
+    total: number;
+    byType: Record<string, number>;
+    recent: Array<{
+      updateId: number;
+      updateType: string | null;
+      chatId: number | null;
+      preview: string | null;
+      processedAt: string;
+    }>;
+  };
 };
 
 const CHECK_LABELS: Record<string, string> = {
@@ -223,6 +234,71 @@ export default function HealthPage() {
                   <dd>{data.activity.bcs_enabled ?? 0}</dd>
                 </div>
               </dl>
+            </Card>
+          )}
+
+          {data.updates && (
+            <Card className="mt-4">
+              <div className="text-sm font-medium mb-1">
+                Telegram updates received (last 1h)
+              </div>
+              <div className="text-[11px] text-[var(--color-text-dim)] mb-3">
+                If this list doesn&apos;t include channel_post but the bot
+                IS in a channel, the bot probably isn&apos;t an
+                administrator there. Telegram only delivers channel
+                posts to admin bots.
+              </div>
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {Object.keys(data.updates.byType).length === 0 ? (
+                  <span className="text-xs text-[var(--color-text-dim)]">
+                    no Telegram updates in the last hour
+                  </span>
+                ) : (
+                  Object.entries(data.updates.byType).map(([t, n]) => (
+                    <span
+                      key={t}
+                      className="text-[11px] px-2 py-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                    >
+                      {t}: <strong>{n}</strong>
+                    </span>
+                  ))
+                )}
+              </div>
+              {data.updates.recent.length > 0 && (
+                <details>
+                  <summary className="text-[11px] text-[var(--color-text-dim)] cursor-pointer">
+                    آخرین ۵۰ update — برای دیباگ
+                  </summary>
+                  <div className="mt-2 flex flex-col gap-1">
+                    {data.updates.recent.map((u) => (
+                      <div
+                        key={u.updateId}
+                        className="text-[11px] flex items-center gap-2 flex-wrap p-1.5 border border-[var(--color-border)] rounded-md"
+                      >
+                        <span className="text-[var(--color-text-dim)]">
+                          {new Date(u.processedAt).toLocaleTimeString()}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)]">
+                          {u.updateType ?? "(unknown)"}
+                        </span>
+                        {u.chatId != null && (
+                          <span className="text-[var(--color-text-dim)]">
+                            chat {u.chatId}
+                          </span>
+                        )}
+                        {u.preview && (
+                          <span
+                            dir="auto"
+                            className="truncate min-w-0 flex-1"
+                          >
+                            {u.preview}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
             </Card>
           )}
         </>

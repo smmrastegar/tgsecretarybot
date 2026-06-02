@@ -1,6 +1,6 @@
 import { Bot } from "grammy";
 import { config } from "@/lib/config";
-import { hasDb, sql } from "@/lib/db";
+import { hasDb, recentUpdateCounts, sql } from "@/lib/db";
 import { ALLOWED_UPDATES } from "@/lib/bot";
 
 export const runtime = "nodejs";
@@ -126,9 +126,42 @@ export async function GET(): Promise<Response> {
   });
   checks.openrouter = { ok: or.ok, detail: or.detail ?? or.value, ms: or.ms };
 
+  // Breakdown of update types Telegram has actually been pushing.
+  // Most useful for "I added the bot to a channel, no posts come" —
+  // shows whether channel_post arrives at all.
+  let updates: {
+    total: number;
+    byType: Record<string, number>;
+    recent: Array<{
+      updateId: number;
+      updateType: string | null;
+      chatId: number | null;
+      preview: string | null;
+      processedAt: string;
+    }>;
+  } = { total: 0, byType: {}, recent: [] };
+  if (hasDb()) {
+    try {
+      const counts = await recentUpdateCounts(60);
+      updates = {
+        total: counts.total,
+        byType: counts.byType,
+        recent: counts.recent.map((r) => ({
+          updateId: r.updateId,
+          updateType: r.updateType,
+          chatId: r.chatId,
+          preview: r.preview,
+          processedAt: r.processedAt.toISOString(),
+        })),
+      };
+    } catch (err) {
+      console.warn("[health] recentUpdateCounts failed:", err);
+    }
+  }
+
   const ok = Object.values(checks).every((c) => c.ok);
   return new Response(
-    JSON.stringify({ ok, checks, activity }, null, 2),
+    JSON.stringify({ ok, checks, activity, updates }, null, 2),
     {
       status: ok ? 200 : 503,
       headers: { "Content-Type": "application/json" },
