@@ -225,6 +225,11 @@ export async function ensureSchema(): Promise<void> {
         UNIQUE (chat_id, thread_started_at)
       )`;
     await q`CREATE INDEX IF NOT EXISTS thread_summaries_chat_idx ON thread_summaries (chat_id, thread_started_at DESC)`;
+    // Where we posted this summary (so owner replying in the inbox
+    // can be forwarded back to the source chat).
+    await q`ALTER TABLE thread_summaries ADD COLUMN IF NOT EXISTS inbox_chat_id BIGINT`;
+    await q`ALTER TABLE thread_summaries ADD COLUMN IF NOT EXISTS inbox_message_id BIGINT`;
+    await q`CREATE INDEX IF NOT EXISTS thread_summaries_inbox_idx ON thread_summaries (inbox_chat_id, inbox_message_id) WHERE inbox_chat_id IS NOT NULL`;
     // One-time migration: the old default was 'secretary' which caused the
     // bot to relay/auto-reply in every new chat. Owner wants the default to
     // be silent (off); flip every existing 'secretary' row to 'off' exactly
@@ -794,6 +799,47 @@ function rowToThreadSummary(r: Record<string, unknown>): ThreadSummary {
       ? (actionsRaw.filter((x) => typeof x === "string") as string[])
       : [],
     createdAt: r.created_at as Date,
+  };
+}
+
+// Record where we posted the summary, so a reply to that message in
+// the summary_inbox can be routed back to the source chat. Called
+// after sendMessage to the inbox returns the new message id.
+export async function setThreadSummaryInbox(args: {
+  chatId: number;
+  threadStartedAt: Date;
+  inboxChatId: number;
+  inboxMessageId: number;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE thread_summaries
+    SET inbox_chat_id = ${args.inboxChatId},
+        inbox_message_id = ${args.inboxMessageId}
+    WHERE chat_id = ${args.chatId}
+      AND thread_started_at = ${args.threadStartedAt.toISOString()}`;
+}
+
+// Look up the source chat for a reply that landed in the
+// summary_inbox. Used by the channel-post / inbox-reply handler.
+export async function findThreadByInboxMessage(
+  inboxChatId: number,
+  inboxMessageId: number,
+): Promise<{ chatId: number; threadStartedAt: Date } | null> {
+  if (!hasDb()) return null;
+  const rows = await sql()`
+    SELECT chat_id, thread_started_at
+    FROM thread_summaries
+    WHERE inbox_chat_id = ${inboxChatId}
+      AND inbox_message_id = ${inboxMessageId}
+    LIMIT 1`;
+  const r = rows[0] as
+    | { chat_id: string; thread_started_at: Date }
+    | undefined;
+  if (!r) return null;
+  return {
+    chatId: Number(r.chat_id),
+    threadStartedAt: r.thread_started_at,
   };
 }
 

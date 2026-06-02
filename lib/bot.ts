@@ -35,11 +35,13 @@ import {
   hasDb,
   isAllowedUser,
   lastOwnerMessageAt,
+  findThreadByInboxMessage,
   getPrimarySummaryInbox,
   listChatThreaded,
   logMessage,
   markAutoSummaryDelivered,
   markMessagesDeleted,
+  setThreadSummaryInbox,
   openSecretarySession,
   recentIncomingCount,
   recordMessageEdit,
@@ -75,6 +77,9 @@ export const ALLOWED_UPDATES = [
   "edited_business_message",
   "deleted_business_messages",
   "message_reaction",
+  "channel_post",
+  "edited_channel_post",
+  "callback_query",
 ] as const;
 
 type OwnerCacheEntry = { userId: number; userChatId: number; canReply: boolean };
@@ -554,6 +559,77 @@ async function handleAutoSummaryCallback(
   await ctx.answerCallbackQuery({ text: "unknown action" });
 }
 
+// Owner typed a reply (or any message) inside the summary_inbox
+// channel/group. If it's a reply to one of our delivered summaries,
+// forward the text back to the original chat — over the same
+// business_connection if available, otherwise plain sendMessage.
+// Returns true when the message was a recognised inbox reply and we
+// handled it (so the normal classify/log path should skip it).
+async function handleInboxReply(msg: Message, bot: Bot): Promise<boolean> {
+  // Must be a chat tagged as summary_inbox.
+  const rule = await getChatRule(msg.chat.id).catch(() => null);
+  if (!rule || rule.functionRole !== "summary_inbox") return false;
+  // Must be a reply to one of our prior summary posts.
+  const replyTo = msg.reply_to_message;
+  if (!replyTo) return false;
+  // Ignore bot-typed messages (our own summary deliveries and edits).
+  if (msg.from?.is_bot) return false;
+  // Need actual text to forward; ignore caption-only media for now.
+  const text = msg.text?.trim();
+  if (!text) return false;
+
+  const mapping = await findThreadByInboxMessage(
+    msg.chat.id,
+    replyTo.message_id,
+  );
+  if (!mapping) return false;
+
+  // Find a recent bcId for the source chat (we used the business
+  // connection to receive the original messages; we send through it
+  // to deliver as the owner).
+  let bcId: string | null = null;
+  try {
+    const rows = await sql()`
+      SELECT business_connection_id FROM messages_log
+      WHERE chat_id = ${mapping.chatId}
+        AND business_connection_id IS NOT NULL
+      ORDER BY created_at DESC LIMIT 1`;
+    bcId =
+      (rows[0] as { business_connection_id: string } | undefined)
+        ?.business_connection_id ?? null;
+  } catch (err) {
+    console.warn("[inbox_reply] bcId lookup failed:", err);
+  }
+
+  try {
+    if (bcId) {
+      await bot.api.sendMessage(mapping.chatId, text, {
+        business_connection_id: bcId,
+      });
+    } else {
+      await bot.api.sendMessage(mapping.chatId, text);
+    }
+    try {
+      await bot.api.sendMessage(
+        msg.chat.id,
+        `✅ ارسال شد به چت مبدا`,
+        { reply_parameters: { message_id: msg.message_id } },
+      );
+    } catch {}
+    return true;
+  } catch (err) {
+    console.error("[inbox_reply] send failed:", err);
+    try {
+      await bot.api.sendMessage(
+        msg.chat.id,
+        `❌ ارسال نشد: ${String(err).slice(0, 200)}`,
+        { reply_parameters: { message_id: msg.message_id } },
+      );
+    } catch {}
+    return true;
+  }
+}
+
 // In ai_listen mode with auto_summarize_enabled, whenever a NEW
 // message arrives we check the gap from the previously logged
 // message: if that gap exceeds the chat's configured silence window
@@ -711,10 +787,18 @@ export async function deliverAutoSummary(args: {
     .text("🔄 Regenerate", `as:resum:${rule.chatId}:${startSec}`);
 
   try {
-    await bot.api.sendMessage(inbox.chatId, body, {
+    const sent = await bot.api.sendMessage(inbox.chatId, body, {
       reply_markup: keyboard,
     });
     await markAutoSummaryDelivered(rule.chatId);
+    await setThreadSummaryInbox({
+      chatId: rule.chatId,
+      threadStartedAt: threadMsgs[0]!.createdAt,
+      inboxChatId: inbox.chatId,
+      inboxMessageId: sent.message_id,
+    }).catch((err) =>
+      console.error("[auto_summary] setThreadSummaryInbox failed:", err),
+    );
     return true;
   } catch (err) {
     console.error(
@@ -1086,6 +1170,15 @@ function buildBot(): Bot {
 
   bot.on("message", async (ctx) => {
     const m = ctx.update.message;
+    // If this message lands in a group/channel that the owner has
+    // tagged as summary_inbox and it's a reply to one of our delivered
+    // summaries, route it back to the source chat. Runs BEFORE the
+    // normal group handler so we don't classify our own routed reply.
+    const routed = await handleInboxReply(m, bot).catch((err) => {
+      console.error("[inbox_reply] handler error:", err);
+      return false;
+    });
+    if (routed) return;
     // Groups/supergroups: classify + log + alert if urgent. Requires
     // 'Disable group privacy' on the bot in BotFather so Telegram
     // forwards every message instead of just /commands and mentions.
@@ -1100,6 +1193,16 @@ function buildBot(): Bot {
     // bot). For anything else this no-ops.
     await handleSecretaryReply(m, bot).catch((err) =>
       console.error("[secretary] handler error:", err),
+    );
+  });
+
+  // Channels deliver posts via channel_post, NOT message. Same routing
+  // logic for inbox replies; we don't have a "channel classifier" so
+  // anything else just gets ignored.
+  bot.on("channel_post", async (ctx) => {
+    const m = ctx.update.channel_post;
+    await handleInboxReply(m, bot).catch((err) =>
+      console.error("[inbox_reply] channel handler error:", err),
     );
   });
 
