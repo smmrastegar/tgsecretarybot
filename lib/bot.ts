@@ -35,8 +35,10 @@ import {
   isAllowedUser,
   lastOwnerMessageAt,
   logMessage,
+  markMessagesDeleted,
   openSecretarySession,
   recentIncomingCount,
+  recordMessageEdit,
   saveMediaDescription,
   saveTranscript,
   setFloodCooldown,
@@ -379,7 +381,30 @@ function buildBot(): Bot {
     await handleBusinessMessage(ctx.update.business_message, bot);
   });
   bot.on("edited_business_message", async (ctx) => {
-    await handleBusinessMessage(ctx.update.edited_business_message, bot);
+    await handleBusinessEdit(ctx.update.edited_business_message, bot).catch(
+      (err) => console.error("[edit] handler error:", err),
+    );
+  });
+
+  bot.on("deleted_business_messages", async (ctx) => {
+    const d = ctx.update.deleted_business_messages;
+    if (!d) return;
+    const ids = Array.isArray(d.message_ids)
+      ? d.message_ids.map((n) => Number(n)).filter((n) => Number.isFinite(n))
+      : [];
+    if (!d.business_connection_id || !d.chat?.id || ids.length === 0) return;
+    try {
+      const n = await markMessagesDeleted({
+        businessConnectionId: d.business_connection_id,
+        chatId: Number(d.chat.id),
+        messageIds: ids,
+      });
+      console.log(
+        `[delete] chat=${d.chat.id} marked ${n} of ${ids.length} message(s) deleted`,
+      );
+    } catch (err) {
+      console.error("[delete] mark failed:", err);
+    }
   });
 
   bot.command("start", async (ctx) => {
@@ -1967,6 +1992,43 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
       console.error("[db] group-log failed:", err);
     }
   }
+}
+
+// Edited DM messages from either side arrive here. We snapshot the
+// previous text into message_edits and overwrite the live row, but we
+// don't re-classify or re-reply — the original handleBusinessMessage
+// already did that and re-running it would either dedupe (logMessage
+// returns the existing id) or worse, generate a second AI reply for
+// the same conversation turn.
+async function handleBusinessEdit(msg: Message, bot: Bot): Promise<void> {
+  const bcId = msg.business_connection_id;
+  if (!bcId) return;
+  // Ignore the bot's own outgoing echo edits — we don't track those.
+  if (
+    (msg as unknown as { sender_business_bot?: unknown }).sender_business_bot
+  ) {
+    return;
+  }
+  const newText = describeMessage(msg);
+  if (!newText) return;
+  try {
+    const changed = await recordMessageEdit({
+      businessConnectionId: bcId,
+      chatId: msg.chat.id,
+      messageId: msg.message_id,
+      newText,
+    });
+    if (changed) {
+      console.log(
+        `[edit] chat=${msg.chat.id} msg=${msg.message_id} text updated, prev snapshot saved`,
+      );
+    }
+  } catch (err) {
+    console.error("[edit] recordMessageEdit failed:", err);
+  }
+  // Silence the no-unused-param lint while keeping the bot arg available
+  // for future use (e.g. re-classifying or notifying the secretary).
+  void bot;
 }
 
 async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {

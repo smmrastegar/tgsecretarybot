@@ -68,6 +68,24 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS transcript_at TIMESTAMPTZ`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS media_description TEXT`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS media_description_at TIMESTAMPTZ`;
+    // Telegram pushes deleted_business_messages updates when either
+    // side deletes a DM. We mark the matching rows so the dashboard
+    // can show what was erased instead of silently losing it.
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`;
+    await q`CREATE INDEX IF NOT EXISTS messages_log_deleted_idx ON messages_log (deleted_at) WHERE deleted_at IS NOT NULL`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ`;
+    // Edit history: when Telegram pushes edited_business_message we
+    // snapshot the previous text/transcript here before overwriting
+    // the live row, so the dashboard can show what was changed.
+    await q`
+      CREATE TABLE IF NOT EXISTS message_edits (
+        id              BIGSERIAL PRIMARY KEY,
+        message_log_id  BIGINT NOT NULL REFERENCES messages_log(id) ON DELETE CASCADE,
+        previous_text   TEXT,
+        previous_transcript TEXT,
+        edited_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS message_edits_msg_idx ON message_edits (message_log_id, edited_at DESC)`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS source TEXT`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_source_idx ON messages_log (source) WHERE source IS NOT NULL`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_owner_chat_idx ON messages_log (chat_id, created_at DESC) WHERE from_owner = TRUE`;
@@ -484,6 +502,107 @@ export async function saveMediaDescription(
     WHERE id = ${id}`;
 }
 
+// Mark every messages_log row for the given (bcId, chatId, messageId)
+// tuples as deleted. Telegram pushes deleted_business_messages with a
+// list of message_ids when either side erases a DM; we keep the row
+// (and its text/transcript/media description) but stamp deleted_at so
+// the dashboard can show the "Deleted" label without losing the
+// content.
+export async function markMessagesDeleted(args: {
+  businessConnectionId: string;
+  chatId: number;
+  messageIds: number[];
+}): Promise<number> {
+  if (!hasDb() || args.messageIds.length === 0) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    UPDATE messages_log
+    SET deleted_at = NOW()
+    WHERE business_connection_id = ${args.businessConnectionId}
+      AND chat_id = ${args.chatId}
+      AND message_id = ANY(${args.messageIds}::bigint[])
+      AND deleted_at IS NULL
+    RETURNING id`;
+  return rows.length;
+}
+
+// Snapshot the existing text/transcript into message_edits and update
+// the live row with the new text. Called from the edited_business_
+// message handler. If nothing actually changed we no-op so we don't
+// pad the history with phantom edits.
+export async function recordMessageEdit(args: {
+  businessConnectionId: string;
+  chatId: number;
+  messageId: number;
+  newText: string;
+  newTranscript?: string | null;
+}): Promise<boolean> {
+  if (!hasDb()) return false;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, message_text, transcript
+    FROM messages_log
+    WHERE business_connection_id = ${args.businessConnectionId}
+      AND chat_id = ${args.chatId}
+      AND message_id = ${args.messageId}
+    LIMIT 1`;
+  const r = rows[0] as
+    | { id: string; message_text: string; transcript: string | null }
+    | undefined;
+  if (!r) return false;
+  const oldText = r.message_text ?? "";
+  const oldTranscript = r.transcript ?? null;
+  const textChanged = oldText !== args.newText;
+  const transcriptChanged =
+    args.newTranscript !== undefined && args.newTranscript !== oldTranscript;
+  if (!textChanged && !transcriptChanged) return false;
+  await sql()`
+    INSERT INTO message_edits (message_log_id, previous_text, previous_transcript)
+    VALUES (${Number(r.id)}, ${oldText}, ${oldTranscript})`;
+  if (transcriptChanged) {
+    await sql()`
+      UPDATE messages_log
+      SET message_text = ${args.newText},
+          transcript = ${args.newTranscript ?? null},
+          edited_at = NOW()
+      WHERE id = ${Number(r.id)}`;
+  } else {
+    await sql()`
+      UPDATE messages_log
+      SET message_text = ${args.newText},
+          edited_at = NOW()
+      WHERE id = ${Number(r.id)}`;
+  }
+  return true;
+}
+
+export type MessageEdit = {
+  id: number;
+  messageLogId: number;
+  previousText: string | null;
+  previousTranscript: string | null;
+  editedAt: Date;
+};
+
+export async function getMessageEdits(
+  messageLogId: number,
+): Promise<MessageEdit[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, message_log_id, previous_text, previous_transcript, edited_at
+    FROM message_edits
+    WHERE message_log_id = ${messageLogId}
+    ORDER BY edited_at DESC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    messageLogId: Number(r.message_log_id),
+    previousText: (r.previous_text as string) ?? null,
+    previousTranscript: (r.previous_transcript as string) ?? null,
+    editedAt: r.edited_at as Date,
+  }));
+}
+
 // "Owner active in this chat" for the grace window means the owner
 // actually typed something in Telegram — NOT the bot's own AI/auto reply
 // (those land in messages_log with from_owner=TRUE because Telegram
@@ -531,6 +650,9 @@ export type MessageRow = {
   transcriptAt: Date | null;
   mediaDescription: string | null;
   mediaDescriptionAt: Date | null;
+  deletedAt: Date | null;
+  editedAt: Date | null;
+  editCount: number;
   fromOwner: boolean;
   source: string | null;
   chatMode: ChatMode;
@@ -564,6 +686,10 @@ function rowToMessage(r: Record<string, unknown>): MessageRow {
     transcriptAt: (r.transcript_at as Date) ?? null,
     mediaDescription: (r.media_description as string) ?? null,
     mediaDescriptionAt: (r.media_description_at as Date) ?? null,
+    deletedAt: (r.deleted_at as Date) ?? null,
+    editedAt: (r.edited_at as Date) ?? null,
+    editCount:
+      r.edit_count != null ? Number(r.edit_count) : 0,
     fromOwner: Boolean(r.from_owner),
     source: (r.source as string) ?? null,
     chatMode:
@@ -587,7 +713,8 @@ export async function listMessages(opts: {
   const q = sql();
   const search = opts.search ? `%${opts.search}%` : null;
   const rows = await q`
-    SELECT m.*, COALESCE(r.mode, 'secretary') AS chat_mode
+    SELECT m.*, COALESCE(r.mode, 'secretary') AS chat_mode,
+           (SELECT COUNT(*)::int FROM message_edits e WHERE e.message_log_id = m.id) AS edit_count
     FROM messages_log m
     LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
     WHERE (${opts.urgentOnly ?? false}::boolean = FALSE OR m.urgent = TRUE)

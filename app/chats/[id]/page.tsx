@@ -69,6 +69,9 @@ type Message = {
   autoReplied: boolean;
   mediaKind: string | null;
   transcript: string | null;
+  deletedAt: string | null;
+  editedAt: string | null;
+  editCount: number;
   fromOwner: boolean;
 };
 
@@ -131,6 +134,96 @@ type ThreadGroup = {
   senders: string[];
   messages: ThreadMsg[];
 };
+
+type MessageEdit = {
+  id: number;
+  previousText: string | null;
+  previousTranscript: string | null;
+  editedAt: string;
+};
+
+function EditHistoryToggle({
+  messageId,
+  count,
+  editedAt,
+}: {
+  messageId: number;
+  count: number;
+  editedAt: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [edits, setEdits] = useState<MessageEdit[] | null>(null);
+
+  async function toggle() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+    if (edits) return;
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/messages/${messageId}/edits`);
+      if (r.ok) {
+        const j = (await r.json()) as { edits: MessageEdit[] };
+        setEdits(j.edits);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <span className="inline-flex flex-col items-start gap-1">
+      <button
+        onClick={toggle}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-900/40 text-amber-300 border border-amber-800 hover:bg-amber-900/60"
+        title={editedAt ? `last edited ${relTime(editedAt)}` : undefined}
+      >
+        ✎ edited ({count})
+      </button>
+      {open && (
+        <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md p-2 text-[11px] max-w-md">
+          {loading && (
+            <span className="text-[var(--color-text-dim)]">loading…</span>
+          )}
+          {edits && edits.length === 0 && (
+            <span className="text-[var(--color-text-dim)]">no history</span>
+          )}
+          {edits && edits.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              {edits.map((e) => (
+                <div
+                  key={e.id}
+                  className="border-l-2 border-amber-700 pl-2"
+                >
+                  <div className="text-[10px] text-[var(--color-text-dim)]">
+                    before {relTime(e.editedAt)}:
+                  </div>
+                  <div
+                    dir="auto"
+                    className="whitespace-pre-wrap line-through opacity-80"
+                  >
+                    {e.previousText || "(empty)"}
+                  </div>
+                  {e.previousTranscript && (
+                    <div
+                      dir="auto"
+                      className="mt-1 text-[10px] text-[var(--color-text-dim)] line-through"
+                    >
+                      transcript: {e.previousTranscript}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
 
 export default function ChatDetailPage() {
   const params = useParams<{ id: string }>();
@@ -988,9 +1081,11 @@ export default function ChatDetailPage() {
                       dir="auto"
                       style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
                       className={`p-3 rounded-2xl text-sm whitespace-pre-wrap max-w-full ${
-                        mine
-                          ? "bg-[var(--color-accent)] text-white rounded-br-md"
-                          : "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-bl-md"
+                        m.deletedAt
+                          ? "bg-red-900/20 border border-red-900/40 text-[var(--color-text-dim)] line-through rounded-md"
+                          : mine
+                            ? "bg-[var(--color-accent)] text-white rounded-br-md"
+                            : "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-bl-md"
                       }`}
                     >
                       {m.messageText}
@@ -1013,6 +1108,18 @@ export default function ChatDetailPage() {
                       )}
                     </div>
                     <div className="flex gap-1 flex-wrap text-[10px] px-1">
+                      {m.deletedAt && (
+                        <Badge tone="danger">
+                          🗑 Deleted {relTime(m.deletedAt)}
+                        </Badge>
+                      )}
+                      {m.editCount > 0 && (
+                        <EditHistoryToggle
+                          messageId={m.id}
+                          count={m.editCount}
+                          editedAt={m.editedAt}
+                        />
+                      )}
                       {m.urgent && <Badge tone="danger">urgent</Badge>}
                       {m.alerted && <Badge tone="warn">alert</Badge>}
                       {m.autoReplied && <Badge tone="info">replied</Badge>}

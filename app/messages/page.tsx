@@ -58,6 +58,9 @@ type Message = {
   mediaFileId: string | null;
   transcript: string | null;
   transcriptAt: string | null;
+  deletedAt: string | null;
+  editedAt: string | null;
+  editCount: number;
   fromOwner: boolean;
   source: string | null;
   chatMode:
@@ -177,17 +180,31 @@ export default function MessagesPage() {
                       m.fromOwner ? "self-end items-end" : "self-start items-start"
                     }`}
                   >
-                    <div className="text-[10px] text-[var(--color-text-dim)]">
-                      {m.fromOwner ? "you" : m.senderName} ·{" "}
-                      {relTime(m.createdAt)}
+                    <div className="text-[10px] text-[var(--color-text-dim)] flex items-center gap-1.5 flex-wrap">
+                      <span>
+                        {m.fromOwner ? "you" : m.senderName} ·{" "}
+                        {relTime(m.createdAt)}
+                      </span>
+                      {m.deletedAt && (
+                        <Badge tone="danger">
+                          🗑 Deleted {relTime(m.deletedAt)}
+                        </Badge>
+                      )}
+                      {m.editCount > 0 && (
+                        <Badge tone="warn">
+                          ✎ edited ({m.editCount})
+                        </Badge>
+                      )}
                     </div>
                     <div
                       dir="auto"
                       style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
                       className={`px-2.5 py-1.5 rounded-2xl text-xs whitespace-pre-wrap max-w-full ${
-                        m.fromOwner
-                          ? "bg-[var(--color-accent)] text-white rounded-br-md"
-                          : "bg-[var(--color-surface-2)] rounded-bl-md"
+                        m.deletedAt
+                          ? "bg-red-900/20 border border-red-900/40 text-[var(--color-text-dim)] line-through rounded-md"
+                          : m.fromOwner
+                            ? "bg-[var(--color-accent)] text-white rounded-br-md"
+                            : "bg-[var(--color-surface-2)] rounded-bl-md"
                       }`}
                     >
                       {truncate(m.messageText, 200)}
