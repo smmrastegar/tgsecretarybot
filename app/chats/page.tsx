@@ -106,14 +106,81 @@ export default function ChatsPage() {
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState<Chat | null>(null);
   const [secretaries, setSecretaries] = useState<Secretary[]>([]);
+  const [search, setSearch] = useState("");
+  const [modeFilter, setModeFilter] = useState<"all" | ChatMode>("all");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulking, setBulking] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     const r = await fetch("/api/chats");
     const j = (await r.json()) as { chats: Chat[] };
     setChats(j.chats);
+    setSelected(new Set());
     setLoading(false);
   }, []);
+
+  function toggleSelect(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function chatMatchesSearch(c: Chat, q: string): boolean {
+    if (!q) return true;
+    const fields = [
+      c.chatTitle,
+      c.firstName,
+      c.lastName,
+      c.nickname,
+      String(c.chatId),
+    ];
+    return fields.some((f) => f && f.toLowerCase().includes(q));
+  }
+
+  const filteredChats = chats.filter((c) => {
+    if (modeFilter !== "all" && c.mode !== modeFilter) return false;
+    if (!chatMatchesSearch(c, search.trim().toLowerCase())) return false;
+    return true;
+  });
+
+  function selectAll() {
+    setSelected(new Set(filteredChats.map((c) => c.chatId)));
+  }
+
+  function selectNone() {
+    setSelected(new Set());
+  }
+
+  async function runBulk(
+    op: "mode" | "vip" | "muted" | "function",
+    extra: { mode?: ChatMode; value?: boolean; role?: string | null } = {},
+  ) {
+    if (selected.size === 0) return;
+    setBulking(true);
+    try {
+      const r = await fetch("/api/chats/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          op,
+          chatIds: [...selected],
+          ...extra,
+        }),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        alert(`عملیات شکست خورد: ${j.error ?? r.status}`);
+      } else {
+        await load();
+      }
+    } finally {
+      setBulking(false);
+    }
+  }
 
   useEffect(() => {
     load();
@@ -193,14 +260,154 @@ export default function ChatsPage() {
         </Card>
       ) : (
         <>
+        <Card className="mb-3 !p-3">
+          <div className="flex flex-col gap-2">
+            <input
+              dir="auto"
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="جستجو در اسم / nickname / id / title…"
+              className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm"
+            />
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <span className="text-[var(--color-text-dim)]">Mode:</span>
+              <select
+                value={modeFilter}
+                onChange={(e) =>
+                  setModeFilter(e.target.value as "all" | ChatMode)
+                }
+                className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+              >
+                <option value="all">همه ({chats.length})</option>
+                {(Object.keys(MODE_LABELS) as ChatMode[]).map((m) => {
+                  const n = chats.filter((c) => c.mode === m).length;
+                  return (
+                    <option key={m} value={m}>
+                      {MODE_LABELS[m]} ({n})
+                    </option>
+                  );
+                })}
+              </select>
+              <span className="text-[var(--color-text-dim)] ml-auto">
+                {filteredChats.length} نمایش / {selected.size} انتخاب
+              </span>
+            </div>
+            {selected.size > 0 && (
+              <div className="flex items-center gap-2 flex-wrap text-xs pt-2 border-t border-[var(--color-border)]">
+                <button
+                  onClick={selectNone}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                >
+                  Clear
+                </button>
+                <select
+                  disabled={bulking}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const v = e.target.value as ChatMode | "";
+                    if (!v) return;
+                    void runBulk("mode", { mode: v });
+                    e.currentTarget.value = "";
+                  }}
+                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
+                >
+                  <option value="">Set mode to…</option>
+                  {(Object.keys(MODE_LABELS) as ChatMode[]).map((m) => (
+                    <option key={m} value={m}>
+                      {MODE_LABELS[m]}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => runBulk("vip", { value: true })}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-amber-700 text-amber-300 hover:bg-amber-900/30 disabled:opacity-50"
+                >
+                  ⭐ Mark VIP
+                </button>
+                <button
+                  onClick={() => runBulk("vip", { value: false })}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                >
+                  Unmark VIP
+                </button>
+                <button
+                  onClick={() => runBulk("muted", { value: true })}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                >
+                  🔕 Mute
+                </button>
+                <button
+                  onClick={() => runBulk("muted", { value: false })}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                >
+                  Unmute
+                </button>
+                <select
+                  disabled={bulking}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    const role = v === "__clear" ? null : v;
+                    void runBulk("function", { role });
+                    e.currentTarget.value = "";
+                  }}
+                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
+                >
+                  <option value="">Set function role…</option>
+                  <option value="downloader">📥 Downloader</option>
+                  <option value="sms_inbox">📱 SMS inbox</option>
+                  <option value="download_archive">🗄 Archive</option>
+                  <option value="news">📰 News</option>
+                  <option value="summary_inbox">📬 Summary inbox</option>
+                  <option value="__clear">— Clear role —</option>
+                </select>
+              </div>
+            )}
+            {filteredChats.length > 0 && (
+              <button
+                onClick={selectAll}
+                className="self-start text-[10px] text-[var(--color-text-dim)] hover:text-white underline-offset-2 hover:underline"
+              >
+                انتخاب همه‌ی {filteredChats.length} مورد فیلترشده
+              </button>
+            )}
+          </div>
+        </Card>
+        {filteredChats.length === 0 && (
+          <Card>
+            <p className="text-sm text-[var(--color-text-dim)]">
+              هیچ چتی با این فیلتر مطابقت نداره.
+            </p>
+          </Card>
+        )}
         {/* Mobile: card list */}
         <div className="md:hidden flex flex-col gap-2 mb-4">
-          {chats.map((c) => (
-            <Card key={c.chatId} className="!p-3">
-              <div className="flex items-start justify-between gap-2 mb-2">
+          {filteredChats.map((c) => (
+            <Card
+              key={c.chatId}
+              className={`!p-3 ${
+                selected.has(c.chatId)
+                  ? "ring-1 ring-[var(--color-accent)]"
+                  : ""
+              }`}
+            >
+              <div className="flex items-start gap-2 mb-2">
+                <input
+                  type="checkbox"
+                  checked={selected.has(c.chatId)}
+                  onChange={() => toggleSelect(c.chatId)}
+                  className="mt-1 shrink-0"
+                />
                 <Link
                   href={`/chats/${c.chatId}`}
-                  className="min-w-0 hover:opacity-90"
+                  className="flex-1 min-w-0 hover:opacity-90"
                 >
                   <div className="font-medium text-sm truncate" dir="auto">
                     {chatDisplayName(c)}
@@ -299,6 +506,19 @@ export default function ChatsPage() {
           <table className="w-full text-sm min-w-[640px]">
             <thead className="text-xs text-[var(--color-text-dim)]">
               <tr className="border-b border-[var(--color-border)]">
+                <th className="text-left font-normal pb-2 pr-2 w-8">
+                  <input
+                    type="checkbox"
+                    checked={
+                      filteredChats.length > 0 &&
+                      filteredChats.every((c) => selected.has(c.chatId))
+                    }
+                    onChange={(e) => {
+                      if (e.target.checked) selectAll();
+                      else selectNone();
+                    }}
+                  />
+                </th>
                 <th className="text-left font-normal pb-2 pr-3">Chat</th>
                 <th className="text-left font-normal pb-2 pr-3">Mode</th>
                 <th className="text-left font-normal pb-2 pr-3">Last seen</th>
@@ -310,11 +530,20 @@ export default function ChatsPage() {
               </tr>
             </thead>
             <tbody>
-              {chats.map((c) => (
+              {filteredChats.map((c) => (
                 <tr
                   key={c.chatId}
-                  className="border-b border-[var(--color-border)] last:border-0"
+                  className={`border-b border-[var(--color-border)] last:border-0 ${
+                    selected.has(c.chatId) ? "bg-[var(--color-surface-2)]/30" : ""
+                  }`}
                 >
+                  <td className="py-3 pr-2 align-top">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(c.chatId)}
+                      onChange={() => toggleSelect(c.chatId)}
+                    />
+                  </td>
                   <td className="py-3 pr-3">
                     <Link
                       href={`/chats/${c.chatId}`}

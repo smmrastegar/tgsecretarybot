@@ -1245,8 +1245,6 @@ export async function upsertChatRule(rule: {
       updated_at = NOW()`;
 }
 
-// Plain SETs for the function role/config so we can clear them too
-// (the upsert COALESCEs and would never clear).
 export async function setChatFunction(
   chatId: number,
   role: FunctionRole | null,
@@ -1263,6 +1261,90 @@ export async function setChatFunction(
         function_config = ${configJson}::jsonb,
         updated_at = NOW()
     WHERE chat_id = ${chatId}`;
+}
+
+// Bulk versions for the chats list page. Each is INSERT-from-
+// messages_log ON CONFLICT so chats that don't yet have a chat_rules
+// row (never edited) still get one. chat_type is required by the
+// schema so we pull it from messages_log.
+export async function bulkSetChatMode(
+  chatIds: number[],
+  mode: ChatMode,
+): Promise<number> {
+  if (!hasDb() || chatIds.length === 0) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title, mode, mode_changed_at, updated_at)
+    SELECT m.chat_id, MAX(m.chat_type), MAX(m.chat_title), ${mode}, NOW(), NOW()
+    FROM messages_log m
+    WHERE m.chat_id = ANY(${chatIds}::bigint[])
+    GROUP BY m.chat_id
+    ON CONFLICT (chat_id) DO UPDATE SET
+      mode = EXCLUDED.mode,
+      mode_changed_at = NOW(),
+      updated_at = NOW()
+    RETURNING chat_id`;
+  return rows.length;
+}
+
+export async function bulkSetChatFlag(
+  chatIds: number[],
+  flag: "vip" | "muted",
+  value: boolean,
+): Promise<number> {
+  if (!hasDb() || chatIds.length === 0) return 0;
+  await ensureSchema();
+  // VIP and muted are mutually exclusive in our UI — turning one ON
+  // turns the other OFF.
+  if (flag === "vip") {
+    const rows = await sql()`
+      INSERT INTO chat_rules (chat_id, chat_type, chat_title, vip, muted, updated_at)
+      SELECT m.chat_id, MAX(m.chat_type), MAX(m.chat_title), ${value},
+             CASE WHEN ${value} THEN FALSE ELSE FALSE END, NOW()
+      FROM messages_log m
+      WHERE m.chat_id = ANY(${chatIds}::bigint[])
+      GROUP BY m.chat_id
+      ON CONFLICT (chat_id) DO UPDATE SET
+        vip = EXCLUDED.vip,
+        muted = CASE WHEN ${value} THEN FALSE ELSE chat_rules.muted END,
+        updated_at = NOW()
+      RETURNING chat_id`;
+    return rows.length;
+  }
+  const rows = await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title, vip, muted, updated_at)
+    SELECT m.chat_id, MAX(m.chat_type), MAX(m.chat_title),
+           CASE WHEN ${value} THEN FALSE ELSE FALSE END, ${value}, NOW()
+    FROM messages_log m
+    WHERE m.chat_id = ANY(${chatIds}::bigint[])
+    GROUP BY m.chat_id
+    ON CONFLICT (chat_id) DO UPDATE SET
+      muted = EXCLUDED.muted,
+      vip = CASE WHEN ${value} THEN FALSE ELSE chat_rules.vip END,
+      updated_at = NOW()
+    RETURNING chat_id`;
+  return rows.length;
+}
+
+export async function bulkSetChatFunction(
+  chatIds: number[],
+  role: FunctionRole | null,
+): Promise<number> {
+  if (!hasDb() || chatIds.length === 0) return 0;
+  await ensureSchema();
+  const normalisedRole =
+    role && (FUNCTION_ROLES as readonly string[]).includes(role) ? role : null;
+  const rows = await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title, function_role, updated_at)
+    SELECT m.chat_id, MAX(m.chat_type), MAX(m.chat_title), ${normalisedRole}, NOW()
+    FROM messages_log m
+    WHERE m.chat_id = ANY(${chatIds}::bigint[])
+    GROUP BY m.chat_id
+    ON CONFLICT (chat_id) DO UPDATE SET
+      function_role = EXCLUDED.function_role,
+      updated_at = NOW()
+    RETURNING chat_id`;
+  return rows.length;
 }
 
 // Toggle auto-summary for a chat (typically called when the owner
