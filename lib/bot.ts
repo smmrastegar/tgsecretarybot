@@ -1,4 +1,4 @@
-import { Bot, GrammyError, HttpError } from "grammy";
+import { Bot, GrammyError, HttpError, InlineKeyboard } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "./config";
 import {
@@ -19,6 +19,7 @@ import { getSettings, invalidateSettingsCache, updateSettings } from "./settings
 import {
   autoFillChatNames,
   consumeInvite,
+  createInvite,
   endSecretarySession,
   findActiveSecretarySessionForSender,
   findLinkWithSenderMessage,
@@ -45,6 +46,7 @@ import {
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
+import { randomBytes } from "node:crypto";
 
 let _bot: Bot | null = null;
 export function getBot(): Bot {
@@ -132,7 +134,7 @@ async function autoExtractAndSave(args: {
   chatTitle: string | null;
   senderName: string;
   messageId: number;
-  businessConnectionId: string;
+  businessConnectionId: string | null;
 }): Promise<void> {
   if (!hasDb()) return;
   const s = await getSettings();
@@ -142,7 +144,7 @@ async function autoExtractAndSave(args: {
       text: args.text,
       senderName: args.senderName,
       chatId: args.chatId,
-      businessConnectionId: args.businessConnectionId,
+      businessConnectionId: args.businessConnectionId ?? undefined,
     });
     const valid = items
       .filter((it) => it && typeof it.title === "string" && it.title.trim())
@@ -182,6 +184,39 @@ function safeDate(input: string): Date | null {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function appBaseUrl(): string {
+  return (
+    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ??
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : "https://tgsecretarybot.vercel.app")
+  );
+}
+
+function buildMainMenu(isOwner: boolean): InlineKeyboard {
+  const kb = new InlineKeyboard()
+    .text("🔐 ورود به داشبورد", "ui:login")
+    .row();
+  if (isOwner) {
+    kb.text("👥 ساخت دعوت‌نامه منشی", "ui:invite_secretary").row();
+  }
+  kb.text("📊 وضعیت اتصال", "ui:status")
+    .text("🆘 راهنما", "ui:help");
+  return kb;
+}
+
+function menuGreeting(isOwner: boolean, name: string | null): string {
+  const hi = name ? `سلام ${name} 👋` : "سلام 👋";
+  if (isOwner) {
+    return (
+      `${hi}\n\nاز این منو می‌تونی به داشبورد بری، برای منشی‌هات دعوت‌نامه بسازی، یا وضعیت اتصال رو ببینی.`
+    );
+  }
+  return (
+    `${hi}\n\nاین بات منشی‌گریِ تلگرامه. اگه صاحب اکانت دعوتت کرده، روی لینک دعوتش کلیک کن. اگه خودت صاحب اکانتی، اول از Telegram Settings → Telegram Business → Chatbots این بات رو وصل کن، بعد دوباره /start رو بزن.`
+  );
 }
 
 // Show "typing…" in the chat and wait a randomised delay so the AI
@@ -378,10 +413,137 @@ function buildBot(): Bot {
       return;
     }
 
-    await ctx.reply(
-      "Hi. I'm your Telegram secretary bot.\n\n" +
-        "Open Telegram Settings → Telegram Business → Chatbots and add me, then send /login to get a dashboard link.",
-    );
+    const isOwner = from
+      ? await isAllowedUser(from.id).catch(() => false)
+      : false;
+    await ctx.reply(menuGreeting(isOwner, from?.first_name ?? null), {
+      reply_markup: buildMainMenu(isOwner),
+    });
+  });
+
+  bot.command("menu", async (ctx) => {
+    const from = ctx.from;
+    const isOwner = from
+      ? await isAllowedUser(from.id).catch(() => false)
+      : false;
+    await ctx.reply(menuGreeting(isOwner, from?.first_name ?? null), {
+      reply_markup: buildMainMenu(isOwner),
+    });
+  });
+
+  bot.on("callback_query:data", async (ctx) => {
+    const from = ctx.from;
+    const data = ctx.callbackQuery.data;
+    if (!from || !data?.startsWith("ui:")) {
+      await ctx.answerCallbackQuery().catch(() => {});
+      return;
+    }
+    const isOwner = await isAllowedUser(from.id).catch(() => false);
+    try {
+      if (data === "ui:login") {
+        if (!hasDb()) {
+          await ctx.answerCallbackQuery({
+            text: "Dashboard not configured.",
+            show_alert: true,
+          });
+          return;
+        }
+        if (!isOwner) {
+          await ctx.answerCallbackQuery({
+            text: "اول این بات رو از Telegram Business → Chatbots وصل کن.",
+            show_alert: true,
+          });
+          return;
+        }
+        const token = await createMagicToken({
+          userId: from.id,
+          username: from.username ?? null,
+          firstName: from.first_name ?? null,
+          lastName: from.last_name ?? null,
+          photoUrl: null,
+        });
+        const url = `${appBaseUrl()}/login/magic?token=${encodeURIComponent(token)}`;
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+          `🔐 لینک ورود (۵ دقیقه اعتبار داره، یک بار مصرف):\n${url}`,
+          { link_preview_options: { is_disabled: true } },
+        );
+      } else if (data === "ui:invite_secretary") {
+        if (!isOwner) {
+          await ctx.answerCallbackQuery({
+            text: "فقط صاحب اکانت می‌تونه دعوت‌نامه بسازه.",
+            show_alert: true,
+          });
+          return;
+        }
+        if (!hasDb()) {
+          await ctx.answerCallbackQuery({
+            text: "DB not configured.",
+            show_alert: true,
+          });
+          return;
+        }
+        const s = await getSettings();
+        const ownerName =
+          s.ownerDisplayName || s.ownerName || "the owner";
+        const token = `inv${randomBytes(12).toString("hex")}`;
+        await createInvite({
+          token,
+          purpose: "secretary_invite",
+          payload: { ownerName, invitedBy: from.id },
+          ttlSeconds: 7 * 24 * 60 * 60,
+          createdBy: from.id,
+        });
+        const botUsername =
+          process.env.NEXT_PUBLIC_BOT_USERNAME || "smmrchatbot";
+        const url = `https://t.me/${botUsername}?start=${encodeURIComponent(token)}`;
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+          `👥 لینک دعوت منشی (۷ روز اعتبار داره):\n${url}\n\nبرای کسی که می‌خوای منشیت بشه بفرست. وقتی روی لینک بزنه، خودش رو ثبت می‌کنه.`,
+          { link_preview_options: { is_disabled: true } },
+        );
+      } else if (data === "ui:status") {
+        const s = await getSettings();
+        const secList = getSecretaries(s);
+        const lines: string[] = [
+          `📊 وضعیت`,
+          `• اتصال Business: ${isOwner ? "✅ متصل" : "❌ متصل نیست"}`,
+          `• منشی‌های ثبت‌شده: ${secList.length} نفر`,
+        ];
+        if (secList.length > 0) {
+          lines.push(...secList.map((sec) => `   - ${sec.name}`));
+        }
+        lines.push(
+          `• Secretary فعال: ${(s.secretaryEnabled ?? "false").toLowerCase() === "true" ? "روشن" : "خاموش"}`,
+        );
+        lines.push(
+          `• Auto-reply: ${(s.autoReplyEnabled ?? "true").toLowerCase() === "false" ? "خاموش" : "روشن"}`,
+        );
+        await ctx.answerCallbackQuery();
+        await ctx.reply(lines.join("\n"));
+      } else if (data === "ui:help") {
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+          "🆘 راهنمای کوتاه:\n\n" +
+            "1. توی تلگرام: Settings → Telegram Business → Chatbots → این بات رو اضافه کن. حتماً اجازه‌ی Reply رو روشن کن.\n" +
+            "2. /login یا دکمه‌ی «ورود به داشبورد» رو بزن تا لینک ورود به وب بگیری.\n" +
+            "3. توی داشبورد، توی Settings مشخصات خودت، owner_context و آستانه‌ی importance رو تنظیم کن.\n" +
+            "4. هر چت رو می‌تونی روی mode دلخواه بذاری: Off / Secretary / Auto-reply / Friendly / AI chat.\n" +
+            "5. برای منشی‌ها از همین منو دعوت‌نامه بساز.\n\n" +
+            "هر وقت خواستی این منو رو ببینی /menu بزن.",
+        );
+      } else {
+        await ctx.answerCallbackQuery();
+      }
+    } catch (err) {
+      console.error("[ui] callback failed:", err);
+      try {
+        await ctx.answerCallbackQuery({
+          text: "خطا رخ داد. دوباره امتحان کن.",
+          show_alert: true,
+        });
+      } catch {}
+    }
   });
 
   bot.command("login", async (ctx) => {
@@ -420,7 +582,20 @@ function buildBot(): Bot {
   });
 
   bot.on("message", async (ctx) => {
-    await handleSecretaryReply(ctx.update.message, bot).catch((err) =>
+    const m = ctx.update.message;
+    // Groups/supergroups: classify + log + alert if urgent. Requires
+    // 'Disable group privacy' on the bot in BotFather so Telegram
+    // forwards every message instead of just /commands and mentions.
+    if (m.chat.type === "group" || m.chat.type === "supergroup") {
+      await handleGroupMessage(m, bot).catch((err) =>
+        console.error("[group] handler error:", err),
+      );
+      return;
+    }
+    // Private chats: existing secretary-reply relay (a registered
+    // secretary replying to a forwarded message in their DM with the
+    // bot). For anything else this no-ops.
+    await handleSecretaryReply(m, bot).catch((err) =>
       console.error("[secretary] handler error:", err),
     );
   });
@@ -1520,6 +1695,184 @@ async function maybeForwardToSecretary(args: {
       console.error("[secretary] forward failed:", err);
     }
     return false;
+  }
+}
+
+// Groups/supergroups: bot.on("message") path (non-business). Logs every
+// non-empty message, classifies it via the same SYSTEM_PROMPT used for
+// DMs, and fires the alert webhook + ownerNotifyChatId DM when the
+// classifier says it's urgent and concerns the owner. Mute and VIP
+// chat-rules still apply. The bot never replies in groups — that's
+// intentional, groups stay log-only.
+async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
+  if (msg.chat.type !== "group" && msg.chat.type !== "supergroup") return;
+  if (msg.from?.is_bot) return;
+
+  const hasContent = Boolean(
+    msg.text ||
+      msg.caption ||
+      msg.photo ||
+      msg.video ||
+      msg.voice ||
+      msg.audio ||
+      msg.document ||
+      msg.animation ||
+      msg.sticker ||
+      msg.video_note,
+  );
+  if (!hasContent) return;
+
+  const text = describeMessage(msg);
+  const senderName =
+    [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ").trim() ||
+    msg.from?.username ||
+    "unknown sender";
+  const senderUsername = msg.from?.username ?? null;
+  const chatTitle =
+    "title" in msg.chat && typeof msg.chat.title === "string" ? msg.chat.title : null;
+
+  const media = extractMedia(msg);
+  const mediaFileId = media?.fileId ?? null;
+  const mediaKind = media?.kind ?? null;
+
+  const rule = await getChatRule(msg.chat.id).catch(() => null);
+  const settings = await getSettings();
+  const mode: ChatMode = rule?.mode ?? "off";
+
+  if (rule?.muted) {
+    if (hasDb()) {
+      await logMessage({
+        businessConnectionId: null,
+        ownerUserId: null,
+        chatId: msg.chat.id,
+        chatType: msg.chat.type,
+        chatTitle,
+        senderId: msg.from?.id ?? null,
+        senderUsername,
+        senderName,
+        messageId: msg.message_id,
+        messageText: text,
+        importance: 0,
+        urgent: false,
+        concernsOwner: false,
+        reason: "muted chat",
+        alerted: false,
+        autoReplied: false,
+        skippedReason: "muted",
+        mediaFileId,
+        mediaKind,
+      }).catch((err) => console.error("[db] group mute-log failed:", err));
+    }
+    return;
+  }
+
+  let verdict;
+  try {
+    verdict = await classify({
+      chatType: msg.chat.type,
+      chatTitle: chatTitle ?? undefined,
+      senderName,
+      text,
+    });
+  } catch (err) {
+    console.error("[classify] group failed:", err);
+    verdict = {
+      importance: 0,
+      urgent: false,
+      concernsOwner: false,
+      reason: "classifier failed",
+    };
+  }
+
+  if (rule?.vip) {
+    verdict = {
+      ...verdict,
+      urgent: true,
+      concernsOwner: true,
+      importance: Math.max(verdict.importance, 8),
+      reason: verdict.reason ? `[VIP] ${verdict.reason}` : "VIP sender",
+    };
+  }
+
+  const threshold = Number(settings.importanceThreshold) || 7;
+  const shouldAlert =
+    verdict.urgent && verdict.concernsOwner && verdict.importance >= threshold;
+  const chatLabel = chatTitle ?? `group ${msg.chat.id}`;
+
+  console.log(
+    `[classify] imp=${verdict.importance} urg=${verdict.urgent} owner=${verdict.concernsOwner} chat=${msg.chat.type}:${msg.chat.id} from=${senderName} alert=${shouldAlert} | ${verdict.reason}`,
+  );
+
+  // Auto-extract for meaningful group messages too.
+  const extractMin = Number(settings.autoExtractMinImportance) || 4;
+  if (
+    (msg.text || msg.caption) &&
+    !msg.from?.is_bot &&
+    verdict.importance >= extractMin
+  ) {
+    void autoExtractAndSave({
+      text,
+      chatId: msg.chat.id,
+      chatTitle,
+      senderName,
+      messageId: msg.message_id,
+      businessConnectionId: null,
+    });
+  }
+
+  let alerted = false;
+  if (shouldAlert && mode !== "off") {
+    try {
+      alerted = await fireAlert({
+        text,
+        sender: senderName,
+        chat: chatLabel,
+        importance: verdict.importance,
+        reason: verdict.reason,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error("[alert] group failed:", err);
+    }
+    const notifyChat = settings.ownerNotifyChatId;
+    if (notifyChat) {
+      try {
+        await bot.api.sendMessage(
+          notifyChat,
+          `🚨 Urgent (group)\n` +
+            `From: ${senderName}\n` +
+            `In: ${chatLabel}\n` +
+            `Importance: ${verdict.importance}/10\n` +
+            `Reason: ${verdict.reason}\n\n` +
+            text.slice(0, 500),
+        );
+      } catch (err) {
+        console.error("[notify] group failed:", err);
+      }
+    }
+  }
+
+  if (hasDb()) {
+    await logMessage({
+      businessConnectionId: null,
+      ownerUserId: null,
+      chatId: msg.chat.id,
+      chatType: msg.chat.type,
+      chatTitle,
+      senderId: msg.from?.id ?? null,
+      senderUsername,
+      senderName,
+      messageId: msg.message_id,
+      messageText: text,
+      importance: verdict.importance,
+      urgent: verdict.urgent,
+      concernsOwner: verdict.concernsOwner,
+      reason: verdict.reason,
+      alerted,
+      autoReplied: false,
+      mediaFileId,
+      mediaKind,
+    }).catch((err) => console.error("[db] group-log failed:", err));
   }
 }
 

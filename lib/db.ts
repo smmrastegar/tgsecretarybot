@@ -69,6 +69,10 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS source TEXT`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_source_idx ON messages_log (source) WHERE source IS NOT NULL`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_owner_chat_idx ON messages_log (chat_id, created_at DESC) WHERE from_owner = TRUE`;
+    // Groups arrive via regular bot.on("message"), not via business
+    // connections — they don't have a bcId. Relax the NOT NULL so we
+    // can log them.
+    await q`ALTER TABLE messages_log ALTER COLUMN business_connection_id DROP NOT NULL`;
     await q`
       CREATE TABLE IF NOT EXISTS chat_rules (
         chat_id      BIGINT PRIMARY KEY,
@@ -340,7 +344,7 @@ export async function isAllowedUser(userId: number): Promise<boolean> {
 // --- Messages log ---
 
 export type LogMessage = {
-  businessConnectionId: string;
+  businessConnectionId: string | null;
   ownerUserId: number | null;
   chatId: number;
   chatType: string;
@@ -367,13 +371,23 @@ export async function logMessage(m: LogMessage): Promise<number> {
   await ensureSchema();
   // Dedupe: the same outgoing message can reach us via both the send-call
   // (we log it) and a sender_business_bot echo (the bot's own outgoing
-  // arrives as a business_message). Return the existing id if so.
-  const existing = await sql()`
-    SELECT id FROM messages_log
-    WHERE business_connection_id = ${m.businessConnectionId}
-      AND chat_id = ${m.chatId}
-      AND message_id = ${m.messageId}
-    LIMIT 1`;
+  // arrives as a business_message). Return the existing id if so. For
+  // groups (no bcId), message_id is unique within chat_id so that pair
+  // is enough.
+  const existing =
+    m.businessConnectionId === null
+      ? await sql()`
+          SELECT id FROM messages_log
+          WHERE business_connection_id IS NULL
+            AND chat_id = ${m.chatId}
+            AND message_id = ${m.messageId}
+          LIMIT 1`
+      : await sql()`
+          SELECT id FROM messages_log
+          WHERE business_connection_id = ${m.businessConnectionId}
+            AND chat_id = ${m.chatId}
+            AND message_id = ${m.messageId}
+          LIMIT 1`;
   if (existing.length > 0) {
     return Number((existing[0] as { id: string }).id);
   }
