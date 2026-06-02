@@ -23,6 +23,7 @@ export async function POST(
   const body = (await request.json().catch(() => ({}))) as {
     title?: string;
     kind?: string;
+    priority?: string;
     description?: string;
     dueAt?: string;
   };
@@ -50,6 +51,7 @@ export async function POST(
       chatTitle: rule?.chatTitle ?? null,
       senderName,
       kind,
+      priority: body.priority ?? "normal",
       title: title.slice(0, 200),
       description: body.description ?? null,
       dueAt,

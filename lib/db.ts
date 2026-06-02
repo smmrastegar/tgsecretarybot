@@ -177,6 +177,7 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ALTER COLUMN mode SET DEFAULT 'off'`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS secretary_user_id BIGINT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS is_bot BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS first_name TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS last_name TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS nickname TEXT`;
@@ -295,6 +296,8 @@ export async function ensureSchema(): Promise<void> {
     await q`CREATE INDEX IF NOT EXISTS extracted_items_created_idx ON extracted_items (created_at DESC)`;
     await q`ALTER TABLE extracted_items ADD COLUMN IF NOT EXISTS source_text TEXT`;
     await q`ALTER TABLE extracted_items ADD COLUMN IF NOT EXISTS tg_message_id BIGINT`;
+    await q`ALTER TABLE extracted_items ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'normal'`;
+    await q`CREATE INDEX IF NOT EXISTS extracted_items_priority_idx ON extracted_items (priority, created_at DESC)`;
     await q`
       CREATE TABLE IF NOT EXISTS invites (
         token        TEXT PRIMARY KEY,
@@ -1107,6 +1110,7 @@ export type ChatRule = {
   autoSummarizeEnabled: boolean;
   autoSummarizeGapMinutes: number;
   lastAutoSummaryAt: Date | null;
+  isBot: boolean;
   graceSkippedAt: Date | null;
   updatedAt: Date;
 };
@@ -1158,6 +1162,7 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
         ? Number(r.auto_summarize_gap_minutes)
         : 5,
     lastAutoSummaryAt: (r.last_auto_summary_at as Date) ?? null,
+    isBot: Boolean(r.is_bot),
     graceSkippedAt: (r.grace_skipped_at as Date) ?? null,
     updatedAt: r.updated_at as Date,
   };
@@ -1176,7 +1181,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            ai_process_voice, ai_process_stickers, ai_process_gifs,
            function_role, function_config,
            auto_summarize_enabled, auto_summarize_gap_minutes,
-           last_auto_summary_at,
+           last_auto_summary_at, is_bot,
            grace_skipped_at, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -1457,7 +1462,7 @@ export async function listChatsByFunction(
            ai_process_voice, ai_process_stickers, ai_process_gifs,
            function_role, function_config,
            auto_summarize_enabled, auto_summarize_gap_minutes,
-           last_auto_summary_at,
+           last_auto_summary_at, is_bot,
            grace_skipped_at, updated_at
     FROM chat_rules
     WHERE function_role = ${role}
@@ -1543,17 +1548,20 @@ export async function autoFillChatNames(args: {
   chatType: string;
   firstName?: string | null;
   lastName?: string | null;
+  isBot?: boolean;
 }): Promise<void> {
   if (!hasDb()) return;
-  if (!args.firstName && !args.lastName) return;
+  if (!args.firstName && !args.lastName && !args.isBot) return;
   await ensureSchema();
   await sql()`
-    INSERT INTO chat_rules (chat_id, chat_type, first_name, last_name, updated_at)
+    INSERT INTO chat_rules (chat_id, chat_type, first_name, last_name, is_bot, updated_at)
     VALUES (${args.chatId}, ${args.chatType},
-            ${args.firstName ?? null}, ${args.lastName ?? null}, NOW())
+            ${args.firstName ?? null}, ${args.lastName ?? null},
+            ${args.isBot ?? false}, NOW())
     ON CONFLICT (chat_id) DO UPDATE SET
       first_name = COALESCE(chat_rules.first_name, EXCLUDED.first_name),
       last_name = COALESCE(chat_rules.last_name, EXCLUDED.last_name),
+      is_bot = chat_rules.is_bot OR EXCLUDED.is_bot,
       updated_at = CASE
         WHEN chat_rules.first_name IS NULL OR chat_rules.last_name IS NULL
           THEN NOW() ELSE chat_rules.updated_at
@@ -1588,6 +1596,8 @@ export async function listChats(): Promise<
     nickname: string | null;
     relationship: Relationship | null;
     secretaryUserId: number | null;
+    functionRole: string | null;
+    isBot: boolean;
     aiCostUsd: number;
     aiTokens: number;
   }>
@@ -1611,6 +1621,8 @@ export async function listChats(): Promise<
       MAX(r.nickname) AS nickname,
       MAX(r.relationship) AS relationship,
       MAX(r.secretary_user_id) AS secretary_user_id,
+      MAX(r.function_role) AS function_role,
+      BOOL_OR(COALESCE(r.is_bot, FALSE)) AS is_bot,
       COALESCE(SUM(u.cost_usd), 0)::float8 AS ai_cost,
       COALESCE(SUM(u.total_tokens), 0)::int AS ai_tokens
     FROM messages_log m
@@ -1643,6 +1655,8 @@ export async function listChats(): Promise<
           : null,
       secretaryUserId:
         r.secretary_user_id == null ? null : Number(r.secretary_user_id),
+      functionRole: (r.function_role as string) ?? null,
+      isBot: Boolean(r.is_bot),
       aiCostUsd: Number(r.ai_cost) || 0,
       aiTokens: Number(r.ai_tokens) || 0,
     };
@@ -2361,6 +2375,12 @@ export async function chatModeCounts(): Promise<Record<ChatMode, number>> {
 
 // --- Extracted reminders/events/tasks ---
 
+const VALID_PRIORITIES = new Set(["urgent", "high", "normal", "low"]);
+function normalisePriority(p: string | null | undefined): string {
+  const v = (p ?? "").toLowerCase().trim();
+  return VALID_PRIORITIES.has(v) ? v : "normal";
+}
+
 export type ExtractedItem = {
   id: number;
   messageId: number | null;
@@ -2369,6 +2389,7 @@ export type ExtractedItem = {
   chatTitle: string | null;
   senderName: string | null;
   kind: string;
+  priority: string;
   title: string;
   description: string | null;
   dueAt: Date | null;
@@ -2386,6 +2407,7 @@ export async function saveExtractedItems(items: Array<{
   chatTitle: string | null;
   senderName: string | null;
   kind: string;
+  priority?: string | null;
   title: string;
   description?: string | null;
   dueAt?: Date | null;
@@ -2401,10 +2423,10 @@ export async function saveExtractedItems(items: Array<{
     await q`
       INSERT INTO extracted_items (
         message_id, tg_message_id, chat_id, chat_title, sender_name,
-        kind, title, description, due_at, location, participants, source_text
+        kind, priority, title, description, due_at, location, participants, source_text
       ) VALUES (
         ${it.messageId}, ${it.tgMessageId ?? null}, ${it.chatId}, ${it.chatTitle}, ${it.senderName},
-        ${it.kind}, ${it.title}, ${it.description ?? null},
+        ${it.kind}, ${normalisePriority(it.priority)}, ${it.title}, ${it.description ?? null},
         ${it.dueAt ? it.dueAt.toISOString() : null},
         ${it.location ?? null},
         ${it.participants ? JSON.stringify(it.participants) : null}::jsonb,
@@ -2425,6 +2447,7 @@ function rowToExtracted(r: Record<string, unknown>): ExtractedItem {
     chatTitle: (r.chat_title as string) ?? null,
     senderName: (r.sender_name as string) ?? null,
     kind: r.kind as string,
+    priority: normalisePriority(r.priority as string | null),
     title: r.title as string,
     description: (r.description as string) ?? null,
     dueAt: (r.due_at as Date) ?? null,
@@ -2439,16 +2462,24 @@ function rowToExtracted(r: Record<string, unknown>): ExtractedItem {
 export async function listExtractedItems(opts: {
   upcoming?: boolean;
   doneOnly?: boolean;
+  priority?: string | null;
   limit?: number;
 }): Promise<ExtractedItem[]> {
   if (!hasDb()) return [];
   await ensureSchema();
   const limit = Math.min(opts.limit ?? 100, 500);
+  // Priority filter is applied as an extra clause to whichever base
+  // query the view (upcoming / done / all) selected. null = no filter.
+  const prio =
+    opts.priority && VALID_PRIORITIES.has(opts.priority)
+      ? opts.priority
+      : null;
   const rows = opts.upcoming
     ? await sql()`
         SELECT * FROM extracted_items
         WHERE done_at IS NULL
           AND (due_at IS NULL OR due_at > NOW() - INTERVAL '1 day')
+          AND (${prio}::text IS NULL OR priority = ${prio})
         ORDER BY
           COALESCE(due_at, created_at + INTERVAL '100 years') ASC,
           created_at DESC
@@ -2457,9 +2488,11 @@ export async function listExtractedItems(opts: {
       ? await sql()`
           SELECT * FROM extracted_items
           WHERE done_at IS NOT NULL
+            AND (${prio}::text IS NULL OR priority = ${prio})
           ORDER BY done_at DESC LIMIT ${limit}`
       : await sql()`
           SELECT * FROM extracted_items
+          WHERE (${prio}::text IS NULL OR priority = ${prio})
           ORDER BY created_at DESC LIMIT ${limit}`;
   return rows.map(rowToExtracted);
 }

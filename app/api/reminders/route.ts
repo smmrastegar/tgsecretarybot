@@ -13,9 +13,11 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
   const url = new URL(request.url);
   const filter = url.searchParams.get("filter") ?? "upcoming";
+  const priority = url.searchParams.get("priority");
   const items = await listExtractedItems({
     upcoming: filter === "upcoming",
     doneOnly: filter === "done",
+    priority: priority && priority !== "all" ? priority : null,
   });
   return NextResponse.json({ items });
 }

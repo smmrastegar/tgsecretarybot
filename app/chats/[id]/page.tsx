@@ -111,6 +111,7 @@ type Rule = {
   autoSummarizeEnabled: boolean;
   autoSummarizeGapMinutes: number;
   lastAutoSummaryAt: string | null;
+  isBot: boolean;
   graceSkippedAt: string | null;
   updatedAt: string;
 };
@@ -613,7 +614,7 @@ export default function ChatDetailPage() {
                   </div>
                 )}
 
-                {rule?.chatType === "private" && (
+                {rule?.chatType === "private" && !rule?.isBot && (
                 <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
                   <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
                     Personal info (used by AI to adjust tone)
@@ -820,7 +821,50 @@ export default function ChatDetailPage() {
                 </div>
                 )}
 
-                {rule?.chatType !== "private" && (
+                {rule?.isBot && (
+                  <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
+                    <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
+                      🤖 Bot — independent settings
+                    </div>
+                    <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
+                      این چت با یک bot است. معمولاً نقش function (مثلاً
+                      downloader) براش ست می‌کنی و mode رو روی Off می‌ذاری تا
+                      AI جوابش رو نده. notes زیر به prompt تزریق می‌شه.
+                    </div>
+                    <textarea
+                      dir="auto"
+                      disabled={saving}
+                      value={personal.notes}
+                      onChange={(e) =>
+                        updatePersonal({ notes: e.target.value })
+                      }
+                      rows={3}
+                      placeholder="مثلاً: این bot لینک اینستاگرام می‌گیره و فایل می‌فرسته. دستور دانلود: فقط لینک رو بفرست."
+                      className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                    />
+                    <div className="mt-3 flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={savePersonal}
+                        disabled={saving || !personalDirty}
+                        className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-40 hover:opacity-90"
+                      >
+                        {saving ? "Saving…" : "Save"}
+                      </button>
+                      {personalDirty && (
+                        <span className="text-[10px] text-amber-400">
+                          unsaved changes
+                        </span>
+                      )}
+                      {personalSaved && !personalDirty && (
+                        <span className="text-[10px] text-emerald-400">
+                          ✓ saved
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {rule?.chatType !== "private" && !rule?.isBot && (
                   <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
                     <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
                       Channel / Group context

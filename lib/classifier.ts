@@ -436,16 +436,36 @@ function parseAiReply(content: string): string {
     const fromExtracted = tryParse(extracted);
     if (fromExtracted !== null) return fromExtracted;
   }
+  // Try to manually extract the value of a "reply" key even from a
+  // truncated payload like `{\n  "reply": "hi the` — pull everything
+  // after the colon up to the next unescaped quote or EOF.
+  const looseMatch = content.match(
+    /["']?reply["']?\s*:\s*"((?:[^"\\]|\\.)*)/,
+  );
+  if (looseMatch && looseMatch[1]) {
+    return looseMatch[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
+  }
   // Fallback: salvage prose by stripping JSON-envelope fragments at
   // the start or end of the content. Order matters — strip from end
-  // first (the common case in the wild).
-  const stripped = content
+  // first (the common case), then from start. Code-fence + raw-brace
+  // variants are both covered.
+  let stripped = content
     .replace(/^\s*```(?:json)?\s*/i, "")
     .replace(/```\s*$/i, "")
-    .replace(/\n\s*\{\s*"reply"\s*:?[\s\S]*$/i, "")
-    .replace(/^\s*\{\s*"reply"\s*:\s*"?/i, "")
+    // truncated json starting at any column on its own line (or right
+    // at the very beginning of the content): drop from the `{` to EOF.
+    .replace(/^[\s]*\{\s*["']?reply["']?[\s\S]*$/im, "")
+    .replace(/\n\s*\{\s*["']?reply["']?[\s\S]*$/im, "")
+    .replace(/^\s*\{\s*["']?reply["']?\s*:?\s*"?/i, "")
     .replace(/"?\s*\}?\s*$/m, "")
     .trim();
+  // Last-ditch safety net: if anything that still looks like a JSON
+  // fragment (matching brace + "reply" word) remains, drop it. We'd
+  // rather send a slightly shorter message than leak `{ "reply` to a
+  // user.
+  if (/\{[\s\S]*["']?reply["']?/.test(stripped)) {
+    stripped = stripped.replace(/\{[\s\S]*$/g, "").trim();
+  }
   return stripped;
 }
 
@@ -1035,6 +1055,7 @@ Reply with STRICT JSON only, no prose, no code fences:
   "items": [
     {
       "kind": "event" | "task" | "reminder" | "deadline" | "decision" | "note",
+      "priority": "urgent" | "high" | "normal" | "low",
       "title": "<عنوان کوتاه فارسی، حداکثر ۸۰ کاراکتر>",
       "description": "<توضیح اختیاری یک‌جمله‌ای به فارسی>",
       "due_at": "<ISO 8601 timestamp WITH timezone, or null>",
@@ -1065,11 +1086,21 @@ Rules:
     deadline = something that's due by a specific time
     decision = something that was agreed
     note = miscellaneous info worth keeping
+- "priority": judge how time-critical / important the item is for the
+  owner:
+    urgent = needs action within hours, or an emergency / money /
+             security / legal matter
+    high   = important and time-bound (a real deadline this week, a
+             meeting to confirm)
+    normal = ordinary task or reminder, no hard time pressure
+    low    = nice-to-have, FYI, or a loose "someday" item
+  If unsure, use "normal".
 - Keep titles short and concrete; prefer noun phrases ("جلسه با علی",
   "خرید نان", "تماس با پزشک") over full sentences.`;
 
 export type ExtractedItemPayload = {
   kind: string;
+  priority?: string | null;
   title: string;
   description?: string | null;
   due_at?: string | null;

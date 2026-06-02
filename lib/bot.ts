@@ -174,6 +174,7 @@ async function autoExtractAndSave(args: {
         chatTitle: args.chatTitle,
         senderName: args.senderName,
         kind: typeof it.kind === "string" ? it.kind : "note",
+        priority: typeof it.priority === "string" ? it.priority : "normal",
         title: it.title.trim().slice(0, 200),
         description: it.description ?? null,
         dueAt: it.due_at ? safeDate(it.due_at) : null,
@@ -761,6 +762,39 @@ export async function deliverAutoSummary(args: {
     console.error("[auto_summary] upsertThreadSummary failed:", err),
   );
 
+  // Generate a suggested reply in parallel with the summary so the
+  // owner gets summary + draft together. If it fails (or comes back
+  // blank), we still post the summary — owner can hit 🔄 to retry.
+  let suggested = "";
+  try {
+    const history = threadMsgs.map((m) => ({
+      from: m.fromOwner ? ("owner" as const) : ("other" as const),
+      senderName: m.senderName,
+      text: m.transcript
+        ? m.transcript
+        : m.mediaDescription
+          ? `[${m.mediaKind ?? "media"}] ${m.mediaDescription}`
+          : m.messageText,
+    }));
+    const senderName =
+      threadMsgs.find((m) => !m.fromOwner)?.senderName ?? "the other person";
+    suggested = await aiConversationReply({
+      ownerName: settings.ownerName,
+      ownerDisplayName: settings.ownerDisplayName,
+      ownerContext: settings.ownerContext,
+      senderName,
+      history,
+      nickname: rule.nickname,
+      relationship: rule.relationship,
+      relationshipNotes: rule.relationshipNotes,
+      talkStyleNotes: rule.talkStyleNotes,
+      toneProfile: rule.toneProfile,
+      chatId: rule.chatId,
+    });
+  } catch (err) {
+    console.warn("[auto_summary] suggested reply failed:", err);
+  }
+
   const header = `📬 خلاصه‌ی thread — ${chatLabel}`;
   const body = [
     header,
@@ -773,18 +807,25 @@ export async function deliverAutoSummary(args: {
       ? `\nاکشن‌ها:\n• ${summary.actionItems.join("\n• ")}`
       : "",
     `\n⏱ ${threadMsgs.length} پیام · ${threadMsgs[0]!.createdAt.toLocaleString()} → ${threadMsgs[threadMsgs.length - 1]!.createdAt.toLocaleString()}`,
+    suggested ? `\n\n🤖 پاسخ پیشنهادی:\n${suggested}` : "",
   ]
     .filter(Boolean)
     .join("\n")
     .slice(0, 3800);
 
-  // callback_data is limited to 64 bytes. We pack { action, chatId,
-  // threadStartTs (unix seconds) }. The handler will recover the
-  // thread by (chatId, started_at) and regenerate the AI reply.
+  // callback_data limit is 64 bytes. We pack { action, chatId,
+  // threadStartTs (unix seconds) }. The handler recovers the thread
+  // by (chatId, started_at) and regenerates the AI reply.
   const startSec = Math.floor(threadMsgs[0]!.createdAt.getTime() / 1000);
-  const keyboard = new InlineKeyboard()
-    .text("💬 جواب پیشنهادی", `as:reply:${rule.chatId}:${startSec}`)
-    .text("🔄 Regenerate", `as:resum:${rule.chatId}:${startSec}`);
+  const keyboard = suggested
+    ? new InlineKeyboard()
+        .text("✅ ارسال", `as:send:${rule.chatId}:${startSec}`)
+        .text("🔄 پاسخ دوباره", `as:reply:${rule.chatId}:${startSec}`)
+        .row()
+        .text("📋 خلاصه دوباره", `as:resum:${rule.chatId}:${startSec}`)
+    : new InlineKeyboard()
+        .text("💬 جواب پیشنهادی", `as:reply:${rule.chatId}:${startSec}`)
+        .text("🔄 Regenerate", `as:resum:${rule.chatId}:${startSec}`);
 
   try {
     const sent = await bot.api.sendMessage(inbox.chatId, body, {
@@ -1426,6 +1467,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       chatType: msg.chat.type,
       firstName: msg.from.first_name ?? null,
       lastName: msg.from.last_name ?? null,
+      isBot: Boolean(msg.from.is_bot),
     }).catch((err) => console.error("[db] autoFillChatNames failed:", err));
   }
 

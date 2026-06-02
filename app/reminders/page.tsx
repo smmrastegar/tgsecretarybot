@@ -14,6 +14,7 @@ type Item = {
   chatTitle: string | null;
   senderName: string | null;
   kind: string;
+  priority: string;
   title: string;
   description: string | null;
   dueAt: string | null;
@@ -22,6 +23,16 @@ type Item = {
   sourceText: string | null;
   doneAt: string | null;
   createdAt: string;
+};
+
+const PRIORITY_LABEL: Record<
+  string,
+  { label: string; tone: "danger" | "warn" | "neutral" | "info" }
+> = {
+  urgent: { label: "🔴 فوری", tone: "danger" },
+  high: { label: "🟠 مهم", tone: "warn" },
+  normal: { label: "عادی", tone: "neutral" },
+  low: { label: "کم", tone: "info" },
 };
 
 function googleCalendarUrl(it: Item): string {
@@ -94,6 +105,9 @@ const BULK_KIND_OPTIONS = [
 
 export default function RemindersPage() {
   const [filter, setFilter] = useState<"upcoming" | "all" | "done">("upcoming");
+  const [priorityFilter, setPriorityFilter] = useState<
+    "all" | "urgent" | "high" | "normal" | "low"
+  >("all");
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedSource, setExpandedSource] = useState<Set<number>>(new Set());
@@ -109,7 +123,9 @@ export default function RemindersPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await fetch(`/api/reminders?filter=${filter}`);
+    const r = await fetch(
+      `/api/reminders?filter=${filter}&priority=${priorityFilter}`,
+    );
     if (!r.ok) {
       setLoading(false);
       return;
@@ -118,7 +134,7 @@ export default function RemindersPage() {
     setItems(j.items);
     setSelected(new Set());
     setLoading(false);
-  }, [filter]);
+  }, [filter, priorityFilter]);
 
   useEffect(() => {
     load();
@@ -182,20 +198,42 @@ export default function RemindersPage() {
         title="Actions"
         subtitle="کارها، رویدادها، یادآوری‌ها و نکته‌هایی که از پیام‌ها استخراج شده. ریمایندر فقط یک نوع از actionهاست."
         actions={
-          <div className="flex gap-1">
-            {(["upcoming", "all", "done"] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`text-xs px-3 py-1.5 rounded-md border ${
-                  filter === f
-                    ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20 text-white"
-                    : "border-[var(--color-border)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
-                }`}
-              >
-                {f}
-              </button>
-            ))}
+          <div className="flex gap-2 flex-wrap items-center">
+            <div className="flex gap-1">
+              {(["upcoming", "all", "done"] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={`text-xs px-3 py-1.5 rounded-md border ${
+                    filter === f
+                      ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20 text-white"
+                      : "border-[var(--color-border)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+            <select
+              value={priorityFilter}
+              onChange={(e) =>
+                setPriorityFilter(
+                  e.target.value as
+                    | "all"
+                    | "urgent"
+                    | "high"
+                    | "normal"
+                    | "low",
+                )
+              }
+              className="text-xs px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+            >
+              <option value="all">همه‌ی اولویت‌ها</option>
+              <option value="urgent">🔴 فوری</option>
+              <option value="high">🟠 مهم</option>
+              <option value="normal">عادی</option>
+              <option value="low">کم</option>
+            </select>
           </div>
         }
       />
@@ -296,6 +334,17 @@ export default function RemindersPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <Badge tone={kindInfo.tone}>{kindInfo.label}</Badge>
+                      {it.priority && it.priority !== "normal" && (
+                        <Badge
+                          tone={
+                            (PRIORITY_LABEL[it.priority] ?? PRIORITY_LABEL.normal!)
+                              .tone
+                          }
+                        >
+                          {(PRIORITY_LABEL[it.priority] ?? PRIORITY_LABEL.normal!)
+                            .label}
+                        </Badge>
+                      )}
                       {due && <Badge tone={due.tone}>{due.text}</Badge>}
                       {it.doneAt && <Badge tone="success">done</Badge>}
                     </div>

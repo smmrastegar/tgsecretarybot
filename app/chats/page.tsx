@@ -84,8 +84,18 @@ type Chat = {
   mode: ChatMode;
   modeChangedAt: string | null;
   secretaryUserId: number | null;
+  functionRole: string | null;
+  isBot: boolean;
   aiCostUsd: number;
   aiTokens: number;
+};
+
+const FUNCTION_ROLE_BADGE: Record<string, string> = {
+  downloader: "📥",
+  sms_inbox: "📱",
+  download_archive: "🗄",
+  news: "📰",
+  summary_inbox: "📬",
 };
 
 type Secretary = { userId: number; name: string };
