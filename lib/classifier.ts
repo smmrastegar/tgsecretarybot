@@ -1,6 +1,7 @@
 import { config } from "./config";
 import { getSettings } from "./settings";
 import { recordAiUsage } from "./db";
+import { downloadTelegramFile } from "./stt";
 
 const MODEL_RATES: Record<string, { in: number; out: number }> = {
   "google/gemini-2.5-flash-lite": { in: 0.1, out: 0.4 },
@@ -132,8 +133,13 @@ async function modelsToTry(purpose?: string): Promise<string[]> {
   return [config.openrouterModel];
 }
 
+type ChatPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+type ChatMsg = { role: string; content: string | ChatPart[] };
+
 async function callOpenRouter(
-  messages: Array<{ role: string; content: string }>,
+  messages: ChatMsg[],
   opts: {
     maxTokens?: number;
     jsonObject?: boolean;
@@ -277,6 +283,98 @@ function parseVerdict(raw: string): Classification {
     concernsOwner: parsed.concerns_owner === true,
     reason: typeof parsed.reason === "string" ? parsed.reason : "",
   };
+}
+
+// Multimodal description of a photo / sticker / GIF / video thumbnail.
+// We download via the Telegram Bot API, base64-encode (data: URL) and
+// hand to Gemini through the standard chat-completions multimodal
+// payload. Used by ai_listen mode to give the dashboard a one-line
+// content description for non-text messages.
+export type MediaDescription = {
+  description: string;
+  textInImage: string;
+};
+
+const MEDIA_PROMPT = `You are describing a single image / sticker / animation
+frame from a chat message for someone who can't see it. Reply with strict JSON,
+no prose, no code fences:
+{
+  "description": "<2-3 short sentences in the same language as any visible text, or English if there's none>",
+  "text_in_image": "<any readable text or captions, or empty string>"
+}
+Keep description under 250 characters. If you can't tell what it is, say so plainly.`;
+
+export async function describeMedia(args: {
+  fileId: string;
+  kind: string;
+  chatId?: number | null;
+  businessConnectionId?: string | null;
+}): Promise<MediaDescription | null> {
+  let data: Uint8Array;
+  let mime: string;
+  try {
+    const f = await downloadTelegramFile(config.telegramBotToken, args.fileId);
+    data = f.data;
+    mime = f.mime;
+  } catch (err) {
+    console.warn(`[describe_media] download failed: ${String(err)}`);
+    return null;
+  }
+  // 10MB cap: OpenRouter / Gemini will reject larger payloads anyway,
+  // and we don't want a single sticker to blow the request body.
+  if (data.length > 10 * 1024 * 1024) {
+    console.warn(
+      `[describe_media] skipping ${args.kind} ${args.fileId} — ${data.length} bytes`,
+    );
+    return null;
+  }
+  // Normalise sticker MIME — Telegram serves .webp without a charset
+  // sometimes; multimodal endpoints accept image/* in general.
+  let effectiveMime = mime;
+  if (effectiveMime === "application/octet-stream") {
+    effectiveMime = args.kind === "sticker" ? "image/webp" : "image/jpeg";
+  }
+  const base64 = Buffer.from(data).toString("base64");
+  const dataUrl = `data:${effectiveMime};base64,${base64}`;
+
+  let content: string;
+  try {
+    content = await callOpenRouter(
+      [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: MEDIA_PROMPT },
+            { type: "image_url", image_url: { url: dataUrl } },
+          ],
+        },
+      ],
+      {
+        maxTokens: 200,
+        jsonObject: true,
+        purpose: "describe_media",
+        chatId: args.chatId ?? null,
+        businessConnectionId: args.businessConnectionId ?? null,
+      },
+    );
+  } catch (err) {
+    console.warn(`[describe_media] call failed: ${String(err)}`);
+    return null;
+  }
+
+  const extracted = extractJson(content) ?? content;
+  try {
+    const p = JSON.parse(extracted) as {
+      description?: string;
+      text_in_image?: string;
+    };
+    return {
+      description: (p.description ?? "").trim(),
+      textInImage: (p.text_in_image ?? "").trim(),
+    };
+  } catch {
+    return { description: content.trim().slice(0, 400), textInImage: "" };
+  }
 }
 
 function extractJson(s: string): string | null {

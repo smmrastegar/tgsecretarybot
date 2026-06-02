@@ -4,6 +4,7 @@ import { config } from "./config";
 import {
   aiConversationReply,
   classify,
+  describeMedia,
   extractActions,
   friendlyAutoReply,
 } from "./classifier";
@@ -35,6 +36,8 @@ import {
   lastOwnerMessageAt,
   logMessage,
   openSecretarySession,
+  saveMediaDescription,
+  saveTranscript,
   recentConversation,
   recordSecretaryLink,
   saveExtractedItems,
@@ -252,6 +255,63 @@ async function humanTypingDelay(
     await sleep(step);
     waited += step;
     if (waited < total) await sendAction();
+  }
+}
+
+// Run multimodal analysis only on chats the owner has put in ai_listen
+// mode — for other modes the dashboard either gets a reply (so the
+// visual doesn't matter much) or has a separate per-feature transcribe
+// path (secretary forwarding already STTs voice messages). Images go
+// through Gemini multimodal; voice/audio/video_note go through STT.
+async function maybeDescribeMedia(args: {
+  mode: ChatMode;
+  logId: number;
+  mediaFileId: string | null;
+  mediaKind: string | null;
+  chatId: number;
+  bcId: string | null;
+}): Promise<void> {
+  if (args.mode !== "ai_listen") return;
+  if (!args.mediaFileId || !args.mediaKind) return;
+
+  const visualKinds = new Set(["photo", "sticker", "animation"]);
+  const audioKinds = new Set(["voice", "audio", "video_note"]);
+
+  if (audioKinds.has(args.mediaKind)) {
+    if (!sttConfigured()) return;
+    try {
+      const settings = await getSettings();
+      const tr = await transcribeAudio({
+        botToken: config.telegramBotToken,
+        fileId: args.mediaFileId,
+        language: settings.sttLanguage || "fa",
+        chatId: args.chatId,
+        businessConnectionId: args.bcId,
+      });
+      if (tr.text) await saveTranscript(args.logId, tr.text);
+    } catch (err) {
+      console.warn("[ai_listen] transcribe failed:", err);
+    }
+    return;
+  }
+
+  if (visualKinds.has(args.mediaKind)) {
+    try {
+      const result = await describeMedia({
+        fileId: args.mediaFileId,
+        kind: args.mediaKind,
+        chatId: args.chatId,
+        businessConnectionId: args.bcId,
+      });
+      if (!result || (!result.description && !result.textInImage)) return;
+      const lines: string[] = [];
+      if (result.description) lines.push(result.description);
+      if (result.textInImage)
+        lines.push(`[متن داخل تصویر] ${result.textInImage}`);
+      await saveMediaDescription(args.logId, lines.join("\n"));
+    } catch (err) {
+      console.warn("[ai_listen] describe failed:", err);
+    }
   }
 }
 
@@ -1177,7 +1237,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
 
   if (hasDb()) {
     try {
-      await logMessage({
+      const logId = await logMessage({
         businessConnectionId: bcId,
         ownerUserId: owner?.userId ?? null,
         chatId: msg.chat.id,
@@ -1196,6 +1256,14 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         autoReplied,
         mediaFileId,
         mediaKind,
+      });
+      void maybeDescribeMedia({
+        mode,
+        logId,
+        mediaFileId,
+        mediaKind,
+        chatId: msg.chat.id,
+        bcId,
       });
     } catch (err) {
       console.error("[db] log failed:", err);
@@ -1856,26 +1924,38 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
   }
 
   if (hasDb()) {
-    await logMessage({
-      businessConnectionId: null,
-      ownerUserId: null,
-      chatId: msg.chat.id,
-      chatType: msg.chat.type,
-      chatTitle,
-      senderId: msg.from?.id ?? null,
-      senderUsername,
-      senderName,
-      messageId: msg.message_id,
-      messageText: text,
-      importance: verdict.importance,
-      urgent: verdict.urgent,
-      concernsOwner: verdict.concernsOwner,
-      reason: verdict.reason,
-      alerted,
-      autoReplied: false,
-      mediaFileId,
-      mediaKind,
-    }).catch((err) => console.error("[db] group-log failed:", err));
+    try {
+      const logId = await logMessage({
+        businessConnectionId: null,
+        ownerUserId: null,
+        chatId: msg.chat.id,
+        chatType: msg.chat.type,
+        chatTitle,
+        senderId: msg.from?.id ?? null,
+        senderUsername,
+        senderName,
+        messageId: msg.message_id,
+        messageText: text,
+        importance: verdict.importance,
+        urgent: verdict.urgent,
+        concernsOwner: verdict.concernsOwner,
+        reason: verdict.reason,
+        alerted,
+        autoReplied: false,
+        mediaFileId,
+        mediaKind,
+      });
+      void maybeDescribeMedia({
+        mode,
+        logId,
+        mediaFileId,
+        mediaKind,
+        chatId: msg.chat.id,
+        bcId: null,
+      });
+    } catch (err) {
+      console.error("[db] group-log failed:", err);
+    }
   }
 }
 

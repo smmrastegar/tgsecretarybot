@@ -46,6 +46,7 @@ export async function GET(
         senderName: string;
         messageText: string;
         transcript: string | null;
+        mediaDescription: string | null;
         mediaKind: string | null;
         mediaFileId: string | null;
         importance: number;
@@ -80,6 +81,7 @@ export async function GET(
       senderName: m.senderName,
       messageText: m.messageText,
       transcript: m.transcript,
+      mediaDescription: m.mediaDescription,
       mediaKind: m.mediaKind,
       mediaFileId: m.mediaFileId,
       importance: m.importance,

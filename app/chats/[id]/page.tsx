@@ -109,6 +109,7 @@ type ThreadMsg = {
   senderName: string;
   messageText: string;
   transcript: string | null;
+  mediaDescription: string | null;
   mediaKind: string | null;
   mediaFileId: string | null;
   importance: number;
@@ -794,7 +795,9 @@ export default function ChatDetailPage() {
                               )}
                               {m.transcript
                                 ? m.transcript
-                                : m.messageText || "(no text)"}
+                                : m.mediaDescription
+                                  ? m.mediaDescription
+                                  : m.messageText || "(no text)"}
                             </div>
                           </div>
                         ))}

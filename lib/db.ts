@@ -66,6 +66,8 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS media_kind TEXT`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS transcript TEXT`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS transcript_at TIMESTAMPTZ`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS media_description TEXT`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS media_description_at TIMESTAMPTZ`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS source TEXT`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_source_idx ON messages_log (source) WHERE source IS NOT NULL`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_owner_chat_idx ON messages_log (chat_id, created_at DESC) WHERE from_owner = TRUE`;
@@ -449,6 +451,17 @@ export async function saveTranscript(
     WHERE id = ${id}`;
 }
 
+export async function saveMediaDescription(
+  id: number,
+  description: string,
+): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE messages_log
+    SET media_description = ${description}, media_description_at = NOW()
+    WHERE id = ${id}`;
+}
+
 // "Owner active in this chat" for the grace window means the owner
 // actually typed something in Telegram — NOT the bot's own AI/auto reply
 // (those land in messages_log with from_owner=TRUE because Telegram
@@ -494,6 +507,8 @@ export type MessageRow = {
   mediaFileId: string | null;
   transcript: string | null;
   transcriptAt: Date | null;
+  mediaDescription: string | null;
+  mediaDescriptionAt: Date | null;
   fromOwner: boolean;
   source: string | null;
   chatMode: ChatMode;
@@ -525,6 +540,8 @@ function rowToMessage(r: Record<string, unknown>): MessageRow {
     mediaFileId: (r.media_file_id as string) ?? null,
     transcript: (r.transcript as string) ?? null,
     transcriptAt: (r.transcript_at as Date) ?? null,
+    mediaDescription: (r.media_description as string) ?? null,
+    mediaDescriptionAt: (r.media_description_at as Date) ?? null,
     fromOwner: Boolean(r.from_owner),
     source: (r.source as string) ?? null,
     chatMode:

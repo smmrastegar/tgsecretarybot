@@ -25,6 +25,7 @@ const PURPOSE_LABEL: Record<string, string> = {
   ai_chat: "AI chat replies",
   friendly_reply: "Friendly auto-reply",
   transcribe: "Voice transcription",
+  describe_media: "Image / GIF / sticker description",
 };
 
 export default function CostsPage() {

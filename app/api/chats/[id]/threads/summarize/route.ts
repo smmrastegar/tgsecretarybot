@@ -57,9 +57,11 @@ export async function POST(
         : m.senderName,
       text: m.transcript
         ? `[voice] ${m.transcript}`
-        : m.mediaKind && !m.messageText
-          ? `[${m.mediaKind}]`
-          : m.messageText,
+        : m.mediaDescription
+          ? `[${m.mediaKind ?? "media"}] ${m.mediaDescription}`
+          : m.mediaKind && !m.messageText
+            ? `[${m.mediaKind}]`
+            : m.messageText,
       at: m.createdAt,
     })),
   });
