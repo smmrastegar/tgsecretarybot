@@ -118,6 +118,9 @@ export default function ChatsPage() {
   const [secretaries, setSecretaries] = useState<Secretary[]>([]);
   const [search, setSearch] = useState("");
   const [modeFilter, setModeFilter] = useState<"all" | ChatMode>("all");
+  const [typeFilter, setTypeFilter] = useState<
+    "all" | "private" | "bot" | "group" | "channel"
+  >("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulking, setBulking] = useState(false);
 
@@ -151,8 +154,22 @@ export default function ChatsPage() {
     return fields.some((f) => f && f.toLowerCase().includes(q));
   }
 
+  function chatMatchesType(
+    c: Chat,
+    t: "all" | "private" | "bot" | "group" | "channel",
+  ): boolean {
+    if (t === "all") return true;
+    if (t === "bot") return c.isBot;
+    if (t === "private") return c.chatType === "private" && !c.isBot;
+    if (t === "group")
+      return c.chatType === "group" || c.chatType === "supergroup";
+    if (t === "channel") return c.chatType === "channel";
+    return true;
+  }
+
   const filteredChats = chats.filter((c) => {
     if (modeFilter !== "all" && c.mode !== modeFilter) return false;
+    if (!chatMatchesType(c, typeFilter)) return false;
     if (!chatMatchesSearch(c, search.trim().toLowerCase())) return false;
     return true;
   });
@@ -295,6 +312,41 @@ export default function ChatsPage() {
                   return (
                     <option key={m} value={m}>
                       {MODE_LABELS[m]} ({n})
+                    </option>
+                  );
+                })}
+              </select>
+              <span className="text-[var(--color-text-dim)]">Type:</span>
+              <select
+                value={typeFilter}
+                onChange={(e) =>
+                  setTypeFilter(
+                    e.target.value as
+                      | "all"
+                      | "private"
+                      | "bot"
+                      | "group"
+                      | "channel",
+                  )
+                }
+                className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+              >
+                {(
+                  [
+                    ["all", "همه"],
+                    ["private", "👤 شخصی"],
+                    ["bot", "🤖 بات"],
+                    ["group", "👥 گروه"],
+                    ["channel", "📰 کانال"],
+                  ] as const
+                ).map(([k, label]) => {
+                  const n =
+                    k === "all"
+                      ? chats.length
+                      : chats.filter((c) => chatMatchesType(c, k)).length;
+                  return (
+                    <option key={k} value={k}>
+                      {label} ({n})
                     </option>
                   );
                 })}
