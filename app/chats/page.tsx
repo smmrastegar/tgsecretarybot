@@ -492,6 +492,12 @@ export default function ChatsPage() {
                   {c.messages} msg
                 </span>
                 {c.urgent > 0 && <Badge tone="danger">{c.urgent} urg</Badge>}
+                {c.isBot && <Badge tone="info">🤖</Badge>}
+                {c.functionRole && (
+                  <Badge tone="info">
+                    {FUNCTION_ROLE_BADGE[c.functionRole] ?? "🧩"}
+                  </Badge>
+                )}
                 {c.vip && <Badge tone="warn">VIP</Badge>}
                 {c.muted && <Badge tone="neutral">muted</Badge>}
                 {c.relationship && (
@@ -659,6 +665,12 @@ export default function ChatsPage() {
                   </td>
                   <td className="py-3 pr-3">
                     <div className="flex gap-1 flex-wrap">
+                      {c.isBot && <Badge tone="info">🤖 bot</Badge>}
+                      {c.functionRole && (
+                        <Badge tone="info">
+                          {FUNCTION_ROLE_BADGE[c.functionRole] ?? "🧩"} {c.functionRole}
+                        </Badge>
+                      )}
                       {c.vip && <Badge tone="warn">VIP</Badge>}
                       {c.muted && <Badge tone="neutral">muted</Badge>}
                       {c.customReply && <Badge tone="info">custom reply</Badge>}
