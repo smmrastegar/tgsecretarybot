@@ -11,7 +11,8 @@ type FunctionRole =
   | "sms_inbox"
   | "download_archive"
   | "news"
-  | "summary_inbox";
+  | "summary_inbox"
+  | "storage";
 
 const ROLE_INFO: Record<
   FunctionRole,
@@ -46,6 +47,12 @@ const ROLE_INFO: Record<
     emoji: "📬",
     description:
       "کانال یا گروهی که خلاصه‌های auto-summary از چت‌های ai_listen رو دریافت می‌کنه. فقط یکی استفاده می‌شه (آخرین به‌روزشده). توی همون پست خلاصه می‌تونی روی «جواب پیشنهادی» بزنی تا AI پاسخ رو برات بنویسه.",
+  },
+  storage: {
+    title: "Storage (Instagram media)",
+    emoji: "📦",
+    description:
+      "کانالی که استوری/پست/ریلز دانلودشده از HikerAPI رو دریافت می‌کنه. اولین چت تگ‌شده استفاده می‌شه. هر media با caption و لینک پست اصلی پست می‌شه.",
   },
 };
 

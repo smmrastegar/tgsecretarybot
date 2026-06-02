@@ -96,6 +96,7 @@ const FUNCTION_ROLE_BADGE: Record<string, string> = {
   download_archive: "🗄",
   news: "📰",
   summary_inbox: "📬",
+  storage: "📦",
 };
 
 type Secretary = { userId: number; name: string };
@@ -433,6 +434,7 @@ export default function ChatsPage() {
                   <option value="download_archive">🗄 Archive</option>
                   <option value="news">📰 News</option>
                   <option value="summary_inbox">📬 Summary inbox</option>
+                  <option value="storage">📦 Storage</option>
                   <option value="__clear">— Clear role —</option>
                 </select>
                 <select

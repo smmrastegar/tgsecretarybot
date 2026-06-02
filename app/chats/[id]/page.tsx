@@ -106,6 +106,7 @@ type Rule = {
     | "download_archive"
     | "news"
     | "summary_inbox"
+    | "storage"
     | null;
   functionConfig: Record<string, unknown> | null;
   autoSummarizeEnabled: boolean;
@@ -122,6 +123,7 @@ const FUNCTION_ROLE_LABELS: Record<string, string> = {
   download_archive: "🗄 Download archive",
   news: "📰 News source",
   summary_inbox: "📬 Summary inbox",
+  storage: "📦 Storage (Instagram media)",
 };
 
 type GraceInfo = {

@@ -4,6 +4,7 @@ import {
   audit,
   deleteMonitoredAccount,
   setMonitoredAccountEnabled,
+  updateMonitoredAccountConfig,
 } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -26,14 +27,40 @@ export async function PATCH(
   }
   const body = (await request.json().catch(() => ({}))) as {
     enabled?: boolean;
+    checkStories?: boolean;
+    checkPosts?: boolean;
+    checkReels?: boolean;
+    checkProfile?: boolean;
+    intervalMinutes?: number;
   };
-  await setMonitoredAccountEnabled(n, Boolean(body.enabled));
+  if (body.enabled !== undefined) {
+    await setMonitoredAccountEnabled(n, Boolean(body.enabled));
+  }
+  if (
+    body.checkStories !== undefined ||
+    body.checkPosts !== undefined ||
+    body.checkReels !== undefined ||
+    body.checkProfile !== undefined ||
+    body.intervalMinutes !== undefined
+  ) {
+    const interval =
+      body.intervalMinutes !== undefined
+        ? Math.max(5, Math.min(Number(body.intervalMinutes), 24 * 60))
+        : undefined;
+    await updateMonitoredAccountConfig(n, {
+      checkStories: body.checkStories,
+      checkPosts: body.checkPosts,
+      checkReels: body.checkReels,
+      checkProfile: body.checkProfile,
+      intervalMinutes: interval,
+    });
+  }
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,
-    action: "monitor.set_enabled",
+    action: "monitor.update",
     target: String(n),
-    details: { enabled: Boolean(body.enabled) },
+    details: body as Record<string, unknown>,
   });
   return NextResponse.json({ ok: true });
 }

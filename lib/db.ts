@@ -277,6 +277,15 @@ export async function ensureSchema(): Promise<void> {
         UNIQUE (platform, username)
       )`;
     await q`CREATE INDEX IF NOT EXISTS monitored_accounts_enabled_idx ON monitored_accounts (enabled, last_checked_at NULLS FIRST)`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_stories BOOLEAN NOT NULL DEFAULT TRUE`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_posts BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_reels BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_profile BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS interval_minutes INT NOT NULL DEFAULT 30`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS instagram_user_id TEXT`;
+    await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'story'`;
+    await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS caption TEXT`;
+    await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS media_type TEXT`;
     await q`
       CREATE TABLE IF NOT EXISTS monitor_events (
         id              BIGSERIAL PRIMARY KEY,
@@ -1130,6 +1139,7 @@ export const FUNCTION_ROLES = [
   "download_archive",
   "news",
   "summary_inbox",
+  "storage",
 ] as const;
 export type FunctionRole = (typeof FUNCTION_ROLES)[number];
 
@@ -1141,6 +1151,8 @@ export const FUNCTION_ROLE_LABELS: Record<FunctionRole, string> = {
   news: "News source (channel or group with important news)",
   summary_inbox:
     "Summary inbox (channel/group that receives auto-summaries from ai_listen chats)",
+  storage:
+    "Storage (channel that receives Instagram stories / posts / reels via HikerAPI)",
 };
 
 export type ChatRule = {
@@ -2917,6 +2929,12 @@ export type MonitoredAccount = {
   externalId: string | null;
   topicId: string | null;
   enabled: boolean;
+  checkStories: boolean;
+  checkPosts: boolean;
+  checkReels: boolean;
+  checkProfile: boolean;
+  intervalMinutes: number;
+  instagramUserId: string | null;
   lastCheckedAt: Date | null;
   lastStoryAt: Date | null;
   lastError: string | null;
@@ -2933,6 +2951,12 @@ function rowToMonitored(r: Record<string, unknown>): MonitoredAccount {
     externalId: (r.external_id as string) ?? null,
     topicId: (r.topic_id as string) ?? null,
     enabled: Boolean(r.enabled),
+    checkStories: r.check_stories == null ? true : Boolean(r.check_stories),
+    checkPosts: Boolean(r.check_posts),
+    checkReels: Boolean(r.check_reels),
+    checkProfile: Boolean(r.check_profile),
+    intervalMinutes: Number(r.interval_minutes ?? 30),
+    instagramUserId: (r.instagram_user_id as string) ?? null,
     lastCheckedAt: (r.last_checked_at as Date) ?? null,
     lastStoryAt: (r.last_story_at as Date) ?? null,
     lastError: (r.last_error as string) ?? null,
@@ -2949,6 +2973,8 @@ export async function listMonitoredAccounts(opts: {
   await ensureSchema();
   const rows = await sql()`
     SELECT id, platform, username, url, external_id, topic_id, enabled,
+           check_stories, check_posts, check_reels, check_profile,
+           interval_minutes, instagram_user_id,
            last_checked_at, last_story_at, last_error, created_at, updated_at
     FROM monitored_accounts
     WHERE (${opts.platform ?? null}::text IS NULL OR platform = ${opts.platform ?? null})
@@ -3016,31 +3042,92 @@ export async function getMonitoredAccount(
   await ensureSchema();
   const rows = await sql()`
     SELECT id, platform, username, url, external_id, topic_id, enabled,
+           check_stories, check_posts, check_reels, check_profile,
+           interval_minutes, instagram_user_id,
            last_checked_at, last_story_at, last_error, created_at, updated_at
     FROM monitored_accounts WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToMonitored(r) : null;
 }
 
-// Find accounts that should be polled next: enabled, and either never
-// checked or last checked more than `staleMinutes` ago. Oldest first
-// so a backlog drains evenly.
+// Find accounts that should be polled next: enabled and their own
+// per-account interval_minutes has elapsed since last_checked_at
+// (or never checked). Oldest first so the backlog drains evenly.
 export async function dueMonitoredAccounts(
-  staleMinutes: number,
   limit = 50,
 ): Promise<MonitoredAccount[]> {
   if (!hasDb()) return [];
   await ensureSchema();
   const rows = await sql()`
     SELECT id, platform, username, url, external_id, topic_id, enabled,
+           check_stories, check_posts, check_reels, check_profile,
+           interval_minutes, instagram_user_id,
            last_checked_at, last_story_at, last_error, created_at, updated_at
     FROM monitored_accounts
     WHERE enabled = TRUE
       AND (last_checked_at IS NULL
-           OR last_checked_at < NOW() - (${staleMinutes} || ' minutes')::INTERVAL)
+           OR last_checked_at < NOW() - (interval_minutes || ' minutes')::INTERVAL)
     ORDER BY last_checked_at NULLS FIRST, id ASC
     LIMIT ${limit}`;
   return (rows as Array<Record<string, unknown>>).map(rowToMonitored);
+}
+
+// Manual add: insert a single account by username. Returns the row.
+export async function addMonitoredAccount(args: {
+  platform: string;
+  username: string;
+  url?: string | null;
+}): Promise<MonitoredAccount | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const username = args.username.trim().toLowerCase();
+  if (!username) return null;
+  const rows = await sql()`
+    INSERT INTO monitored_accounts (platform, username, url)
+    VALUES (${args.platform}, ${username},
+            ${args.url ?? `https://instagram.com/${username}`})
+    ON CONFLICT (platform, username) DO UPDATE SET updated_at = NOW()
+    RETURNING id, platform, username, url, external_id, topic_id, enabled,
+              check_stories, check_posts, check_reels, check_profile,
+              interval_minutes, instagram_user_id,
+              last_checked_at, last_story_at, last_error, created_at, updated_at`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToMonitored(r) : null;
+}
+
+export async function updateMonitoredAccountConfig(
+  id: number,
+  patch: {
+    checkStories?: boolean;
+    checkPosts?: boolean;
+    checkReels?: boolean;
+    checkProfile?: boolean;
+    intervalMinutes?: number;
+  },
+): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE monitored_accounts SET
+      check_stories = COALESCE(${patch.checkStories ?? null}, check_stories),
+      check_posts = COALESCE(${patch.checkPosts ?? null}, check_posts),
+      check_reels = COALESCE(${patch.checkReels ?? null}, check_reels),
+      check_profile = COALESCE(${patch.checkProfile ?? null}, check_profile),
+      interval_minutes = COALESCE(${
+        patch.intervalMinutes ?? null
+      }::int, interval_minutes),
+      updated_at = NOW()
+    WHERE id = ${id}`;
+}
+
+export async function setInstagramUserId(
+  id: number,
+  igUserId: string,
+): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE monitored_accounts
+    SET instagram_user_id = ${igUserId}, updated_at = NOW()
+    WHERE id = ${id}`;
 }
 
 export async function markMonitoredChecked(args: {
@@ -3080,12 +3167,17 @@ export async function recordMonitorEvent(args: {
   accountId: number;
   storyId: string;
   storyUrl: string | null;
+  kind?: string;
+  caption?: string | null;
+  mediaType?: string | null;
 }): Promise<MonitorEvent | null> {
   if (!hasDb()) return null;
   await ensureSchema();
   const rows = await sql()`
-    INSERT INTO monitor_events (account_id, story_id, story_url, status)
-    VALUES (${args.accountId}, ${args.storyId}, ${args.storyUrl}, 'detected')
+    INSERT INTO monitor_events (account_id, story_id, story_url, kind, caption, media_type, status)
+    VALUES (${args.accountId}, ${args.storyId}, ${args.storyUrl},
+            ${args.kind ?? "story"}, ${args.caption ?? null},
+            ${args.mediaType ?? null}, 'detected')
     ON CONFLICT (account_id, story_id) DO NOTHING
     RETURNING id, account_id, story_id, story_url, detected_at,
               forwarded_chat_id, forwarded_message_id, forwarded_at, status, error`;

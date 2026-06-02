@@ -22,6 +22,11 @@ export const config = {
 
   groqApiKey: optional("GROQ_API_KEY"),
 
+  // HikerAPI (Instagram via https://hikerapi.com). Without this the
+  // /api/cron/instagram-stories cron is a no-op.
+  hikerApiKey: optional("HIKER_API_KEY"),
+  hikerBaseUrl: optional("HIKER_BASE_URL") ?? "https://api.hikerapi.com",
+
   webhookSecretToken: optional("WEBHOOK_SECRET_TOKEN"),
   setupSecret: optional("SETUP_SECRET"),
   cronSecret: optional("CRON_SECRET"),
