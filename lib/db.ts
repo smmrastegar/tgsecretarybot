@@ -232,6 +232,12 @@ export async function ensureSchema(): Promise<void> {
         created_by   BIGINT
       )`;
     await q`CREATE INDEX IF NOT EXISTS invites_expires_idx ON invites (expires_at)`;
+    await q`
+      CREATE TABLE IF NOT EXISTS processed_updates (
+        update_id    BIGINT PRIMARY KEY,
+        processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS processed_updates_at_idx ON processed_updates (processed_at)`;
   })().catch((err) => {
     schemaPromise = null;
     throw err;
@@ -1648,4 +1654,21 @@ export async function upcomingReminderCount(): Promise<number> {
     SELECT COUNT(*)::int AS n FROM extracted_items
     WHERE done_at IS NULL AND due_at IS NOT NULL AND due_at > NOW()`;
   return Number((rows[0] as { n: number })?.n) || 0;
+}
+
+// Telegram retries the webhook if we don't ACK within ~25s. With slow
+// AI calls + sendChatAction delays we can hit that, and the retry
+// would otherwise re-run the handler and produce a duplicate reply
+// (sometimes landing several messages later in the chat). Insert
+// every update_id once; if it's already there, drop the retry.
+// Returns true if the update is new, false if it's a duplicate.
+export async function markUpdateProcessed(updateId: number): Promise<boolean> {
+  if (!hasDb()) return true;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO processed_updates (update_id)
+    VALUES (${updateId})
+    ON CONFLICT (update_id) DO NOTHING
+    RETURNING update_id`;
+  return rows.length > 0;
 }

@@ -262,6 +262,39 @@ function extractJson(s: string): string | null {
   return match ? match[0] : null;
 }
 
+// Both ai_chat and friendly_reply ask the model for { "reply": "..." }.
+// The model sometimes returns prose followed by a truncated JSON
+// envelope (e.g. `بحث نکنیم\n{\n  "reply":`), or just prose, or just
+// JSON. We try hardest to get a clean reply string, and never leak the
+// raw `{"reply":` fragment to Telegram.
+function parseAiReply(content: string): string {
+  const tryParse = (s: string): string | null => {
+    try {
+      const p = JSON.parse(s) as { reply?: unknown };
+      if (typeof p.reply === "string") return p.reply.trim();
+    } catch {}
+    return null;
+  };
+  const direct = tryParse(content);
+  if (direct !== null) return direct;
+  const extracted = extractJson(content);
+  if (extracted) {
+    const fromExtracted = tryParse(extracted);
+    if (fromExtracted !== null) return fromExtracted;
+  }
+  // Fallback: salvage prose by stripping JSON-envelope fragments at
+  // the start or end of the content. Order matters — strip from end
+  // first (the common case in the wild).
+  const stripped = content
+    .replace(/^\s*```(?:json)?\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .replace(/\n\s*\{\s*"reply"\s*:?[\s\S]*$/i, "")
+    .replace(/^\s*\{\s*"reply"\s*:\s*"?/i, "")
+    .replace(/"?\s*\}?\s*$/m, "")
+    .trim();
+  return stripped;
+}
+
 const SUMMARY_PROMPT = `You analyze a group chat's recent activity for a Telegram secretary
 and return a STRICT JSON summary the owner can scan in 20 seconds.
 
@@ -501,12 +534,7 @@ export async function aiConversationReply(input: {
         businessConnectionId: input.businessConnectionId ?? null,
       },
     );
-    try {
-      const parsed = JSON.parse(content) as { reply?: string };
-      return (parsed.reply ?? "").trim();
-    } catch {
-      return content.trim();
-    }
+    return parseAiReply(content);
   };
 
   const previousSet = new Set(previousReplies.map(normaliseForCompare));
@@ -612,12 +640,8 @@ export async function friendlyAutoReply(input: {
       businessConnectionId: input.businessConnectionId ?? null,
     },
   );
-  try {
-    const parsed = JSON.parse(content) as { reply?: string };
-    return (parsed.reply ?? "").trim() || input.awayMessage;
-  } catch {
-    return content.trim() || input.awayMessage;
-  }
+  const cleaned = parseAiReply(content);
+  return cleaned || input.awayMessage;
 }
 
 function parseSummary(raw: string): GroupSummary {

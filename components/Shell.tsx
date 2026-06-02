@@ -8,6 +8,7 @@ import {
   AlertOctagon,
   Bell,
   DollarSign,
+  Heart,
   History,
   LayoutDashboard,
   LogOut,
@@ -33,6 +34,7 @@ const NAV = [
   { href: "/reminders", label: "Reminders", icon: Bell },
   { href: "/costs", label: "Costs", icon: DollarSign },
   { href: "/audit", label: "Audit", icon: History },
+  { href: "/health", label: "Health", icon: Heart },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

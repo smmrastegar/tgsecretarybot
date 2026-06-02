@@ -180,6 +180,46 @@ function safeDate(input: string): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Show "typing…" in the chat and wait a randomised delay so the AI
+// reply doesn't land instantly (which feels robotic and tips the other
+// side off that they're talking to a bot). Delay is roughly: 0.8-1.8s
+// of think time + ~50ms per character of reply, capped at ~7s so we
+// don't blow Telegram's 25s webhook timeout.
+async function humanTypingDelay(
+  bot: Bot,
+  args: { chatId: number; bcId: string; replyText: string },
+): Promise<void> {
+  const len = Math.min(args.replyText.length, 240);
+  const think = 800 + Math.random() * 1000;
+  const typing = len * (35 + Math.random() * 25);
+  const total = Math.max(1200, Math.min(7000, think + typing));
+  const sendAction = async () => {
+    try {
+      await bot.api.sendChatAction(args.chatId, "typing", {
+        business_connection_id: args.bcId,
+      });
+    } catch (err) {
+      // Non-fatal: typing indicator isn't critical, and some business
+      // connections won't accept it.
+      console.warn("[typing] sendChatAction failed:", err);
+    }
+  };
+  // Telegram clears the typing indicator after ~5s, so re-send for
+  // longer delays.
+  await sendAction();
+  let waited = 0;
+  while (waited < total) {
+    const step = Math.min(4500, total - waited);
+    await sleep(step);
+    waited += step;
+    if (waited < total) await sendAction();
+  }
+}
+
 async function markBusinessRead(
   bot: Bot,
   bcId: string,
@@ -1711,6 +1751,12 @@ async function sendFriendlyReply(args: {
     console.error("[friendly] AI failed; falling back to literal:", err);
   }
 
+  await humanTypingDelay(bot, {
+    chatId: msg.chat.id,
+    bcId,
+    replyText: text,
+  });
+
   try {
     const sent = await bot.api.sendMessage(msg.chat.id, text, {
       business_connection_id: bcId,
@@ -1784,6 +1830,12 @@ async function sendAiConversation(args: {
     return false;
   }
   if (!reply) return false;
+
+  await humanTypingDelay(bot, {
+    chatId: msg.chat.id,
+    bcId,
+    replyText: reply,
+  });
 
   try {
     const sent = await bot.api.sendMessage(msg.chat.id, reply, {
