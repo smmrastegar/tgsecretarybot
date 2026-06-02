@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/auto-summary",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/instagram-stories",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

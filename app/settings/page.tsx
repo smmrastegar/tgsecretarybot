@@ -20,6 +20,12 @@ const TILES: Array<{
     desc: "سوال طبیعی از همه‌ی پیام‌ها (مثلاً «ساعت کاری بچه‌ها رو بگو»)",
   },
   {
+    href: "/monitored",
+    emoji: "📸",
+    label: "IG Monitor",
+    desc: "اکانت‌های اینستاگرام که هر ۵ دقیقه چک می‌شن برای استوری جدید",
+  },
+  {
     href: "/groups",
     emoji: "📊",
     label: "Groups",

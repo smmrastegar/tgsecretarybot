@@ -257,6 +257,42 @@ export async function ensureSchema(): Promise<void> {
       )`;
     await q`CREATE INDEX IF NOT EXISTS ask_queries_created_idx ON ask_queries (created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS ask_queries_hash_idx ON ask_queries (prompt_hash, created_at DESC)`;
+    // Instagram (and future platforms) story-monitor list. Each row
+    // is one account to poll periodically; events table records
+    // every detected story so we don't forward duplicates.
+    await q`
+      CREATE TABLE IF NOT EXISTS monitored_accounts (
+        id              BIGSERIAL PRIMARY KEY,
+        platform        TEXT NOT NULL DEFAULT 'instagram',
+        username        TEXT NOT NULL,
+        url             TEXT,
+        external_id     TEXT,
+        topic_id        TEXT,
+        enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+        last_checked_at TIMESTAMPTZ,
+        last_story_at   TIMESTAMPTZ,
+        last_error      TEXT,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (platform, username)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS monitored_accounts_enabled_idx ON monitored_accounts (enabled, last_checked_at NULLS FIRST)`;
+    await q`
+      CREATE TABLE IF NOT EXISTS monitor_events (
+        id              BIGSERIAL PRIMARY KEY,
+        account_id      BIGINT NOT NULL REFERENCES monitored_accounts(id) ON DELETE CASCADE,
+        story_id        TEXT,
+        story_url       TEXT,
+        detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        forwarded_chat_id BIGINT,
+        forwarded_message_id BIGINT,
+        forwarded_at    TIMESTAMPTZ,
+        status          TEXT NOT NULL DEFAULT 'detected',
+        error           TEXT,
+        UNIQUE (account_id, story_id)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS monitor_events_account_idx ON monitor_events (account_id, detected_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS monitor_events_detected_idx ON monitor_events (detected_at DESC)`;
     // One-time migration: the old default was 'secretary' which caused the
     // bot to relay/auto-reply in every new chat. Owner wants the default to
     // be silent (off); flip every existing 'secretary' row to 'off' exactly
@@ -2869,6 +2905,266 @@ export async function getAskQuery(id: number): Promise<AskQuery | null> {
 export async function deleteAskQuery(id: number): Promise<void> {
   if (!hasDb()) return;
   await sql()`DELETE FROM ask_queries WHERE id = ${id}`;
+}
+
+// --- Monitored accounts (Instagram stories etc.) ---
+
+export type MonitoredAccount = {
+  id: number;
+  platform: string;
+  username: string;
+  url: string | null;
+  externalId: string | null;
+  topicId: string | null;
+  enabled: boolean;
+  lastCheckedAt: Date | null;
+  lastStoryAt: Date | null;
+  lastError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+function rowToMonitored(r: Record<string, unknown>): MonitoredAccount {
+  return {
+    id: Number(r.id),
+    platform: r.platform as string,
+    username: r.username as string,
+    url: (r.url as string) ?? null,
+    externalId: (r.external_id as string) ?? null,
+    topicId: (r.topic_id as string) ?? null,
+    enabled: Boolean(r.enabled),
+    lastCheckedAt: (r.last_checked_at as Date) ?? null,
+    lastStoryAt: (r.last_story_at as Date) ?? null,
+    lastError: (r.last_error as string) ?? null,
+    createdAt: r.created_at as Date,
+    updatedAt: r.updated_at as Date,
+  };
+}
+
+export async function listMonitoredAccounts(opts: {
+  platform?: string;
+  enabledOnly?: boolean;
+} = {}): Promise<MonitoredAccount[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, platform, username, url, external_id, topic_id, enabled,
+           last_checked_at, last_story_at, last_error, created_at, updated_at
+    FROM monitored_accounts
+    WHERE (${opts.platform ?? null}::text IS NULL OR platform = ${opts.platform ?? null})
+      AND (${opts.enabledOnly ?? false}::boolean = FALSE OR enabled = TRUE)
+    ORDER BY username ASC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToMonitored);
+}
+
+// Bulk upsert from CSV import. Updates URL / external_id / topic_id
+// for existing rows but DOESN'T clobber the enabled flag (the owner
+// might have manually disabled an account).
+export async function upsertMonitoredAccounts(
+  items: Array<{
+    platform: string;
+    username: string;
+    url?: string | null;
+    externalId?: string | null;
+    topicId?: string | null;
+  }>,
+): Promise<{ inserted: number; updated: number }> {
+  if (!hasDb() || items.length === 0) return { inserted: 0, updated: 0 };
+  await ensureSchema();
+  let inserted = 0;
+  let updated = 0;
+  for (const it of items) {
+    const username = it.username.trim().toLowerCase();
+    if (!username) continue;
+    const rows = await sql()`
+      INSERT INTO monitored_accounts (platform, username, url, external_id, topic_id)
+      VALUES (${it.platform}, ${username}, ${it.url ?? null},
+              ${it.externalId ?? null}, ${it.topicId ?? null})
+      ON CONFLICT (platform, username) DO UPDATE SET
+        url = COALESCE(EXCLUDED.url, monitored_accounts.url),
+        external_id = COALESCE(EXCLUDED.external_id, monitored_accounts.external_id),
+        topic_id = COALESCE(EXCLUDED.topic_id, monitored_accounts.topic_id),
+        updated_at = NOW()
+      RETURNING (xmax = 0) AS was_inserted`;
+    const r = rows[0] as { was_inserted: boolean } | undefined;
+    if (r?.was_inserted) inserted++;
+    else updated++;
+  }
+  return { inserted, updated };
+}
+
+export async function setMonitoredAccountEnabled(
+  id: number,
+  enabled: boolean,
+): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE monitored_accounts
+    SET enabled = ${enabled}, updated_at = NOW()
+    WHERE id = ${id}`;
+}
+
+export async function deleteMonitoredAccount(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`DELETE FROM monitored_accounts WHERE id = ${id}`;
+}
+
+export async function getMonitoredAccount(
+  id: number,
+): Promise<MonitoredAccount | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, platform, username, url, external_id, topic_id, enabled,
+           last_checked_at, last_story_at, last_error, created_at, updated_at
+    FROM monitored_accounts WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToMonitored(r) : null;
+}
+
+// Find accounts that should be polled next: enabled, and either never
+// checked or last checked more than `staleMinutes` ago. Oldest first
+// so a backlog drains evenly.
+export async function dueMonitoredAccounts(
+  staleMinutes: number,
+  limit = 50,
+): Promise<MonitoredAccount[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, platform, username, url, external_id, topic_id, enabled,
+           last_checked_at, last_story_at, last_error, created_at, updated_at
+    FROM monitored_accounts
+    WHERE enabled = TRUE
+      AND (last_checked_at IS NULL
+           OR last_checked_at < NOW() - (${staleMinutes} || ' minutes')::INTERVAL)
+    ORDER BY last_checked_at NULLS FIRST, id ASC
+    LIMIT ${limit}`;
+  return (rows as Array<Record<string, unknown>>).map(rowToMonitored);
+}
+
+export async function markMonitoredChecked(args: {
+  id: number;
+  lastStoryAt?: Date | null;
+  error?: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE monitored_accounts
+    SET last_checked_at = NOW(),
+        last_story_at = COALESCE(${args.lastStoryAt
+          ? args.lastStoryAt.toISOString()
+          : null}::timestamptz, last_story_at),
+        last_error = ${args.error ?? null},
+        updated_at = NOW()
+    WHERE id = ${args.id}`;
+}
+
+// Story-detection event log. story_id is whatever the source API
+// returned (could be a string, a numeric id, or our hash). Used to
+// dedupe so we don't forward the same story twice.
+export type MonitorEvent = {
+  id: number;
+  accountId: number;
+  storyId: string | null;
+  storyUrl: string | null;
+  detectedAt: Date;
+  forwardedChatId: number | null;
+  forwardedMessageId: number | null;
+  forwardedAt: Date | null;
+  status: string;
+  error: string | null;
+};
+
+export async function recordMonitorEvent(args: {
+  accountId: number;
+  storyId: string;
+  storyUrl: string | null;
+}): Promise<MonitorEvent | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO monitor_events (account_id, story_id, story_url, status)
+    VALUES (${args.accountId}, ${args.storyId}, ${args.storyUrl}, 'detected')
+    ON CONFLICT (account_id, story_id) DO NOTHING
+    RETURNING id, account_id, story_id, story_url, detected_at,
+              forwarded_chat_id, forwarded_message_id, forwarded_at, status, error`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  if (!r) return null;
+  return {
+    id: Number(r.id),
+    accountId: Number(r.account_id),
+    storyId: (r.story_id as string) ?? null,
+    storyUrl: (r.story_url as string) ?? null,
+    detectedAt: r.detected_at as Date,
+    forwardedChatId:
+      r.forwarded_chat_id != null ? Number(r.forwarded_chat_id) : null,
+    forwardedMessageId:
+      r.forwarded_message_id != null ? Number(r.forwarded_message_id) : null,
+    forwardedAt: (r.forwarded_at as Date) ?? null,
+    status: r.status as string,
+    error: (r.error as string) ?? null,
+  };
+}
+
+export async function markMonitorEventForwarded(args: {
+  id: number;
+  chatId: number;
+  messageId: number;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE monitor_events
+    SET forwarded_chat_id = ${args.chatId},
+        forwarded_message_id = ${args.messageId},
+        forwarded_at = NOW(),
+        status = 'forwarded'
+    WHERE id = ${args.id}`;
+}
+
+export async function markMonitorEventError(args: {
+  id: number;
+  error: string;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE monitor_events
+    SET status = 'error', error = ${args.error}
+    WHERE id = ${args.id}`;
+}
+
+export async function listRecentMonitorEvents(
+  limit = 50,
+): Promise<
+  Array<MonitorEvent & { username: string | null; platform: string | null }>
+> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT e.id, e.account_id, e.story_id, e.story_url, e.detected_at,
+           e.forwarded_chat_id, e.forwarded_message_id, e.forwarded_at,
+           e.status, e.error,
+           a.username, a.platform
+    FROM monitor_events e
+    LEFT JOIN monitored_accounts a ON a.id = e.account_id
+    ORDER BY e.detected_at DESC
+    LIMIT ${Math.min(Math.max(limit, 1), 500)}`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    accountId: Number(r.account_id),
+    storyId: (r.story_id as string) ?? null,
+    storyUrl: (r.story_url as string) ?? null,
+    detectedAt: r.detected_at as Date,
+    forwardedChatId:
+      r.forwarded_chat_id != null ? Number(r.forwarded_chat_id) : null,
+    forwardedMessageId:
+      r.forwarded_message_id != null ? Number(r.forwarded_message_id) : null,
+    forwardedAt: (r.forwarded_at as Date) ?? null,
+    status: r.status as string,
+    error: (r.error as string) ?? null,
+    username: (r.username as string) ?? null,
+    platform: (r.platform as string) ?? null,
+  }));
 }
 
 // Telegram retries the webhook if we don't ACK within ~25s. With slow
