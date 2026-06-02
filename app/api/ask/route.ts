@@ -28,7 +28,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "prompt required" }, { status: 400 });
   }
   const days = Math.min(Math.max(Number(body.days ?? 30), 1), 365);
-  const limit = Math.min(Math.max(Number(body.limit ?? 500), 50), 2000);
+  const limit = Math.min(Math.max(Number(body.limit ?? 1500), 50), 3000);
 
   // Pull recent messages across all chats. We prefer transcript /
   // media_description when present so voice/photo messages are

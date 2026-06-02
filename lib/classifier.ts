@@ -527,18 +527,35 @@ export type GroupSummary = {
 // table here — pure analytical query.
 const ASK_PROMPT = `You are a search assistant for a Telegram secretary
 dashboard. The owner asks a question in natural language and you receive a
-batch of recent messages (already pre-filtered by the dashboard). Answer in
-Persian, concise, grouped by chat where relevant.
+batch of recent messages. Answer in Persian, concise, grouped by chat where
+relevant.
 
-Rules:
+CRITICAL — SEMANTIC MATCHING (most important rule):
+- The question often uses GENERAL terms; the messages use SPECIFIC
+  phrasings. Match them. Examples (Persian):
+    * "ساعت کاری" → also matches "X ساعت کارکردم", "X ساعت کار کردم",
+      "از ساعت X تا Y کار می‌کنم", "این هفته X ساعت ", "این ماه X ساعت"
+    * "هزینه" / "پول" → also matches "X تومن گرفتم", "X تومن دادم",
+      "شارژ کردم", "پرداخت", "حقوق"
+    * "پروژه" → also matches اسم خاص پروژه‌ها وقتی به صورت دیپلوی،
+      توسعه، کار رو X و... هم به کار رفته
+- DO NOT require the message to contain the question's exact words.
+  Look for SEMANTIC equivalents and number patterns. Numbers + units
+  (ساعت، تومن، روز، دقیقه) are strong signals.
+- Read each sender's message even if you skim. A single line like
+  "این ماه ۱۷۸ ساعت کارکردم" is exactly what the question
+  "ساعت کاری" is asking about.
+
+Output rules:
 - ALWAYS output in Persian (فارسی), in clean Markdown if it helps
   (bullets, bold, headings).
-- Be specific. Quote senders by name when relevant.
 - Group results by chat title when the question is per-chat (e.g.
   "ساعت کاری هر کس"). Use the chat title as a heading.
-- If the messages don't contain the answer, say so honestly (e.g.
-  "توی پیام‌های اخیر چیزی در این مورد نبود.") rather than inventing.
-- Don't recite all messages — just synthesise the answer.
+- Quote senders by name when you have data for them.
+- For numerical questions (ساعت، تومن، ...) extract the NUMBER and
+  unit and put them prominently.
+- If the messages don't contain the answer for someone, say so per-
+  person: "از علی چیزی در این مورد نبود."
 - Plain text only. NO JSON, NO code fences, NO "reply": keys.`;
 
 export async function askMessages(input: {
@@ -556,10 +573,10 @@ export async function askMessages(input: {
     question: input.prompt,
     owner_name: input.ownerName,
     owner_context: input.ownerContext || undefined,
-    messages: input.messages.slice(-500).map((m) => ({
+    messages: input.messages.slice(-1500).map((m) => ({
       chat: m.chatTitle ?? "—",
       sender: m.senderName,
-      text: m.text.slice(0, 400),
+      text: m.text.slice(0, 800),
       at: m.at.toISOString(),
     })),
   };
@@ -569,8 +586,8 @@ export async function askMessages(input: {
       { role: "user", content: JSON.stringify(payload) },
     ],
     {
-      maxTokens: 1200,
-      temperature: 0.3,
+      maxTokens: 2000,
+      temperature: 0.2,
       purpose: "ask",
     },
   );
