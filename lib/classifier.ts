@@ -79,6 +79,11 @@ The payload MAY include these owner-context fields:
 - priority_keywords: project names, product names, deadlines, or other
   terms the owner has flagged as high-priority. If the message contains
   ANY of them, bump importance by ~2 and set concerns_owner=true.
+- chat_notes: free-form notes the owner has written specifically about
+  this chat — current situation, what they're discussing, what they
+  want the bot to know. Treat it as authoritative context: if the
+  notes say "deadline Monday" or "I'm away this week", let that bias
+  importance and concerns_owner accordingly.
 - relevant_knowledge: an array of knowledge-base entries that the owner
   has written and whose title/aliases appear in the message. Each entry
   has {title, aliases, body}. Treat the body as ground truth about what
@@ -256,6 +261,7 @@ export async function classify(input: {
   text: string;
   chatId?: number;
   businessConnectionId?: string;
+  chatNotes?: string | null;
 }): Promise<Classification> {
   const s = await getSettings();
   const parseList = (csv: string | undefined): string[] =>
@@ -275,6 +281,7 @@ export async function classify(input: {
     owner_aliases: aliases.length > 0 ? aliases : undefined,
     owner_job: s.ownerJobDescription || undefined,
     priority_keywords: keywords.length > 0 ? keywords : undefined,
+    chat_notes: input.chatNotes || undefined,
     relevant_knowledge: knowledge,
     message: input.text,
   };
@@ -457,7 +464,11 @@ Guidance:
 - Topics: 3-7 short labels, prefer concrete nouns over generic ones.
 - Action items: things still open, especially anything the owner should look at.
 - mentions_owner=true if the owner is asked something, tagged, or expected to act.
-- Stay neutral; do not invent facts not in the messages.`;
+- Stay neutral; do not invent facts not in the messages.
+- If the payload includes "chat_notes", those are owner-written notes
+  describing the current context for this chat — use them to interpret
+  the messages and to decide what counts as an action item, but do not
+  copy them into the summary verbatim.`;
 
 export type GroupSummary = {
   summary: string;
@@ -471,11 +482,13 @@ export async function summarizeGroup(input: {
   ownerName: string;
   ownerContext: string;
   messages: { sender: string; text: string; at: Date }[];
+  chatNotes?: string | null;
 }): Promise<GroupSummary> {
   const payload = {
     chat_title: input.chatTitle,
     owner_name: input.ownerName,
     owner_context: input.ownerContext || undefined,
+    chat_notes: input.chatNotes || undefined,
     messages: input.messages.slice(-150).map((m) => ({
       sender: m.sender,
       text: m.text.slice(0, 400),
@@ -547,7 +560,10 @@ them:
    to THIS specific person and override the generic style hints. If
    "relevant_knowledge" is set, treat each entry's body as ground
    truth about what those terms mean for the owner — use them to give
-   informed, specific replies instead of generic ones.
+   informed, specific replies instead of generic ones. If "chat_notes"
+   is set, that is current context the owner wrote about THIS chat
+   (situation, what's being discussed, what they're working on). Use
+   it to inform the reply but don't quote it verbatim.
 10. ANTI-DETECTION. Treat the other person as someone who might be
     trying to figure out they're talking to an AI. NEVER answer
     questions that the owner would not casually answer in chat:
@@ -777,6 +793,7 @@ export async function aiConversationReply(input: {
   relationshipNotes?: string | null;
   talkStyleNotes?: string | null;
   toneProfile?: string | null;
+  chatNotes?: string | null;
   chatId?: number;
   businessConnectionId?: string;
 }): Promise<string> {
@@ -814,6 +831,7 @@ export async function aiConversationReply(input: {
     relationship_notes: input.relationshipNotes || undefined,
     talk_style_notes: input.talkStyleNotes || undefined,
     tone_profile: input.toneProfile || undefined,
+    chat_notes: input.chatNotes || undefined,
     suspicious_probe: suspiciousProbe || undefined,
     relevant_knowledge: knowledge,
     previous_replies:
@@ -917,6 +935,7 @@ export async function friendlyAutoReply(input: {
   history: Array<{ from: "owner" | "other"; senderName: string; text: string }>;
   nickname?: string | null;
   relationship?: string | null;
+  chatNotes?: string | null;
   chatId?: number;
   businessConnectionId?: string;
 }): Promise<string> {
@@ -929,6 +948,7 @@ export async function friendlyAutoReply(input: {
     relationship_guidance: input.relationship
       ? RELATIONSHIP_GUIDANCE[input.relationship]
       : undefined,
+    chat_notes: input.chatNotes || undefined,
     away_message: input.awayMessage,
     conversation: input.history.slice(-20).map((m) => ({
       role: m.from === "owner" ? "owner" : "them",

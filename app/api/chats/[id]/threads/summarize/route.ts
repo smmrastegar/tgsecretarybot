@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { listChatThreaded } from "@/lib/db";
+import { getChatRule, listChatThreaded } from "@/lib/db";
 import { summarizeGroup } from "@/lib/classifier";
 import { getSettings } from "@/lib/settings";
 
@@ -47,10 +47,12 @@ export async function POST(
   }
 
   const settings = await getSettings();
+  const rule = await getChatRule(chatId).catch(() => null);
   const summary = await summarizeGroup({
     chatTitle: threadMsgs[0]?.chatTitle ?? null,
     ownerName: settings.ownerName,
     ownerContext: settings.ownerContext,
+    chatNotes: rule?.notes ?? null,
     messages: threadMsgs.map((m) => ({
       sender: m.fromOwner
         ? settings.ownerDisplayName || settings.ownerName || "owner"

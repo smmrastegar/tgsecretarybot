@@ -1100,6 +1100,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       chatTitle: chatTitle ?? undefined,
       senderName,
       text,
+      chatNotes: rule?.notes ?? null,
     });
   } catch (err) {
     console.error("[classify] failed:", err);
@@ -1222,6 +1223,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         customReply: rule?.customReply ?? null,
         nickname: rule?.nickname ?? null,
         relationship: rule?.relationship ?? null,
+        chatNotes: rule?.notes ?? null,
         bot,
       });
     } else if (mode === "ai_chat") {
@@ -1235,6 +1237,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         relationshipNotes: rule?.relationshipNotes ?? null,
         talkStyleNotes: rule?.talkStyleNotes ?? null,
         toneProfile: rule?.toneProfile ?? null,
+        chatNotes: rule?.notes ?? null,
         floodCooldownUntil: rule?.floodCooldownUntil ?? null,
         bot,
       });
@@ -1850,6 +1853,7 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
       chatTitle: chatTitle ?? undefined,
       senderName,
       text,
+      chatNotes: rule?.notes ?? null,
     });
   } catch (err) {
     console.error("[classify] group failed:", err);
@@ -2147,9 +2151,10 @@ async function sendFriendlyReply(args: {
   customReply: string | null;
   nickname: string | null;
   relationship: import("./db").Relationship | null;
+  chatNotes: string | null;
   bot: Bot;
 }): Promise<boolean> {
-  const { msg, bcId, senderName, settings, customReply, nickname, relationship, bot } = args;
+  const { msg, bcId, senderName, settings, customReply, nickname, relationship, chatNotes, bot } = args;
   if (msg.chat.type !== "private") return false;
   const awayMessage = customReply || settings.autoReplyText;
   if (!awayMessage) return false;
@@ -2186,6 +2191,7 @@ async function sendFriendlyReply(args: {
         history,
         nickname,
         relationship,
+        chatNotes,
         chatId: msg.chat.id,
         businessConnectionId: bcId,
       })) || awayMessage;
@@ -2283,6 +2289,7 @@ async function sendAiConversation(args: {
   relationshipNotes: string | null;
   talkStyleNotes: string | null;
   toneProfile: string | null;
+  chatNotes: string | null;
   floodCooldownUntil: Date | null;
   bot: Bot;
 }): Promise<boolean> {
@@ -2296,6 +2303,7 @@ async function sendAiConversation(args: {
     relationshipNotes,
     talkStyleNotes,
     toneProfile,
+    chatNotes,
     floodCooldownUntil,
     bot,
   } = args;
@@ -2395,6 +2403,7 @@ async function sendAiConversation(args: {
       relationshipNotes,
       talkStyleNotes,
       toneProfile,
+      chatNotes,
       chatId: msg.chat.id,
       businessConnectionId: bcId,
     });

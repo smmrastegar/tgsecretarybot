@@ -3,6 +3,7 @@ import { config } from "@/lib/config";
 import { getSettings } from "@/lib/settings";
 import {
   audit,
+  getChatRule,
   groupActivityForPeriod,
   hasDb,
   upsertGroupSummary,
@@ -57,10 +58,12 @@ async function run(request: Request): Promise<NextResponse> {
       continue;
     }
     try {
+      const rule = await getChatRule(a.chatId).catch(() => null);
       const summary = await summarizeGroup({
         chatTitle: a.chatTitle,
         ownerName: s.ownerName,
         ownerContext: s.ownerContext,
+        chatNotes: rule?.notes ?? null,
         messages: a.messages,
       });
       const senders = new Set(a.messages.map((m) => m.sender));

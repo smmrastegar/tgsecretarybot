@@ -158,6 +158,7 @@ export default function ChatDetailPage() {
     relationship: Relationship | "";
     relationshipNotes: string;
     talkStyleNotes: string;
+    notes: string;
   };
   const blankPersonal: Personal = {
     firstName: "",
@@ -166,6 +167,7 @@ export default function ChatDetailPage() {
     relationship: "",
     relationshipNotes: "",
     talkStyleNotes: "",
+    notes: "",
   };
   const [personal, setPersonal] = useState<Personal>(blankPersonal);
   const [personalDirty, setPersonalDirty] = useState(false);
@@ -262,6 +264,7 @@ export default function ChatDetailPage() {
       relationship: j.rule?.relationship ?? "",
       relationshipNotes: j.rule?.relationshipNotes ?? "",
       talkStyleNotes: j.rule?.talkStyleNotes ?? "",
+      notes: j.rule?.notes ?? "",
     });
     setPersonalDirty(false);
     setLoading(false);
@@ -278,7 +281,7 @@ export default function ChatDetailPage() {
         vip: rule?.vip ?? false,
         muted: rule?.muted ?? false,
         customReply: rule?.customReply ?? null,
-        notes: rule?.notes ?? null,
+        notes: personal.notes.trim() || null,
         mode: rule?.mode ?? "off",
         secretaryUserId: rule?.secretaryUserId ?? null,
         firstName: personal.firstName.trim() || null,
@@ -585,6 +588,24 @@ export default function ChatDetailPage() {
                         }
                         rows={2}
                         placeholder="مثلاً: رسمی، بدون شوخی، همیشه «شما». یا: خودمونی، با اموجی، کوتاه."
+                        className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                        📝 Context / Notes — هر چی اینجا بنویسی، توی همه‌ی
+                        تحلیل‌های بعدی این چت (classify / summarise / AI
+                        reply) به prompt تزریق می‌شه و می‌مونه.
+                      </label>
+                      <textarea
+                        dir="auto"
+                        disabled={saving}
+                        value={personal.notes}
+                        onChange={(e) =>
+                          updatePersonal({ notes: e.target.value })
+                        }
+                        rows={4}
+                        placeholder="مثلاً: راجع به پروژه‌ی X باهاش حرف می‌زنیم، deadline دوشنبه‌ست. یا: این هفته در حال جابه‌جایی‌ام، جزئیات کاری رو موکول کن به هفته‌ی بعد."
                         className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
                       />
                     </div>

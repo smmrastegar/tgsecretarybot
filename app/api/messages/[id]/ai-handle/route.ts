@@ -74,6 +74,7 @@ export async function POST(
       relationshipNotes: rule?.relationshipNotes ?? null,
       talkStyleNotes: rule?.talkStyleNotes ?? null,
       toneProfile: rule?.toneProfile ?? null,
+      chatNotes: rule?.notes ?? null,
       chatId: Number(row.chat_id),
       businessConnectionId: row.business_connection_id,
     });
