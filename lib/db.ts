@@ -2286,6 +2286,50 @@ export async function markExtractedDone(id: number, done: boolean): Promise<void
   }
 }
 
+// Bulk versions: caller passes a list of ids and we run a single SQL
+// per op. ANY(...) keeps the round-trip cost flat regardless of how
+// many items the owner ticked.
+export async function bulkMarkExtractedDone(
+  ids: number[],
+  done: boolean,
+): Promise<number> {
+  if (!hasDb() || ids.length === 0) return 0;
+  const rows = done
+    ? await sql()`
+        UPDATE extracted_items
+        SET done_at = NOW()
+        WHERE id = ANY(${ids}::bigint[])
+        RETURNING id`
+    : await sql()`
+        UPDATE extracted_items
+        SET done_at = NULL
+        WHERE id = ANY(${ids}::bigint[])
+        RETURNING id`;
+  return rows.length;
+}
+
+export async function bulkDeleteExtracted(ids: number[]): Promise<number> {
+  if (!hasDb() || ids.length === 0) return 0;
+  const rows = await sql()`
+    DELETE FROM extracted_items
+    WHERE id = ANY(${ids}::bigint[])
+    RETURNING id`;
+  return rows.length;
+}
+
+export async function bulkSetExtractedKind(
+  ids: number[],
+  kind: string,
+): Promise<number> {
+  if (!hasDb() || ids.length === 0) return 0;
+  const rows = await sql()`
+    UPDATE extracted_items
+    SET kind = ${kind}
+    WHERE id = ANY(${ids}::bigint[])
+    RETURNING id`;
+  return rows.length;
+}
+
 export async function upcomingReminderCount(): Promise<number> {
   if (!hasDb()) return 0;
   await ensureSchema();

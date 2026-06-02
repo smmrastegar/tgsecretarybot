@@ -82,11 +82,23 @@ function dueChip(s: string | null): { text: string; tone: "danger" | "warn" | "n
   return null;
 }
 
+const BULK_KIND_OPTIONS = [
+  "event",
+  "task",
+  "reminder",
+  "deadline",
+  "decision",
+  "note",
+  "action",
+] as const;
+
 export default function RemindersPage() {
   const [filter, setFilter] = useState<"upcoming" | "all" | "done">("upcoming");
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedSource, setExpandedSource] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulking, setBulking] = useState(false);
   const toggleSource = (id: number) =>
     setExpandedSource((s) => {
       const next = new Set(s);
@@ -104,12 +116,56 @@ export default function RemindersPage() {
     }
     const j = (await r.json()) as { items: Item[] };
     setItems(j.items);
+    setSelected(new Set());
     setLoading(false);
   }, [filter]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  function toggleSelect(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelected(new Set(items.map((it) => it.id)));
+  }
+
+  function selectNone() {
+    setSelected(new Set());
+  }
+
+  async function runBulk(
+    op: "done" | "undone" | "delete" | "set_kind",
+    kind?: string,
+  ) {
+    if (selected.size === 0) return;
+    if (op === "delete") {
+      if (!confirm(`حذف ${selected.size} مورد؟`)) return;
+    }
+    setBulking(true);
+    try {
+      const r = await fetch("/api/reminders/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ op, ids: [...selected], kind }),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        alert(`عملیات شکست خورد: ${j.error ?? r.status}`);
+      } else {
+        await load();
+      }
+    } finally {
+      setBulking(false);
+    }
+  }
 
   async function setDone(id: number, done: boolean) {
     await fetch(`/api/reminders/${id}`, {
@@ -154,13 +210,89 @@ export default function RemindersPage() {
           </p>
         </Card>
       ) : (
-        <div className="flex flex-col gap-2">
+        <>
+          <Card className="mb-3 !p-3 sticky top-0 z-10">
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <button
+                onClick={selectAll}
+                disabled={bulking}
+                className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              >
+                Select all ({items.length})
+              </button>
+              <button
+                onClick={selectNone}
+                disabled={bulking || selected.size === 0}
+                className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              >
+                Clear
+              </button>
+              <span className="text-[var(--color-text-dim)]">
+                {selected.size} selected
+              </span>
+              <span className="text-[var(--color-text-dim)] mx-1">|</span>
+              <button
+                onClick={() => runBulk("done")}
+                disabled={bulking || selected.size === 0}
+                className="px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+              >
+                ✓ Mark done
+              </button>
+              <button
+                onClick={() => runBulk("undone")}
+                disabled={bulking || selected.size === 0}
+                className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              >
+                Mark undone
+              </button>
+              <button
+                onClick={() => runBulk("delete")}
+                disabled={bulking || selected.size === 0}
+                className="px-2 py-1 rounded-md border border-red-800 text-red-300 hover:bg-red-900/30 disabled:opacity-50"
+              >
+                🗑 Delete
+              </button>
+              <select
+                disabled={bulking || selected.size === 0}
+                onChange={(e) => {
+                  const k = e.target.value;
+                  if (!k) return;
+                  void runBulk("set_kind", k);
+                  e.currentTarget.value = "";
+                }}
+                className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
+                defaultValue=""
+              >
+                <option value="">Change kind to…</option>
+                {BULK_KIND_OPTIONS.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </Card>
+          <div className="flex flex-col gap-2">
           {items.map((it) => {
             const kindInfo = KIND_LABEL[it.kind] ?? KIND_LABEL.note!;
             const due = dueChip(it.dueAt);
             return (
-              <Card key={it.id} className="!p-3">
-                <div className="flex items-start justify-between gap-3 flex-wrap">
+              <Card
+                key={it.id}
+                className={`!p-3 ${
+                  selected.has(it.id)
+                    ? "ring-1 ring-[var(--color-accent)]"
+                    : ""
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(it.id)}
+                    onChange={() => toggleSelect(it.id)}
+                    className="mt-1 shrink-0"
+                  />
+                <div className="flex items-start justify-between gap-3 flex-wrap flex-1 min-w-0">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <Badge tone={kindInfo.tone}>{kindInfo.label}</Badge>
@@ -243,10 +375,12 @@ export default function RemindersPage() {
                     {it.doneAt ? "Mark undone" : "Mark done"}
                   </button>
                 </div>
+                </div>
               </Card>
             );
           })}
-        </div>
+          </div>
+        </>
       )}
     </Shell>
   );
