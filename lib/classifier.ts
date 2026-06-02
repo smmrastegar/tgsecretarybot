@@ -454,15 +454,21 @@ and return a STRICT JSON summary the owner can scan in 20 seconds.
 
 Reply with JSON only, no prose, no code fences:
 {
-  "summary": "<2-4 sentence overview in the same language as the messages>",
+  "summary": "<2-4 sentence overview>",
   "topics": ["short topic", ...],
   "action_items": ["specific TODO or unanswered question, who should act if known", ...],
   "mentions_owner": <true|false>
 }
 
 Guidance:
+- LANGUAGE: if the payload sets "output_language", write the summary,
+  topics, and action_items IN that language. Otherwise default to the
+  language used by most of the messages.
 - Topics: 3-7 short labels, prefer concrete nouns over generic ones.
 - Action items: things still open, especially anything the owner should look at.
+  Each should be a SHORT imperative the owner can turn into a task or
+  reminder (e.g. "Reply to Ali about the invoice", "Confirm meeting
+  time", not "There is an invoice question").
 - mentions_owner=true if the owner is asked something, tagged, or expected to act.
 - Stay neutral; do not invent facts not in the messages.
 - If the payload includes "chat_notes", those are owner-written notes
@@ -483,12 +489,14 @@ export async function summarizeGroup(input: {
   ownerContext: string;
   messages: { sender: string; text: string; at: Date }[];
   chatNotes?: string | null;
+  outputLanguage?: string;
 }): Promise<GroupSummary> {
   const payload = {
     chat_title: input.chatTitle,
     owner_name: input.ownerName,
     owner_context: input.ownerContext || undefined,
     chat_notes: input.chatNotes || undefined,
+    output_language: input.outputLanguage || undefined,
     messages: input.messages.slice(-150).map((m) => ({
       sender: m.sender,
       text: m.text.slice(0, 400),

@@ -95,6 +95,9 @@ export async function PUT(
     relationship?: Relationship | null;
     relationshipNotes?: string | null;
     talkStyleNotes?: string | null;
+    aiProcessVoice?: boolean;
+    aiProcessStickers?: boolean;
+    aiProcessGifs?: boolean;
   };
   const existing = await getChatRule(chatId);
   const mode: ChatMode =
@@ -138,6 +141,18 @@ export async function PUT(
     body.talkStyleNotes === undefined
       ? existing?.talkStyleNotes ?? null
       : normName(body.talkStyleNotes);
+  const aiProcessVoice =
+    body.aiProcessVoice === undefined
+      ? existing?.aiProcessVoice ?? false
+      : Boolean(body.aiProcessVoice);
+  const aiProcessStickers =
+    body.aiProcessStickers === undefined
+      ? existing?.aiProcessStickers ?? false
+      : Boolean(body.aiProcessStickers);
+  const aiProcessGifs =
+    body.aiProcessGifs === undefined
+      ? existing?.aiProcessGifs ?? false
+      : Boolean(body.aiProcessGifs);
   await upsertChatRule({
     chatId,
     chatType: body.chatType ?? existing?.chatType ?? "private",
@@ -154,6 +169,9 @@ export async function PUT(
     relationship,
     relationshipNotes,
     talkStyleNotes,
+    aiProcessVoice,
+    aiProcessStickers,
+    aiProcessGifs,
   });
   await audit({
     actorId: session.userId,

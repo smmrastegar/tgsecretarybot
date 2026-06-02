@@ -42,6 +42,7 @@ import {
   saveMediaDescription,
   saveTranscript,
   setFloodCooldown,
+  sql,
   recentConversation,
   recordSecretaryLink,
   saveExtractedItems,
@@ -1264,6 +1265,9 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         toneProfile: rule?.toneProfile ?? null,
         chatNotes: rule?.notes ?? null,
         floodCooldownUntil: rule?.floodCooldownUntil ?? null,
+        aiProcessVoice: rule?.aiProcessVoice ?? false,
+        aiProcessStickers: rule?.aiProcessStickers ?? false,
+        aiProcessGifs: rule?.aiProcessGifs ?? false,
         bot,
       });
     }
@@ -2353,6 +2357,9 @@ async function sendAiConversation(args: {
   toneProfile: string | null;
   chatNotes: string | null;
   floodCooldownUntil: Date | null;
+  aiProcessVoice: boolean;
+  aiProcessStickers: boolean;
+  aiProcessGifs: boolean;
   bot: Bot;
 }): Promise<boolean> {
   const {
@@ -2367,11 +2374,125 @@ async function sendAiConversation(args: {
     toneProfile,
     chatNotes,
     floodCooldownUntil,
+    aiProcessVoice,
+    aiProcessStickers,
+    aiProcessGifs,
     bot,
   } = args;
   if (msg.chat.type !== "private") return false;
-  const userText = msg.text ?? msg.caption;
+
+  // Default: only text/caption messages get an AI reply. With per-chat
+  // ai_process_voice / _stickers / _gifs flags, we ALSO process the
+  // corresponding media kind: transcribe voice via STT, describe
+  // sticker/GIF via multimodal. The transcript / description becomes
+  // the effective "user text" the AI replies to, and we persist it on
+  // the messages_log row downstream (recentConversation already reads
+  // transcript / media_description, so subsequent turns see the real
+  // content instead of `[voice]`).
+  let userText: string | undefined = msg.text ?? msg.caption ?? undefined;
+  let processedMediaTranscript: string | null = null;
+  let processedMediaDescription: string | null = null;
+  let processedMediaKind: string | null = null;
+
+  if (!userText) {
+    const voiceId =
+      msg.voice?.file_id ?? msg.audio?.file_id ?? msg.video_note?.file_id ?? null;
+    const stickerId = msg.sticker?.file_id ?? null;
+    const animationId = msg.animation?.file_id ?? null;
+    if (voiceId && aiProcessVoice && sttConfigured()) {
+      try {
+        const tr = await transcribeAudio({
+          botToken: config.telegramBotToken,
+          fileId: voiceId,
+          language: settings.sttLanguage || "fa",
+          chatId: msg.chat.id,
+          businessConnectionId: bcId,
+        });
+        if (tr.text) {
+          userText = tr.text;
+          processedMediaTranscript = tr.text;
+          processedMediaKind = msg.voice
+            ? "voice"
+            : msg.audio
+              ? "audio"
+              : "video_note";
+        }
+      } catch (err) {
+        console.warn("[ai_chat] voice STT failed:", err);
+      }
+    } else if (stickerId && aiProcessStickers) {
+      const desc = await describeMedia({
+        fileId: stickerId,
+        kind: "sticker",
+        chatId: msg.chat.id,
+        businessConnectionId: bcId,
+      }).catch(() => null);
+      const text = desc
+        ? [desc.description, desc.textInImage].filter(Boolean).join("\n")
+        : "";
+      if (text) {
+        userText = `[sticker] ${text}`;
+        processedMediaDescription = text;
+        processedMediaKind = "sticker";
+      }
+    } else if (animationId && aiProcessGifs) {
+      const desc = await describeMedia({
+        fileId: animationId,
+        kind: "animation",
+        chatId: msg.chat.id,
+        businessConnectionId: bcId,
+      }).catch(() => null);
+      const text = desc
+        ? [desc.description, desc.textInImage].filter(Boolean).join("\n")
+        : "";
+      if (text) {
+        userText = `[GIF] ${text}`;
+        processedMediaDescription = text;
+        processedMediaKind = "animation";
+      }
+    }
+  }
+
   if (!userText) return false;
+
+  // Persist the transcript/description on the original message row so
+  // future calls to recentConversation (and the dashboard) see the
+  // real content instead of `[voice]`. Best-effort — we already have
+  // userText cached locally, so this never blocks the AI reply.
+  if (processedMediaTranscript || processedMediaDescription) {
+    void (async () => {
+      try {
+        // Look up the messages_log row created (or about to be created)
+        // for this telegram message. handleBusinessMessage logs AFTER
+        // sendAiConversation, so there might not be a row yet — retry
+        // briefly.
+        for (let i = 0; i < 4; i++) {
+          const rows = await sql()`
+            SELECT id FROM messages_log
+            WHERE business_connection_id = ${bcId}
+              AND chat_id = ${msg.chat.id}
+              AND message_id = ${msg.message_id}
+            LIMIT 1`;
+          const r = rows[0] as { id: string } | undefined;
+          if (r) {
+            if (processedMediaTranscript) {
+              await saveTranscript(Number(r.id), processedMediaTranscript);
+            } else if (processedMediaDescription) {
+              await saveMediaDescription(
+                Number(r.id),
+                processedMediaDescription,
+              );
+            }
+            return;
+          }
+          await sleep(800);
+        }
+      } catch (err) {
+        console.warn("[ai_chat] persist transcript/description failed:", err);
+      }
+    })();
+  }
+  void processedMediaKind;
 
   // Flood waitlist: if we already sent the "I'm busy" deflection in this
   // chat and the cooldown hasn't passed, stay silent. The dashboard

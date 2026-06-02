@@ -32,7 +32,7 @@ const NAV = [
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/chats", label: "Chats", icon: Users2 },
   { href: "/groups", label: "Groups", icon: Activity },
-  { href: "/reminders", label: "Reminders", icon: Bell },
+  { href: "/reminders", label: "Actions", icon: Bell },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/costs", label: "Costs", icon: DollarSign },
   { href: "/audit", label: "Audit", icon: History },

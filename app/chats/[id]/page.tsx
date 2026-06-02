@@ -96,6 +96,9 @@ type Rule = {
   toneProfileAt: string | null;
   floodCooldownUntil: string | null;
   floodDeflectedAt: string | null;
+  aiProcessVoice: boolean;
+  aiProcessStickers: boolean;
+  aiProcessGifs: boolean;
   graceSkippedAt: string | null;
   updatedAt: string;
 };
@@ -133,6 +136,13 @@ type ThreadGroup = {
   messageCount: number;
   senders: string[];
   messages: ThreadMsg[];
+  summary: {
+    summary: string;
+    topics: string[];
+    actionItems: string[];
+    createdAt: string;
+    stale: boolean;
+  } | null;
 };
 
 type MessageEdit = {
@@ -269,19 +279,24 @@ export default function ChatDetailPage() {
   const [threads, setThreads] = useState<ThreadGroup[] | null>(null);
   const [threadsLoading, setThreadsLoading] = useState(false);
   const [threadGap, setThreadGap] = useState(5);
+  const [threadWindow, setThreadWindow] = useState<
+    "recent24h" | "recent7d" | "all"
+  >("recent24h");
   const [expandedThreads, setExpandedThreads] = useState<Set<number>>(
     new Set(),
   );
-  const [summaries, setSummaries] = useState<Record<number, string>>({});
   const [summarizing, setSummarizing] = useState<Set<number>>(new Set());
+  const [savedActions, setSavedActions] = useState<Set<string>>(new Set());
 
   const loadThreads = useCallback(
-    async (gap: number) => {
+    async (gap: number, window: "recent24h" | "recent7d" | "all") => {
       if (!Number.isFinite(chatId)) return;
       setThreadsLoading(true);
+      const sinceHours =
+        window === "recent24h" ? 24 : window === "recent7d" ? 24 * 7 : 0;
       try {
         const r = await fetch(
-          `/api/chats/${chatId}/threads?gap=${gap}&limit=500`,
+          `/api/chats/${chatId}/threads?gap=${gap}&limit=500&sinceHours=${sinceHours}`,
         );
         if (r.ok) {
           const j = (await r.json()) as { threads: ThreadGroup[] };
@@ -294,29 +309,23 @@ export default function ChatDetailPage() {
     [chatId],
   );
 
-  async function summarizeThread(threadNo: number) {
-    if (summarizing.has(threadNo) || summaries[threadNo]) return;
+  async function summarizeThread(threadNo: number, force = false) {
+    if (summarizing.has(threadNo)) return;
     setSummarizing((prev) => new Set(prev).add(threadNo));
     try {
       const r = await fetch(`/api/chats/${chatId}/threads/summarize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ threadNo, gapMinutes: threadGap }),
+        body: JSON.stringify({
+          threadNo,
+          gapMinutes: threadGap,
+          force,
+        }),
       });
       if (r.ok) {
-        const j = (await r.json()) as {
-          summary?: { summary?: string; topics?: string[]; actionItems?: string[] };
-        };
-        const parts: string[] = [];
-        if (j.summary?.summary) parts.push(j.summary.summary);
-        if (j.summary?.topics?.length)
-          parts.push(`موضوعات: ${j.summary.topics.join(" · ")}`);
-        if (j.summary?.actionItems?.length)
-          parts.push(`Action items:\n• ${j.summary.actionItems.join("\n• ")}`);
-        setSummaries((prev) => ({
-          ...prev,
-          [threadNo]: parts.join("\n\n") || "(no summary)",
-        }));
+        // Reload threads so we pick up the new persisted summary +
+        // stale flag rather than tracking it locally.
+        await loadThreads(threadGap, threadWindow);
       }
     } finally {
       setSummarizing((prev) => {
@@ -324,6 +333,19 @@ export default function ChatDetailPage() {
         next.delete(threadNo);
         return next;
       });
+    }
+  }
+
+  async function addActionFromSummary(threadNo: number, title: string) {
+    const key = `${threadNo}::${title}`;
+    if (savedActions.has(key)) return;
+    const r = await fetch(`/api/chats/${chatId}/actions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, kind: "action" }),
+    });
+    if (r.ok) {
+      setSavedActions((prev) => new Set(prev).add(key));
     }
   }
 
@@ -894,32 +916,83 @@ export default function ChatDetailPage() {
                   )}
                 </div>
               )}
+
+              {rule?.mode === "ai_chat" && (
+                <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                  <div className="text-xs font-medium mb-1.5">
+                    🎙 پردازش خودکار رسانه در AI chat
+                  </div>
+                  <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
+                    وقتی روشن باشه، AI به جای اینکه ساکت بمونه ویس / استیکر /
+                    GIF رو می‌فهمه و جواب می‌ده. transcript روی پیام پایدار
+                    می‌مونه و دفعه‌ی بعد نیازی به دکمه نیست.
+                  </div>
+                  <div className="flex flex-col gap-1.5 text-xs">
+                    {(
+                      [
+                        ["aiProcessVoice", "🎤 ویس", rule.aiProcessVoice],
+                        ["aiProcessStickers", "🎨 استیکر", rule.aiProcessStickers],
+                        ["aiProcessGifs", "🎞 گیف", rule.aiProcessGifs],
+                      ] as const
+                    ).map(([key, label, value]) => (
+                      <label
+                        key={key}
+                        className="flex items-center gap-2 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(value)}
+                          disabled={saving}
+                          onChange={(e) =>
+                            patchRule({ [key]: e.target.checked })
+                          }
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
           </Card>
 
           <PageTitle
             title="Threads"
-            subtitle="هر فاصله‌ی سکوتِ بیشتر از چند دقیقه یه thread جدید درست می‌کنه. خلاصه‌ی هر کدوم رو با AI بگیر."
+            subtitle="هر فاصله‌ی سکوتِ بیشتر از چند دقیقه یه thread جدید درست می‌کنه. خلاصه‌ی هر کدوم رو با AI بگیر — اکشن‌های پیشنهادی به Actions اضافه می‌شن."
             actions={
-              <div className="flex items-center gap-2">
-                <label className="text-[11px] text-[var(--color-text-dim)]">
-                  gap
-                </label>
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={threadWindow}
+                  onChange={(e) => {
+                    const w = e.target.value as
+                      | "recent24h"
+                      | "recent7d"
+                      | "all";
+                    setThreadWindow(w);
+                    void loadThreads(threadGap, w);
+                  }}
+                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs"
+                >
+                  <option value="recent24h">۲۴ ساعت اخیر</option>
+                  <option value="recent7d">۷ روز اخیر</option>
+                  <option value="all">همه</option>
+                </select>
                 <select
                   value={threadGap}
                   onChange={(e) => {
                     const g = Number(e.target.value);
                     setThreadGap(g);
-                    void loadThreads(g);
+                    void loadThreads(g, threadWindow);
                   }}
                   className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs"
+                  title="فاصله‌ی سکوت برای جدا کردن threadها"
                 >
-                  <option value="2">۲ دقیقه</option>
-                  <option value="5">۵ دقیقه</option>
-                  <option value="15">۱۵ دقیقه</option>
-                  <option value="60">۱ ساعت</option>
+                  <option value="2">gap ۲ دقیقه</option>
+                  <option value="5">gap ۵ دقیقه</option>
+                  <option value="15">gap ۱۵ دقیقه</option>
+                  <option value="60">gap ۱ ساعت</option>
                 </select>
                 <button
-                  onClick={() => loadThreads(threadGap)}
+                  onClick={() => loadThreads(threadGap, threadWindow)}
                   disabled={threadsLoading}
                   className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                 >
@@ -943,7 +1016,9 @@ export default function ChatDetailPage() {
           {threads && threads.length === 0 && (
             <Card>
               <p className="text-sm text-[var(--color-text-dim)]">
-                پیامی در این چت نیست.
+                {threadWindow === "all"
+                  ? "پیامی در این چت نیست."
+                  : "توی این بازه‌ی زمانی thread‌ای نیست. فیلتر رو روی «همه» بذار یا بازه‌ی بزرگ‌تر انتخاب کن."}
               </p>
             </Card>
           )}
@@ -956,6 +1031,15 @@ export default function ChatDetailPage() {
                 const durationMs =
                   ended.getTime() - started.getTime();
                 const durationMin = Math.round(durationMs / 60000);
+                const sum = t.summary;
+                const summarising = summarizing.has(t.threadNo);
+                const summariseLabel = summarising
+                  ? "Summarising…"
+                  : !sum
+                    ? "Summarise"
+                    : sum.stale
+                      ? "🔄 Update summary"
+                      : "✓ Re-summarise";
                 return (
                   <Card key={t.threadNo} className="!p-3">
                     <div className="flex items-start justify-between gap-2 flex-wrap">
@@ -969,22 +1053,22 @@ export default function ChatDetailPage() {
                         <div className="text-[11px] text-[var(--color-text-dim)] mt-0.5">
                           {t.messageCount} پیام · {durationMin}m ·{" "}
                           {t.senders.join("، ")}
+                          {sum?.stale && (
+                            <span className="ml-2 text-amber-400">
+                              · پیام جدید بعد از خلاصه
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex gap-1">
                         <button
-                          onClick={() => summarizeThread(t.threadNo)}
-                          disabled={
-                            summarizing.has(t.threadNo) ||
-                            Boolean(summaries[t.threadNo])
+                          onClick={() =>
+                            summarizeThread(t.threadNo, sum?.stale ?? false)
                           }
+                          disabled={summarising}
                           className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                         >
-                          {summarizing.has(t.threadNo)
-                            ? "Summarising…"
-                            : summaries[t.threadNo]
-                              ? "✓ Summary"
-                              : "Summarise"}
+                          {summariseLabel}
                         </button>
                         <button
                           onClick={() =>
@@ -1002,12 +1086,58 @@ export default function ChatDetailPage() {
                         </button>
                       </div>
                     </div>
-                    {summaries[t.threadNo] && (
-                      <div
-                        dir="auto"
-                        className="mt-2 text-xs whitespace-pre-wrap bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md p-2"
-                      >
-                        {summaries[t.threadNo]}
+                    {sum && (
+                      <div className="mt-2 text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md p-2">
+                        <div
+                          dir="auto"
+                          className="whitespace-pre-wrap"
+                        >
+                          {sum.summary}
+                        </div>
+                        {sum.topics.length > 0 && (
+                          <div
+                            dir="auto"
+                            className="mt-2 text-[11px] text-[var(--color-text-dim)]"
+                          >
+                            موضوعات: {sum.topics.join(" · ")}
+                          </div>
+                        )}
+                        {sum.actionItems.length > 0 && (
+                          <div className="mt-2">
+                            <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
+                              اکشن‌های پیشنهادی — کلیک کن تا به Actions اضافه بشه:
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {sum.actionItems.map((a, i) => {
+                                const key = `${t.threadNo}::${a}`;
+                                const saved = savedActions.has(key);
+                                return (
+                                  <button
+                                    key={i}
+                                    dir="auto"
+                                    onClick={() =>
+                                      addActionFromSummary(t.threadNo, a)
+                                    }
+                                    disabled={saved}
+                                    className={`text-[11px] px-2 py-1 rounded-md border text-left ${
+                                      saved
+                                        ? "border-emerald-700 bg-emerald-900/40 text-emerald-300 cursor-default"
+                                        : "border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+                                    }`}
+                                  >
+                                    {saved ? "✓ " : "+ "}
+                                    {a}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        <div className="mt-2 text-[10px] text-[var(--color-text-dim)]">
+                          {sum.stale
+                            ? "خلاصه‌ی قبلی — پیام‌های جدیدتری اضافه شده‌ان"
+                            : `خلاصه‌ی ${relTime(sum.createdAt)}`}
+                        </div>
                       </div>
                     )}
                     {expanded && (

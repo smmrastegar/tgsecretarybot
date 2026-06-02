@@ -188,6 +188,30 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS tone_profile_at TIMESTAMPTZ`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS flood_cooldown_until TIMESTAMPTZ`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS flood_deflected_at TIMESTAMPTZ`;
+    // Per-chat opt-in: in ai_chat mode, treat incoming voice / sticker
+    // / GIF (animation) as if it were text by transcribing or
+    // describing it first, then letting the AI reply. Off by default
+    // because both add ~$0.001 per message.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_voice BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_stickers BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_gifs BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Persisted per-thread AI summaries so the dashboard doesn't lose
+    // them on reload and so we can detect when a thread has new
+    // activity that arrived after the last summary.
+    await q`
+      CREATE TABLE IF NOT EXISTS thread_summaries (
+        id                BIGSERIAL PRIMARY KEY,
+        chat_id           BIGINT NOT NULL,
+        thread_started_at TIMESTAMPTZ NOT NULL,
+        thread_ended_at   TIMESTAMPTZ NOT NULL,
+        message_count     INT NOT NULL,
+        summary           TEXT NOT NULL,
+        topics            JSONB NOT NULL DEFAULT '[]',
+        action_items      JSONB NOT NULL DEFAULT '[]',
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (chat_id, thread_started_at)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS thread_summaries_chat_idx ON thread_summaries (chat_id, thread_started_at DESC)`;
     // One-time migration: the old default was 'secretary' which caused the
     // bot to relay/auto-reply in every new chat. Owner wants the default to
     // be silent (off); flip every existing 'secretary' row to 'off' exactly
@@ -726,6 +750,89 @@ export async function listMessages(opts: {
   return rows.map(rowToMessage);
 }
 
+// --- Thread summaries ---
+
+export type ThreadSummary = {
+  id: number;
+  chatId: number;
+  threadStartedAt: Date;
+  threadEndedAt: Date;
+  messageCount: number;
+  summary: string;
+  topics: string[];
+  actionItems: string[];
+  createdAt: Date;
+};
+
+function rowToThreadSummary(r: Record<string, unknown>): ThreadSummary {
+  const topicsRaw = r.topics;
+  const actionsRaw = r.action_items;
+  return {
+    id: Number(r.id),
+    chatId: Number(r.chat_id),
+    threadStartedAt: r.thread_started_at as Date,
+    threadEndedAt: r.thread_ended_at as Date,
+    messageCount: Number(r.message_count),
+    summary: r.summary as string,
+    topics: Array.isArray(topicsRaw)
+      ? (topicsRaw.filter((x) => typeof x === "string") as string[])
+      : [],
+    actionItems: Array.isArray(actionsRaw)
+      ? (actionsRaw.filter((x) => typeof x === "string") as string[])
+      : [],
+    createdAt: r.created_at as Date,
+  };
+}
+
+export async function upsertThreadSummary(args: {
+  chatId: number;
+  threadStartedAt: Date;
+  threadEndedAt: Date;
+  messageCount: number;
+  summary: string;
+  topics: string[];
+  actionItems: string[];
+}): Promise<ThreadSummary> {
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO thread_summaries (
+      chat_id, thread_started_at, thread_ended_at, message_count,
+      summary, topics, action_items
+    ) VALUES (
+      ${args.chatId}, ${args.threadStartedAt.toISOString()},
+      ${args.threadEndedAt.toISOString()}, ${args.messageCount},
+      ${args.summary},
+      ${JSON.stringify(args.topics)}::jsonb,
+      ${JSON.stringify(args.actionItems)}::jsonb
+    )
+    ON CONFLICT (chat_id, thread_started_at) DO UPDATE SET
+      thread_ended_at = EXCLUDED.thread_ended_at,
+      message_count = EXCLUDED.message_count,
+      summary = EXCLUDED.summary,
+      topics = EXCLUDED.topics,
+      action_items = EXCLUDED.action_items,
+      created_at = NOW()
+    RETURNING id, chat_id, thread_started_at, thread_ended_at,
+              message_count, summary, topics, action_items, created_at`;
+  return rowToThreadSummary(rows[0] as Record<string, unknown>);
+}
+
+export async function listThreadSummaries(
+  chatId: number,
+  threadStartedAts: Date[],
+): Promise<ThreadSummary[]> {
+  if (!hasDb() || threadStartedAts.length === 0) return [];
+  await ensureSchema();
+  const isoList = threadStartedAts.map((d) => d.toISOString());
+  const rows = await sql()`
+    SELECT id, chat_id, thread_started_at, thread_ended_at,
+           message_count, summary, topics, action_items, created_at
+    FROM thread_summaries
+    WHERE chat_id = ${chatId}
+      AND thread_started_at = ANY(${isoList}::timestamptz[])`;
+  return (rows as Array<Record<string, unknown>>).map(rowToThreadSummary);
+}
+
 // Cluster a chat's messages into threads by time gap (default: a >5min
 // silence starts a new thread). Used by the ai_listen mode dashboard so
 // the owner can scan what happened during periods they weren't looking
@@ -882,6 +989,9 @@ export type ChatRule = {
   toneProfileAt: Date | null;
   floodCooldownUntil: Date | null;
   floodDeflectedAt: Date | null;
+  aiProcessVoice: boolean;
+  aiProcessStickers: boolean;
+  aiProcessGifs: boolean;
   graceSkippedAt: Date | null;
   updatedAt: Date;
 };
@@ -915,6 +1025,9 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
     toneProfileAt: (r.tone_profile_at as Date) ?? null,
     floodCooldownUntil: (r.flood_cooldown_until as Date) ?? null,
     floodDeflectedAt: (r.flood_deflected_at as Date) ?? null,
+    aiProcessVoice: Boolean(r.ai_process_voice),
+    aiProcessStickers: Boolean(r.ai_process_stickers),
+    aiProcessGifs: Boolean(r.ai_process_gifs),
     graceSkippedAt: (r.grace_skipped_at as Date) ?? null,
     updatedAt: r.updated_at as Date,
   };
@@ -930,6 +1043,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            relationship_notes, talk_style_notes,
            tone_profile, tone_profile_at,
            flood_cooldown_until, flood_deflected_at,
+           ai_process_voice, ai_process_stickers, ai_process_gifs,
            grace_skipped_at, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -952,6 +1066,9 @@ export async function upsertChatRule(rule: {
   relationship?: Relationship | null;
   relationshipNotes?: string | null;
   talkStyleNotes?: string | null;
+  aiProcessVoice?: boolean;
+  aiProcessStickers?: boolean;
+  aiProcessGifs?: boolean;
 }): Promise<void> {
   await ensureSchema();
   const mode = rule.mode ?? "off";
@@ -966,18 +1083,23 @@ export async function upsertChatRule(rule: {
       : null;
   const relationshipNotes = rule.relationshipNotes ?? null;
   const talkStyleNotes = rule.talkStyleNotes ?? null;
+  const aiProcessVoice = rule.aiProcessVoice ?? false;
+  const aiProcessStickers = rule.aiProcessStickers ?? false;
+  const aiProcessGifs = rule.aiProcessGifs ?? false;
   await sql()`
     INSERT INTO chat_rules (
       chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
       mode, mode_changed_at, secretary_user_id,
       first_name, last_name, nickname, relationship,
-      relationship_notes, talk_style_notes, updated_at
+      relationship_notes, talk_style_notes,
+      ai_process_voice, ai_process_stickers, ai_process_gifs, updated_at
     )
     VALUES (
       ${rule.chatId}, ${rule.chatType}, ${rule.chatTitle}, ${rule.vip}, ${rule.muted},
       ${rule.customReply}, ${rule.notes}, ${mode}, NOW(), ${secretaryUserId},
       ${firstName}, ${lastName}, ${nickname}, ${relationship},
-      ${relationshipNotes}, ${talkStyleNotes}, NOW()
+      ${relationshipNotes}, ${talkStyleNotes},
+      ${aiProcessVoice}, ${aiProcessStickers}, ${aiProcessGifs}, NOW()
     )
     ON CONFLICT (chat_id) DO UPDATE SET
       chat_type = EXCLUDED.chat_type,
@@ -996,6 +1118,9 @@ export async function upsertChatRule(rule: {
       relationship = EXCLUDED.relationship,
       relationship_notes = EXCLUDED.relationship_notes,
       talk_style_notes = EXCLUDED.talk_style_notes,
+      ai_process_voice = EXCLUDED.ai_process_voice,
+      ai_process_stickers = EXCLUDED.ai_process_stickers,
+      ai_process_gifs = EXCLUDED.ai_process_gifs,
       updated_at = NOW()`;
 }
 
@@ -1276,8 +1401,15 @@ export async function recentConversation(
 ): Promise<Array<{ from: "owner" | "other"; senderName: string; text: string; at: Date }>> {
   if (!hasDb()) return [];
   await ensureSchema();
+  // For voice / sticker / GIF messages the message_text column is the
+  // raw `[voice]` placeholder. If we have a transcript or a media
+  // description for that row we surface THAT to the AI so future
+  // replies are based on the real content. This is what makes the
+  // transcript "stick" — once transcribed, every subsequent AI call
+  // sees the words, not the placeholder.
   const rows = await sql()`
-    SELECT created_at, from_owner, sender_name, message_text
+    SELECT created_at, from_owner, sender_name, message_text,
+           transcript, media_description, media_kind
     FROM messages_log
     WHERE chat_id = ${chatId}
       AND (skipped_reason IS NULL OR skipped_reason <> 'muted')
@@ -1287,14 +1419,24 @@ export async function recentConversation(
     from_owner: boolean;
     sender_name: string;
     message_text: string;
+    transcript: string | null;
+    media_description: string | null;
+    media_kind: string | null;
   }>;
   return r
-    .map((row) => ({
-      from: row.from_owner ? ("owner" as const) : ("other" as const),
-      senderName: row.sender_name,
-      text: row.message_text,
-      at: row.created_at,
-    }))
+    .map((row) => {
+      let text = row.message_text;
+      if (row.transcript) text = row.transcript;
+      else if (row.media_description) {
+        text = `[${row.media_kind ?? "media"}] ${row.media_description}`;
+      }
+      return {
+        from: row.from_owner ? ("owner" as const) : ("other" as const),
+        senderName: row.sender_name,
+        text,
+        at: row.created_at,
+      };
+    })
     .reverse();
 }
 

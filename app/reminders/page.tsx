@@ -123,8 +123,8 @@ export default function RemindersPage() {
   return (
     <Shell>
       <PageTitle
-        title="Reminders"
-        subtitle="Events, deadlines, tasks and notes the AI extracted from messages."
+        title="Actions"
+        subtitle="کارها، رویدادها، یادآوری‌ها و نکته‌هایی که از پیام‌ها استخراج شده. ریمایندر فقط یک نوع از actionهاست."
         actions={
           <div className="flex gap-1">
             {(["upcoming", "all", "done"] as const).map((f) => (
