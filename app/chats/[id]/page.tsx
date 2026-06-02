@@ -831,6 +831,23 @@ export default function ChatDetailPage() {
                       downloader) براش ست می‌کنی و mode رو روی Off می‌ذاری تا
                       AI جوابش رو نده. notes زیر به prompt تزریق می‌شه.
                     </div>
+                    <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                      اسم سفارشی (اگه خالی بمونه، نام پیش‌فرض bot استفاده می‌شه)
+                    </label>
+                    <input
+                      dir="auto"
+                      type="text"
+                      disabled={saving}
+                      value={personal.firstName}
+                      onChange={(e) =>
+                        updatePersonal({ firstName: e.target.value })
+                      }
+                      placeholder={rule?.chatTitle ?? "—"}
+                      className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] mb-3"
+                    />
+                    <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                      Notes
+                    </label>
                     <textarea
                       dir="auto"
                       disabled={saving}
@@ -869,6 +886,20 @@ export default function ChatDetailPage() {
                     <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
                       Channel / Group context
                     </div>
+                    <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
+                      اسم سفارشی (اگه خالی بمونه، نام پیش‌فرض کانال/گروه استفاده می‌شه)
+                    </label>
+                    <input
+                      dir="auto"
+                      type="text"
+                      disabled={saving}
+                      value={personal.firstName}
+                      onChange={(e) =>
+                        updatePersonal({ firstName: e.target.value })
+                      }
+                      placeholder={rule?.chatTitle ?? "—"}
+                      className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] mb-3"
+                    />
                     <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
                       📝 Context / Notes — هر چی اینجا بنویسی، توی همه‌ی
                       تحلیل‌های بعدی این چت (classify / summarise) به prompt
