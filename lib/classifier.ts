@@ -520,6 +520,68 @@ export type GroupSummary = {
   mentionsOwner: boolean;
 };
 
+// Natural-language query over the owner's recent messages. The user
+// types something like "ساعت کاری همه‌ی بچه‌ها رو بگو" and the AI
+// scans the supplied messages, organises the answer by chat, and
+// returns Persian prose. We deliberately do NOT touch the chat_rules
+// table here — pure analytical query.
+const ASK_PROMPT = `You are a search assistant for a Telegram secretary
+dashboard. The owner asks a question in natural language and you receive a
+batch of recent messages (already pre-filtered by the dashboard). Answer in
+Persian, concise, grouped by chat where relevant.
+
+Rules:
+- ALWAYS output in Persian (فارسی), in clean Markdown if it helps
+  (bullets, bold, headings).
+- Be specific. Quote senders by name when relevant.
+- Group results by chat title when the question is per-chat (e.g.
+  "ساعت کاری هر کس"). Use the chat title as a heading.
+- If the messages don't contain the answer, say so honestly (e.g.
+  "توی پیام‌های اخیر چیزی در این مورد نبود.") rather than inventing.
+- Don't recite all messages — just synthesise the answer.
+- Plain text only. NO JSON, NO code fences, NO "reply": keys.`;
+
+export async function askMessages(input: {
+  prompt: string;
+  ownerName: string;
+  ownerContext: string;
+  messages: Array<{
+    chatTitle: string | null;
+    senderName: string;
+    text: string;
+    at: Date;
+  }>;
+}): Promise<string> {
+  const payload = {
+    question: input.prompt,
+    owner_name: input.ownerName,
+    owner_context: input.ownerContext || undefined,
+    messages: input.messages.slice(-500).map((m) => ({
+      chat: m.chatTitle ?? "—",
+      sender: m.senderName,
+      text: m.text.slice(0, 400),
+      at: m.at.toISOString(),
+    })),
+  };
+  const content = await callOpenRouter(
+    [
+      { role: "system", content: ASK_PROMPT },
+      { role: "user", content: JSON.stringify(payload) },
+    ],
+    {
+      maxTokens: 1200,
+      temperature: 0.3,
+      purpose: "ask",
+    },
+  );
+  // Strip any code fences the model might wrap things in, otherwise
+  // return as-is — we want full prose, not a JSON envelope.
+  return content
+    .replace(/^\s*```(?:markdown|md)?\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+}
+
 export async function summarizeGroup(input: {
   chatTitle: string | null;
   ownerName: string;

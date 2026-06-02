@@ -14,6 +14,12 @@ const TILES: Array<{
   desc: string;
 }> = [
   {
+    href: "/ask",
+    emoji: "🔎",
+    label: "Ask",
+    desc: "سوال طبیعی از همه‌ی پیام‌ها (مثلاً «ساعت کاری بچه‌ها رو بگو»)",
+  },
+  {
     href: "/groups",
     emoji: "📊",
     label: "Groups",
