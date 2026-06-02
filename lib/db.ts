@@ -195,6 +195,13 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_voice BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_stickers BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_gifs BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Per-chat "function": some chats aren't ordinary conversations,
+    // they're tools (e.g. a downloader bot, an SMS-forwarding channel,
+    // a news source). Labelling them lets the bot adjust classifier
+    // importance, route requests to them, and group them in the UI.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS function_role TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS function_config JSONB`;
+    await q`CREATE INDEX IF NOT EXISTS chat_rules_function_role_idx ON chat_rules (function_role) WHERE function_role IS NOT NULL`;
     // Persisted per-thread AI summaries so the dashboard doesn't lose
     // them on reload and so we can detect when a thread has new
     // activity that arrived after the last summary.
@@ -968,6 +975,25 @@ export const RELATIONSHIPS = [
 ] as const;
 export type Relationship = (typeof RELATIONSHIPS)[number];
 
+// Role / function a chat plays in the owner's workflow. Most chats are
+// just conversations (null), but some are tools or feeds whose
+// behaviour the bot should adapt to.
+export const FUNCTION_ROLES = [
+  "downloader",
+  "sms_inbox",
+  "download_archive",
+  "news",
+] as const;
+export type FunctionRole = (typeof FUNCTION_ROLES)[number];
+
+export const FUNCTION_ROLE_LABELS: Record<FunctionRole, string> = {
+  downloader:
+    "Downloader bot (Instagram / YouTube / Twitter / SoundCloud / Spotify)",
+  sms_inbox: "SMS inbox (forwarded phone messages)",
+  download_archive: "Download archive (saved Instagram / etc. media)",
+  news: "News source (channel or group with important news)",
+};
+
 export type ChatRule = {
   chatId: number;
   chatType: string;
@@ -992,6 +1018,8 @@ export type ChatRule = {
   aiProcessVoice: boolean;
   aiProcessStickers: boolean;
   aiProcessGifs: boolean;
+  functionRole: FunctionRole | null;
+  functionConfig: Record<string, unknown> | null;
   graceSkippedAt: Date | null;
   updatedAt: Date;
 };
@@ -1028,6 +1056,15 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
     aiProcessVoice: Boolean(r.ai_process_voice),
     aiProcessStickers: Boolean(r.ai_process_stickers),
     aiProcessGifs: Boolean(r.ai_process_gifs),
+    functionRole:
+      typeof r.function_role === "string" &&
+      (FUNCTION_ROLES as readonly string[]).includes(r.function_role)
+        ? (r.function_role as FunctionRole)
+        : null,
+    functionConfig:
+      r.function_config && typeof r.function_config === "object"
+        ? (r.function_config as Record<string, unknown>)
+        : null,
     graceSkippedAt: (r.grace_skipped_at as Date) ?? null,
     updatedAt: r.updated_at as Date,
   };
@@ -1044,6 +1081,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            tone_profile, tone_profile_at,
            flood_cooldown_until, flood_deflected_at,
            ai_process_voice, ai_process_stickers, ai_process_gifs,
+           function_role, function_config,
            grace_skipped_at, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -1069,6 +1107,8 @@ export async function upsertChatRule(rule: {
   aiProcessVoice?: boolean;
   aiProcessStickers?: boolean;
   aiProcessGifs?: boolean;
+  functionRole?: FunctionRole | null;
+  functionConfig?: Record<string, unknown> | null;
 }): Promise<void> {
   await ensureSchema();
   const mode = rule.mode ?? "off";
@@ -1086,20 +1126,33 @@ export async function upsertChatRule(rule: {
   const aiProcessVoice = rule.aiProcessVoice ?? false;
   const aiProcessStickers = rule.aiProcessStickers ?? false;
   const aiProcessGifs = rule.aiProcessGifs ?? false;
+  const functionRole =
+    rule.functionRole &&
+    (FUNCTION_ROLES as readonly string[]).includes(rule.functionRole)
+      ? rule.functionRole
+      : null;
+  const functionConfigJson =
+    rule.functionConfig === undefined
+      ? undefined
+      : rule.functionConfig === null
+        ? null
+        : JSON.stringify(rule.functionConfig);
   await sql()`
     INSERT INTO chat_rules (
       chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
       mode, mode_changed_at, secretary_user_id,
       first_name, last_name, nickname, relationship,
       relationship_notes, talk_style_notes,
-      ai_process_voice, ai_process_stickers, ai_process_gifs, updated_at
+      ai_process_voice, ai_process_stickers, ai_process_gifs,
+      function_role, function_config, updated_at
     )
     VALUES (
       ${rule.chatId}, ${rule.chatType}, ${rule.chatTitle}, ${rule.vip}, ${rule.muted},
       ${rule.customReply}, ${rule.notes}, ${mode}, NOW(), ${secretaryUserId},
       ${firstName}, ${lastName}, ${nickname}, ${relationship},
       ${relationshipNotes}, ${talkStyleNotes},
-      ${aiProcessVoice}, ${aiProcessStickers}, ${aiProcessGifs}, NOW()
+      ${aiProcessVoice}, ${aiProcessStickers}, ${aiProcessGifs},
+      ${functionRole}, ${functionConfigJson}::jsonb, NOW()
     )
     ON CONFLICT (chat_id) DO UPDATE SET
       chat_type = EXCLUDED.chat_type,
@@ -1121,7 +1174,50 @@ export async function upsertChatRule(rule: {
       ai_process_voice = EXCLUDED.ai_process_voice,
       ai_process_stickers = EXCLUDED.ai_process_stickers,
       ai_process_gifs = EXCLUDED.ai_process_gifs,
+      function_role = COALESCE(EXCLUDED.function_role, chat_rules.function_role),
+      function_config = COALESCE(EXCLUDED.function_config, chat_rules.function_config),
       updated_at = NOW()`;
+}
+
+// Plain SETs for the function role/config so we can clear them too
+// (the upsert COALESCEs and would never clear).
+export async function setChatFunction(
+  chatId: number,
+  role: FunctionRole | null,
+  config: Record<string, unknown> | null,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  const normalisedRole =
+    role && (FUNCTION_ROLES as readonly string[]).includes(role) ? role : null;
+  const configJson = config ? JSON.stringify(config) : null;
+  await sql()`
+    UPDATE chat_rules
+    SET function_role = ${normalisedRole},
+        function_config = ${configJson}::jsonb,
+        updated_at = NOW()
+    WHERE chat_id = ${chatId}`;
+}
+
+export async function listChatsByFunction(
+  role: FunctionRole,
+): Promise<ChatRule[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
+           mode, mode_changed_at, secretary_user_id,
+           first_name, last_name, nickname, relationship,
+           relationship_notes, talk_style_notes,
+           tone_profile, tone_profile_at,
+           flood_cooldown_until, flood_deflected_at,
+           ai_process_voice, ai_process_stickers, ai_process_gifs,
+           function_role, function_config,
+           grace_skipped_at, updated_at
+    FROM chat_rules
+    WHERE function_role = ${role}
+    ORDER BY updated_at DESC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToChatRule);
 }
 
 // Persist a fine-tuned tone profile for a chat. Separate from

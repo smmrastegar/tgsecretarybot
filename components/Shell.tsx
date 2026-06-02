@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquare,
+  Puzzle,
   Settings,
   Users2,
 } from "lucide-react";
@@ -33,6 +34,7 @@ const NAV = [
   { href: "/chats", label: "Chats", icon: Users2 },
   { href: "/groups", label: "Groups", icon: Activity },
   { href: "/reminders", label: "Actions", icon: Bell },
+  { href: "/functions", label: "Functions", icon: Puzzle },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/costs", label: "Costs", icon: DollarSign },
   { href: "/audit", label: "Audit", icon: History },

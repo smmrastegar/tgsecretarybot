@@ -99,8 +99,22 @@ type Rule = {
   aiProcessVoice: boolean;
   aiProcessStickers: boolean;
   aiProcessGifs: boolean;
+  functionRole:
+    | "downloader"
+    | "sms_inbox"
+    | "download_archive"
+    | "news"
+    | null;
+  functionConfig: Record<string, unknown> | null;
   graceSkippedAt: string | null;
   updatedAt: string;
+};
+
+const FUNCTION_ROLE_LABELS: Record<string, string> = {
+  downloader: "📥 Downloader bot",
+  sms_inbox: "📱 SMS inbox",
+  download_archive: "🗄 Download archive",
+  news: "📰 News source",
 };
 
 type GraceInfo = {
@@ -916,6 +930,39 @@ export default function ChatDetailPage() {
                   )}
                 </div>
               )}
+
+              <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                <div className="text-xs font-medium mb-1.5">
+                  🧩 نقش (Function) این چت
+                </div>
+                <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
+                  اگه این چت یه ابزار خاصه (مثلاً bot دانلود، یا SMS inbox) از
+                  اینجا انتخاب کن — رفتار کلاسیفایر و بقیه فیچرها روی این
+                  نقش تنظیم می‌شه.
+                </div>
+                <select
+                  disabled={saving}
+                  value={rule?.functionRole ?? ""}
+                  onChange={(e) =>
+                    fetch(`/api/chats/${chatId}/function`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        role: e.target.value || null,
+                        config: rule?.functionConfig ?? null,
+                      }),
+                    }).then(() => load())
+                  }
+                  className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-xs"
+                >
+                  <option value="">— بدون نقش خاص —</option>
+                  {Object.entries(FUNCTION_ROLE_LABELS).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               {rule?.mode === "ai_chat" && (
                 <div className="mt-3 pt-3 border-t border-[var(--color-border)]">

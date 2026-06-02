@@ -42,6 +42,23 @@ export default function HealthPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [refreshingWebhook, setRefreshingWebhook] = useState(false);
+
+  async function refreshWebhook() {
+    setRefreshingWebhook(true);
+    try {
+      const r = await fetch("/api/health/refresh-webhook", { method: "POST" });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        alert(`Refresh failed: ${j.error ?? r.status}`);
+      }
+    } catch (err) {
+      alert(`Refresh failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setRefreshingWebhook(false);
+      await load();
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,13 +85,23 @@ export default function HealthPage() {
         title="Health"
         subtitle="Live status of every external dependency. If the bot 'just stopped working', the red light is usually here."
         actions={
-          <button
-            onClick={load}
-            disabled={loading}
-            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-          >
-            {loading ? "Checking…" : "Re-check"}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={refreshWebhook}
+              disabled={refreshingWebhook}
+              className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              title="Re-subscribe to all Telegram update types (use this if delete/edit events aren't being received)"
+            >
+              {refreshingWebhook ? "Refreshing…" : "Re-register webhook"}
+            </button>
+            <button
+              onClick={load}
+              disabled={loading}
+              className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            >
+              {loading ? "Checking…" : "Re-check"}
+            </button>
+          </div>
         }
       />
 

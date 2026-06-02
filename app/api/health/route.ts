@@ -1,6 +1,7 @@
 import { Bot } from "grammy";
 import { config } from "@/lib/config";
 import { hasDb, sql } from "@/lib/db";
+import { ALLOWED_UPDATES } from "@/lib/bot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,6 +65,50 @@ export async function GET(): Promise<Response> {
     return `@${me.username} (${me.id})`;
   });
   checks.telegram = { ok: tg.ok, detail: tg.detail ?? tg.value, ms: tg.ms };
+
+  // Webhook subscription info — if allowed_updates doesn't contain
+  // every type we handle (especially deleted_business_messages), the
+  // event will silently never arrive. We surface the gap on the
+  // dashboard so the owner can hit "Re-register webhook".
+  const webhook = await timed(async () => {
+    const bot = new Bot(config.telegramBotToken);
+    const info = await bot.api.getWebhookInfo();
+    return info;
+  });
+  if (webhook.ok && webhook.value) {
+    const info = webhook.value;
+    const registered = new Set(
+      (info.allowed_updates ?? []) as string[],
+    );
+    const expected = ALLOWED_UPDATES as readonly string[];
+    const missing = expected.filter((u) => !registered.has(u));
+    // If allowed_updates is empty/undefined, Telegram defaults to a
+    // subset that EXCLUDES business + reaction updates, so we always
+    // report it as out-of-sync in that case.
+    const stale =
+      missing.length > 0 || (info.allowed_updates?.length ?? 0) === 0;
+    activity.webhook_url = info.url ?? "";
+    activity.webhook_pending = info.pending_update_count ?? 0;
+    activity.webhook_last_error = info.last_error_message ?? "";
+    activity.webhook_allowed_updates =
+      info.allowed_updates && info.allowed_updates.length > 0
+        ? info.allowed_updates.join(", ")
+        : "(default — missing business + reaction events)";
+    activity.webhook_missing = missing.join(", ");
+    checks.webhook = {
+      ok: !stale,
+      detail: stale
+        ? `Missing: ${missing.join(", ") || "default subset only"}. Re-register the webhook to fix.`
+        : "all expected update types subscribed",
+      ms: webhook.ms,
+    };
+  } else {
+    checks.webhook = {
+      ok: false,
+      detail: webhook.detail ?? "getWebhookInfo failed",
+      ms: webhook.ms,
+    };
+  }
 
   const or = await timed(async () => {
     const res = await fetch("https://openrouter.ai/api/v1/auth/key", {
