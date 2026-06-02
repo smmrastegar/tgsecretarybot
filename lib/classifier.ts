@@ -460,11 +460,27 @@ function parseAiReply(content: string): string {
     .replace(/"?\s*\}?\s*$/m, "")
     .trim();
   // Last-ditch safety net: if anything that still looks like a JSON
-  // fragment (matching brace + "reply" word) remains, drop it. We'd
-  // rather send a slightly shorter message than leak `{ "reply` to a
-  // user.
+  // fragment (matching brace + "reply" word) remains, drop it.
   if (/\{[\s\S]*["']?reply["']?/.test(stripped)) {
     stripped = stripped.replace(/\{[\s\S]*$/g, "").trim();
+  }
+  // Drop any leading / trailing lone braces or quotes left by a
+  // truncated payload (`{` alone, `{\n`, `{}`, `"...`, etc).
+  stripped = stripped
+    .replace(/^[\s\{\}"'`,:]+/, "")
+    .replace(/[\s\{\}"'`,:]+$/, "")
+    .trim();
+  // Discard outputs that are obviously not a real reply: empty, just
+  // punctuation/brackets, or a single token left over from the JSON
+  // envelope. Returning empty lets the caller fall back to its
+  // default (away message, no reply, etc.) instead of leaking a
+  // garbage character to the user.
+  if (
+    stripped.length < 2 ||
+    !/[\p{L}\p{N}]/u.test(stripped) ||
+    /^["'{}\[\],:]+$/.test(stripped)
+  ) {
+    return "";
   }
   return stripped;
 }
