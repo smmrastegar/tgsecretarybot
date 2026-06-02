@@ -22,7 +22,7 @@ const MODE_LABELS: Record<ChatMode, string> = {
   auto_reply: "Auto-reply",
   friendly_reply: "Friendly auto-reply (AI)",
   ai_chat: "AI chat (full)",
-  ai_listen: "AI listen (silent, summarises)",
+  ai_listen: "🤐 AI silent (ساکت، فقط خلاصه)",
 };
 
 type Relationship =
