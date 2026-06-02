@@ -75,6 +75,9 @@ export async function ensureSchema(): Promise<void> {
     // connections — they don't have a bcId. Relax the NOT NULL so we
     // can log them.
     await q`ALTER TABLE messages_log ALTER COLUMN business_connection_id DROP NOT NULL`;
+    // group_summaries — same reason: groups receiving messages via the
+    // regular bot.on("message") path have no bcId.
+    await q`ALTER TABLE group_summaries ALTER COLUMN business_connection_id DROP NOT NULL`;
     await q`
       CREATE TABLE IF NOT EXISTS chat_rules (
         chat_id      BIGINT PRIMARY KEY,
@@ -244,6 +247,19 @@ export async function ensureSchema(): Promise<void> {
         created_by   BIGINT
       )`;
     await q`CREATE INDEX IF NOT EXISTS invites_expires_idx ON invites (expires_at)`;
+    await q`
+      CREATE TABLE IF NOT EXISTS knowledge_entries (
+        id          BIGSERIAL PRIMARY KEY,
+        title       TEXT NOT NULL,
+        aliases     JSONB NOT NULL DEFAULT '[]',
+        body        TEXT NOT NULL,
+        tags        JSONB NOT NULL DEFAULT '[]',
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_by  BIGINT
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS knowledge_entries_title_idx ON knowledge_entries (lower(title))`;
+    await q`CREATE INDEX IF NOT EXISTS knowledge_entries_updated_idx ON knowledge_entries (updated_at DESC)`;
     await q`
       CREATE TABLE IF NOT EXISTS processed_updates (
         update_id    BIGINT PRIMARY KEY,
@@ -1257,7 +1273,7 @@ export async function listGroupSummaries(
 export async function upsertGroupSummary(s: {
   chatId: number;
   chatTitle: string | null;
-  businessConnectionId: string;
+  businessConnectionId: string | null;
   periodStart: Date;
   periodEnd: Date;
   messageCount: number;
@@ -1297,7 +1313,7 @@ export async function groupActivityForPeriod(args: {
     chatId: number;
     chatType: string;
     chatTitle: string | null;
-    businessConnectionId: string;
+    businessConnectionId: string | null;
     messages: { sender: string; text: string; at: Date }[];
   }>
 > {
@@ -1316,7 +1332,7 @@ export async function groupActivityForPeriod(args: {
       chatId: number;
       chatType: string;
       chatTitle: string | null;
-      businessConnectionId: string;
+      businessConnectionId: string | null;
       messages: { sender: string; text: string; at: Date }[];
     }
   >();
@@ -1328,7 +1344,7 @@ export async function groupActivityForPeriod(args: {
         chatId,
         chatType: r.chat_type as string,
         chatTitle: (r.chat_title as string) ?? null,
-        businessConnectionId: r.business_connection_id as string,
+        businessConnectionId: (r.business_connection_id as string) ?? null,
         messages: [],
       };
       byChat.set(chatId, bucket);
@@ -1854,6 +1870,126 @@ export async function upcomingReminderCount(): Promise<number> {
     SELECT COUNT(*)::int AS n FROM extracted_items
     WHERE done_at IS NULL AND due_at IS NOT NULL AND due_at > NOW()`;
   return Number((rows[0] as { n: number })?.n) || 0;
+}
+
+// --- Knowledge base ---
+
+export type KnowledgeEntry = {
+  id: number;
+  title: string;
+  aliases: string[];
+  body: string;
+  tags: string[];
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+function rowToKnowledge(r: Record<string, unknown>): KnowledgeEntry {
+  const aliasesRaw = r.aliases;
+  const tagsRaw = r.tags;
+  const aliases =
+    Array.isArray(aliasesRaw)
+      ? (aliasesRaw.filter((x) => typeof x === "string") as string[])
+      : [];
+  const tags =
+    Array.isArray(tagsRaw)
+      ? (tagsRaw.filter((x) => typeof x === "string") as string[])
+      : [];
+  return {
+    id: Number(r.id),
+    title: r.title as string,
+    aliases,
+    body: r.body as string,
+    tags,
+    createdAt: r.created_at as Date,
+    updatedAt: r.updated_at as Date,
+  };
+}
+
+export async function listKnowledge(): Promise<KnowledgeEntry[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, title, aliases, body, tags, created_at, updated_at
+    FROM knowledge_entries
+    ORDER BY updated_at DESC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToKnowledge);
+}
+
+export async function getKnowledge(id: number): Promise<KnowledgeEntry | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, title, aliases, body, tags, created_at, updated_at
+    FROM knowledge_entries WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToKnowledge(r) : null;
+}
+
+export async function upsertKnowledge(args: {
+  id?: number;
+  title: string;
+  aliases: string[];
+  body: string;
+  tags: string[];
+  createdBy?: number | null;
+}): Promise<number> {
+  await ensureSchema();
+  const aliasesJson = JSON.stringify(args.aliases);
+  const tagsJson = JSON.stringify(args.tags);
+  if (args.id) {
+    await sql()`
+      UPDATE knowledge_entries
+      SET title = ${args.title},
+          aliases = ${aliasesJson}::jsonb,
+          body = ${args.body},
+          tags = ${tagsJson}::jsonb,
+          updated_at = NOW()
+      WHERE id = ${args.id}`;
+    return args.id;
+  }
+  const rows = await sql()`
+    INSERT INTO knowledge_entries (title, aliases, body, tags, created_by)
+    VALUES (${args.title}, ${aliasesJson}::jsonb, ${args.body},
+            ${tagsJson}::jsonb, ${args.createdBy ?? null})
+    RETURNING id`;
+  return Number((rows[0] as { id: string }).id);
+}
+
+export async function deleteKnowledge(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`DELETE FROM knowledge_entries WHERE id = ${id}`;
+}
+
+// Substring match the incoming text against every knowledge entry's
+// title + aliases (case-insensitive). Returns matches sorted by length
+// of the matched needle so longer / more specific terms win. We do this
+// in JS because the table is small (single-user app, expected <few-
+// hundred entries) and matching with proper word boundaries across
+// Persian + English at SQL level would be more code than it's worth.
+export async function findKnowledgeMatches(
+  text: string,
+  limit = 6,
+): Promise<KnowledgeEntry[]> {
+  if (!text) return [];
+  const haystack = text.toLowerCase();
+  const all = await listKnowledge();
+  const hits: Array<{ entry: KnowledgeEntry; matched: string }> = [];
+  for (const e of all) {
+    const needles = [e.title, ...e.aliases]
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 2);
+    let best: string | null = null;
+    for (const n of needles) {
+      if (haystack.includes(n.toLowerCase())) {
+        if (!best || n.length > best.length) best = n;
+      }
+    }
+    if (best) hits.push({ entry: e, matched: best });
+  }
+  hits.sort((a, b) => b.matched.length - a.matched.length);
+  return hits.slice(0, limit).map((h) => h.entry);
 }
 
 // Telegram retries the webhook if we don't ACK within ~25s. With slow

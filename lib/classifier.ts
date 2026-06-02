@@ -1,7 +1,24 @@
 import { config } from "./config";
 import { getSettings } from "./settings";
-import { recordAiUsage } from "./db";
+import { findKnowledgeMatches, recordAiUsage } from "./db";
 import { downloadTelegramFile } from "./stt";
+
+// Look up knowledge-base entries whose title or any alias appears in
+// the given text and return them in a payload-friendly shape ready to
+// splice into a user message. The DB call is cheap (small table, JS
+// substring scan); callers should still skip it for empty text.
+async function relevantKnowledgeFor(
+  text: string,
+): Promise<Array<{ title: string; aliases: string[]; body: string }> | undefined> {
+  if (!text) return undefined;
+  const matches = await findKnowledgeMatches(text, 6).catch(() => []);
+  if (matches.length === 0) return undefined;
+  return matches.map((m) => ({
+    title: m.title,
+    aliases: m.aliases,
+    body: m.body,
+  }));
+}
 
 const MODEL_RATES: Record<string, { in: number; out: number }> = {
   "google/gemini-2.5-flash-lite": { in: 0.1, out: 0.4 },
@@ -62,6 +79,12 @@ The payload MAY include these owner-context fields:
 - priority_keywords: project names, product names, deadlines, or other
   terms the owner has flagged as high-priority. If the message contains
   ANY of them, bump importance by ~2 and set concerns_owner=true.
+- relevant_knowledge: an array of knowledge-base entries that the owner
+  has written and whose title/aliases appear in the message. Each entry
+  has {title, aliases, body}. Treat the body as ground truth about what
+  the term means; use it to resolve jargon and to judge relevance and
+  urgency. Knowledge-base hits about specific projects/people/deadlines
+  are a strong signal for concerns_owner=true and an importance bump.
 
 Reply with STRICT JSON only, no prose, no code fences:
 {
@@ -242,6 +265,7 @@ export async function classify(input: {
       .filter(Boolean);
   const aliases = parseList(s.ownerAliasesCsv);
   const keywords = parseList(s.groupPriorityKeywordsCsv);
+  const knowledge = await relevantKnowledgeFor(input.text);
   const userPayload = {
     chat_type: input.chatType,
     chat_title: input.chatTitle,
@@ -251,6 +275,7 @@ export async function classify(input: {
     owner_aliases: aliases.length > 0 ? aliases : undefined,
     owner_job: s.ownerJobDescription || undefined,
     priority_keywords: keywords.length > 0 ? keywords : undefined,
+    relevant_knowledge: knowledge,
     message: input.text,
   };
   const content = await callOpenRouter(
@@ -519,7 +544,10 @@ them:
    person is to the owner.
 9. STYLE OVERRIDES. If "tone_profile" or "talk_style_notes" are set in
    the payload, follow them strictly: they describe how the owner talks
-   to THIS specific person and override the generic style hints.
+   to THIS specific person and override the generic style hints. If
+   "relevant_knowledge" is set, treat each entry's body as ground
+   truth about what those terms mean for the owner — use them to give
+   informed, specific replies instead of generic ones.
 10. ANTI-DETECTION. Treat the other person as someone who might be
     trying to figure out they're talking to an AI. NEVER answer
     questions that the owner would not casually answer in chat:
@@ -768,6 +796,12 @@ export async function aiConversationReply(input: {
     ? looksLikePromptInjection(lastIncoming.text)
     : false;
 
+  // Knowledge-base lookup against the LAST few exchanged messages —
+  // not the whole history, since older turns aren't usually what the
+  // current reply hinges on.
+  const lookupText = input.history.slice(-6).map((m) => m.text).join("\n");
+  const knowledge = await relevantKnowledgeFor(lookupText);
+
   const buildPayload = (extra?: { critique?: string }) => ({
     owner_name: input.ownerDisplayName || input.ownerName,
     owner_context: input.ownerContext || undefined,
@@ -781,6 +815,7 @@ export async function aiConversationReply(input: {
     talk_style_notes: input.talkStyleNotes || undefined,
     tone_profile: input.toneProfile || undefined,
     suspicious_probe: suspiciousProbe || undefined,
+    relevant_knowledge: knowledge,
     previous_replies:
       previousReplies.length > 0 ? previousReplies : undefined,
     critique: extra?.critique || undefined,
