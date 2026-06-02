@@ -549,16 +549,20 @@ CRITICAL — SEMANTIC MATCHING (most important rule):
 Output rules:
 - ALWAYS output in Persian (فارسی), in clean Markdown if it helps
   (bullets, bold, headings).
-- ONLY include people / chats where you ACTUALLY found relevant
-  info. DO NOT list "از X چیزی نبود" / "اطلاعاتی یافت نشد" for
-  people with no match — just leave them out entirely. If NOBODY
-  has data, then (and only then) say "هیچ نتیجه‌ای نبود."
+- BE GENEROUS WITH INCLUSION. If a sender's message has any
+  plausibly relevant signal (numbers + units like "X ساعت",
+  references to working, hours, hours-worked phrasings, etc.) →
+  include them. The semantic-matching rule above is the source of
+  truth; this rule is only about what to PRINT.
+- The ONLY thing you should DROP is the "not found" callouts. NEVER
+  write "از X چیزی نبود" or "اطلاعاتی یافت نشد" for a specific
+  person. Just leave them out silently. If LITERALLY no one in the
+  payload had a single relevant signal, end the answer with one
+  line: "هیچ نتیجه‌ای پیدا نشد." — and nothing else.
 - For each person you DO have data on, group ALL of their related
-  messages together consecutively under one heading. Don't sprinkle
-  the same person across multiple sections.
-- Quote senders by name when you have data for them.
-- For numerical questions (ساعت، تومن، ...) extract the NUMBER and
-  unit and put them prominently.
+  messages together consecutively under one heading.
+- Quote senders by name. For numerical questions extract the NUMBER
+  and unit prominently (e.g., **علی: ۱۷۸ ساعت**).
 - Plain text only. NO JSON, NO code fences, NO "reply": keys.`;
 
 export async function askMessages(input: {
