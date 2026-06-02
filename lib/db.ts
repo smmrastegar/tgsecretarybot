@@ -241,6 +241,22 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE thread_summaries ADD COLUMN IF NOT EXISTS inbox_chat_id BIGINT`;
     await q`ALTER TABLE thread_summaries ADD COLUMN IF NOT EXISTS inbox_message_id BIGINT`;
     await q`CREATE INDEX IF NOT EXISTS thread_summaries_inbox_idx ON thread_summaries (inbox_chat_id, inbox_message_id) WHERE inbox_chat_id IS NOT NULL`;
+    // Ask queries — saved natural-language Q&A so the owner can
+    // revisit old answers without re-paying for the AI call. The
+    // page also re-uses recent answers within a short TTL.
+    await q`
+      CREATE TABLE IF NOT EXISTS ask_queries (
+        id                 BIGSERIAL PRIMARY KEY,
+        prompt             TEXT NOT NULL,
+        prompt_hash        TEXT NOT NULL,
+        answer             TEXT NOT NULL,
+        scanned_messages   INT NOT NULL,
+        days               INT NOT NULL,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_by         BIGINT
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS ask_queries_created_idx ON ask_queries (created_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS ask_queries_hash_idx ON ask_queries (prompt_hash, created_at DESC)`;
     // One-time migration: the old default was 'secretary' which caused the
     // bot to relay/auto-reply in every new chat. Owner wants the default to
     // be silent (off); flip every existing 'secretary' row to 'off' exactly
@@ -2763,6 +2779,96 @@ export async function findKnowledgeMatches(
   }
   hits.sort((a, b) => b.matched.length - a.matched.length);
   return hits.slice(0, limit).map((h) => h.entry);
+}
+
+// --- Ask queries (saved natural-language Q&A) ---
+
+export type AskQuery = {
+  id: number;
+  prompt: string;
+  answer: string;
+  scannedMessages: number;
+  days: number;
+  createdAt: Date;
+};
+
+function rowToAsk(r: Record<string, unknown>): AskQuery {
+  return {
+    id: Number(r.id),
+    prompt: r.prompt as string,
+    answer: r.answer as string,
+    scannedMessages: Number(r.scanned_messages),
+    days: Number(r.days),
+    createdAt: r.created_at as Date,
+  };
+}
+
+export async function saveAskQuery(args: {
+  prompt: string;
+  promptHash: string;
+  answer: string;
+  scannedMessages: number;
+  days: number;
+  createdBy?: number | null;
+}): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO ask_queries (
+      prompt, prompt_hash, answer, scanned_messages, days, created_by
+    ) VALUES (
+      ${args.prompt}, ${args.promptHash}, ${args.answer},
+      ${args.scannedMessages}, ${args.days}, ${args.createdBy ?? null}
+    ) RETURNING id`;
+  return Number((rows[0] as { id: string }).id);
+}
+
+// Find the most recent cached answer for an identical (prompt, days)
+// pair within the last `ttlMinutes`. Returns null when no fresh hit
+// exists; the caller can then run the AI and cache the new result.
+export async function findCachedAsk(
+  promptHash: string,
+  days: number,
+  ttlMinutes: number,
+): Promise<AskQuery | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, prompt, answer, scanned_messages, days, created_at
+    FROM ask_queries
+    WHERE prompt_hash = ${promptHash}
+      AND days = ${days}
+      AND created_at > NOW() - (${ttlMinutes} || ' minutes')::INTERVAL
+    ORDER BY created_at DESC
+    LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToAsk(r) : null;
+}
+
+export async function listAskQueries(limit = 30): Promise<AskQuery[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const cap = Math.min(Math.max(limit, 1), 200);
+  const rows = await sql()`
+    SELECT id, prompt, answer, scanned_messages, days, created_at
+    FROM ask_queries
+    ORDER BY created_at DESC LIMIT ${cap}`;
+  return (rows as Array<Record<string, unknown>>).map(rowToAsk);
+}
+
+export async function getAskQuery(id: number): Promise<AskQuery | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, prompt, answer, scanned_messages, days, created_at
+    FROM ask_queries WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToAsk(r) : null;
+}
+
+export async function deleteAskQuery(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`DELETE FROM ask_queries WHERE id = ${id}`;
 }
 
 // Telegram retries the webhook if we don't ACK within ~25s. With slow
