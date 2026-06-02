@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
+import MediaView from "@/components/MediaView";
 import { chatTypeLabel, relTime } from "@/lib/format";
 
 type ChatMode =
@@ -432,7 +433,7 @@ export default function UrgentPage() {
                   onChange={() => toggleSelect(m.id)}
                   className="mt-1 shrink-0"
                 />
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-start sm:justify-between gap-3 sm:gap-4">
+              <div className="flex-1 min-w-0 flex flex-col sm:flex-row items-stretch sm:items-start sm:justify-between gap-3 sm:gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="text-xs text-[var(--color-text-dim)] mb-2 flex items-center gap-2 flex-wrap">
                     <span>{m.senderName}</span>
@@ -464,6 +465,11 @@ export default function UrgentPage() {
                       >
                         {m.transcript}
                       </div>
+                    </div>
+                  )}
+                  {m.mediaKind && (
+                    <div className="mt-2">
+                      <MediaView messageId={m.id} kind={m.mediaKind} />
                     </div>
                   )}
                   <div className="text-xs text-[var(--color-text-dim)] mt-2 italic">

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import MessageActions from "@/components/MessageActions";
+import MediaView from "@/components/MediaView";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
 function groupByChat(messages: Message[]): Array<{
@@ -292,6 +293,9 @@ export default function MessagesPage() {
                     >
                       {truncate(visibleText, 200)}
                     </div>
+                    {m.mediaKind && !m.deletedAt && (
+                      <MediaView messageId={m.id} kind={m.mediaKind} />
+                    )}
                   </div>
                   );
                 })}
@@ -398,6 +402,11 @@ export default function MessagesPage() {
                   >
                     {m.transcript}
                   </div>
+                </div>
+              )}
+              {m.mediaKind && !m.deletedAt && (
+                <div className="mt-2">
+                  <MediaView messageId={m.id} kind={m.mediaKind} />
                 </div>
               )}
               <MessageActions

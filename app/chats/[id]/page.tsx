@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
+import MediaView from "@/components/MediaView";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
 type ChatMode =
@@ -1339,6 +1340,9 @@ export default function ChatDetailPage() {
                                   ? m.mediaDescription
                                   : m.messageText || "(no text)"}
                             </div>
+                            {m.mediaKind && (
+                              <MediaView messageId={m.id} kind={m.mediaKind} />
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1401,6 +1405,9 @@ export default function ChatDetailPage() {
                         </div>
                       )}
                     </div>
+                    {m.mediaKind && !m.deletedAt && (
+                      <MediaView messageId={m.id} kind={m.mediaKind} />
+                    )}
                     <div className="flex gap-1 flex-wrap text-[10px] px-1">
                       {m.deletedAt && (
                         <Badge tone="danger">
