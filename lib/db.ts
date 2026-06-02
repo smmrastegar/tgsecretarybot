@@ -967,6 +967,27 @@ export async function markMessageHandled(
     WHERE id = ${id}`;
 }
 
+export async function bulkMarkMessagesHandled(
+  ids: number[],
+  actorId: number,
+  handled: boolean,
+): Promise<number> {
+  if (!hasDb() || ids.length === 0) return 0;
+  await ensureSchema();
+  const rows = handled
+    ? await sql()`
+        UPDATE messages_log
+        SET handled_at = NOW(), handled_by = ${actorId}
+        WHERE id = ANY(${ids}::bigint[])
+        RETURNING id`
+    : await sql()`
+        UPDATE messages_log
+        SET handled_at = NULL, handled_by = NULL
+        WHERE id = ANY(${ids}::bigint[])
+        RETURNING id`;
+  return rows.length;
+}
+
 export async function unhandleMessage(id: number): Promise<void> {
   await ensureSchema();
   await sql()`UPDATE messages_log SET handled_at = NULL, handled_by = NULL WHERE id = ${id}`;

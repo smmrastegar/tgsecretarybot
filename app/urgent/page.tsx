@@ -47,6 +47,64 @@ export default function UrgentPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [showHandled, setShowHandled] = useState(false);
+  const [search, setSearch] = useState("");
+  const [modeFilter, setModeFilter] = useState<"all" | ChatMode>("all");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulking, setBulking] = useState(false);
+
+  function toggleSelect(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const filtered = (() => {
+    const q = search.trim().toLowerCase();
+    return messages.filter((m) => {
+      if (modeFilter !== "all" && m.chatMode !== modeFilter) return false;
+      if (!q) return true;
+      const hay = [
+        m.messageText,
+        m.transcript,
+        m.senderName,
+        m.chatTitle,
+        m.reason,
+      ];
+      return hay.some((f) => f && f.toLowerCase().includes(q));
+    });
+  })();
+
+  function selectAllFiltered() {
+    setSelected(new Set(filtered.map((m) => m.id)));
+  }
+
+  function selectNone() {
+    setSelected(new Set());
+  }
+
+  async function runBulk(op: "handle" | "unhandle") {
+    if (selected.size === 0) return;
+    setBulking(true);
+    try {
+      const r = await fetch("/api/messages/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ op, ids: [...selected] }),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        alert(`عملیات شکست خورد: ${j.error ?? r.status}`);
+      } else {
+        setSelected(new Set());
+        await load();
+      }
+    } finally {
+      setBulking(false);
+    }
+  }
 
   const firstLoadRef = useRef(true);
   const load = useCallback(async () => {
@@ -280,9 +338,100 @@ export default function UrgentPage() {
           </p>
         </Card>
       ) : (
+        <>
+        <Card className="mb-3 !p-3">
+          <div className="flex flex-col gap-2">
+            <input
+              dir="auto"
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="جستجو در متن / sender / chat / دلیل…"
+              className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm"
+            />
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <span className="text-[var(--color-text-dim)]">Mode:</span>
+              <select
+                value={modeFilter}
+                onChange={(e) =>
+                  setModeFilter(e.target.value as "all" | ChatMode)
+                }
+                className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+              >
+                <option value="all">همه ({messages.length})</option>
+                {(Object.keys(MODE_LABEL) as ChatMode[]).map((m) => {
+                  const n = messages.filter((msg) => msg.chatMode === m)
+                    .length;
+                  return (
+                    <option key={m} value={m}>
+                      {MODE_LABEL[m].label} ({n})
+                    </option>
+                  );
+                })}
+              </select>
+              <span className="text-[var(--color-text-dim)] ml-auto">
+                {filtered.length} نمایش / {selected.size} انتخاب
+              </span>
+            </div>
+            {selected.size > 0 && (
+              <div className="flex items-center gap-2 flex-wrap text-xs pt-2 border-t border-[var(--color-border)]">
+                <button
+                  onClick={selectNone}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={() => runBulk("handle")}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+                >
+                  ✓ Mark handled
+                </button>
+                <button
+                  onClick={() => runBulk("unhandle")}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                >
+                  Un-handle
+                </button>
+              </div>
+            )}
+            {filtered.length > 0 && (
+              <button
+                onClick={selectAllFiltered}
+                className="self-start text-[10px] text-[var(--color-text-dim)] hover:text-white underline-offset-2 hover:underline"
+              >
+                انتخاب همه‌ی {filtered.length} مورد فیلترشده
+              </button>
+            )}
+          </div>
+        </Card>
+        {filtered.length === 0 && (
+          <Card>
+            <p className="text-sm text-[var(--color-text-dim)]">
+              هیچ پیامی با این فیلتر مطابقت نداره.
+            </p>
+          </Card>
+        )}
         <ul className="flex flex-col gap-3">
-          {messages.map((m) => (
-            <Card key={m.id}>
+          {filtered.map((m) => (
+            <Card
+              key={m.id}
+              className={
+                selected.has(m.id)
+                  ? "ring-1 ring-[var(--color-accent)]"
+                  : ""
+              }
+            >
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={selected.has(m.id)}
+                  onChange={() => toggleSelect(m.id)}
+                  className="mt-1 shrink-0"
+                />
               <div className="flex flex-col sm:flex-row items-stretch sm:items-start sm:justify-between gap-3 sm:gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="text-xs text-[var(--color-text-dim)] mb-2 flex items-center gap-2 flex-wrap">
@@ -452,9 +601,11 @@ export default function UrgentPage() {
                   )}
                 </div>
               </div>
+              </div>
             </Card>
           ))}
         </ul>
+        </>
       )}
     </Shell>
   );
