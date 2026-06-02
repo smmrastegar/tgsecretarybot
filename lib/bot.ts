@@ -1,4 +1,4 @@
-import { Bot, GrammyError, HttpError, InlineKeyboard } from "grammy";
+import { Bot, type Context, GrammyError, HttpError, InlineKeyboard } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "./config";
 import {
@@ -7,6 +7,7 @@ import {
   describeMedia,
   extractActions,
   friendlyAutoReply,
+  summarizeGroup,
 } from "./classifier";
 import { sttConfigured, transcribeAudio } from "./stt";
 import {
@@ -34,7 +35,10 @@ import {
   hasDb,
   isAllowedUser,
   lastOwnerMessageAt,
+  getPrimarySummaryInbox,
+  listChatThreaded,
   logMessage,
+  markAutoSummaryDelivered,
   markMessagesDeleted,
   openSecretarySession,
   recentIncomingCount,
@@ -43,6 +47,8 @@ import {
   saveTranscript,
   setFloodCooldown,
   sql,
+  upsertThreadSummary,
+  type ChatRule,
   recentConversation,
   recordSecretaryLink,
   saveExtractedItems,
@@ -320,6 +326,405 @@ async function maybeDescribeMedia(args: {
   }
 }
 
+// Handle clicks on inline buttons attached to auto-summary posts in
+// the summary_inbox channel. callback_data formats:
+//   as:reply:<chatId>:<startSec>   — generate an AI suggested reply
+//   as:resum:<chatId>:<startSec>   — re-generate the summary
+//   as:send:<chatId>:<startSec>    — send the previously-suggested
+//                                    reply to the source chat
+async function handleAutoSummaryCallback(
+  ctx: Context,
+  data: string,
+  bot: Bot,
+): Promise<void> {
+  const parts = data.split(":");
+  if (parts.length < 4) {
+    await ctx.answerCallbackQuery({ text: "bad callback", show_alert: true });
+    return;
+  }
+  const action = parts[1]!;
+  const chatId = Number(parts[2]);
+  const startSec = Number(parts[3]);
+  if (!Number.isFinite(chatId) || !Number.isFinite(startSec)) {
+    await ctx.answerCallbackQuery({ text: "bad callback", show_alert: true });
+    return;
+  }
+  const cb = ctx.callbackQuery;
+  if (!cb) return;
+  const rule = await getChatRule(chatId).catch(() => null);
+  if (!rule) {
+    await ctx.answerCallbackQuery({
+      text: "chat rule missing",
+      show_alert: true,
+    });
+    return;
+  }
+  const settings = await getSettings();
+  const messages = await listChatThreaded({
+    chatId,
+    gapMinutes: rule.autoSummarizeGapMinutes || 5,
+    limit: 1000,
+  });
+  const target = messages.find(
+    (m) => Math.floor(m.createdAt.getTime() / 1000) === startSec,
+  );
+  if (!target) {
+    await ctx.answerCallbackQuery({
+      text: "thread not found",
+      show_alert: true,
+    });
+    return;
+  }
+  const threadMsgs = messages
+    .filter((m) => m.threadNo === target.threadNo)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+  if (action === "resum") {
+    await ctx.answerCallbackQuery({ text: "در حال خلاصه‌سازی…" });
+    try {
+      const s = await summarizeGroup({
+        chatTitle: rule.chatTitle,
+        ownerName: settings.ownerName,
+        ownerContext: settings.ownerContext,
+        chatNotes: rule.notes ?? null,
+        outputLanguage: "Persian (فارسی)",
+        messages: threadMsgs.map((m) => ({
+          sender: m.fromOwner
+            ? settings.ownerDisplayName || settings.ownerName || "owner"
+            : m.senderName,
+          text: m.transcript
+            ? `[voice] ${m.transcript}`
+            : m.mediaDescription
+              ? `[${m.mediaKind ?? "media"}] ${m.mediaDescription}`
+              : m.mediaKind && !m.messageText
+                ? `[${m.mediaKind}]`
+                : m.messageText,
+          at: m.createdAt,
+        })),
+      });
+      await upsertThreadSummary({
+        chatId: rule.chatId,
+        threadStartedAt: threadMsgs[0]!.createdAt,
+        threadEndedAt: threadMsgs[threadMsgs.length - 1]!.createdAt,
+        messageCount: threadMsgs.length,
+        summary: s.summary,
+        topics: s.topics,
+        actionItems: s.actionItems,
+      }).catch(() => {});
+      const chatLabel =
+        [rule.firstName, rule.lastName].filter(Boolean).join(" ").trim() ||
+        rule.chatTitle ||
+        `chat ${rule.chatId}`;
+      const body = [
+        `📬 خلاصه‌ی thread — ${chatLabel} (re-generated)`,
+        "",
+        s.summary,
+        s.topics.length > 0 ? `\nموضوعات: ${s.topics.join(" · ")}` : "",
+        s.actionItems.length > 0
+          ? `\nاکشن‌ها:\n• ${s.actionItems.join("\n• ")}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 3800);
+      const keyboard = new InlineKeyboard()
+        .text("💬 جواب پیشنهادی", `as:reply:${chatId}:${startSec}`)
+        .text("🔄 Regenerate", `as:resum:${chatId}:${startSec}`);
+      try {
+        await ctx.editMessageText(body, { reply_markup: keyboard });
+      } catch (err) {
+        console.warn("[as_callback] editMessageText failed:", err);
+      }
+    } catch (err) {
+      console.error("[as_callback] resum failed:", err);
+    }
+    return;
+  }
+
+  if (action === "reply") {
+    await ctx.answerCallbackQuery({ text: "در حال تولید پاسخ…" });
+    const history = threadMsgs.map((m) => ({
+      from: m.fromOwner ? ("owner" as const) : ("other" as const),
+      senderName: m.senderName,
+      text: m.transcript
+        ? m.transcript
+        : m.mediaDescription
+          ? `[${m.mediaKind ?? "media"}] ${m.mediaDescription}`
+          : m.messageText,
+    }));
+    const senderName =
+      threadMsgs.find((m) => !m.fromOwner)?.senderName ?? "the other person";
+    let reply = "";
+    try {
+      reply = await aiConversationReply({
+        ownerName: settings.ownerName,
+        ownerDisplayName: settings.ownerDisplayName,
+        ownerContext: settings.ownerContext,
+        senderName,
+        history,
+        nickname: rule.nickname,
+        relationship: rule.relationship,
+        relationshipNotes: rule.relationshipNotes,
+        talkStyleNotes: rule.talkStyleNotes,
+        toneProfile: rule.toneProfile,
+        chatId: rule.chatId,
+      });
+    } catch (err) {
+      console.error("[as_callback] generate reply failed:", err);
+    }
+    if (!reply) {
+      try {
+        await ctx.reply("پاسخ AI تولید نشد. دوباره تلاش کن.");
+      } catch {}
+      return;
+    }
+    // Append suggested reply to the channel post + add Send/Regenerate
+    // buttons. We don't auto-send to the source chat — explicit
+    // confirmation via the Send button.
+    const orig =
+      cb.message?.text ?? cb.message?.caption ?? "";
+    const newBody = `${orig}\n\n🤖 پاسخ پیشنهادی:\n${reply}`.slice(0, 3800);
+    const keyboard = new InlineKeyboard()
+      .text("✅ ارسال به چت", `as:send:${chatId}:${startSec}`)
+      .text("🔄 دوباره", `as:reply:${chatId}:${startSec}`);
+    try {
+      await ctx.editMessageText(newBody, { reply_markup: keyboard });
+    } catch (err) {
+      console.warn("[as_callback] editMessageText failed:", err);
+    }
+    return;
+  }
+
+  if (action === "send") {
+    // Recover the suggested reply from the channel post body.
+    const orig =
+      cb.message?.text ?? cb.message?.caption ?? "";
+    const marker = "🤖 پاسخ پیشنهادی:\n";
+    const idx = orig.lastIndexOf(marker);
+    if (idx === -1) {
+      await ctx.answerCallbackQuery({
+        text: "پاسخ پیشنهادی پیدا نشد.",
+        show_alert: true,
+      });
+      return;
+    }
+    const replyText = orig.slice(idx + marker.length).trim();
+    if (!replyText) {
+      await ctx.answerCallbackQuery({
+        text: "پاسخ خالی.",
+        show_alert: true,
+      });
+      return;
+    }
+    // For DMs we send via business connection. We don't always have
+    // bcId on the rule, so look it up from a recent log row.
+    const rows = await sql()`
+      SELECT business_connection_id FROM messages_log
+      WHERE chat_id = ${chatId}
+        AND business_connection_id IS NOT NULL
+      ORDER BY created_at DESC LIMIT 1`;
+    const bcId = (rows[0] as { business_connection_id: string } | undefined)
+      ?.business_connection_id;
+    try {
+      if (bcId) {
+        await bot.api.sendMessage(chatId, replyText, {
+          business_connection_id: bcId,
+        });
+      } else {
+        await bot.api.sendMessage(chatId, replyText);
+      }
+      await ctx.answerCallbackQuery({ text: "✅ ارسال شد" });
+      const newBody = `${orig}\n\n✅ ارسال شد در ${new Date().toLocaleTimeString()}`.slice(
+        0,
+        3800,
+      );
+      try {
+        await ctx.editMessageText(newBody);
+      } catch {}
+    } catch (err) {
+      console.error("[as_callback] send failed:", err);
+      await ctx.answerCallbackQuery({
+        text: "ارسال نشد: " + String(err).slice(0, 80),
+        show_alert: true,
+      });
+    }
+    return;
+  }
+
+  await ctx.answerCallbackQuery({ text: "unknown action" });
+}
+
+// In ai_listen mode with auto_summarize_enabled, whenever a NEW
+// message arrives we check the gap from the previously logged
+// message: if that gap exceeds the chat's configured silence window
+// (default 5min), the previous thread just "closed" — we summarise
+// what was in it and post that summary to the primary summary_inbox
+// channel. Fire-and-forget so we never block the regular reply path.
+export async function maybeAutoSummarizeOnArrival(args: {
+  rule: ChatRule | null;
+  msg: Message;
+  bot: Bot;
+}): Promise<void> {
+  const { rule, msg, bot } = args;
+  if (!rule || rule.mode !== "ai_listen") return;
+  if (!rule.autoSummarizeEnabled) return;
+  if (!hasDb()) return;
+  const gapMin = rule.autoSummarizeGapMinutes || 5;
+
+  try {
+    // Previous logged row (any kind, owner or other) BEFORE the row
+    // that handleBusinessMessage / handleGroupMessage just inserted.
+    const rows = await sql()`
+      SELECT created_at FROM messages_log
+      WHERE chat_id = ${msg.chat.id}
+        AND message_id <> ${msg.message_id}
+      ORDER BY created_at DESC
+      LIMIT 1`;
+    const prev = rows[0] as { created_at: Date } | undefined;
+    if (!prev) return;
+    const gapMs = Date.now() - new Date(prev.created_at).getTime();
+    if (gapMs < gapMin * 60_000) return;
+    // The previous thread JUST closed (we got the first message after
+    // a long silence). Idempotency: if last_auto_summary_at is newer
+    // than prev's timestamp, we already summarised this gap.
+    if (
+      rule.lastAutoSummaryAt &&
+      rule.lastAutoSummaryAt.getTime() >= new Date(prev.created_at).getTime()
+    ) {
+      return;
+    }
+    await deliverAutoSummary({
+      bot,
+      rule,
+      throughTs: new Date(prev.created_at),
+    });
+  } catch (err) {
+    console.error("[auto_summary] reactive trigger failed:", err);
+  }
+}
+
+// Used by both the reactive path (handleBusinessMessage) and the
+// cron path (catches threads that just stopped without a follow-up).
+export async function deliverAutoSummary(args: {
+  bot: Bot;
+  rule: ChatRule;
+  throughTs: Date;
+}): Promise<boolean> {
+  const { bot, rule, throughTs } = args;
+  const inbox = await getPrimarySummaryInbox();
+  if (!inbox) {
+    console.warn(
+      "[auto_summary] no summary_inbox configured; skipping for chat=" +
+        rule.chatId,
+    );
+    return false;
+  }
+  const gap = rule.autoSummarizeGapMinutes || 5;
+  // Cluster the chat's messages so we can grab JUST the most-recent
+  // thread whose endedAt <= throughTs.
+  const messages = await listChatThreaded({
+    chatId: rule.chatId,
+    gapMinutes: gap,
+    limit: 1000,
+  });
+  if (messages.length === 0) return false;
+  // Find the thread that contains `throughTs` (the last message
+  // before the silence gap).
+  const target = messages.find(
+    (m) => m.createdAt.getTime() === throughTs.getTime(),
+  );
+  if (!target) return false;
+  const threadNo = target.threadNo;
+  const threadMsgs = messages
+    .filter((m) => m.threadNo === threadNo)
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  if (threadMsgs.length === 0) return false;
+
+  const settings = await getSettings();
+  const chatLabel =
+    [rule.firstName, rule.lastName].filter(Boolean).join(" ").trim() ||
+    rule.chatTitle ||
+    `chat ${rule.chatId}`;
+
+  let summary;
+  try {
+    summary = await summarizeGroup({
+      chatTitle: chatLabel,
+      ownerName: settings.ownerName,
+      ownerContext: settings.ownerContext,
+      chatNotes: rule.notes ?? null,
+      outputLanguage: "Persian (فارسی)",
+      messages: threadMsgs.map((m) => ({
+        sender: m.fromOwner
+          ? settings.ownerDisplayName || settings.ownerName || "owner"
+          : m.senderName,
+        text: m.transcript
+          ? `[voice] ${m.transcript}`
+          : m.mediaDescription
+            ? `[${m.mediaKind ?? "media"}] ${m.mediaDescription}`
+            : m.mediaKind && !m.messageText
+              ? `[${m.mediaKind}]`
+              : m.messageText,
+        at: m.createdAt,
+      })),
+    });
+  } catch (err) {
+    console.error("[auto_summary] summarise failed:", err);
+    return false;
+  }
+
+  await upsertThreadSummary({
+    chatId: rule.chatId,
+    threadStartedAt: threadMsgs[0]!.createdAt,
+    threadEndedAt: threadMsgs[threadMsgs.length - 1]!.createdAt,
+    messageCount: threadMsgs.length,
+    summary: summary.summary,
+    topics: summary.topics,
+    actionItems: summary.actionItems,
+  }).catch((err) =>
+    console.error("[auto_summary] upsertThreadSummary failed:", err),
+  );
+
+  const header = `📬 خلاصه‌ی thread — ${chatLabel}`;
+  const body = [
+    header,
+    "",
+    summary.summary,
+    summary.topics.length > 0
+      ? `\nموضوعات: ${summary.topics.join(" · ")}`
+      : "",
+    summary.actionItems.length > 0
+      ? `\nاکشن‌ها:\n• ${summary.actionItems.join("\n• ")}`
+      : "",
+    `\n⏱ ${threadMsgs.length} پیام · ${threadMsgs[0]!.createdAt.toLocaleString()} → ${threadMsgs[threadMsgs.length - 1]!.createdAt.toLocaleString()}`,
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 3800);
+
+  // callback_data is limited to 64 bytes. We pack { action, chatId,
+  // threadStartTs (unix seconds) }. The handler will recover the
+  // thread by (chatId, started_at) and regenerate the AI reply.
+  const startSec = Math.floor(threadMsgs[0]!.createdAt.getTime() / 1000);
+  const keyboard = new InlineKeyboard()
+    .text("💬 جواب پیشنهادی", `as:reply:${rule.chatId}:${startSec}`)
+    .text("🔄 Regenerate", `as:resum:${rule.chatId}:${startSec}`);
+
+  try {
+    await bot.api.sendMessage(inbox.chatId, body, {
+      reply_markup: keyboard,
+    });
+    await markAutoSummaryDelivered(rule.chatId);
+    return true;
+  } catch (err) {
+    console.error(
+      `[auto_summary] send to inbox=${inbox.chatId} failed:`,
+      err,
+    );
+    return false;
+  }
+}
+
 async function markBusinessRead(
   bot: Bot,
   bcId: string,
@@ -522,7 +927,17 @@ function buildBot(): Bot {
   bot.on("callback_query:data", async (ctx) => {
     const from = ctx.from;
     const data = ctx.callbackQuery.data;
-    if (!from || !data?.startsWith("ui:")) {
+    if (!from || !data) {
+      await ctx.answerCallbackQuery().catch(() => {});
+      return;
+    }
+    if (data.startsWith("as:")) {
+      await handleAutoSummaryCallback(ctx, data, bot).catch((err) =>
+        console.error("[as_callback] failed:", err),
+      );
+      return;
+    }
+    if (!data.startsWith("ui:")) {
       await ctx.answerCallbackQuery().catch(() => {});
       return;
     }
@@ -1303,6 +1718,11 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         chatId: msg.chat.id,
         bcId,
       });
+      void maybeAutoSummarizeOnArrival({
+        rule,
+        msg,
+        bot,
+      });
     } catch (err) {
       console.error("[db] log failed:", err);
     }
@@ -1991,6 +2411,11 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
         mediaKind,
         chatId: msg.chat.id,
         bcId: null,
+      });
+      void maybeAutoSummarizeOnArrival({
+        rule,
+        msg,
+        bot,
       });
     } catch (err) {
       console.error("[db] group-log failed:", err);

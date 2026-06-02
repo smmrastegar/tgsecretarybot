@@ -202,6 +202,12 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS function_role TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS function_config JSONB`;
     await q`CREATE INDEX IF NOT EXISTS chat_rules_function_role_idx ON chat_rules (function_role) WHERE function_role IS NOT NULL`;
+    // Auto-summary: when a chat is in ai_listen and a thread closes
+    // (no new message for `auto_summarize_gap_minutes`), post a
+    // summary into the configured summary_inbox channel.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_summarize_enabled BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_summarize_gap_minutes INT NOT NULL DEFAULT 5`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS last_auto_summary_at TIMESTAMPTZ`;
     // Persisted per-thread AI summaries so the dashboard doesn't lose
     // them on reload and so we can detect when a thread has new
     // activity that arrived after the last summary.
@@ -983,6 +989,7 @@ export const FUNCTION_ROLES = [
   "sms_inbox",
   "download_archive",
   "news",
+  "summary_inbox",
 ] as const;
 export type FunctionRole = (typeof FUNCTION_ROLES)[number];
 
@@ -992,6 +999,8 @@ export const FUNCTION_ROLE_LABELS: Record<FunctionRole, string> = {
   sms_inbox: "SMS inbox (forwarded phone messages)",
   download_archive: "Download archive (saved Instagram / etc. media)",
   news: "News source (channel or group with important news)",
+  summary_inbox:
+    "Summary inbox (channel/group that receives auto-summaries from ai_listen chats)",
 };
 
 export type ChatRule = {
@@ -1020,6 +1029,9 @@ export type ChatRule = {
   aiProcessGifs: boolean;
   functionRole: FunctionRole | null;
   functionConfig: Record<string, unknown> | null;
+  autoSummarizeEnabled: boolean;
+  autoSummarizeGapMinutes: number;
+  lastAutoSummaryAt: Date | null;
   graceSkippedAt: Date | null;
   updatedAt: Date;
 };
@@ -1065,6 +1077,12 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
       r.function_config && typeof r.function_config === "object"
         ? (r.function_config as Record<string, unknown>)
         : null,
+    autoSummarizeEnabled: Boolean(r.auto_summarize_enabled),
+    autoSummarizeGapMinutes:
+      Number(r.auto_summarize_gap_minutes) > 0
+        ? Number(r.auto_summarize_gap_minutes)
+        : 5,
+    lastAutoSummaryAt: (r.last_auto_summary_at as Date) ?? null,
     graceSkippedAt: (r.grace_skipped_at as Date) ?? null,
     updatedAt: r.updated_at as Date,
   };
@@ -1082,6 +1100,8 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            flood_cooldown_until, flood_deflected_at,
            ai_process_voice, ai_process_stickers, ai_process_gifs,
            function_role, function_config,
+           auto_summarize_enabled, auto_summarize_gap_minutes,
+           last_auto_summary_at,
            grace_skipped_at, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -1199,6 +1219,42 @@ export async function setChatFunction(
     WHERE chat_id = ${chatId}`;
 }
 
+// Toggle auto-summary for a chat (typically called when the owner
+// flips the checkbox in /chats/[id]). Stays separate from upsertChatRule
+// so the JSON of an unrelated edit doesn't accidentally reset it.
+export async function setAutoSummarize(
+  chatId: number,
+  enabled: boolean,
+  gapMinutes: number,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  const gap = Math.max(1, Math.min(Math.round(gapMinutes), 240));
+  await sql()`
+    UPDATE chat_rules
+    SET auto_summarize_enabled = ${enabled},
+        auto_summarize_gap_minutes = ${gap},
+        updated_at = NOW()
+    WHERE chat_id = ${chatId}`;
+}
+
+export async function markAutoSummaryDelivered(chatId: number): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE chat_rules
+    SET last_auto_summary_at = NOW(), updated_at = NOW()
+    WHERE chat_id = ${chatId}`;
+}
+
+// First chat tagged as the summary_inbox. The caller decides whether
+// to fan out to multiple if more than one is tagged; for now we use
+// the most recently updated one.
+export async function getPrimarySummaryInbox(): Promise<ChatRule | null> {
+  if (!hasDb()) return null;
+  const list = await listChatsByFunction("summary_inbox");
+  return list[0] ?? null;
+}
+
 export async function listChatsByFunction(
   role: FunctionRole,
 ): Promise<ChatRule[]> {
@@ -1213,6 +1269,8 @@ export async function listChatsByFunction(
            flood_cooldown_until, flood_deflected_at,
            ai_process_voice, ai_process_stickers, ai_process_gifs,
            function_role, function_config,
+           auto_summarize_enabled, auto_summarize_gap_minutes,
+           last_auto_summary_at,
            grace_skipped_at, updated_at
     FROM chat_rules
     WHERE function_role = ${role}

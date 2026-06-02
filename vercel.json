@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/daily-summary?hours=24",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/auto-summary",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

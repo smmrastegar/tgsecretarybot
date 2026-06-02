@@ -10,7 +10,8 @@ type FunctionRole =
   | "downloader"
   | "sms_inbox"
   | "download_archive"
-  | "news";
+  | "news"
+  | "summary_inbox";
 
 const ROLE_INFO: Record<
   FunctionRole,
@@ -39,6 +40,12 @@ const ROLE_INFO: Record<
     emoji: "📰",
     description:
       "کانال‌ها و گروه‌های خبری مهم. classifier importance رو bump می‌کنه و خلاصه‌های روزانه پررنگ‌تر هستن.",
+  },
+  summary_inbox: {
+    title: "Summary inbox",
+    emoji: "📬",
+    description:
+      "کانال یا گروهی که خلاصه‌های auto-summary از چت‌های ai_listen رو دریافت می‌کنه. فقط یکی استفاده می‌شه (آخرین به‌روزشده). توی همون پست خلاصه می‌تونی روی «جواب پیشنهادی» بزنی تا AI پاسخ رو برات بنویسه.",
   },
 };
 

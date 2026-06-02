@@ -104,8 +104,12 @@ type Rule = {
     | "sms_inbox"
     | "download_archive"
     | "news"
+    | "summary_inbox"
     | null;
   functionConfig: Record<string, unknown> | null;
+  autoSummarizeEnabled: boolean;
+  autoSummarizeGapMinutes: number;
+  lastAutoSummaryAt: string | null;
   graceSkippedAt: string | null;
   updatedAt: string;
 };
@@ -115,6 +119,7 @@ const FUNCTION_ROLE_LABELS: Record<string, string> = {
   sms_inbox: "📱 SMS inbox",
   download_archive: "🗄 Download archive",
   news: "📰 News source",
+  summary_inbox: "📬 Summary inbox",
 };
 
 type GraceInfo = {
@@ -963,6 +968,72 @@ export default function ChatDetailPage() {
                   ))}
                 </select>
               </div>
+
+              {rule?.mode === "ai_listen" && (
+                <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                  <div className="text-xs font-medium mb-1.5">
+                    📬 Auto-summarize threads
+                  </div>
+                  <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
+                    وقتی یه thread با گپ سکوت بسته بشه، خلاصه‌اش خودکار
+                    تولید می‌شه و توی کانال «Summary inbox» (که توی
+                    Functions ست کردی) با دکمه‌ی «جواب پیشنهادی» پست می‌شه.
+                    پیش‌فرض خاموش.
+                  </div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(rule.autoSummarizeEnabled)}
+                        disabled={saving}
+                        onChange={(e) =>
+                          fetch(`/api/chats/${chatId}/auto-summarize`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              enabled: e.target.checked,
+                              gapMinutes: rule.autoSummarizeGapMinutes ?? 5,
+                            }),
+                          }).then(() => load())
+                        }
+                      />
+                      Auto-summarize روشن
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-[var(--color-text-dim)]">
+                      گپ سکوت برای بستن thread:
+                    </span>
+                    <select
+                      value={rule.autoSummarizeGapMinutes ?? 5}
+                      disabled={saving || !rule.autoSummarizeEnabled}
+                      onChange={(e) =>
+                        fetch(`/api/chats/${chatId}/auto-summarize`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            enabled: rule.autoSummarizeEnabled,
+                            gapMinutes: Number(e.target.value),
+                          }),
+                        }).then(() => load())
+                      }
+                      className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs"
+                    >
+                      <option value="2">۲ دقیقه</option>
+                      <option value="5">۵ دقیقه</option>
+                      <option value="10">۱۰ دقیقه</option>
+                      <option value="15">۱۵ دقیقه</option>
+                      <option value="30">۳۰ دقیقه</option>
+                      <option value="60">۱ ساعت</option>
+                    </select>
+                  </div>
+                  {rule.lastAutoSummaryAt && (
+                    <div className="text-[10px] text-[var(--color-text-dim)] mt-2">
+                      آخرین summary خودکار: {relTime(rule.lastAutoSummaryAt)}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {rule?.mode === "ai_chat" && (
                 <div className="mt-3 pt-3 border-t border-[var(--color-border)]">

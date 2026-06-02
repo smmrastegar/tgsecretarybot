@@ -31,6 +31,7 @@ export async function GET(): Promise<NextResponse> {
     sms_inbox: [],
     download_archive: [],
     news: [],
+    summary_inbox: [],
   };
   for (const r of FUNCTION_ROLES) {
     const rows = await listChatsByFunction(r);
