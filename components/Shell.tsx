@@ -36,17 +36,41 @@ function isActive(pathname: string, href: string): boolean {
     : pathname === href || pathname.startsWith(`${href}/`);
 }
 
+type WebhookStatus = {
+  ok: boolean;
+  missing: string[];
+  usingDefault: boolean;
+};
+
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
+  const [webhook, setWebhook] = useState<WebhookStatus | null>(null);
+  const [fixingWebhook, setFixingWebhook] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d?.user && setUser(d.user))
       .catch(() => {});
+    fetch("/api/health/webhook-status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: WebhookStatus | null) => {
+        if (d && (!d.ok || d.missing?.length > 0)) setWebhook(d);
+      })
+      .catch(() => {});
   }, []);
+
+  async function fixWebhook() {
+    setFixingWebhook(true);
+    try {
+      const r = await fetch("/api/health/refresh-webhook", { method: "POST" });
+      if (r.ok) setWebhook({ ok: true, missing: [], usingDefault: false });
+    } finally {
+      setFixingWebhook(false);
+    }
+  }
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -111,6 +135,33 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main className="flex-1 min-w-0 p-4 md:p-8 md:max-w-6xl pb-24 md:pb-8">
+        {webhook && (!webhook.ok || webhook.missing.length > 0) && (
+          <div className="mb-4 p-3 rounded-lg border border-amber-800 bg-amber-900/30 text-amber-100">
+            <div className="text-sm font-medium">
+              ⚠️ Webhook out of sync
+            </div>
+            <div className="text-xs mt-1 opacity-90 break-words">
+              {webhook.usingDefault
+                ? "بات روی default Telegram updates ست شده — channel posts / business / reactions نمیان."
+                : `Missing: ${webhook.missing.join(", ")}`}
+            </div>
+            <div className="mt-2 flex gap-2 flex-wrap">
+              <button
+                onClick={fixWebhook}
+                disabled={fixingWebhook}
+                className="text-xs px-3 py-1.5 rounded-md bg-amber-700 text-white hover:bg-amber-600 disabled:opacity-50"
+              >
+                {fixingWebhook ? "در حال ست…" : "Re-register webhook"}
+              </button>
+              <Link
+                href="/health"
+                className="text-xs px-3 py-1.5 rounded-md border border-amber-700 hover:bg-amber-900/40"
+              >
+                Details
+              </Link>
+            </div>
+          </div>
+        )}
         {children}
       </main>
 

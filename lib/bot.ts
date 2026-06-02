@@ -1203,6 +1203,9 @@ function buildBot(): Bot {
   // channels show up in /messages and /chats too.
   bot.on("channel_post", async (ctx) => {
     const m = ctx.update.channel_post;
+    console.log(
+      `[channel_post] chat=${m.chat.id} type=${m.chat.type} msg=${m.message_id} text=${(m.text ?? m.caption ?? "").slice(0, 60)}`,
+    );
     const routed = await handleInboxReply(m, bot).catch((err) => {
       console.error("[inbox_reply] channel handler error:", err);
       return false;
@@ -1215,6 +1218,9 @@ function buildBot(): Bot {
 
   bot.on("edited_channel_post", async (ctx) => {
     const m = ctx.update.edited_channel_post;
+    console.log(
+      `[edited_channel_post] chat=${m.chat.id} msg=${m.message_id}`,
+    );
     // Treat edits in channels as fresh classifies — for news channels
     // an edit is often a correction the owner should see.
     await handleChannelPost(m, bot).catch((err) =>
@@ -2356,9 +2362,10 @@ async function maybeForwardToSecretary(args: {
 // not message. They have no `from` (the post is from the channel
 // itself) and the bot must be a member/admin to see them at all.
 // Same flow as handleGroupMessage minus the per-sender bits, so news
-// channels show up in /messages and the dashboard.
+// channels show up in /messages and the dashboard. We deliberately
+// don't filter on chat.type — Telegram delivers anonymous-admin
+// posts in supergroups via channel_post too and we want those too.
 async function handleChannelPost(msg: Message, bot: Bot): Promise<void> {
-  if (msg.chat.type !== "channel") return;
   await handleAnyChatPost(msg, bot);
 }
 
