@@ -1,8 +1,55 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
+
+// Less-frequent pages live as tiles at the top of Settings instead of
+// the main sidebar — keeping the bottom navbar readable on mobile.
+const TILES: Array<{
+  href: string;
+  emoji: string;
+  label: string;
+  desc: string;
+}> = [
+  {
+    href: "/groups",
+    emoji: "📊",
+    label: "Groups",
+    desc: "خلاصه‌های روزانه‌ی گروه‌ها",
+  },
+  {
+    href: "/functions",
+    emoji: "🧩",
+    label: "Functions",
+    desc: "نقش هر چت (downloader, news, ...)",
+  },
+  {
+    href: "/knowledge",
+    emoji: "📘",
+    label: "Knowledge",
+    desc: "اصطلاحات و توضیحاتی که به AI تزریق می‌شه",
+  },
+  {
+    href: "/costs",
+    emoji: "💵",
+    label: "Costs",
+    desc: "هزینه‌ی AI و توکن‌ها",
+  },
+  {
+    href: "/audit",
+    emoji: "🕐",
+    label: "Audit",
+    desc: "لاگ تغییرات",
+  },
+  {
+    href: "/health",
+    emoji: "❤️",
+    label: "Health",
+    desc: "وضعیت سرویس‌ها و webhook",
+  },
+];
 
 type Settings = {
   ownerName: string;
@@ -380,6 +427,22 @@ export default function SettingsPage() {
           </button>
         }
       />
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-6">
+        {TILES.map((t) => (
+          <Link
+            key={t.href}
+            href={t.href}
+            className="flex flex-col items-start gap-1 p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
+          >
+            <span className="text-lg">{t.emoji}</span>
+            <span className="text-sm font-medium">{t.label}</span>
+            <span className="text-[10px] text-[var(--color-text-dim)] leading-snug">
+              {t.desc}
+            </span>
+          </Link>
+        ))}
+      </div>
 
       {msg && (
         <Card className="mb-6">

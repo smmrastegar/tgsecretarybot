@@ -4,17 +4,11 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  Activity,
   AlertOctagon,
   Bell,
-  BookOpen,
-  DollarSign,
-  Heart,
-  History,
   LayoutDashboard,
   LogOut,
   MessageSquare,
-  Puzzle,
   Settings,
   Users2,
 } from "lucide-react";
@@ -32,13 +26,7 @@ const NAV = [
   { href: "/urgent", label: "Urgent", icon: AlertOctagon },
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/chats", label: "Chats", icon: Users2 },
-  { href: "/groups", label: "Groups", icon: Activity },
   { href: "/reminders", label: "Actions", icon: Bell },
-  { href: "/functions", label: "Functions", icon: Puzzle },
-  { href: "/knowledge", label: "Knowledge", icon: BookOpen },
-  { href: "/costs", label: "Costs", icon: DollarSign },
-  { href: "/audit", label: "Audit", icon: History },
-  { href: "/health", label: "Health", icon: Heart },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
