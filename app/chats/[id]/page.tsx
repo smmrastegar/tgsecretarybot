@@ -821,6 +821,30 @@ export default function ChatDetailPage() {
                 </div>
                 )}
 
+                {rule?.chatType === "private" && (
+                  <div className="mt-2 max-w-lg">
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(rule.isBot)}
+                        disabled={saving}
+                        onChange={(e) =>
+                          fetch(`/api/chats/${chatId}/is-bot`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ isBot: e.target.checked }),
+                          }).then(() => load())
+                        }
+                      />
+                      🤖 این چت یک bot است
+                      <span className="text-[10px] text-[var(--color-text-dim)]">
+                        (تشخیص خودکار بر اساس username؛ این رو علامت بزن یا
+                        بردار اگه اشتباه شناسایی شده)
+                      </span>
+                    </label>
+                  </div>
+                )}
+
                 {rule?.isBot && (
                   <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
                     <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">

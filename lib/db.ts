@@ -178,6 +178,16 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS mode_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS secretary_user_id BIGINT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS is_bot BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Backfill is_bot from messages_log: Telegram bot usernames must
+    // end with "bot" (case-insensitive). Anything else stays FALSE and
+    // the owner can manually flag it on /chats/[id].
+    await q`
+      UPDATE chat_rules SET is_bot = TRUE
+      WHERE is_bot = FALSE
+        AND chat_id IN (
+          SELECT DISTINCT chat_id FROM messages_log
+          WHERE sender_username ILIKE '%bot'
+        )`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS first_name TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS last_name TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS nickname TEXT`;
@@ -1276,6 +1286,34 @@ export async function upsertChatRule(rule: {
       ai_process_gifs = EXCLUDED.ai_process_gifs,
       function_role = COALESCE(EXCLUDED.function_role, chat_rules.function_role),
       function_config = COALESCE(EXCLUDED.function_config, chat_rules.function_config),
+      updated_at = NOW()`;
+}
+
+// Manual override of the auto-detected is_bot flag (auto-detection
+// flags chats whose senders have usernames ending in "bot", which
+// covers most cases but the owner needs the escape hatch). Separate
+// helper because upsertChatRule's `undefined` couldn't distinguish
+// "don't touch" from "set to false".
+export async function setChatIsBot(
+  chatId: number,
+  isBot: boolean,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title, is_bot, updated_at)
+    VALUES (
+      ${chatId},
+      COALESCE(
+        (SELECT MAX(chat_type) FROM messages_log WHERE chat_id = ${chatId}),
+        'private'
+      ),
+      (SELECT MAX(chat_title) FROM messages_log WHERE chat_id = ${chatId}),
+      ${isBot},
+      NOW()
+    )
+    ON CONFLICT (chat_id) DO UPDATE SET
+      is_bot = ${isBot},
       updated_at = NOW()`;
 }
 
