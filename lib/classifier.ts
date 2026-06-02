@@ -459,26 +459,27 @@ function parseAiReply(content: string): string {
     .replace(/^\s*\{\s*["']?reply["']?\s*:?\s*"?/i, "")
     .replace(/"?\s*\}?\s*$/m, "")
     .trim();
-  // Last-ditch safety net: if anything that still looks like a JSON
-  // fragment (matching brace + "reply" word) remains, drop it.
-  if (/\{[\s\S]*["']?reply["']?/.test(stripped)) {
-    stripped = stripped.replace(/\{[\s\S]*$/g, "").trim();
-  }
-  // Drop any leading / trailing lone braces or quotes left by a
-  // truncated payload (`{` alone, `{\n`, `{}`, `"...`, etc).
+  // NUKE FROM ORBIT: at this point any remaining `{` or `}` is JSON
+  // residue, not a real reply. Real Telegram conversations don't use
+  // curly braces. Drop everything from the first `{` onwards, and the
+  // last `}` backwards, including any orphan brace that survived.
+  const firstBrace = stripped.indexOf("{");
+  if (firstBrace !== -1) stripped = stripped.slice(0, firstBrace);
+  const lastBrace = stripped.lastIndexOf("}");
+  if (lastBrace !== -1) stripped = stripped.slice(lastBrace + 1);
+  // Drop any leading / trailing lone braces, quotes, commas, colons
+  // left over from a truncated payload (`"...`, `,`, etc).
   stripped = stripped
     .replace(/^[\s\{\}"'`,:]+/, "")
     .replace(/[\s\{\}"'`,:]+$/, "")
     .trim();
   // Discard outputs that are obviously not a real reply: empty, just
-  // punctuation/brackets, or a single token left over from the JSON
-  // envelope. Returning empty lets the caller fall back to its
-  // default (away message, no reply, etc.) instead of leaking a
-  // garbage character to the user.
+  // punctuation, or contains stray "reply" : / json-key fragments.
   if (
     stripped.length < 2 ||
     !/[\p{L}\p{N}]/u.test(stripped) ||
-    /^["'{}\[\],:]+$/.test(stripped)
+    /^["'{}\[\],:]+$/.test(stripped) ||
+    /["']reply["']\s*:/i.test(stripped)
   ) {
     return "";
   }
