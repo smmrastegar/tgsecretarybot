@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import {
   audit,
+  bulkSetAutoSummarize,
   bulkSetChatFlag,
   bulkSetChatFunction,
   bulkSetChatMode,
@@ -22,11 +23,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const body = (await request.json().catch(() => ({}))) as {
-    op?: "mode" | "vip" | "muted" | "function";
+    op?: "mode" | "vip" | "muted" | "function" | "auto_summarize";
     chatIds?: number[];
     mode?: ChatMode;
     value?: boolean;
     role?: FunctionRole | null;
+    gapMinutes?: number;
   };
   const op = body.op;
   const chatIds = Array.isArray(body.chatIds)
@@ -64,6 +66,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
     affected = await bulkSetChatFunction(chatIds, r ?? null);
+  } else if (op === "auto_summarize") {
+    const enabled = Boolean(body.value);
+    const gap = Number(body.gapMinutes ?? 5);
+    affected = await bulkSetAutoSummarize(
+      chatIds,
+      enabled,
+      Number.isFinite(gap) ? gap : 5,
+    );
   } else {
     return NextResponse.json({ error: "unknown op" }, { status: 400 });
   }
@@ -80,6 +90,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       mode: body.mode,
       role: body.role,
       value: body.value,
+      gapMinutes: body.gapMinutes,
     },
   });
 

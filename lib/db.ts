@@ -1435,6 +1435,31 @@ export async function bulkSetChatFunction(
   return rows.length;
 }
 
+export async function bulkSetAutoSummarize(
+  chatIds: number[],
+  enabled: boolean,
+  gapMinutes: number,
+): Promise<number> {
+  if (!hasDb() || chatIds.length === 0) return 0;
+  await ensureSchema();
+  const gap = Math.max(1, Math.min(Math.round(gapMinutes), 240));
+  const rows = await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title,
+                            auto_summarize_enabled, auto_summarize_gap_minutes,
+                            updated_at)
+    SELECT m.chat_id, MAX(m.chat_type), MAX(m.chat_title),
+           ${enabled}, ${gap}, NOW()
+    FROM messages_log m
+    WHERE m.chat_id = ANY(${chatIds}::bigint[])
+    GROUP BY m.chat_id
+    ON CONFLICT (chat_id) DO UPDATE SET
+      auto_summarize_enabled = ${enabled},
+      auto_summarize_gap_minutes = ${gap},
+      updated_at = NOW()
+    RETURNING chat_id`;
+  return rows.length;
+}
+
 // Toggle auto-summary for a chat (typically called when the owner
 // flips the checkbox in /chats/[id]). Stays separate from upsertChatRule
 // so the JSON of an unrelated edit doesn't accidentally reset it.

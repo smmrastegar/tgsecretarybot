@@ -183,8 +183,13 @@ export default function ChatsPage() {
   }
 
   async function runBulk(
-    op: "mode" | "vip" | "muted" | "function",
-    extra: { mode?: ChatMode; value?: boolean; role?: string | null } = {},
+    op: "mode" | "vip" | "muted" | "function" | "auto_summarize",
+    extra: {
+      mode?: ChatMode;
+      value?: boolean;
+      role?: string | null;
+      gapMinutes?: number;
+    } = {},
   ) {
     if (selected.size === 0) return;
     setBulking(true);
@@ -429,6 +434,34 @@ export default function ChatsPage() {
                   <option value="news">📰 News</option>
                   <option value="summary_inbox">📬 Summary inbox</option>
                   <option value="__clear">— Clear role —</option>
+                </select>
+                <select
+                  disabled={bulking}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    if (v === "off") {
+                      void runBulk("auto_summarize", { value: false });
+                    } else {
+                      void runBulk("auto_summarize", {
+                        value: true,
+                        gapMinutes: Number(v),
+                      });
+                    }
+                    e.currentTarget.value = "";
+                  }}
+                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
+                  title="Bulk Auto-summarize — وقتی روشن باشه، threadهای ساکت‌شده توی summary_inbox خلاصه می‌شن"
+                >
+                  <option value="">📬 Auto-summarize…</option>
+                  <option value="2">روشن، گپ ۲ دقیقه</option>
+                  <option value="5">روشن، گپ ۵ دقیقه</option>
+                  <option value="10">روشن، گپ ۱۰ دقیقه</option>
+                  <option value="15">روشن، گپ ۱۵ دقیقه</option>
+                  <option value="30">روشن، گپ ۳۰ دقیقه</option>
+                  <option value="60">روشن، گپ ۱ ساعت</option>
+                  <option value="off">— Off —</option>
                 </select>
               </div>
             )}
