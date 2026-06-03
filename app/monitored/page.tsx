@@ -176,12 +176,12 @@ export default function MonitoredPage() {
   } | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const [keyPrefix, setKeyPrefix] = useState<string | null>(null);
-  const [keySource, setKeySource] = useState<"db" | "env" | null>(null);
+  const [keySource, setKeySource] = useState<"tenant" | "db" | "env" | null>(null);
   const [keyName, setKeyName] = useState<string | null>(null);
   type Diagnose = {
     keyPrefix: string | null;
     keyLoaded: boolean;
-    keySource: "db" | "env" | null;
+    keySource: "tenant" | "db" | "env" | null;
     keyName: string | null;
     probes: Array<{
       path: string;
@@ -224,7 +224,7 @@ export default function MonitoredPage() {
         balanceUsd?: number | null;
         rateLimitPerSec?: number | null;
         keyPrefix?: string | null;
-        keySource?: "db" | "env" | null;
+        keySource?: "tenant" | "db" | "env" | null;
         keyName?: string | null;
       };
       if (j.keyPrefix !== undefined) setKeyPrefix(j.keyPrefix);

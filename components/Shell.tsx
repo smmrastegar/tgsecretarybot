@@ -10,6 +10,7 @@ import {
   LogOut,
   MessageSquare,
   Settings,
+  Shield,
   Users2,
 } from "lucide-react";
 
@@ -48,6 +49,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [webhook, setWebhook] = useState<WebhookStatus | null>(null);
   const [fixingWebhook, setFixingWebhook] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -60,7 +62,15 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         if (d && (!d.ok || d.missing?.length > 0)) setWebhook(d);
       })
       .catch(() => {});
+    fetch("/api/admin/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { admin?: boolean } | null) => setIsAdmin(!!d?.admin))
+      .catch(() => {});
   }, []);
+
+  const navItems = isAdmin
+    ? [...NAV, { href: "/admin", label: "Admin", icon: Shield }]
+    : NAV;
 
   async function fixWebhook() {
     setFixingWebhook(true);
@@ -90,7 +100,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <div className="text-sm mt-1">{display}</div>
         </div>
         <nav className="flex-1 flex flex-col gap-1">
-          {NAV.map((item) => {
+          {navItems.map((item) => {
             const active = isActive(pathname, item.href);
             const Icon = item.icon;
             return (

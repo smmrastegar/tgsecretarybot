@@ -466,6 +466,12 @@ export async function ensureSchema(): Promise<void> {
         created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
+    // Per-tenant API key overrides. Empty = fall through to the
+    // global settings override and then env. Admin owns these via
+    // /api/admin/tenants/[id]/keys.
+    await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hiker_api_key TEXT`;
+    await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hiker_api_key_name TEXT`;
+    await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS openrouter_api_key TEXT`;
     await q`
       CREATE TABLE IF NOT EXISTS admin_users (
         user_id    BIGINT PRIMARY KEY,
@@ -623,7 +629,7 @@ export async function listBusinessConnections(): Promise<BusinessConnectionRow[]
   await ensureSchema();
   const rows = await sql()`
     SELECT id, user_id, user_chat_id, username, first_name, last_name,
-           can_reply, is_enabled, created_at, updated_at
+           can_reply, is_enabled, tenant_id, created_at, updated_at
     FROM business_connections ORDER BY updated_at DESC`;
   return rows.map((r) => ({
     id: r.id as string,
@@ -634,6 +640,7 @@ export async function listBusinessConnections(): Promise<BusinessConnectionRow[]
     lastName: r.last_name as string | null,
     canReply: r.can_reply as boolean,
     isEnabled: r.is_enabled as boolean,
+    tenantId: r.tenant_id == null ? null : Number(r.tenant_id),
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
   }));
@@ -648,6 +655,7 @@ export type BusinessConnectionRow = {
   lastName: string | null;
   canReply: boolean;
   isEnabled: boolean;
+  tenantId: number | null;
   createdAt: Date;
   updatedAt: Date;
 };

@@ -17,26 +17,44 @@ import {
   recordCall,
 } from "./hikerapi-budget";
 import { getSettings } from "./settings";
+import { getTenant } from "./tenant";
+import { getCurrentTenantId } from "./tenant-context";
 
 export { HikerApprovalNeededError };
 
-// DB override wins over env so the owner can rotate the key from the
-// UI without a Vercel redeploy. Empty string in settings → fall back
-// to HIKER_API_KEY env var.
+// Resolution order:
+//   1. tenant.hiker_api_key (per-tenant override, via context)
+//   2. settings.hikerApiKeyOverride (global UI override)
+//   3. config.hikerApiKey (env HIKER_API_KEY)
+// Empty / missing values fall through to the next layer.
 export async function getActiveKey(): Promise<{
   key: string | null;
-  source: "db" | "env" | null;
+  source: "tenant" | "db" | "env" | null;
   name: string | null;
 }> {
+  const tenantId = getCurrentTenantId();
+  if (tenantId != null) {
+    try {
+      const t = await getTenant(tenantId);
+      const tkey = (t?.hikerApiKey ?? "").trim();
+      if (tkey) {
+        return {
+          key: tkey,
+          source: "tenant",
+          name: t?.hikerApiKeyName ?? null,
+        };
+      }
+    } catch {
+      // tenant lookup failed → fall through to global.
+    }
+  }
   let dbKey = "";
   let name = "";
   try {
     const s = await getSettings();
     dbKey = (s.hikerApiKeyOverride ?? "").trim();
     name = (s.hikerApiKeyName ?? "").trim();
-  } catch {
-    // settings not available (e.g. DB outage) — fall back to env.
-  }
+  } catch {}
   if (dbKey) return { key: dbKey, source: "db", name: name || null };
   if (config.hikerApiKey)
     return { key: config.hikerApiKey, source: "env", name: name || null };
@@ -645,7 +663,7 @@ export async function getUsage(): Promise<HikerUsage> {
 export async function diagnoseUsage(): Promise<{
   keyPrefix: string | null;
   keyLoaded: boolean;
-  keySource: "db" | "env" | null;
+  keySource: "tenant" | "db" | "env" | null;
   keyName: string | null;
   probes: Array<{
     path: string;

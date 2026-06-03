@@ -25,6 +25,9 @@ export type Tenant = {
   monitoredCap: number;
   isEnabled: boolean;
   notes: string | null;
+  hikerApiKey: string | null;
+  hikerApiKeyName: string | null;
+  openrouterApiKey: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -40,10 +43,18 @@ function rowToTenant(r: Record<string, unknown>): Tenant {
     monitoredCap: Number(r.monitored_cap),
     isEnabled: Boolean(r.is_enabled),
     notes: (r.notes as string) ?? null,
+    hikerApiKey: (r.hiker_api_key as string) ?? null,
+    hikerApiKeyName: (r.hiker_api_key_name as string) ?? null,
+    openrouterApiKey: (r.openrouter_api_key as string) ?? null,
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
   };
 }
+
+const TENANT_COLUMNS = `id, name, plan, hiker_budget_usd, hiker_approved_usd,
+           hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+           hiker_api_key, hiker_api_key_name, openrouter_api_key,
+           created_at, updated_at` as const;
 
 export async function listTenants(): Promise<Tenant[]> {
   if (!hasDb()) return [];
@@ -51,6 +62,7 @@ export async function listTenants(): Promise<Tenant[]> {
   const rows = await sql()`
     SELECT id, name, plan, hiker_budget_usd, hiker_approved_usd,
            hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+           hiker_api_key, hiker_api_key_name, openrouter_api_key,
            created_at, updated_at
     FROM tenants
     ORDER BY name ASC`;
@@ -63,6 +75,7 @@ export async function getTenant(id: number): Promise<Tenant | null> {
   const rows = await sql()`
     SELECT id, name, plan, hiker_budget_usd, hiker_approved_usd,
            hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+           hiker_api_key, hiker_api_key_name, openrouter_api_key,
            created_at, updated_at
     FROM tenants WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -75,6 +88,7 @@ export async function getTenantByName(name: string): Promise<Tenant | null> {
   const rows = await sql()`
     SELECT id, name, plan, hiker_budget_usd, hiker_approved_usd,
            hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+           hiker_api_key, hiker_api_key_name, openrouter_api_key,
            created_at, updated_at
     FROM tenants WHERE name = ${name} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -109,6 +123,7 @@ export async function createTenant(args: {
     ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
     RETURNING id, name, plan, hiker_budget_usd, hiker_approved_usd,
               hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+              hiker_api_key, hiker_api_key_name, openrouter_api_key,
               created_at, updated_at`;
   return rowToTenant(rows[0] as Record<string, unknown>);
 }
@@ -124,6 +139,9 @@ export async function updateTenant(
     monitoredCap: number;
     isEnabled: boolean;
     notes: string | null;
+    hikerApiKey: string | null;
+    hikerApiKeyName: string | null;
+    openrouterApiKey: string | null;
   }>,
 ): Promise<Tenant | null> {
   if (!hasDb()) return null;
@@ -138,10 +156,53 @@ export async function updateTenant(
       monitored_cap = COALESCE(${patch.monitoredCap ?? null}::int, monitored_cap),
       is_enabled = COALESCE(${patch.isEnabled ?? null}::boolean, is_enabled),
       notes = COALESCE(${patch.notes ?? null}, notes),
+      hiker_api_key = COALESCE(${patch.hikerApiKey ?? null}, hiker_api_key),
+      hiker_api_key_name = COALESCE(${patch.hikerApiKeyName ?? null}, hiker_api_key_name),
+      openrouter_api_key = COALESCE(${patch.openrouterApiKey ?? null}, openrouter_api_key),
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id, name, plan, hiker_budget_usd, hiker_approved_usd,
               hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+              hiker_api_key, hiker_api_key_name, openrouter_api_key,
+              created_at, updated_at`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToTenant(r) : null;
+}
+
+// Hard-set per-tenant API key fields. Empty string clears them.
+// updateTenant() above can't distinguish "leave alone" from
+// "clear" because it uses COALESCE. This helper writes literal
+// strings or NULL.
+export async function setTenantApiKeys(
+  id: number,
+  patch: {
+    hikerApiKey?: string | null;
+    hikerApiKeyName?: string | null;
+    openrouterApiKey?: string | null;
+  },
+): Promise<Tenant | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const fields: string[] = [];
+  const hk = patch.hikerApiKey === undefined ? null : patch.hikerApiKey || null;
+  const hkn =
+    patch.hikerApiKeyName === undefined ? null : patch.hikerApiKeyName || null;
+  const or =
+    patch.openrouterApiKey === undefined ? null : patch.openrouterApiKey || null;
+  if (patch.hikerApiKey !== undefined) fields.push("hiker_api_key");
+  if (patch.hikerApiKeyName !== undefined) fields.push("hiker_api_key_name");
+  if (patch.openrouterApiKey !== undefined) fields.push("openrouter_api_key");
+  if (fields.length === 0) return getTenant(id);
+  const rows = await sql()`
+    UPDATE tenants SET
+      hiker_api_key = CASE WHEN ${patch.hikerApiKey !== undefined}::boolean THEN ${hk} ELSE hiker_api_key END,
+      hiker_api_key_name = CASE WHEN ${patch.hikerApiKeyName !== undefined}::boolean THEN ${hkn} ELSE hiker_api_key_name END,
+      openrouter_api_key = CASE WHEN ${patch.openrouterApiKey !== undefined}::boolean THEN ${or} ELSE openrouter_api_key END,
+      updated_at = NOW()
+    WHERE id = ${id}
+    RETURNING id, name, plan, hiker_budget_usd, hiker_approved_usd,
+              hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+              hiker_api_key, hiker_api_key_name, openrouter_api_key,
               created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToTenant(r) : null;
@@ -175,6 +236,7 @@ export async function getTenantForUser(
   const rows = await sql()`
     SELECT t.id, t.name, t.plan, t.hiker_budget_usd, t.hiker_approved_usd,
            t.hiker_approval_step_usd, t.monitored_cap, t.is_enabled, t.notes,
+           t.hiker_api_key, t.hiker_api_key_name, t.openrouter_api_key,
            t.created_at, t.updated_at
     FROM business_connections bc
     JOIN tenants t ON t.id = bc.tenant_id
@@ -184,6 +246,9 @@ export async function getTenantForUser(
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToTenant(r) : null;
 }
+
+// Mark TENANT_COLUMNS as referenced to silence unused-export warning.
+void TENANT_COLUMNS;
 
 // --- Admin ---
 
