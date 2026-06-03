@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { getBot } from "@/lib/bot";
-import { config } from "@/lib/config";
 import {
   audit,
   getMonitoredAccount,
   upsertMonitoredAccounts,
 } from "@/lib/db";
-import { HikerOutOfCreditsError } from "@/lib/hikerapi";
+import { getActiveKey, HikerOutOfCreditsError } from "@/lib/hikerapi";
 import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
+import { requireTenant } from "@/lib/tenant";
+import { runWithTenant } from "@/lib/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,6 +79,15 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  let tenant;
+  try {
+    tenant = await requireTenant(session);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 403 },
+    );
+  }
   let csvText = "";
   const ct = request.headers.get("content-type") ?? "";
   try {
@@ -115,31 +125,32 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 400 },
     );
   }
-  const { inserted, updated, insertedIds } = await upsertMonitoredAccounts(items);
+  const { inserted, updated, insertedIds } = await upsertMonitoredAccounts(
+    items,
+    tenant.id,
+  );
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,
     action: "monitor.import",
-    details: { inserted, updated, parsed: parsed.length },
+    details: { inserted, updated, parsed: parsed.length, tenantId: tenant.id },
   });
 
-  // Immediate on-add processing for newly inserted accounts. We cap
-  // to a handful so a 47-row CSV doesn't try to fan out 47 × 4
-  // HikerAPI calls inside a 60s function — the cron picks up the
-  // rest within 5 minutes.
   const IMMEDIATE_ON_ADD = 5;
   let detected = 0;
   let forwarded = 0;
   const errors: string[] = [];
   let outOfCredits: { message: string; billingUrl: string } | null = null;
   let approvalNeeded: HikerApprovalNeededError | null = null;
-  if (insertedIds.length > 0 && config.hikerApiKey) {
-    const target = await resolveTargetChat();
-    if (target) {
+  const { key } = await getActiveKey();
+  if (insertedIds.length > 0 && key) {
+    await runWithTenant(tenant.id, async () => {
+      const target = await resolveTargetChat();
+      if (!target) return;
       const bot = getBot();
       const slice = insertedIds.slice(0, IMMEDIATE_ON_ADD);
       for (const id of slice) {
-        const acc = await getMonitoredAccount(id);
+        const acc = await getMonitoredAccount(id, tenant.id);
         if (!acc) continue;
         try {
           const result = await processAccount({
@@ -155,13 +166,11 @@ export async function POST(request: Request): Promise<NextResponse> {
           errors.push(...result.errors);
         } catch (err) {
           if (err instanceof HikerOutOfCreditsError) {
-            // Bail out — every subsequent account would hit the same 402.
             outOfCredits = { message: err.message, billingUrl: err.billingUrl };
             errors.push(`HikerAPI out of credits: ${err.message}`);
             break;
           }
           if (err instanceof HikerApprovalNeededError) {
-            // Same idea — past the approved slice, stop fanning out.
             approvalNeeded = err;
             errors.push(err.message);
             break;
@@ -169,7 +178,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           errors.push(err instanceof Error ? err.message : String(err));
         }
       }
-    }
+    });
   }
 
   return NextResponse.json({
@@ -183,16 +192,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     forwarded,
     errors: errors.slice(0, 10),
     ...(outOfCredits
-      ? { outOfCredits: true, billingUrl: outOfCredits.billingUrl }
+      ? {
+          outOfCredits: true,
+          billingUrl: (outOfCredits as { billingUrl: string }).billingUrl,
+        }
       : {}),
     ...(approvalNeeded
       ? {
           approvalNeeded: true,
-          spentUsd: approvalNeeded.spentUsd,
-          approvedUsd: approvalNeeded.approvedUsd,
-          nextThresholdUsd: approvalNeeded.nextThresholdUsd,
-          budgetUsd: approvalNeeded.budgetUsd,
-          reason: approvalNeeded.reason,
+          spentUsd: (approvalNeeded as HikerApprovalNeededError).spentUsd,
+          approvedUsd: (approvalNeeded as HikerApprovalNeededError).approvedUsd,
+          nextThresholdUsd: (approvalNeeded as HikerApprovalNeededError).nextThresholdUsd,
+          budgetUsd: (approvalNeeded as HikerApprovalNeededError).budgetUsd,
+          reason: (approvalNeeded as HikerApprovalNeededError).reason,
         }
       : {}),
   });

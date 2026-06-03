@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { dueMonitoredAccounts, hasDb } from "@/lib/db";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
-import { HikerOutOfCreditsError } from "@/lib/hikerapi";
+import { getActiveKey, HikerOutOfCreditsError } from "@/lib/hikerapi";
 import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
 import { getBot } from "@/lib/bot";
+import { listTenants } from "@/lib/tenant";
+import { runWithTenant } from "@/lib/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +28,80 @@ export async function POST(request: Request): Promise<NextResponse> {
   return run(request);
 }
 
+type TenantResult = {
+  tenantId: number;
+  tenantName: string;
+  checked: number;
+  detected: number;
+  forwarded: number;
+  errors: string[];
+  bail?: "out_of_credits" | "approval_needed";
+  billingUrl?: string;
+  approval?: {
+    spentUsd: number;
+    approvedUsd: number;
+    nextThresholdUsd: number;
+    budgetUsd: number;
+    reason: string;
+  };
+};
+
+async function processTenant(
+  tenantId: number,
+  tenantName: string,
+): Promise<TenantResult> {
+  return runWithTenant(tenantId, async () => {
+    const out: TenantResult = {
+      tenantId,
+      tenantName,
+      checked: 0,
+      detected: 0,
+      forwarded: 0,
+      errors: [],
+    };
+    const target = await resolveTargetChat();
+    if (!target) {
+      out.errors.push(
+        `tenant ${tenantName}: no chat tagged as storage/downloader`,
+      );
+      return out;
+    }
+    const due = await dueMonitoredAccounts(30, tenantId);
+    const bot = getBot();
+    for (const acc of due) {
+      out.checked++;
+      try {
+        const result = await processAccount({ account: acc, target, bot });
+        out.detected += result.detected;
+        out.forwarded += result.forwarded;
+        out.errors.push(...result.errors);
+      } catch (err) {
+        if (err instanceof HikerOutOfCreditsError) {
+          out.bail = "out_of_credits";
+          out.billingUrl = err.billingUrl;
+          out.errors.push(`HikerAPI out of credits: ${err.message}`);
+          break;
+        }
+        if (err instanceof HikerApprovalNeededError) {
+          out.bail = "approval_needed";
+          out.approval = {
+            spentUsd: err.spentUsd,
+            approvedUsd: err.approvedUsd,
+            nextThresholdUsd: err.nextThresholdUsd,
+            budgetUsd: err.budgetUsd,
+            reason: err.reason,
+          };
+          out.errors.push(err.message);
+          break;
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        out.errors.push(`${acc.username}: ${msg.slice(0, 200)}`);
+      }
+    }
+    return out;
+  });
+}
+
 async function run(request: Request): Promise<NextResponse> {
   if (!authorized(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -33,81 +109,42 @@ async function run(request: Request): Promise<NextResponse> {
   if (!hasDb()) {
     return NextResponse.json({ error: "DATABASE_URL not set" }, { status: 500 });
   }
-  if (!config.hikerApiKey) {
+  const { key } = await getActiveKey();
+  if (!key) {
     return NextResponse.json(
       { error: "HIKER_API_KEY not configured" },
       { status: 503 },
     );
   }
-  const target = await resolveTargetChat();
-  if (!target) {
-    return NextResponse.json(
-      {
-        error:
-          "No chat tagged as 'storage' or 'downloader'. Set one on /chats/[id] → Function role.",
-      },
-      { status: 412 },
-    );
-  }
-
-  const due = await dueMonitoredAccounts(30);
-  const bot = getBot();
-  let checked = 0;
-  let detected = 0;
-  let forwarded = 0;
-  const errors: string[] = [];
-
-  for (const acc of due) {
-    checked++;
+  // Iterate every enabled tenant. A tenant whose budget is exhausted
+  // bails out early — other tenants keep running.
+  const tenants = (await listTenants()).filter((t) => t.isEnabled);
+  const results: TenantResult[] = [];
+  for (const t of tenants) {
     try {
-      const result = await processAccount({ account: acc, target, bot });
-      detected += result.detected;
-      forwarded += result.forwarded;
-      errors.push(...result.errors);
+      results.push(await processTenant(t.id, t.name));
     } catch (err) {
-      if (err instanceof HikerOutOfCreditsError) {
-        // Don't stamp every remaining account with the same 402 —
-        // bail out and let the next cron pick up where we left off
-        // once the operator tops up.
-        return NextResponse.json({
-          ok: false,
-          checked,
-          detected,
-          forwarded,
-          errors: [`HikerAPI out of credits: ${err.message}`],
-          billingUrl: err.billingUrl,
-        }, { status: 402 });
-      }
-      if (err instanceof HikerApprovalNeededError) {
-        // Same logic — once we hit the local approval ceiling, every
-        // remaining account would just throw the same thing. Stop
-        // and surface the state so the UI flips into "approve next
-        // $10" mode.
-        return NextResponse.json({
-          ok: false,
-          approvalNeeded: true,
-          checked,
-          detected,
-          forwarded,
-          errors: [err.message],
-          spentUsd: err.spentUsd,
-          approvedUsd: err.approvedUsd,
-          nextThresholdUsd: err.nextThresholdUsd,
-          budgetUsd: err.budgetUsd,
-          reason: err.reason,
-        }, { status: 402 });
-      }
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${acc.username}: ${msg.slice(0, 200)}`);
+      results.push({
+        tenantId: t.id,
+        tenantName: t.name,
+        checked: 0,
+        detected: 0,
+        forwarded: 0,
+        errors: [`tenant fatal: ${err instanceof Error ? err.message : String(err)}`],
+      });
     }
   }
-
+  const totals = results.reduce(
+    (acc, r) => ({
+      checked: acc.checked + r.checked,
+      detected: acc.detected + r.detected,
+      forwarded: acc.forwarded + r.forwarded,
+    }),
+    { checked: 0, detected: 0, forwarded: 0 },
+  );
   return NextResponse.json({
     ok: true,
-    checked,
-    detected,
-    forwarded,
-    target: target.chatId,
-    errors: errors.slice(0, 20),
+    tenants: results,
+    ...totals,
   });
 }

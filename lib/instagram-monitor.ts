@@ -23,15 +23,20 @@ import {
   type IGMedia,
 } from "./hikerapi";
 import { getSettings } from "./settings";
+import { getCurrentTenantId } from "./tenant-context";
 
 export type AccountTarget = {
   chatId: number;
 };
 
 export async function resolveTargetChat(): Promise<AccountTarget | null> {
-  const storages = await listChatsByFunction("storage");
+  // Tenant-scoped: pulls the storage/downloader role chat for the
+  // currently-active tenant (set via runWithTenant). If no tenant
+  // context (legacy callers, tests), falls back to the global pick.
+  const tenantId = getCurrentTenantId();
+  const storages = await listChatsByFunction("storage", tenantId);
   if (storages[0]) return { chatId: storages[0].chatId };
-  const downloaders = await listChatsByFunction("downloader");
+  const downloaders = await listChatsByFunction("downloader", tenantId);
   if (downloaders[0]) return { chatId: downloaders[0].chatId };
   return null;
 }
@@ -331,6 +336,7 @@ export async function processAccount(args: {
         kind: task.kind,
         caption: captionFor({ account, kind: task.kind, media: m }),
         mediaType: m.mediaType,
+        tenantId: getCurrentTenantId(),
       });
       if (!ev) continue;
       detected++;

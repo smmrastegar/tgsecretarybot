@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { getBot } from "@/lib/bot";
-import { config } from "@/lib/config";
 import {
   addMonitoredAccount,
   audit,
@@ -9,10 +8,12 @@ import {
   listMonitoredAccounts,
   listRecentMonitorEvents,
 } from "@/lib/db";
-import { HikerOutOfCreditsError } from "@/lib/hikerapi";
+import { getActiveKey, HikerOutOfCreditsError } from "@/lib/hikerapi";
 import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 import { getSettings } from "@/lib/settings";
+import { requireTenant } from "@/lib/tenant";
+import { runWithTenant } from "@/lib/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,20 +24,31 @@ function parseBool(v: string | undefined, def: boolean): boolean {
 }
 
 export async function GET(): Promise<NextResponse> {
+  let session;
   try {
-    await requireSession();
+    session = await requireSession();
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  let tenant;
+  try {
+    tenant = await requireTenant(session);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 403 },
+    );
+  }
   const [accounts, events, storages, downloaders, settings] = await Promise.all([
-    listMonitoredAccounts({ platform: "instagram" }),
-    listRecentMonitorEvents(100),
-    listChatsByFunction("storage"),
-    listChatsByFunction("downloader"),
+    listMonitoredAccounts({ platform: "instagram", tenantId: tenant.id }),
+    listRecentMonitorEvents(100, tenant.id),
+    listChatsByFunction("storage", tenant.id),
+    listChatsByFunction("downloader", tenant.id),
     getSettings(),
   ]);
   const target = storages[0] ?? downloaders[0] ?? null;
   return NextResponse.json({
+    tenant: { id: tenant.id, name: tenant.name, plan: tenant.plan },
     accounts,
     events,
     storageChats: storages.map((c) => ({
@@ -73,6 +85,15 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  let tenant;
+  try {
+    tenant = await requireTenant(session);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 403 },
+    );
+  }
   const body = (await request.json().catch(() => ({}))) as {
     username?: string;
   };
@@ -84,6 +105,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const account = await addMonitoredAccount({
     platform: "instagram",
     username,
+    tenantId: tenant.id,
     defaults: {
       intervalMinutes: Number(settings.monitorDefaultIntervalMinutes) || 30,
       checkStories: parseBool(settings.monitorDefaultCheckStories, true),
@@ -98,40 +120,43 @@ export async function POST(request: Request): Promise<NextResponse> {
     actorName: session.username ?? null,
     action: "monitor.add",
     target: account ? String(account.id) : null,
-    details: { username },
+    details: { username, tenantId: tenant.id },
   });
   let detected = 0;
   let forwarded = 0;
   const errors: string[] = [];
   let outOfCredits: { message: string; billingUrl: string } | null = null;
   let approvalNeeded: HikerApprovalNeededError | null = null;
-  if (account && config.hikerApiKey) {
-    const target = await resolveTargetChat();
-    if (target) {
-      try {
-        const result = await processAccount({
-          account,
-          target,
-          bot: getBot(),
-          forceAllKinds: true,
-          postsLimit: 3,
-          reelsLimit: 0,
-        });
-        detected = result.detected;
-        forwarded = result.forwarded;
-        errors.push(...result.errors);
-      } catch (err) {
-        if (err instanceof HikerOutOfCreditsError) {
-          outOfCredits = { message: err.message, billingUrl: err.billingUrl };
-          errors.push(`HikerAPI out of credits: ${err.message}`);
-        } else if (err instanceof HikerApprovalNeededError) {
-          approvalNeeded = err;
-          errors.push(err.message);
-        } else {
-          errors.push(err instanceof Error ? err.message : String(err));
+  const { key } = await getActiveKey();
+  if (account && key) {
+    await runWithTenant(tenant.id, async () => {
+      const target = await resolveTargetChat();
+      if (target) {
+        try {
+          const result = await processAccount({
+            account,
+            target,
+            bot: getBot(),
+            forceAllKinds: true,
+            postsLimit: 3,
+            reelsLimit: 0,
+          });
+          detected = result.detected;
+          forwarded = result.forwarded;
+          errors.push(...result.errors);
+        } catch (err) {
+          if (err instanceof HikerOutOfCreditsError) {
+            outOfCredits = { message: err.message, billingUrl: err.billingUrl };
+            errors.push(`HikerAPI out of credits: ${err.message}`);
+          } else if (err instanceof HikerApprovalNeededError) {
+            approvalNeeded = err;
+            errors.push(err.message);
+          } else {
+            errors.push(err instanceof Error ? err.message : String(err));
+          }
         }
       }
-    }
+    });
   }
   return NextResponse.json({
     ok: true,
@@ -140,16 +165,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     forwarded,
     errors: errors.slice(0, 5),
     ...(outOfCredits
-      ? { outOfCredits: true, billingUrl: outOfCredits.billingUrl }
+      ? {
+          outOfCredits: true,
+          billingUrl: (outOfCredits as { billingUrl: string }).billingUrl,
+        }
       : {}),
     ...(approvalNeeded
       ? {
           approvalNeeded: true,
-          spentUsd: approvalNeeded.spentUsd,
-          approvedUsd: approvalNeeded.approvedUsd,
-          nextThresholdUsd: approvalNeeded.nextThresholdUsd,
-          budgetUsd: approvalNeeded.budgetUsd,
-          reason: approvalNeeded.reason,
+          spentUsd: (approvalNeeded as HikerApprovalNeededError).spentUsd,
+          approvedUsd: (approvalNeeded as HikerApprovalNeededError).approvedUsd,
+          nextThresholdUsd: (approvalNeeded as HikerApprovalNeededError)
+            .nextThresholdUsd,
+          budgetUsd: (approvalNeeded as HikerApprovalNeededError).budgetUsd,
+          reason: (approvalNeeded as HikerApprovalNeededError).reason,
         }
       : {}),
   });

@@ -1729,6 +1729,7 @@ export async function getPrimarySummaryInbox(): Promise<ChatRule | null> {
 
 export async function listChatsByFunction(
   role: FunctionRole,
+  tenantId?: number | null,
 ): Promise<ChatRule[]> {
   if (!hasDb()) return [];
   await ensureSchema();
@@ -1746,6 +1747,7 @@ export async function listChatsByFunction(
            grace_skipped_at, updated_at
     FROM chat_rules
     WHERE function_role = ${role}
+      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
     ORDER BY updated_at DESC`;
   return (rows as Array<Record<string, unknown>>).map(rowToChatRule);
 }
@@ -3128,6 +3130,7 @@ function rowToMonitored(r: Record<string, unknown>): MonitoredAccount {
 export async function listMonitoredAccounts(opts: {
   platform?: string;
   enabledOnly?: boolean;
+  tenantId?: number | null;
 } = {}): Promise<MonitoredAccount[]> {
   if (!hasDb()) return [];
   await ensureSchema();
@@ -3140,6 +3143,7 @@ export async function listMonitoredAccounts(opts: {
     FROM monitored_accounts
     WHERE (${opts.platform ?? null}::text IS NULL OR platform = ${opts.platform ?? null})
       AND (${opts.enabledOnly ?? false}::boolean = FALSE OR enabled = TRUE)
+      AND (${opts.tenantId ?? null}::bigint IS NULL OR tenant_id = ${opts.tenantId ?? null})
     ORDER BY username ASC`;
   return (rows as Array<Record<string, unknown>>).map(rowToMonitored);
 }
@@ -3155,6 +3159,7 @@ export async function upsertMonitoredAccounts(
     externalId?: string | null;
     topicId?: string | null;
   }>,
+  tenantId?: number | null,
 ): Promise<{ inserted: number; updated: number; insertedIds: number[] }> {
   if (!hasDb() || items.length === 0)
     return { inserted: 0, updated: 0, insertedIds: [] };
@@ -3166,13 +3171,17 @@ export async function upsertMonitoredAccounts(
     const username = it.username.trim().toLowerCase();
     if (!username) continue;
     const rows = await sql()`
-      INSERT INTO monitored_accounts (platform, username, url, external_id, topic_id)
+      INSERT INTO monitored_accounts (
+        platform, username, url, external_id, topic_id, tenant_id
+      )
       VALUES (${it.platform}, ${username}, ${it.url ?? null},
-              ${it.externalId ?? null}, ${it.topicId ?? null})
+              ${it.externalId ?? null}, ${it.topicId ?? null},
+              ${tenantId ?? null})
       ON CONFLICT (platform, username) DO UPDATE SET
         url = COALESCE(EXCLUDED.url, monitored_accounts.url),
         external_id = COALESCE(EXCLUDED.external_id, monitored_accounts.external_id),
         topic_id = COALESCE(EXCLUDED.topic_id, monitored_accounts.topic_id),
+        tenant_id = COALESCE(monitored_accounts.tenant_id, EXCLUDED.tenant_id),
         updated_at = NOW()
       RETURNING id, (xmax = 0) AS was_inserted`;
     const r = rows[0] as { id: string; was_inserted: boolean } | undefined;
@@ -3190,21 +3199,30 @@ export async function upsertMonitoredAccounts(
 export async function setMonitoredAccountEnabled(
   id: number,
   enabled: boolean,
+  tenantId?: number | null,
 ): Promise<void> {
   if (!hasDb()) return;
   await sql()`
     UPDATE monitored_accounts
     SET enabled = ${enabled}, updated_at = NOW()
-    WHERE id = ${id}`;
+    WHERE id = ${id}
+      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})`;
 }
 
-export async function deleteMonitoredAccount(id: number): Promise<void> {
+export async function deleteMonitoredAccount(
+  id: number,
+  tenantId?: number | null,
+): Promise<void> {
   if (!hasDb()) return;
-  await sql()`DELETE FROM monitored_accounts WHERE id = ${id}`;
+  await sql()`
+    DELETE FROM monitored_accounts
+    WHERE id = ${id}
+      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})`;
 }
 
 export async function getMonitoredAccount(
   id: number,
+  tenantId?: number | null,
 ): Promise<MonitoredAccount | null> {
   if (!hasDb()) return null;
   await ensureSchema();
@@ -3214,7 +3232,10 @@ export async function getMonitoredAccount(
            check_mentioned, interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, last_media_count,
            created_at, updated_at
-    FROM monitored_accounts WHERE id = ${id} LIMIT 1`;
+    FROM monitored_accounts
+    WHERE id = ${id}
+      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
+    LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToMonitored(r) : null;
 }
@@ -3224,6 +3245,7 @@ export async function getMonitoredAccount(
 // (or never checked). Oldest first so the backlog drains evenly.
 export async function dueMonitoredAccounts(
   limit = 50,
+  tenantId?: number | null,
 ): Promise<MonitoredAccount[]> {
   if (!hasDb()) return [];
   await ensureSchema();
@@ -3235,6 +3257,7 @@ export async function dueMonitoredAccounts(
            created_at, updated_at
     FROM monitored_accounts
     WHERE enabled = TRUE
+      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
       AND (last_checked_at IS NULL
            OR last_checked_at < NOW() - (interval_minutes || ' minutes')::INTERVAL)
     ORDER BY last_checked_at NULLS FIRST, id ASC
@@ -3249,6 +3272,7 @@ export async function addMonitoredAccount(args: {
   platform: string;
   username: string;
   url?: string | null;
+  tenantId?: number | null;
   defaults?: {
     intervalMinutes?: number;
     checkStories?: boolean;
@@ -3266,7 +3290,8 @@ export async function addMonitoredAccount(args: {
   const rows = await sql()`
     INSERT INTO monitored_accounts (
       platform, username, url, interval_minutes,
-      check_stories, check_posts, check_reels, check_profile, check_mentioned
+      check_stories, check_posts, check_reels, check_profile, check_mentioned,
+      tenant_id
     )
     VALUES (
       ${args.platform}, ${username},
@@ -3276,9 +3301,12 @@ export async function addMonitoredAccount(args: {
       ${d.checkPosts ?? false},
       ${d.checkReels ?? false},
       ${d.checkProfile ?? false},
-      ${d.checkMentioned ?? false}
+      ${d.checkMentioned ?? false},
+      ${args.tenantId ?? null}
     )
-    ON CONFLICT (platform, username) DO UPDATE SET updated_at = NOW()
+    ON CONFLICT (platform, username) DO UPDATE SET
+      updated_at = NOW(),
+      tenant_id = COALESCE(monitored_accounts.tenant_id, EXCLUDED.tenant_id)
     RETURNING id, platform, username, url, external_id, topic_id, enabled,
               check_stories, check_posts, check_reels, check_profile,
               check_mentioned, interval_minutes, instagram_user_id, full_name,
@@ -3298,6 +3326,7 @@ export async function updateMonitoredAccountConfig(
     checkMentioned?: boolean;
     intervalMinutes?: number;
   },
+  tenantId?: number | null,
 ): Promise<void> {
   if (!hasDb()) return;
   await sql()`
@@ -3311,7 +3340,8 @@ export async function updateMonitoredAccountConfig(
         patch.intervalMinutes ?? null
       }::int, interval_minutes),
       updated_at = NOW()
-    WHERE id = ${id}`;
+    WHERE id = ${id}
+      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})`;
 }
 
 // Bulk patch for the /monitored bulk toolbar. Any undefined field is
@@ -3330,6 +3360,7 @@ export async function bulkUpdateMonitoredAccounts(
     intervalMinutes?: number;
     resetError?: boolean;
   },
+  tenantId?: number | null,
 ): Promise<number> {
   if (!hasDb() || ids.length === 0) return 0;
   const reset = patch.resetError === true;
@@ -3348,13 +3379,17 @@ export async function bulkUpdateMonitoredAccounts(
       last_checked_at = CASE WHEN ${reset}::boolean THEN NULL ELSE last_checked_at END,
       updated_at = NOW()
     WHERE id = ANY(${ids}::bigint[])
+      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
     RETURNING id`;
   return rows.length;
 }
 
 // Single-row reset helper — same semantics as the bulk version but
 // for one account. Returns true if a row was touched.
-export async function resetMonitoredAccountError(id: number): Promise<boolean> {
+export async function resetMonitoredAccountError(
+  id: number,
+  tenantId?: number | null,
+): Promise<boolean> {
   if (!hasDb()) return false;
   const rows = await sql()`
     UPDATE monitored_accounts
@@ -3362,17 +3397,20 @@ export async function resetMonitoredAccountError(id: number): Promise<boolean> {
         last_checked_at = NULL,
         updated_at = NOW()
     WHERE id = ${id}
+      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
     RETURNING id`;
   return rows.length > 0;
 }
 
 export async function bulkDeleteMonitoredAccounts(
   ids: number[],
+  tenantId?: number | null,
 ): Promise<number> {
   if (!hasDb() || ids.length === 0) return 0;
   const rows = await sql()`
     DELETE FROM monitored_accounts
     WHERE id = ANY(${ids}::bigint[])
+      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
     RETURNING id`;
   return rows.length;
 }
@@ -3416,18 +3454,39 @@ export async function recordHikerCall(args: {
   endpoint: string;
   costUsd: number;
   accountId?: number | null;
+  tenantId?: number | null;
 }): Promise<void> {
   if (!hasDb()) return;
   await sql()`
-    INSERT INTO hikerapi_usage (endpoint, cost_usd, account_id)
+    INSERT INTO hikerapi_usage (endpoint, cost_usd, account_id, tenant_id)
     VALUES (${args.endpoint}, ${args.costUsd.toFixed(6)},
-            ${args.accountId ?? null})`;
+            ${args.accountId ?? null}, ${args.tenantId ?? null})`;
 }
 
-export async function getHikerTotalSpent(): Promise<number> {
+// Tenant-scoped total spend — used by hikerapi-budget.ts.
+export async function getHikerSpentForTenant(tenantId: number): Promise<number> {
   if (!hasDb()) return 0;
   await ensureSchema();
-  const rows = await sql()`SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total FROM hikerapi_usage`;
+  const rows = await sql()`
+    SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total
+    FROM hikerapi_usage
+    WHERE tenant_id = ${tenantId}`;
+  const r = rows[0] as { total: number } | undefined;
+  return r ? Number(r.total) : 0;
+}
+
+// Legacy global helper — used by admin views and the global usage
+// summary. Filters by tenant when provided.
+export async function getHikerTotalSpent(tenantId?: number | null): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const rows =
+    tenantId != null
+      ? await sql()`
+          SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total
+          FROM hikerapi_usage
+          WHERE tenant_id = ${tenantId}`
+      : await sql()`SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total FROM hikerapi_usage`;
   const r = rows[0] as { total: number } | undefined;
   return r ? Number(r.total) : 0;
 }
@@ -3435,6 +3494,7 @@ export async function getHikerTotalSpent(): Promise<number> {
 export async function getHikerSpentBuckets(args: {
   bucket: "hour" | "day" | "week" | "month";
   since: Date;
+  tenantId?: number | null;
 }): Promise<Array<{ at: Date; calls: number; costUsd: number }>> {
   if (!hasDb()) return [];
   await ensureSchema();
@@ -3446,53 +3506,85 @@ export async function getHikerSpentBuckets(args: {
         : args.bucket === "week"
           ? "week"
           : "month";
-  const rows = await sql()`
-    SELECT date_trunc(${truncFn}, called_at) AS at,
-           COUNT(*)::int AS calls,
-           COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
-    FROM hikerapi_usage
-    WHERE called_at >= ${args.since.toISOString()}::timestamptz
-    GROUP BY 1
-    ORDER BY 1 ASC`;
+  const rows =
+    args.tenantId != null
+      ? await sql()`
+          SELECT date_trunc(${truncFn}, called_at) AS at,
+                 COUNT(*)::int AS calls,
+                 COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
+          FROM hikerapi_usage
+          WHERE called_at >= ${args.since.toISOString()}::timestamptz
+            AND tenant_id = ${args.tenantId}
+          GROUP BY 1
+          ORDER BY 1 ASC`
+      : await sql()`
+          SELECT date_trunc(${truncFn}, called_at) AS at,
+                 COUNT(*)::int AS calls,
+                 COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
+          FROM hikerapi_usage
+          WHERE called_at >= ${args.since.toISOString()}::timestamptz
+          GROUP BY 1
+          ORDER BY 1 ASC`;
   return (rows as Array<{ at: Date; calls: number; cost_usd: number }>).map(
     (r) => ({ at: r.at, calls: r.calls, costUsd: Number(r.cost_usd) }),
   );
 }
 
-// Sum calls + cost over a sliding window. Used for the precise
-// "this hour / today / this week / this month / all-time" summary
-// row that sits at the top of the budget dialog.
 export async function getHikerWindowSummary(
   since: Date | null,
+  tenantId?: number | null,
 ): Promise<{ calls: number; costUsd: number }> {
   if (!hasDb()) return { calls: 0, costUsd: 0 };
   await ensureSchema();
-  const rows = since
-    ? await sql()`
-        SELECT COUNT(*)::int AS calls,
-               COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
-        FROM hikerapi_usage
-        WHERE called_at >= ${since.toISOString()}::timestamptz`
-    : await sql()`
-        SELECT COUNT(*)::int AS calls,
-               COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
-        FROM hikerapi_usage`;
+  let rows;
+  if (since && tenantId != null) {
+    rows = await sql()`
+      SELECT COUNT(*)::int AS calls,
+             COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
+      FROM hikerapi_usage
+      WHERE called_at >= ${since.toISOString()}::timestamptz
+        AND tenant_id = ${tenantId}`;
+  } else if (since) {
+    rows = await sql()`
+      SELECT COUNT(*)::int AS calls,
+             COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
+      FROM hikerapi_usage
+      WHERE called_at >= ${since.toISOString()}::timestamptz`;
+  } else if (tenantId != null) {
+    rows = await sql()`
+      SELECT COUNT(*)::int AS calls,
+             COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
+      FROM hikerapi_usage
+      WHERE tenant_id = ${tenantId}`;
+  } else {
+    rows = await sql()`
+      SELECT COUNT(*)::int AS calls,
+             COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
+      FROM hikerapi_usage`;
+  }
   const r = rows[0] as { calls: number; cost_usd: number } | undefined;
   return r ? { calls: r.calls, costUsd: Number(r.cost_usd) } : { calls: 0, costUsd: 0 };
 }
 
-// Last N HikerAPI calls — used for the "recent activity" tail in the
-// settings dialog so the owner can sanity-check what we're spending on.
 export async function listRecentHikerCalls(
   limit = 30,
+  tenantId?: number | null,
 ): Promise<Array<{ id: number; calledAt: Date; endpoint: string; costUsd: number; accountId: number | null }>> {
   if (!hasDb()) return [];
   await ensureSchema();
-  const rows = await sql()`
-    SELECT id, called_at, endpoint, cost_usd::float8 AS cost_usd, account_id
-    FROM hikerapi_usage
-    ORDER BY called_at DESC
-    LIMIT ${limit}`;
+  const rows =
+    tenantId != null
+      ? await sql()`
+          SELECT id, called_at, endpoint, cost_usd::float8 AS cost_usd, account_id
+          FROM hikerapi_usage
+          WHERE tenant_id = ${tenantId}
+          ORDER BY called_at DESC
+          LIMIT ${limit}`
+      : await sql()`
+          SELECT id, called_at, endpoint, cost_usd::float8 AS cost_usd, account_id
+          FROM hikerapi_usage
+          ORDER BY called_at DESC
+          LIMIT ${limit}`;
   return (rows as Array<{
     id: string;
     called_at: Date;
@@ -3531,14 +3623,19 @@ export async function recordMonitorEvent(args: {
   kind?: string;
   caption?: string | null;
   mediaType?: string | null;
+  tenantId?: number | null;
 }): Promise<MonitorEvent | null> {
   if (!hasDb()) return null;
   await ensureSchema();
   const rows = await sql()`
-    INSERT INTO monitor_events (account_id, story_id, story_url, kind, caption, media_type, status)
+    INSERT INTO monitor_events (
+      account_id, story_id, story_url, kind, caption, media_type, status,
+      tenant_id
+    )
     VALUES (${args.accountId}, ${args.storyId}, ${args.storyUrl},
             ${args.kind ?? "story"}, ${args.caption ?? null},
-            ${args.mediaType ?? null}, 'detected')
+            ${args.mediaType ?? null}, 'detected',
+            ${args.tenantId ?? null})
     ON CONFLICT (account_id, story_id) DO NOTHING
     RETURNING id, account_id, story_id, story_url, detected_at,
               forwarded_chat_id, forwarded_message_id, forwarded_at, status, error`;
@@ -3588,6 +3685,7 @@ export async function markMonitorEventError(args: {
 
 export async function listRecentMonitorEvents(
   limit = 50,
+  tenantId?: number | null,
 ): Promise<
   Array<MonitorEvent & { username: string | null; platform: string | null }>
 > {
@@ -3600,6 +3698,7 @@ export async function listRecentMonitorEvents(
            a.username, a.platform
     FROM monitor_events e
     LEFT JOIN monitored_accounts a ON a.id = e.account_id
+    WHERE (${tenantId ?? null}::bigint IS NULL OR e.tenant_id = ${tenantId ?? null})
     ORDER BY e.detected_at DESC
     LIMIT ${Math.min(Math.max(limit, 1), 500)}`;
   return (rows as Array<Record<string, unknown>>).map((r) => ({

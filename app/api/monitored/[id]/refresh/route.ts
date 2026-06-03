@@ -1,20 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { getBot } from "@/lib/bot";
-import { config } from "@/lib/config";
 import { audit, getMonitoredAccount } from "@/lib/db";
-import { HikerOutOfCreditsError } from "@/lib/hikerapi";
+import { getActiveKey, HikerOutOfCreditsError } from "@/lib/hikerapi";
 import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
+import { requireTenant } from "@/lib/tenant";
+import { runWithTenant } from "@/lib/tenant-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// On-demand "fetch now" for a single account. The body is optional;
-// if you POST {} we run with the account's existing check_* flags
-// and default count=3 for each kind. The 🔄 dialog on /monitored
-// sends an explicit set of kinds + counts.
 export async function POST(
   request: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -25,7 +22,17 @@ export async function POST(
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  if (!config.hikerApiKey) {
+  let tenant;
+  try {
+    tenant = await requireTenant(session);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 403 },
+    );
+  }
+  const { key } = await getActiveKey();
+  if (!key) {
     return NextResponse.json(
       { error: "HIKER_API_KEY not configured" },
       { status: 503 },
@@ -36,19 +43,9 @@ export async function POST(
   if (!Number.isFinite(n)) {
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
   }
-  const account = await getMonitoredAccount(n);
+  const account = await getMonitoredAccount(n, tenant.id);
   if (!account) {
     return NextResponse.json({ error: "account not found" }, { status: 404 });
-  }
-  const target = await resolveTargetChat();
-  if (!target) {
-    return NextResponse.json(
-      {
-        error:
-          "No chat tagged as 'storage' or 'downloader'. Set one on /chats/[id] → Function role.",
-      },
-      { status: 412 },
-    );
   }
   const body = (await request.json().catch(() => ({}))) as {
     stories?: boolean;
@@ -70,73 +67,87 @@ export async function POST(
     if (!Number.isFinite(v)) return def;
     return Math.max(1, Math.min(20, Math.round(v)));
   };
-  let result;
-  try {
-    result = await processAccount({
-      account,
-      target,
-      bot: getBot(),
-      kindOverrides: hasExplicit
-        ? {
-            story: Boolean(body.stories),
-            post: Boolean(body.posts),
-            reel: Boolean(body.reels),
-            mentioned: Boolean(body.mentioned),
-          }
-        : undefined,
-      storiesLimit: clamp(body.countStories),
-      postsLimit: clamp(body.countPosts),
-      reelsLimit: clamp(body.countReels),
-      mentionedLimit: clamp(body.countMentioned),
+
+  return runWithTenant(tenant.id, async () => {
+    const target = await resolveTargetChat();
+    if (!target) {
+      return NextResponse.json(
+        {
+          error:
+            "No chat tagged as 'storage' or 'downloader'. Set one on /chats/[id] → Function role.",
+        },
+        { status: 412 },
+      );
+    }
+    let result;
+    try {
+      result = await processAccount({
+        account,
+        target,
+        bot: getBot(),
+        kindOverrides: hasExplicit
+          ? {
+              story: Boolean(body.stories),
+              post: Boolean(body.posts),
+              reel: Boolean(body.reels),
+              mentioned: Boolean(body.mentioned),
+            }
+          : undefined,
+        storiesLimit: clamp(body.countStories),
+        postsLimit: clamp(body.countPosts),
+        reelsLimit: clamp(body.countReels),
+        mentionedLimit: clamp(body.countMentioned),
+      });
+    } catch (err) {
+      if (err instanceof HikerOutOfCreditsError) {
+        return NextResponse.json(
+          {
+            ok: false,
+            outOfCredits: true,
+            error: `HikerAPI out of credits: ${err.message}`,
+            billingUrl: err.billingUrl,
+          },
+          { status: 402 },
+        );
+      }
+      if (err instanceof HikerApprovalNeededError) {
+        return NextResponse.json(
+          {
+            ok: false,
+            approvalNeeded: true,
+            error: err.message,
+            spentUsd: err.spentUsd,
+            approvedUsd: err.approvedUsd,
+            nextThresholdUsd: err.nextThresholdUsd,
+            budgetUsd: err.budgetUsd,
+            reason: err.reason,
+          },
+          { status: 402 },
+        );
+      }
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        { status: 500 },
+      );
+    }
+    await audit({
+      actorId: session.userId,
+      actorName: session.username ?? null,
+      action: "monitor.refresh",
+      target: String(n),
+      details: {
+        tenantId: tenant.id,
+        detected: result.detected,
+        forwarded: result.forwarded,
+        errorCount: result.errors.length,
+        kinds: body,
+      },
     });
-  } catch (err) {
-    if (err instanceof HikerOutOfCreditsError) {
-      return NextResponse.json(
-        {
-          ok: false,
-          outOfCredits: true,
-          error: `HikerAPI out of credits: ${err.message}`,
-          billingUrl: err.billingUrl,
-        },
-        { status: 402 },
-      );
-    }
-    if (err instanceof HikerApprovalNeededError) {
-      return NextResponse.json(
-        {
-          ok: false,
-          approvalNeeded: true,
-          error: err.message,
-          spentUsd: err.spentUsd,
-          approvedUsd: err.approvedUsd,
-          nextThresholdUsd: err.nextThresholdUsd,
-          budgetUsd: err.budgetUsd,
-          reason: err.reason,
-        },
-        { status: 402 },
-      );
-    }
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500 },
-    );
-  }
-  await audit({
-    actorId: session.userId,
-    actorName: session.username ?? null,
-    action: "monitor.refresh",
-    target: String(n),
-    details: {
+    return NextResponse.json({
+      ok: true,
       detected: result.detected,
       forwarded: result.forwarded,
-      errorCount: result.errors.length,
-      kinds: body,
-    },
-  });
-  return NextResponse.json({
-    ok: true,
-    detected: result.detected,
-    forwarded: result.forwarded,
-    errors: result.errors.slice(0, 5),
+      errors: result.errors.slice(0, 5),
+    });
   });
 }

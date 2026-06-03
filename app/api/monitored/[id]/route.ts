@@ -7,6 +7,7 @@ import {
   setMonitoredAccountEnabled,
   updateMonitoredAccountConfig,
 } from "@/lib/db";
+import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +21,15 @@ export async function PATCH(
     session = await requireSession();
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  let tenant;
+  try {
+    tenant = await requireTenant(session);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 403 },
+    );
   }
   const { id } = await ctx.params;
   const n = Number(id);
@@ -37,10 +47,10 @@ export async function PATCH(
     resetError?: boolean;
   };
   if (body.resetError === true) {
-    await resetMonitoredAccountError(n);
+    await resetMonitoredAccountError(n, tenant.id);
   }
   if (body.enabled !== undefined) {
-    await setMonitoredAccountEnabled(n, Boolean(body.enabled));
+    await setMonitoredAccountEnabled(n, Boolean(body.enabled), tenant.id);
   }
   if (
     body.checkStories !== undefined ||
@@ -54,21 +64,25 @@ export async function PATCH(
       body.intervalMinutes !== undefined
         ? Math.max(5, Math.min(Number(body.intervalMinutes), 24 * 60))
         : undefined;
-    await updateMonitoredAccountConfig(n, {
-      checkStories: body.checkStories,
-      checkPosts: body.checkPosts,
-      checkReels: body.checkReels,
-      checkProfile: body.checkProfile,
-      checkMentioned: body.checkMentioned,
-      intervalMinutes: interval,
-    });
+    await updateMonitoredAccountConfig(
+      n,
+      {
+        checkStories: body.checkStories,
+        checkPosts: body.checkPosts,
+        checkReels: body.checkReels,
+        checkProfile: body.checkProfile,
+        checkMentioned: body.checkMentioned,
+        intervalMinutes: interval,
+      },
+      tenant.id,
+    );
   }
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,
     action: "monitor.update",
     target: String(n),
-    details: body as Record<string, unknown>,
+    details: { ...body, tenantId: tenant.id } as Record<string, unknown>,
   });
   return NextResponse.json({ ok: true });
 }
@@ -83,17 +97,27 @@ export async function DELETE(
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  let tenant;
+  try {
+    tenant = await requireTenant(session);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 403 },
+    );
+  }
   const { id } = await ctx.params;
   const n = Number(id);
   if (!Number.isFinite(n)) {
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
   }
-  await deleteMonitoredAccount(n);
+  await deleteMonitoredAccount(n, tenant.id);
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,
     action: "monitor.delete",
     target: String(n),
+    details: { tenantId: tenant.id },
   });
   return NextResponse.json({ ok: true });
 }

@@ -2,21 +2,18 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { audit } from "@/lib/db";
 import {
+  approveTenantBudget,
   getBudgetState,
-  invalidateBudgetCache,
 } from "@/lib/hikerapi-budget";
-import { updateSettings } from "@/lib/settings";
+import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// POST {} → approve the next $stepUsd slice (capped at budget).
-// POST {approvedUsd: <abs>} → set the approved-up-to value directly.
-// POST {extendBudget: true} → if the next step would exceed the
-//   absolute budget cap, raise the cap by stepUsd (or by however
-//   much is needed to fit `approvedUsd` if also passed). Lets the
-//   owner roll over from $50 → $60 → … without leaving the page.
-// POST {budgetUsd: <abs>} → raise/lower the cap directly.
+// POST {} → approve next $stepUsd slice for the caller's tenant.
+// POST {approvedUsd, budgetUsd, stepUsd, extendBudget} → fine-grained
+// control. The tenant.hiker_* columns are the source of truth — the
+// global settings table no longer carries these.
 export async function POST(request: Request): Promise<NextResponse> {
   let session;
   try {
@@ -24,57 +21,46 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  let tenant;
+  try {
+    tenant = await requireTenant(session);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 403 },
+    );
+  }
   const body = (await request.json().catch(() => ({}))) as {
     approvedUsd?: number;
     budgetUsd?: number;
+    stepUsd?: number;
     extendBudget?: boolean;
   };
-  const state = await getBudgetState();
-  let nextBudget = state.budgetUsd;
-  let nextApproved: number;
-
-  if (typeof body.budgetUsd === "number" && Number.isFinite(body.budgetUsd)) {
-    nextBudget = Math.max(0, body.budgetUsd);
-  }
-
-  if (typeof body.approvedUsd === "number" && Number.isFinite(body.approvedUsd)) {
-    nextApproved = Math.max(0, body.approvedUsd);
-  } else {
-    // Default: bump by one step.
-    nextApproved = state.approvedUsd + state.stepUsd;
-  }
-
-  // If extend-mode is on and the requested approval exceeds the cap,
-  // raise the cap to fit. Otherwise clamp to the cap.
-  if (body.extendBudget && nextApproved > nextBudget) {
-    nextBudget = nextApproved;
-  } else if (nextApproved > nextBudget) {
-    nextApproved = nextBudget;
-  }
-
-  const patch: Record<string, string> = {
-    hikerApprovedUsd: String(nextApproved),
-  };
-  if (nextBudget !== state.budgetUsd) {
-    patch.hikerBudgetUsd = String(nextBudget);
-  }
-  await updateSettings(patch, session.userId);
-  invalidateBudgetCache();
+  const before = await getBudgetState(tenant.id);
+  const updated = await approveTenantBudget({
+    tenantId: tenant.id,
+    approvedUsd: body.approvedUsd,
+    budgetUsd: body.budgetUsd,
+    stepUsd: body.stepUsd,
+    extendBudget: body.extendBudget,
+  });
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,
     action: "hiker.budget_approve",
     details: {
-      previousApprovedUsd: state.approvedUsd,
-      newApprovedUsd: nextApproved,
-      previousBudgetUsd: state.budgetUsd,
-      newBudgetUsd: nextBudget,
-      spentUsd: state.spentUsd,
-      extended: body.extendBudget === true && nextBudget !== state.budgetUsd,
+      tenantId: tenant.id,
+      previousApprovedUsd: before.approvedUsd,
+      newApprovedUsd: updated?.hikerApprovedUsd,
+      previousBudgetUsd: before.budgetUsd,
+      newBudgetUsd: updated?.hikerBudgetUsd,
+      stepUsd: updated?.hikerApprovalStepUsd,
+      spentUsd: before.spentUsd,
+      extended: body.extendBudget === true,
     },
   });
   return NextResponse.json({
     ok: true,
-    state: await getBudgetState(),
+    state: await getBudgetState(tenant.id),
   });
 }

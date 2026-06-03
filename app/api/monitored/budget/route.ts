@@ -6,26 +6,33 @@ import {
   listRecentHikerCalls,
 } from "@/lib/db";
 import { getBudgetState } from "@/lib/hikerapi-budget";
+import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {
+  let session;
   try {
-    await requireSession();
+    session = await requireSession();
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const state = await getBudgetState();
+  let tenant;
+  try {
+    tenant = await requireTenant(session);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 403 },
+    );
+  }
+  const state = await getBudgetState(tenant.id);
   const now = new Date();
-  // Precise sliding windows (since N ago) — these are what the
-  // owner reads in the dialog as "exactly how much I'm spending
-  // per hour / day / week / month right now".
   const sinceHour = new Date(now.getTime() - 60 * 60 * 1000);
   const sinceDay = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const sinceWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const sinceMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  // Calendar-aligned buckets for the histograms.
   const sinceHourly = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const sinceDaily = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
   const sinceWeekly = new Date(now.getTime() - 12 * 7 * 24 * 60 * 60 * 1000);
@@ -42,41 +49,25 @@ export async function GET(): Promise<NextResponse> {
     monthly,
     recent,
   ] = await Promise.all([
-    getHikerWindowSummary(sinceHour),
-    getHikerWindowSummary(sinceDay),
-    getHikerWindowSummary(sinceWeek),
-    getHikerWindowSummary(sinceMonth),
-    getHikerWindowSummary(null),
-    getHikerSpentBuckets({ bucket: "hour", since: sinceHourly }),
-    getHikerSpentBuckets({ bucket: "day", since: sinceDaily }),
-    getHikerSpentBuckets({ bucket: "week", since: sinceWeekly }),
-    getHikerSpentBuckets({ bucket: "month", since: sinceMonthly }),
-    listRecentHikerCalls(30),
+    getHikerWindowSummary(sinceHour, tenant.id),
+    getHikerWindowSummary(sinceDay, tenant.id),
+    getHikerWindowSummary(sinceWeek, tenant.id),
+    getHikerWindowSummary(sinceMonth, tenant.id),
+    getHikerWindowSummary(null, tenant.id),
+    getHikerSpentBuckets({ bucket: "hour", since: sinceHourly, tenantId: tenant.id }),
+    getHikerSpentBuckets({ bucket: "day", since: sinceDaily, tenantId: tenant.id }),
+    getHikerSpentBuckets({ bucket: "week", since: sinceWeekly, tenantId: tenant.id }),
+    getHikerSpentBuckets({ bucket: "month", since: sinceMonthly, tenantId: tenant.id }),
+    listRecentHikerCalls(30, tenant.id),
   ]);
   return NextResponse.json({
     ok: true,
     state,
     summary: { lastHour, today, last7d, last30d, allTime },
-    hourly: hourly.map((b) => ({
-      at: b.at,
-      calls: b.calls,
-      costUsd: b.costUsd,
-    })),
-    daily: daily.map((b) => ({
-      at: b.at,
-      calls: b.calls,
-      costUsd: b.costUsd,
-    })),
-    weekly: weekly.map((b) => ({
-      at: b.at,
-      calls: b.calls,
-      costUsd: b.costUsd,
-    })),
-    monthly: monthly.map((b) => ({
-      at: b.at,
-      calls: b.calls,
-      costUsd: b.costUsd,
-    })),
+    hourly: hourly.map((b) => ({ at: b.at, calls: b.calls, costUsd: b.costUsd })),
+    daily: daily.map((b) => ({ at: b.at, calls: b.calls, costUsd: b.costUsd })),
+    weekly: weekly.map((b) => ({ at: b.at, calls: b.calls, costUsd: b.costUsd })),
+    monthly: monthly.map((b) => ({ at: b.at, calls: b.calls, costUsd: b.costUsd })),
     recent,
   });
 }
