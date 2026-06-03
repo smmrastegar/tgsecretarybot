@@ -187,8 +187,10 @@ export default function MonitoredPage() {
     probes: Array<{
       path: string;
       ok: boolean;
+      transient?: boolean;
       status: number;
       body: string;
+      attempts?: number;
     }>;
   };
   const [diagnose, setDiagnose] = useState<Diagnose | null>(null);
@@ -246,12 +248,12 @@ export default function MonitoredPage() {
         if (j.keyPrefix !== undefined) setKeyPrefix(j.keyPrefix);
         if (j.keySource !== undefined) setKeySource(j.keySource ?? null);
         if (j.keyName !== undefined) setKeyName(j.keyName ?? null);
-        // If any probe came back 2xx, the key is fine — clear the
-        // stale out-of-credits banner so the UI stops yelling.
-        if (j.probes.some((p) => p.ok)) {
+        // If any probe came back 2xx (or was clearly transient and
+        // not "key broken"), clear the stale 402 banner — the key
+        // itself is fine.
+        if (j.probes.some((p) => p.ok || p.transient)) {
           setUsageOutOfCredits(null);
           setUsageError(null);
-          // Re-pull usage too so we render whatever the live probe got.
           await loadUsage();
         }
       }
@@ -726,33 +728,54 @@ export default function MonitoredPage() {
               </span>
             </div>
             <div className="flex flex-col gap-1">
-              {diagnose.probes.map((p) => (
-                <div
-                  key={p.path}
-                  dir="ltr"
-                  className={`text-[10px] p-1.5 rounded-md border ${
-                    p.ok
-                      ? "border-emerald-700 bg-emerald-900/20"
-                      : "border-red-700 bg-red-900/20"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 font-mono">
-                    <span className={p.ok ? "text-emerald-400" : "text-red-400"}>
-                      {p.ok ? "✓" : "✗"} {p.status || "?"}
-                    </span>
-                    <span className="font-medium">{p.path}</span>
+              {diagnose.probes.map((p) => {
+                const tone = p.ok
+                  ? "border-emerald-700 bg-emerald-900/20"
+                  : p.transient
+                    ? "border-amber-700 bg-amber-900/20"
+                    : "border-red-700 bg-red-900/20";
+                const icon = p.ok ? "✓" : p.transient ? "⏳" : "✗";
+                const iconColor = p.ok
+                  ? "text-emerald-400"
+                  : p.transient
+                    ? "text-amber-300"
+                    : "text-red-400";
+                return (
+                  <div
+                    key={p.path}
+                    dir="ltr"
+                    className={`text-[10px] p-1.5 rounded-md border ${tone}`}
+                  >
+                    <div className="flex items-center gap-2 font-mono">
+                      <span className={iconColor}>
+                        {icon} {p.status || "?"}
+                      </span>
+                      <span className="font-medium">{p.path}</span>
+                      {p.attempts && p.attempts > 1 && (
+                        <span className="text-[var(--color-text-dim)]">
+                          ({p.attempts} attempts)
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[9px] text-[var(--color-text-dim)] mt-0.5 break-all font-mono">
+                      {p.body}
+                    </div>
                   </div>
-                  <div className="text-[9px] text-[var(--color-text-dim)] mt-0.5 break-all font-mono">
-                    {p.body}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
-            <div className="text-[9px] text-[var(--color-text-dim)] mt-2">
-              نکته: اگه کلیدی که اینجا می‌بینی همون کلید درستی نیست که توی hikerapi
-              dashboard داری، یعنی Vercel env یا redeploy نشده یا کلید قدیمیه. کلید
-              رو توی Vercel → Settings → Environment Variables ست کن و
-              redeploy کن.
+            {diagnose.probes.some((p) => p.transient) && (
+              <div className="text-[10px] text-amber-200 mt-2 leading-relaxed" dir="rtl">
+                ⏳ Instagram خودش الان جواب نمی‌ده ({"InstagramServerError"}) —
+                به کلید یا حساب تو ربطی نداره. cron بعدی دوباره تلاش می‌کنه. اگه
+                چند بار پشت سر هم اتفاق افتاد، چند دقیقه صبر کن و دوباره
+                «🩺 تشخیص» بزن.
+              </div>
+            )}
+            <div className="text-[9px] text-[var(--color-text-dim)] mt-2" dir="rtl">
+              نکته: اگه کلیدی که اینجا می‌بینی همون کلید درستی نیست که توی
+              hikerapi dashboard داری، یعنی Vercel env یا redeploy نشده یا کلید
+              قدیمیه. کلید رو از 🔑 «کلید» همینجا می‌تونی ست کنی.
             </div>
           </div>
         )}

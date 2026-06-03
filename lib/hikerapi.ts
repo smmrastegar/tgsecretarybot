@@ -447,61 +447,111 @@ export type HikerUsage = {
 // run this — we don't fire it on every page load.
 export async function verifyKeyLive(): Promise<{
   keyWorks: boolean;
+  transient: boolean;
   sample: { id: string; username: string } | null;
   status: number;
   body: string;
+  attempts: number;
 }> {
   const { key } = await getActiveKey();
-  if (!key) return { keyWorks: false, sample: null, status: 0, body: "no key" };
-  try {
-    const url = new URL("/v1/user/by/username", config.hikerBaseUrl);
-    url.searchParams.set("username", "instagram");
-    const res = await fetch(url.toString(), {
-      headers: { "x-access-key": key, Accept: "application/json" },
-    });
-    // Read full body so JSON.parse doesn't trip on a truncated tail
-    // (HikerAPI's profile_pic_url alone blows past 400 chars). We
-    // only truncate when packaging the response back for the UI.
-    const fullTxt = await res.text();
-    const displayBody = fullTxt.slice(0, 400);
-    if (!res.ok) {
-      return {
-        keyWorks: false,
-        sample: null,
-        status: res.status,
-        body: displayBody,
-      };
-    }
-    // Cost-tracking — we used $0.001 on the test call.
-    await recordCall({ path: "/v1/user/by/username" }).catch(() => {});
-    try {
-      const j = JSON.parse(fullTxt) as Record<string, unknown>;
-      const u = (j.user as Record<string, unknown>) ?? j;
-      const id = pkOf(u);
-      const username =
-        typeof u.username === "string" ? u.username : "instagram";
-      return {
-        keyWorks: !!id,
-        sample: id ? { id, username } : null,
-        status: res.status,
-        body: displayBody,
-      };
-    } catch {
-      return {
-        keyWorks: false,
-        sample: null,
-        status: res.status,
-        body: displayBody,
-      };
-    }
-  } catch (err) {
+  if (!key)
     return {
       keyWorks: false,
+      transient: false,
       sample: null,
       status: 0,
-      body: err instanceof Error ? err.message : String(err),
+      body: "no key",
+      attempts: 0,
     };
+  const url = new URL("/v1/user/by/username", config.hikerBaseUrl);
+  url.searchParams.set("username", "instagram");
+  // Retry transient upstream once — same policy as call() but for
+  // the raw fetch path used by diagnose.
+  let lastStatus = 0;
+  let lastBody = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch(url.toString(), {
+        headers: { "x-access-key": key, Accept: "application/json" },
+      });
+      const fullTxt = await res.text();
+      const displayBody = fullTxt.slice(0, 400);
+      lastStatus = res.status;
+      lastBody = displayBody;
+      if (!res.ok) {
+        if (isTransientUpstream(res.status, fullTxt)) {
+          if (attempt === 1) {
+            await new Promise((r) => setTimeout(r, 1200));
+            continue;
+          }
+          return {
+            keyWorks: false,
+            transient: true,
+            sample: null,
+            status: res.status,
+            body: displayBody,
+            attempts: attempt,
+          };
+        }
+        return {
+          keyWorks: false,
+          transient: false,
+          sample: null,
+          status: res.status,
+          body: displayBody,
+          attempts: attempt,
+        };
+      }
+      // Cost-tracking — we used $0.001 on the test call.
+      await recordCall({ path: "/v1/user/by/username" }).catch(() => {});
+      try {
+        const j = JSON.parse(fullTxt) as Record<string, unknown>;
+        const u = (j.user as Record<string, unknown>) ?? j;
+        const id = pkOf(u);
+        const username =
+          typeof u.username === "string" ? u.username : "instagram";
+        return {
+          keyWorks: !!id,
+          transient: false,
+          sample: id ? { id, username } : null,
+          status: res.status,
+          body: displayBody,
+          attempts: attempt,
+        };
+      } catch {
+        return {
+          keyWorks: false,
+          transient: false,
+          sample: null,
+          status: res.status,
+          body: displayBody,
+          attempts: attempt,
+        };
+      }
+    } catch (err) {
+      lastBody = err instanceof Error ? err.message : String(err);
+      if (attempt === 1) {
+        await new Promise((r) => setTimeout(r, 1200));
+        continue;
+      }
+      return {
+        keyWorks: false,
+        transient: true,
+        sample: null,
+        status: 0,
+        body: lastBody,
+        attempts: attempt,
+      };
+    }
   }
+  return {
+    keyWorks: false,
+    transient: false,
+    sample: null,
+    status: lastStatus,
+    body: lastBody,
+    attempts: 2,
+  };
 }
 
 // Kept as a no-op shim — usage info isn't available from HikerAPI.
@@ -530,8 +580,10 @@ export async function diagnoseUsage(): Promise<{
   probes: Array<{
     path: string;
     ok: boolean;
+    transient: boolean;
     status: number;
     body: string;
+    attempts: number;
   }>;
 }> {
   const { key, source, name } = await getActiveKey();
@@ -546,8 +598,10 @@ export async function diagnoseUsage(): Promise<{
         {
           path: "/v1/user/by/username?username=instagram",
           ok: false,
+          transient: false,
           status: 0,
           body: "no key",
+          attempts: 0,
         },
       ],
     };
@@ -562,8 +616,10 @@ export async function diagnoseUsage(): Promise<{
       {
         path: "/v1/user/by/username?username=instagram",
         ok: live.keyWorks,
+        transient: live.transient,
         status: live.status,
         body: live.body,
+        attempts: live.attempts,
       },
     ],
   };
