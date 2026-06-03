@@ -44,6 +44,18 @@ function ensureKey(): string {
   return config.hikerApiKey;
 }
 
+// Special exception we throw on 402 from HikerAPI so the caller can
+// distinguish "out of credits" from a generic network / 4xx error
+// and bubble the billing URL to the UI / stop the cron early.
+export class HikerOutOfCreditsError extends Error {
+  billingUrl: string;
+  constructor(detail: string, billingUrl: string) {
+    super(detail);
+    this.name = "HikerOutOfCreditsError";
+    this.billingUrl = billingUrl;
+  }
+}
+
 async function callOne<T>(
   path: string,
   query: Record<string, string>,
@@ -60,6 +72,21 @@ async function callOne<T>(
   });
   if (!res.ok) {
     const txt = (await res.text()).slice(0, 300);
+    if (res.status === 402) {
+      // {"state":false,"error":"Top up your account at https://...",
+      //  "exc_type":"InsufficientFunds"}
+      let detail = "Insufficient credits";
+      let billingUrl = "https://hikerapi.com/billing";
+      try {
+        const j = JSON.parse(txt) as { error?: string };
+        if (j.error) {
+          detail = j.error;
+          const m = j.error.match(/https?:\/\/\S+/);
+          if (m) billingUrl = m[0];
+        }
+      } catch {}
+      throw new HikerOutOfCreditsError(detail, billingUrl);
+    }
     return { error: `${res.status} ${path}: ${txt}`, status: res.status };
   }
   const data = (await res.json()) as T;

@@ -7,6 +7,7 @@ import {
   getMonitoredAccount,
   upsertMonitoredAccounts,
 } from "@/lib/db";
+import { HikerOutOfCreditsError } from "@/lib/hikerapi";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 
 export const runtime = "nodejs";
@@ -129,6 +130,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   let detected = 0;
   let forwarded = 0;
   const errors: string[] = [];
+  let outOfCredits: { message: string; billingUrl: string } | null = null;
   if (insertedIds.length > 0 && config.hikerApiKey) {
     const target = await resolveTargetChat();
     if (target) {
@@ -150,6 +152,12 @@ export async function POST(request: Request): Promise<NextResponse> {
           forwarded += result.forwarded;
           errors.push(...result.errors);
         } catch (err) {
+          if (err instanceof HikerOutOfCreditsError) {
+            // Bail out — every subsequent account would hit the same 402.
+            outOfCredits = { message: err.message, billingUrl: err.billingUrl };
+            errors.push(`HikerAPI out of credits: ${err.message}`);
+            break;
+          }
           errors.push(err instanceof Error ? err.message : String(err));
         }
       }
@@ -166,5 +174,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     detected,
     forwarded,
     errors: errors.slice(0, 10),
+    ...(outOfCredits
+      ? { outOfCredits: true, billingUrl: outOfCredits.billingUrl }
+      : {}),
   });
 }

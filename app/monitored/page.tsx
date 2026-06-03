@@ -147,19 +147,35 @@ export default function MonitoredPage() {
   };
   const [usage, setUsage] = useState<Usage | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
+  const [usageOutOfCredits, setUsageOutOfCredits] = useState<{
+    message: string;
+    billingUrl: string;
+  } | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
 
   const loadUsage = useCallback(async () => {
     setUsageLoading(true);
     setUsageError(null);
+    setUsageOutOfCredits(null);
     try {
       const r = await fetch("/api/monitored/usage");
       const j = (await r.json().catch(() => ({}))) as {
         usage?: Usage;
         error?: string;
+        outOfCredits?: boolean;
+        message?: string;
+        billingUrl?: string;
       };
-      if (!r.ok) setUsageError(j.error ?? `${r.status}`);
-      else setUsage(j.usage ?? null);
+      if (r.status === 402 && j.outOfCredits) {
+        setUsageOutOfCredits({
+          message: j.message ?? "Insufficient credits",
+          billingUrl: j.billingUrl ?? "https://hikerapi.com/billing",
+        });
+      } else if (!r.ok) {
+        setUsageError(j.error ?? `${r.status}`);
+      } else {
+        setUsage(j.usage ?? null);
+      }
     } catch (err) {
       setUsageError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -225,8 +241,15 @@ export default function MonitoredPage() {
         forwarded?: number;
         errors?: string[];
         error?: string;
+        outOfCredits?: boolean;
+        billingUrl?: string;
       };
-      if (!r.ok) {
+      if (r.status === 402 && j.outOfCredits) {
+        setUsageOutOfCredits({
+          message: j.error ?? "Insufficient credits",
+          billingUrl: j.billingUrl ?? "https://hikerapi.com/billing",
+        });
+      } else if (!r.ok) {
         alert(`خطا: ${j.error ?? r.status}`);
       } else if (j.forwarded && j.forwarded > 0) {
         setImportMsg(`${j.forwarded} مورد جدید forward شد`);
@@ -263,9 +286,17 @@ export default function MonitoredPage() {
           detected?: number;
           forwarded?: number;
           errors?: string[];
+          outOfCredits?: boolean;
+          billingUrl?: string;
         };
         setNewUsername("");
-        if (j.forwarded && j.forwarded > 0) {
+        if (j.outOfCredits) {
+          setUsageOutOfCredits({
+            message: j.errors?.[0] ?? "Insufficient credits",
+            billingUrl: j.billingUrl ?? "https://hikerapi.com/billing",
+          });
+          setImportMsg(`@${u} اضافه شد ولی کردیت HikerAPI تموم شده — بالا شارژ کن`);
+        } else if (j.forwarded && j.forwarded > 0) {
           setImportMsg(`@${u} اضافه شد + ${j.forwarded} مورد forward شد`);
         } else if (j.errors && j.errors.length > 0) {
           setImportMsg(`@${u} اضافه شد ولی خطا: ${j.errors[0]}`);
@@ -299,6 +330,9 @@ export default function MonitoredPage() {
         parsed?: number;
         valid?: number;
         error?: string;
+        outOfCredits?: boolean;
+        billingUrl?: string;
+        errors?: string[];
       };
       if (!r.ok) setImportMsg(`خطا: ${j.error ?? r.status}`);
       else {
@@ -310,6 +344,13 @@ export default function MonitoredPage() {
         let msg = `${jx.inserted ?? 0} اضافه شد · ${jx.updated ?? 0} آپدیت شد`;
         if (jx.immediatelyProcessed && jx.immediatelyProcessed > 0) {
           msg += ` · ${jx.immediatelyProcessed} فوراً پردازش شد (${jx.forwarded ?? 0} forward)`;
+        }
+        if (j.outOfCredits) {
+          setUsageOutOfCredits({
+            message: j.errors?.[0] ?? "Insufficient credits",
+            billingUrl: j.billingUrl ?? "https://hikerapi.com/billing",
+          });
+          msg += " · ⚠️ کردیت HikerAPI تموم شد";
         }
         setImportMsg(msg);
         await load();
@@ -388,9 +429,17 @@ export default function MonitoredPage() {
         subtitle="استوری / پست / ریلز اکانت‌های public اینستاگرام رو دانلود و توی کانال storage پست می‌کنه."
       />
 
-      <Card className="mb-3 !p-3">
+      <Card
+        className={`mb-3 !p-3 ${
+          usageOutOfCredits
+            ? "!border-amber-600 !bg-amber-900/20"
+            : ""
+        }`}
+      >
         <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-          <div className="text-sm font-medium">💳 HikerAPI usage</div>
+          <div className="text-sm font-medium">
+            {usageOutOfCredits ? "💸 HikerAPI کردیت تموم شده" : "💳 HikerAPI usage"}
+          </div>
           <button
             onClick={loadUsage}
             disabled={usageLoading}
@@ -399,7 +448,25 @@ export default function MonitoredPage() {
             {usageLoading ? "…" : "🔄"}
           </button>
         </div>
-        {usageError ? (
+        {usageOutOfCredits ? (
+          <div className="flex flex-col gap-2">
+            <div className="text-[12px] text-amber-200">
+              کردیت HikerAPI تموم شده — تا وقتی شارژ نکنی، هیچ استوری/پست/ریلز
+              جدیدی گرفته نمی‌شه و cron هم ۴۰۲ می‌ده.
+            </div>
+            <div className="text-[10px] text-amber-300/70 break-all">
+              {usageOutOfCredits.message}
+            </div>
+            <a
+              href={usageOutOfCredits.billingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="self-start text-xs px-3 py-1.5 rounded-md bg-amber-500 text-black font-medium hover:bg-amber-400"
+            >
+              💳 شارژ HikerAPI →
+            </a>
+          </div>
+        ) : usageError ? (
           <div className="text-[11px] text-red-300 break-all">
             {usageError}
           </div>

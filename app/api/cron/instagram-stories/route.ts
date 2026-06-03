@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { dueMonitoredAccounts, hasDb } from "@/lib/db";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
+import { HikerOutOfCreditsError } from "@/lib/hikerapi";
 import { getBot } from "@/lib/bot";
 
 export const runtime = "nodejs";
@@ -57,10 +58,28 @@ async function run(request: Request): Promise<NextResponse> {
 
   for (const acc of due) {
     checked++;
-    const result = await processAccount({ account: acc, target, bot });
-    detected += result.detected;
-    forwarded += result.forwarded;
-    errors.push(...result.errors);
+    try {
+      const result = await processAccount({ account: acc, target, bot });
+      detected += result.detected;
+      forwarded += result.forwarded;
+      errors.push(...result.errors);
+    } catch (err) {
+      if (err instanceof HikerOutOfCreditsError) {
+        // Don't stamp every remaining account with the same 402 —
+        // bail out and let the next cron pick up where we left off
+        // once the operator tops up.
+        return NextResponse.json({
+          ok: false,
+          checked,
+          detected,
+          forwarded,
+          errors: [`HikerAPI out of credits: ${err.message}`],
+          billingUrl: err.billingUrl,
+        }, { status: 402 });
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${acc.username}: ${msg.slice(0, 200)}`);
+    }
   }
 
   return NextResponse.json({

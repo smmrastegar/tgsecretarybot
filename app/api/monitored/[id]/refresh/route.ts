@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/auth";
 import { getBot } from "@/lib/bot";
 import { config } from "@/lib/config";
 import { audit, getMonitoredAccount } from "@/lib/db";
+import { HikerOutOfCreditsError } from "@/lib/hikerapi";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 
 export const runtime = "nodejs";
@@ -68,23 +69,42 @@ export async function POST(
     if (!Number.isFinite(v)) return def;
     return Math.max(1, Math.min(20, Math.round(v)));
   };
-  const result = await processAccount({
-    account,
-    target,
-    bot: getBot(),
-    kindOverrides: hasExplicit
-      ? {
-          story: Boolean(body.stories),
-          post: Boolean(body.posts),
-          reel: Boolean(body.reels),
-          mentioned: Boolean(body.mentioned),
-        }
-      : undefined,
-    storiesLimit: clamp(body.countStories),
-    postsLimit: clamp(body.countPosts),
-    reelsLimit: clamp(body.countReels),
-    mentionedLimit: clamp(body.countMentioned),
-  });
+  let result;
+  try {
+    result = await processAccount({
+      account,
+      target,
+      bot: getBot(),
+      kindOverrides: hasExplicit
+        ? {
+            story: Boolean(body.stories),
+            post: Boolean(body.posts),
+            reel: Boolean(body.reels),
+            mentioned: Boolean(body.mentioned),
+          }
+        : undefined,
+      storiesLimit: clamp(body.countStories),
+      postsLimit: clamp(body.countPosts),
+      reelsLimit: clamp(body.countReels),
+      mentionedLimit: clamp(body.countMentioned),
+    });
+  } catch (err) {
+    if (err instanceof HikerOutOfCreditsError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          outOfCredits: true,
+          error: `HikerAPI out of credits: ${err.message}`,
+          billingUrl: err.billingUrl,
+        },
+        { status: 402 },
+      );
+    }
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
+  }
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,

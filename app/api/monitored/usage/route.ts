@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { config } from "@/lib/config";
-import { getUsage } from "@/lib/hikerapi";
+import { getUsage, HikerOutOfCreditsError } from "@/lib/hikerapi";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +22,17 @@ export async function GET(): Promise<NextResponse> {
     const usage = await getUsage();
     return NextResponse.json({ ok: true, usage });
   } catch (err) {
+    if (err instanceof HikerOutOfCreditsError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          outOfCredits: true,
+          message: err.message,
+          billingUrl: err.billingUrl,
+        },
+        { status: 402 },
+      );
+    }
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
       { status: 502 },
