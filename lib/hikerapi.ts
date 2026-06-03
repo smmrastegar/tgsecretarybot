@@ -111,14 +111,19 @@ export class InstagramTransientError extends Error {
 }
 
 function isTransientUpstream(status: number, body: string): boolean {
-  if (status < 500 && status !== 429) return false;
-  // HikerAPI uses exc_type to label the failure mode. We treat the
-  // "Instagram side" ones as transient; their own 5xxs (Hiker
-  // internal) we also retry once but escalate after.
-  return (
-    /InstagramServerError|InstagramGatewayError|InstagramRateLimitError|"detail":"Instagram did not respond/i.test(
-      body,
-    ) || status === 502 || status === 503 || status === 504 || status === 429
+  // 429 + every 5xx is treated as transient. HikerAPI's 5xx
+  // responses include not just IG-side flaps (InstagramServerError,
+  // GatewayError, RateLimit) but also their own validation bugs
+  // ({"detail":"expected string or bytes-like object"} etc.) that
+  // surface inconsistently per-account. A single retry + falling
+  // back to soft-fail on the row keeps the UI clean — the next cron
+  // tick re-runs the same account against the same endpoints.
+  if (status === 429) return true;
+  if (status >= 500 && status <= 599) return true;
+  // Belt-and-braces: even if the upstream returns a non-5xx with
+  // one of the documented IG-side exc_types, treat it as transient.
+  return /InstagramServerError|InstagramGatewayError|InstagramRateLimitError|"detail":"Instagram did not respond|"detail":"expected string or bytes/i.test(
+    body,
   );
 }
 
