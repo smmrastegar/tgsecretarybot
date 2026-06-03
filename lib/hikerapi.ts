@@ -298,6 +298,102 @@ function permalinkOf(
   return null;
 }
 
+export type HikerUsage = {
+  // Whatever fields we managed to pull. Frontend renders what's
+  // present and skips what's not — HikerAPI's account payload has
+  // shifted shapes between versions.
+  plan?: string | null;
+  creditsUsed?: number | null;
+  creditsLimit?: number | null;
+  creditsRemaining?: number | null;
+  resetsAt?: string | null;
+  expiresAt?: string | null;
+  raw?: Record<string, unknown>;
+};
+
+// Pull the account / usage info. HikerAPI's path keeps changing so
+// we try the three most common locations and stop at the first 2xx.
+export async function getUsage(): Promise<HikerUsage> {
+  const candidates = ["/v1/auth/me", "/v1/account", "/v1/usage"];
+  let last: { error: string; status: number } | null = null;
+  for (const p of candidates) {
+    const res = await callOne<Record<string, unknown>>(p, {});
+    if ("data" in res) {
+      return normaliseUsage(res.data);
+    }
+    last = res;
+    if (res.status !== 404) {
+      throw new Error(`hikerapi ${res.error}`);
+    }
+  }
+  throw new Error(`hikerapi usage 404 on ${candidates.join(", ")}: ${last?.error ?? ""}`);
+}
+
+function numOf(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function strOf(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+function normaliseUsage(raw: Record<string, unknown>): HikerUsage {
+  // Common shapes seen in the wild — flat, nested under {plan, usage}
+  // or {account: {...}}.
+  const flat = raw;
+  const usage =
+    (raw.usage as Record<string, unknown> | undefined) ?? {};
+  const plan =
+    (raw.plan as Record<string, unknown> | undefined) ?? {};
+  const account =
+    (raw.account as Record<string, unknown> | undefined) ?? {};
+  const merged = { ...account, ...flat, ...usage, ...plan };
+  const used =
+    numOf(merged.credits_used) ??
+    numOf(merged.requests_used) ??
+    numOf(merged.used) ??
+    numOf(merged.current) ??
+    null;
+  const limit =
+    numOf(merged.credits_limit) ??
+    numOf(merged.credits) ??
+    numOf(merged.requests_limit) ??
+    numOf(merged.limit) ??
+    numOf(merged.quota) ??
+    null;
+  const remaining =
+    numOf(merged.credits_remaining) ??
+    numOf(merged.remaining) ??
+    (used != null && limit != null ? limit - used : null);
+  const planName =
+    strOf(merged.plan_name) ??
+    strOf(merged.plan) ??
+    strOf(merged.tier) ??
+    strOf(merged.subscription);
+  const resetsAt =
+    strOf(merged.resets_at) ??
+    strOf(merged.next_reset) ??
+    strOf(merged.reset_at);
+  const expiresAt =
+    strOf(merged.expires_at) ??
+    strOf(merged.expiration) ??
+    strOf(merged.expire_at);
+  return {
+    plan: planName,
+    creditsUsed: used,
+    creditsLimit: limit,
+    creditsRemaining: remaining,
+    resetsAt,
+    expiresAt,
+    raw,
+  };
+}
+
 export async function getUserByUsername(username: string): Promise<IGUser> {
   const data = await call<Record<string, unknown>>("/v1/user/by/username", {
     username,

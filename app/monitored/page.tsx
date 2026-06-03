@@ -137,6 +137,40 @@ export default function MonitoredPage() {
     await load();
   }
 
+  type Usage = {
+    plan?: string | null;
+    creditsUsed?: number | null;
+    creditsLimit?: number | null;
+    creditsRemaining?: number | null;
+    resetsAt?: string | null;
+    expiresAt?: string | null;
+  };
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+
+  const loadUsage = useCallback(async () => {
+    setUsageLoading(true);
+    setUsageError(null);
+    try {
+      const r = await fetch("/api/monitored/usage");
+      const j = (await r.json().catch(() => ({}))) as {
+        usage?: Usage;
+        error?: string;
+      };
+      if (!r.ok) setUsageError(j.error ?? `${r.status}`);
+      else setUsage(j.usage ?? null);
+    } catch (err) {
+      setUsageError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUsageLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUsage();
+  }, [loadUsage]);
+
   const [refreshing, setRefreshing] = useState<Set<number>>(new Set());
   const [refreshDialog, setRefreshDialog] = useState<{
     accountId: number;
@@ -353,6 +387,79 @@ export default function MonitoredPage() {
         title="📸 Instagram Monitor"
         subtitle="استوری / پست / ریلز اکانت‌های public اینستاگرام رو دانلود و توی کانال storage پست می‌کنه."
       />
+
+      <Card className="mb-3 !p-3">
+        <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+          <div className="text-sm font-medium">💳 HikerAPI usage</div>
+          <button
+            onClick={loadUsage}
+            disabled={usageLoading}
+            className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+          >
+            {usageLoading ? "…" : "🔄"}
+          </button>
+        </div>
+        {usageError ? (
+          <div className="text-[11px] text-red-300 break-all">
+            {usageError}
+          </div>
+        ) : usage ? (
+          <div className="flex items-center gap-4 flex-wrap text-[11px]">
+            {usage.plan && (
+              <span>
+                <span className="text-[var(--color-text-dim)]">plan:</span>{" "}
+                <Badge tone="info">{usage.plan}</Badge>
+              </span>
+            )}
+            {usage.creditsUsed != null && usage.creditsLimit != null && (
+              <>
+                <span>
+                  <span className="text-[var(--color-text-dim)]">مصرف:</span>{" "}
+                  <strong>{usage.creditsUsed.toLocaleString()}</strong>
+                  {" / "}
+                  {usage.creditsLimit.toLocaleString()}
+                </span>
+                <div className="flex-1 min-w-[120px] h-2 bg-[var(--color-surface-2)] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[var(--color-accent)]"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.round(
+                          (usage.creditsUsed / usage.creditsLimit) * 100,
+                        ),
+                      )}%`,
+                    }}
+                  />
+                </div>
+                <span className="text-[var(--color-text-dim)]">
+                  {Math.round((usage.creditsUsed / usage.creditsLimit) * 100)}%
+                </span>
+              </>
+            )}
+            {usage.creditsRemaining != null && (
+              <span>
+                <span className="text-[var(--color-text-dim)]">باقی:</span>{" "}
+                <strong>{usage.creditsRemaining.toLocaleString()}</strong>
+              </span>
+            )}
+            {usage.resetsAt && (
+              <span className="text-[var(--color-text-dim)]">
+                ریست: {new Date(usage.resetsAt).toLocaleString()}
+              </span>
+            )}
+            {usage.expiresAt && (
+              <span className="text-[var(--color-text-dim)]">
+                انقضا: {new Date(usage.expiresAt).toLocaleString()}
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="text-[11px] text-[var(--color-text-dim)]">
+            …
+          </div>
+        )}
+      </Card>
 
       <Card className="mb-3 !p-3">
         <div className="text-sm font-medium mb-2">📦 کانال‌های Storage</div>
