@@ -332,22 +332,30 @@ export default function MonitoredPage() {
     loadBudget();
   }, [loadBudget]);
 
-  async function approveNext(absolute?: number) {
+  async function approveNext(opts?: {
+    absolute?: number;
+    extendBudget?: boolean;
+    budgetUsd?: number;
+  }) {
     setApproving(true);
     try {
+      const body: Record<string, unknown> = {};
+      if (opts?.absolute != null) body.approvedUsd = opts.absolute;
+      if (opts?.extendBudget) body.extendBudget = true;
+      if (opts?.budgetUsd != null) body.budgetUsd = opts.budgetUsd;
       const r = await fetch("/api/monitored/budget/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          absolute != null ? { approvedUsd: absolute } : {},
-        ),
+        body: JSON.stringify(body),
       });
       if (r.ok) {
         const j = (await r.json()) as { state: BudgetState };
         setBudget(j.state);
-        setImportMsg(
-          `✅ تا $${j.state.approvedUsd.toFixed(2)} مجاز شد`,
-        );
+        const note =
+          j.state.budgetUsd !== budget?.budgetUsd
+            ? `✅ تخصیص $${j.state.approvedUsd.toFixed(2)} · سقف به $${j.state.budgetUsd.toFixed(2)} رسید`
+            : `✅ تخصیص تا $${j.state.approvedUsd.toFixed(2)}`;
+        setImportMsg(note);
         setTimeout(() => setImportMsg(null), 5000);
         await loadBudget();
       } else {
@@ -923,24 +931,90 @@ export default function MonitoredPage() {
               />
             </div>
             {(budget.needsApproval || budget.budgetExceeded) && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="text-[11px] text-amber-200 flex-1 min-w-[200px]">
-                  {budget.budgetExceeded
-                    ? `سقف کل $${budget.budgetUsd.toFixed(2)} تمام شد. cron متوقفه. اگه بخوای ادامه بدی، اول سقف رو از تنظیمات بالا ببر.`
-                    : `خرج رسید به سقف مجاز $${budget.approvedUsd.toFixed(2)}. تا تایید نکنی، cron و دکمه‌های refresh ۴۰۲ می‌گیرن.`}
-                </div>
-                {!budget.budgetExceeded && (
-                  <button
-                    onClick={() => approveNext()}
-                    disabled={approving}
-                    className="text-xs px-3 py-1.5 rounded-md bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50"
-                  >
-                    ✅ تایید ${budget.stepUsd.toFixed(2)} بعدی (تا $
-                    {budget.nextThresholdUsd.toFixed(2)})
-                  </button>
-                )}
+              <div className="text-[11px] text-amber-200">
+                {budget.budgetExceeded
+                  ? `سقف کل $${budget.budgetUsd.toFixed(2)} پر شد. cron متوقفه — با دکمه «+$10 + سقف» یه slice دیگه باز کن.`
+                  : `خرج رسید به سقف مجاز $${budget.approvedUsd.toFixed(2)}. تا تخصیص ندی، cron و refresh ۴۰۲ می‌گیرن.`}
               </div>
             )}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] text-[var(--color-text-dim)]">
+                ⚡ تخصیص پیش‌فرض:
+              </span>
+              {/* Single +step button — always available, even before
+                  spend hits the cap, so the owner can pre-allocate. */}
+              <button
+                onClick={() => approveNext()}
+                disabled={
+                  approving ||
+                  budget.approvedUsd + 0.0001 >= budget.budgetUsd
+                }
+                className="text-[11px] px-2.5 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-40"
+                title={`الان مجاز تا $${budget.approvedUsd.toFixed(2)} — بزن می‌ره +$${budget.stepUsd.toFixed(2)}`}
+              >
+                + ${budget.stepUsd.toFixed(2)} تخصیص
+              </button>
+              {/* Quick multi-step jumps. We compute targets in
+                  multiples of step from current approved up to the
+                  current cap. Hidden once we hit the cap. */}
+              {(() => {
+                const jumps: number[] = [];
+                for (
+                  let n = 2;
+                  n <= 5 &&
+                  budget.approvedUsd + budget.stepUsd * n <= budget.budgetUsd + 0.0001;
+                  n++
+                ) {
+                  jumps.push(n);
+                }
+                return jumps.map((n) => (
+                  <button
+                    key={n}
+                    onClick={() =>
+                      approveNext({
+                        absolute: Math.min(
+                          budget.budgetUsd,
+                          budget.approvedUsd + budget.stepUsd * n,
+                        ),
+                      })
+                    }
+                    disabled={approving}
+                    className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
+                    title={`بپر تا $${(budget.approvedUsd + budget.stepUsd * n).toFixed(2)}`}
+                  >
+                    +{n}×
+                  </button>
+                ));
+              })()}
+              {/* Jump straight to cap. */}
+              {budget.approvedUsd + 0.0001 < budget.budgetUsd && (
+                <button
+                  onClick={() =>
+                    approveNext({ absolute: budget.budgetUsd })
+                  }
+                  disabled={approving}
+                  className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
+                  title={`تا سقف کل $${budget.budgetUsd.toFixed(2)}`}
+                >
+                  ⬆ سقف
+                </button>
+              )}
+              {/* Extend cap by step and approve it in one click —
+                  rolls $50 → $60 → $70 … without leaving the page. */}
+              <button
+                onClick={() =>
+                  approveNext({
+                    extendBudget: true,
+                    absolute: budget.budgetUsd + budget.stepUsd,
+                  })
+                }
+                disabled={approving}
+                className="text-[11px] px-2.5 py-1 rounded-md border border-amber-600 bg-amber-500/15 text-amber-200 hover:bg-amber-500/30"
+                title={`سقف رو $${budget.stepUsd.toFixed(2)} بالا ببر + تخصیص رو هم تا اونجا ببر`}
+              >
+                🔓 +${budget.stepUsd.toFixed(2)} + سقف
+              </button>
+            </div>
           </div>
         ) : (
           <div className="text-[11px] text-[var(--color-text-dim)]">…</div>
@@ -1606,7 +1680,7 @@ export default function MonitoredPage() {
           onSaved={async () => {
             await loadBudget();
           }}
-          onApproveAbsolute={(v) => approveNext(v)}
+          onApproveAbsolute={(v) => approveNext({ absolute: v })}
         />
       )}
     </Shell>
