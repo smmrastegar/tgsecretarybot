@@ -37,7 +37,10 @@ function ensureKey(): string {
   return config.hikerApiKey;
 }
 
-async function call<T>(path: string, query: Record<string, string>): Promise<T> {
+async function callOne<T>(
+  path: string,
+  query: Record<string, string>,
+): Promise<{ data: T; status: number } | { error: string; status: number }> {
   const url = new URL(path, config.hikerBaseUrl);
   for (const [k, v] of Object.entries(query)) {
     if (v != null && v !== "") url.searchParams.set(k, v);
@@ -50,9 +53,38 @@ async function call<T>(path: string, query: Record<string, string>): Promise<T> 
   });
   if (!res.ok) {
     const txt = (await res.text()).slice(0, 300);
-    throw new Error(`hikerapi ${res.status} ${path}: ${txt}`);
+    return { error: `${res.status} ${path}: ${txt}`, status: res.status };
   }
-  return (await res.json()) as T;
+  const data = (await res.json()) as T;
+  return { data, status: res.status };
+}
+
+// HikerAPI has reshuffled paths between v1 and v2 multiple times; we
+// try the path the user gave us first, then fall back to the v2 alias
+// when the first one 404s. Other status codes (401 / 429 / 500) get
+// surfaced immediately because they're real errors.
+async function call<T>(
+  path: string,
+  query: Record<string, string>,
+): Promise<T> {
+  const tried: string[] = [];
+  const candidates = [path];
+  if (path.startsWith("/v1/")) candidates.push(path.replace(/^\/v1\//, "/v2/"));
+  else if (path.startsWith("/v2/"))
+    candidates.push(path.replace(/^\/v2\//, "/v1/"));
+  let lastError = "";
+  for (const p of candidates) {
+    const res = await callOne<T>(p, query);
+    tried.push(p);
+    if ("data" in res) return res.data;
+    lastError = res.error;
+    if (res.status !== 404) {
+      throw new Error(`hikerapi ${res.error}`);
+    }
+  }
+  throw new Error(
+    `hikerapi 404 after fallback (${tried.join(", ")}): ${lastError}`,
+  );
 }
 
 function biggestImageUrl(raw: unknown): string | null {
@@ -155,7 +187,7 @@ function permalinkOf(
 }
 
 export async function getUserByUsername(username: string): Promise<IGUser> {
-  const data = await call<Record<string, unknown>>("/v1/user/by/username/v1", {
+  const data = await call<Record<string, unknown>>("/v1/user/by/username", {
     username,
   });
   // Some plans return {user: {...}}, some return the user directly.
@@ -178,7 +210,7 @@ export async function getUserStories(
   userId: string,
   username: string,
 ): Promise<IGMedia[]> {
-  const data = await call<Record<string, unknown>>("/v1/user/stories/v1", {
+  const data = await call<Record<string, unknown>>("/v1/user/stories", {
     user_id: userId,
   });
   const arr = Array.isArray(data) ? data : (data.stories as unknown[]) ?? [];
@@ -237,7 +269,7 @@ export async function getUserPosts(
   userId: string,
   username: string,
 ): Promise<IGMedia[]> {
-  const items = await fetchMediaList("/v2/user/medias/v2", userId);
+  const items = await fetchMediaList("/v2/user/medias", userId);
   return items
     .filter((m) => {
       // 1 photo, 2 video, 8 carousel
@@ -266,7 +298,7 @@ export async function getUserReels(
   userId: string,
   username: string,
 ): Promise<IGMedia[]> {
-  const items = await fetchMediaList("/v2/user/clips/v2", userId);
+  const items = await fetchMediaList("/v2/user/clips", userId);
   return items
     .map((m) => {
       const { mediaUrl, mediaType } = pickMedia(m);
