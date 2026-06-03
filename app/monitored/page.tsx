@@ -178,6 +178,19 @@ export default function MonitoredPage() {
     billingUrl: string;
   } | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
+  const [keyPrefix, setKeyPrefix] = useState<string | null>(null);
+  type Diagnose = {
+    keyPrefix: string | null;
+    keyLoaded: boolean;
+    probes: Array<{
+      path: string;
+      ok: boolean;
+      status: number;
+      body: string;
+    }>;
+  };
+  const [diagnose, setDiagnose] = useState<Diagnose | null>(null);
+  const [diagnoseLoading, setDiagnoseLoading] = useState(false);
   const [budget, setBudget] = useState<BudgetState | null>(null);
   const [budgetSummary, setBudgetSummary] = useState<Summary | null>(null);
   const [budgetHourly, setBudgetHourly] = useState<Bucket[]>([]);
@@ -201,7 +214,9 @@ export default function MonitoredPage() {
         outOfCredits?: boolean;
         message?: string;
         billingUrl?: string;
+        keyPrefix?: string | null;
       };
+      if (j.keyPrefix !== undefined) setKeyPrefix(j.keyPrefix);
       if (r.status === 402 && j.outOfCredits) {
         setUsageOutOfCredits({
           message: j.message ?? "Insufficient credits",
@@ -218,6 +233,28 @@ export default function MonitoredPage() {
       setUsageLoading(false);
     }
   }, []);
+
+  const runDiagnose = useCallback(async () => {
+    setDiagnoseLoading(true);
+    try {
+      const r = await fetch("/api/monitored/usage/diagnose");
+      if (r.ok) {
+        const j = (await r.json()) as Diagnose;
+        setDiagnose(j);
+        if (j.keyPrefix !== undefined) setKeyPrefix(j.keyPrefix);
+        // If any probe came back 2xx, the key is fine — clear the
+        // stale out-of-credits banner so the UI stops yelling.
+        if (j.probes.some((p) => p.ok)) {
+          setUsageOutOfCredits(null);
+          setUsageError(null);
+          // Re-pull usage too so we render whatever the live probe got.
+          await loadUsage();
+        }
+      }
+    } finally {
+      setDiagnoseLoading(false);
+    }
+  }, [loadUsage]);
 
   useEffect(() => {
     loadUsage();
@@ -533,33 +570,70 @@ export default function MonitoredPage() {
       >
         <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
           <div className="text-sm font-medium">
-            {usageOutOfCredits ? "💸 HikerAPI کردیت تموم شده" : "💳 HikerAPI usage"}
+            {usageOutOfCredits ? "💸 HikerAPI پاسخ ۴۰۲ می‌ده" : "💳 HikerAPI usage"}
           </div>
-          <button
-            onClick={loadUsage}
-            disabled={usageLoading}
-            className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-          >
-            {usageLoading ? "…" : "🔄"}
-          </button>
+          <div className="flex items-center gap-2">
+            {keyPrefix && (
+              <span
+                dir="ltr"
+                className="text-[10px] text-[var(--color-text-dim)] font-mono"
+                title="کلیدی که سرور الان داره از env می‌خونه"
+              >
+                key: {keyPrefix}
+              </span>
+            )}
+            <button
+              onClick={runDiagnose}
+              disabled={diagnoseLoading}
+              title="هر سه probe رو raw اجرا می‌کنه + اگه یکی OK بود banner ۴۰۲ رو پاک می‌کنه"
+              className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            >
+              {diagnoseLoading ? "…" : "🩺 تشخیص"}
+            </button>
+            <button
+              onClick={loadUsage}
+              disabled={usageLoading}
+              className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            >
+              {usageLoading ? "…" : "🔄"}
+            </button>
+          </div>
         </div>
         {usageOutOfCredits ? (
           <div className="flex flex-col gap-2">
             <div className="text-[12px] text-amber-200">
-              کردیت HikerAPI تموم شده — تا وقتی شارژ نکنی، هیچ استوری/پست/ریلز
-              جدیدی گرفته نمی‌شه و cron هم ۴۰۲ می‌ده.
+              HikerAPI روی probe (مثل <span dir="ltr">/v1/auth/me</span>) خطای
+              ۴۰۲ <code>InsufficientFunds</code> برمی‌گردونه. این
+              <strong> همیشه </strong>
+              یعنی Balance صفره — گاهی فقط یعنی Plan فعال نداری حتی اگه Balance
+              مثبته. اول 🩺 «تشخیص» بزن، اگه یکی از probeها 2xx شد
+              این banner پاک می‌شه. اگه واقعاً همه ۴۰۲ بودن، توی dashboard هم
+              Plan رو فعال کن + هم Balance رو شارژ کن.
             </div>
-            <div className="text-[10px] text-amber-300/70 break-all">
+            <div
+              dir="ltr"
+              className="text-[10px] text-amber-300/70 break-all font-mono"
+            >
               {usageOutOfCredits.message}
             </div>
-            <a
-              href={usageOutOfCredits.billingUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="self-start text-xs px-3 py-1.5 rounded-md bg-amber-500 text-black font-medium hover:bg-amber-400"
-            >
-              💳 شارژ HikerAPI →
-            </a>
+            <div className="flex items-center gap-2 flex-wrap">
+              <a
+                href={usageOutOfCredits.billingUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs px-3 py-1.5 rounded-md bg-amber-500 text-black font-medium hover:bg-amber-400"
+              >
+                💳 hikerapi.com/billing →
+              </a>
+              <a
+                href="https://hikerapi.com/profile"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs px-3 py-1.5 rounded-md border border-amber-700 text-amber-200 hover:bg-amber-900/40"
+              >
+                ⚙️ فعال‌سازی Plan
+              </a>
+            </div>
           </div>
         ) : usageError ? (
           <div className="text-[11px] text-red-300 break-all">
@@ -619,6 +693,50 @@ export default function MonitoredPage() {
         ) : (
           <div className="text-[11px] text-[var(--color-text-dim)]">
             …
+          </div>
+        )}
+        {diagnose && (
+          <div className="mt-3 pt-2 border-t border-[var(--color-border)]">
+            <div className="text-[11px] font-medium mb-1">
+              🩺 نتایج تشخیص
+            </div>
+            <div className="text-[10px] mb-2">
+              <span className="text-[var(--color-text-dim)]">کلید لود شده:</span>{" "}
+              <span dir="ltr" className="font-mono">
+                {diagnose.keyLoaded
+                  ? diagnose.keyPrefix ?? "(loaded)"
+                  : "❌ env nis لود نشده"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1">
+              {diagnose.probes.map((p) => (
+                <div
+                  key={p.path}
+                  dir="ltr"
+                  className={`text-[10px] p-1.5 rounded-md border ${
+                    p.ok
+                      ? "border-emerald-700 bg-emerald-900/20"
+                      : "border-red-700 bg-red-900/20"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 font-mono">
+                    <span className={p.ok ? "text-emerald-400" : "text-red-400"}>
+                      {p.ok ? "✓" : "✗"} {p.status || "?"}
+                    </span>
+                    <span className="font-medium">{p.path}</span>
+                  </div>
+                  <div className="text-[9px] text-[var(--color-text-dim)] mt-0.5 break-all font-mono">
+                    {p.body}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="text-[9px] text-[var(--color-text-dim)] mt-2">
+              نکته: اگه کلیدی که اینجا می‌بینی همون کلید درستی نیست که توی hikerapi
+              dashboard داری، یعنی Vercel env یا redeploy نشده یا کلید قدیمیه. کلید
+              رو توی Vercel → Settings → Environment Variables ست کن و
+              redeploy کن.
+            </div>
           </div>
         )}
       </Card>

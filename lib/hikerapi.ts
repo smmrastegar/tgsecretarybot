@@ -359,20 +359,82 @@ export type HikerUsage = {
 
 // Pull the account / usage info. HikerAPI's path keeps changing so
 // we try the three most common locations and stop at the first 2xx.
+// IMPORTANT: a 402 on one probe does NOT mean the account is out of
+// credits — HikerAPI returns InsufficientFunds on /v1/auth/me when
+// the plan isn't subscribed even if Balance is positive. So we
+// swallow per-probe 402s and only bubble one up if ALL probes failed
+// the same way. (The first successful probe wins.)
 export async function getUsage(): Promise<HikerUsage> {
   const candidates = ["/v1/auth/me", "/v1/account", "/v1/usage"];
   let last: { error: string; status: number } | null = null;
+  let outOfCreditsErr: HikerOutOfCreditsError | null = null;
   for (const p of candidates) {
-    const res = await callOne<Record<string, unknown>>(p, {});
-    if ("data" in res) {
-      return normaliseUsage(res.data);
-    }
-    last = res;
-    if (res.status !== 404) {
-      throw new Error(`hikerapi ${res.error}`);
+    try {
+      const res = await callOne<Record<string, unknown>>(p, {});
+      if ("data" in res) {
+        return normaliseUsage(res.data);
+      }
+      last = res;
+      if (res.status !== 404) {
+        throw new Error(`hikerapi ${res.error}`);
+      }
+    } catch (err) {
+      if (err instanceof HikerOutOfCreditsError) {
+        // Remember it but keep trying — another probe might succeed.
+        outOfCreditsErr = err;
+        continue;
+      }
+      throw err;
     }
   }
+  if (outOfCreditsErr) throw outOfCreditsErr;
   throw new Error(`hikerapi usage 404 on ${candidates.join(", ")}: ${last?.error ?? ""}`);
+}
+
+// Diagnose mode — returns the raw outcome of every probe + a masked
+// key prefix so the owner can confirm which key is actually deployed.
+// Used by /api/monitored/usage/diagnose.
+export async function diagnoseUsage(): Promise<{
+  keyPrefix: string | null;
+  keyLoaded: boolean;
+  probes: Array<{
+    path: string;
+    ok: boolean;
+    status: number;
+    body: string;
+  }>;
+}> {
+  const key = config.hikerApiKey ?? null;
+  const keyPrefix = key
+    ? `${key.slice(0, 5)}…${key.slice(-3)} (${key.length} chars)`
+    : null;
+  const paths = ["/v1/auth/me", "/v1/account", "/v1/usage"];
+  const probes: Array<{ path: string; ok: boolean; status: number; body: string }> = [];
+  for (const p of paths) {
+    if (!key) {
+      probes.push({ path: p, ok: false, status: 0, body: "no key" });
+      continue;
+    }
+    try {
+      const url = new URL(p, config.hikerBaseUrl);
+      const res = await fetch(url.toString(), {
+        headers: {
+          "x-access-key": key,
+          Accept: "application/json",
+        },
+      });
+      const txt = (await res.text()).slice(0, 400);
+      probes.push({ path: p, ok: res.ok, status: res.status, body: txt });
+    } catch (err) {
+      probes.push({
+        path: p,
+        ok: false,
+        status: 0,
+        body: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return { keyPrefix, keyLoaded: !!key, probes };
 }
 
 function numOf(v: unknown): number | null {
