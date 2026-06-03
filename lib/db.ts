@@ -285,6 +285,11 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS interval_minutes INT NOT NULL DEFAULT 30`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS instagram_user_id TEXT`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS full_name TEXT`;
+    // Optimization snapshot: media_count from cheap user-info call.
+    // If unchanged between two ticks → skip the expensive posts /
+    // reels / mentioned fetches entirely. Saves ~4× the cost on
+    // accounts that don't post often (most accounts).
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS last_media_count INT`;
     await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'story'`;
     await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS caption TEXT`;
     await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS media_type TEXT`;
@@ -349,6 +354,20 @@ export async function ensureSchema(): Promise<void> {
       )`;
     await q`CREATE INDEX IF NOT EXISTS ai_usage_chat_idx ON ai_usage (chat_id, created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage (created_at DESC)`;
+    // HikerAPI per-call cost log. HikerAPI itself doesn't expose
+    // dollar-level usage to us so we estimate from a configurable
+    // per-endpoint table and sum locally. Every paid call inserts
+    // one row; getUsage / auth probes record cost_usd=0.
+    await q`
+      CREATE TABLE IF NOT EXISTS hikerapi_usage (
+        id          BIGSERIAL PRIMARY KEY,
+        called_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        endpoint    TEXT NOT NULL,
+        cost_usd    NUMERIC(10, 6) NOT NULL DEFAULT 0,
+        account_id  BIGINT
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS hikerapi_usage_called_idx ON hikerapi_usage (called_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS hikerapi_usage_account_idx ON hikerapi_usage (account_id, called_at DESC) WHERE account_id IS NOT NULL`;
     await q`
       CREATE TABLE IF NOT EXISTS extracted_items (
         id           BIGSERIAL PRIMARY KEY,
@@ -2942,6 +2961,7 @@ export type MonitoredAccount = {
   lastCheckedAt: Date | null;
   lastStoryAt: Date | null;
   lastError: string | null;
+  lastMediaCount: number | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -2966,6 +2986,8 @@ function rowToMonitored(r: Record<string, unknown>): MonitoredAccount {
     lastCheckedAt: (r.last_checked_at as Date) ?? null,
     lastStoryAt: (r.last_story_at as Date) ?? null,
     lastError: (r.last_error as string) ?? null,
+    lastMediaCount:
+      r.last_media_count == null ? null : Number(r.last_media_count),
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
   };
@@ -2981,7 +3003,8 @@ export async function listMonitoredAccounts(opts: {
     SELECT id, platform, username, url, external_id, topic_id, enabled,
            check_stories, check_posts, check_reels, check_profile,
            check_mentioned, interval_minutes, instagram_user_id, full_name,
-           last_checked_at, last_story_at, last_error, created_at, updated_at
+           last_checked_at, last_story_at, last_error, last_media_count,
+           created_at, updated_at
     FROM monitored_accounts
     WHERE (${opts.platform ?? null}::text IS NULL OR platform = ${opts.platform ?? null})
       AND (${opts.enabledOnly ?? false}::boolean = FALSE OR enabled = TRUE)
@@ -3057,7 +3080,8 @@ export async function getMonitoredAccount(
     SELECT id, platform, username, url, external_id, topic_id, enabled,
            check_stories, check_posts, check_reels, check_profile,
            check_mentioned, interval_minutes, instagram_user_id, full_name,
-           last_checked_at, last_story_at, last_error, created_at, updated_at
+           last_checked_at, last_story_at, last_error, last_media_count,
+           created_at, updated_at
     FROM monitored_accounts WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToMonitored(r) : null;
@@ -3075,7 +3099,8 @@ export async function dueMonitoredAccounts(
     SELECT id, platform, username, url, external_id, topic_id, enabled,
            check_stories, check_posts, check_reels, check_profile,
            check_mentioned, interval_minutes, instagram_user_id, full_name,
-           last_checked_at, last_story_at, last_error, created_at, updated_at
+           last_checked_at, last_story_at, last_error, last_media_count,
+           created_at, updated_at
     FROM monitored_accounts
     WHERE enabled = TRUE
       AND (last_checked_at IS NULL
@@ -3125,7 +3150,8 @@ export async function addMonitoredAccount(args: {
     RETURNING id, platform, username, url, external_id, topic_id, enabled,
               check_stories, check_posts, check_reels, check_profile,
               check_mentioned, interval_minutes, instagram_user_id, full_name,
-              last_checked_at, last_story_at, last_error, created_at, updated_at`;
+              last_checked_at, last_story_at, last_error, last_media_count,
+              created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToMonitored(r) : null;
 }
@@ -3237,6 +3263,7 @@ export async function markMonitoredChecked(args: {
   id: number;
   lastStoryAt?: Date | null;
   error?: string | null;
+  lastMediaCount?: number | null;
 }): Promise<void> {
   if (!hasDb()) return;
   await sql()`
@@ -3246,8 +3273,78 @@ export async function markMonitoredChecked(args: {
           ? args.lastStoryAt.toISOString()
           : null}::timestamptz, last_story_at),
         last_error = ${args.error ?? null},
+        last_media_count = COALESCE(${args.lastMediaCount ?? null}::int, last_media_count),
         updated_at = NOW()
     WHERE id = ${args.id}`;
+}
+
+// --- HikerAPI per-call cost log ---
+
+export async function recordHikerCall(args: {
+  endpoint: string;
+  costUsd: number;
+  accountId?: number | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    INSERT INTO hikerapi_usage (endpoint, cost_usd, account_id)
+    VALUES (${args.endpoint}, ${args.costUsd.toFixed(6)},
+            ${args.accountId ?? null})`;
+}
+
+export async function getHikerTotalSpent(): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const rows = await sql()`SELECT COALESCE(SUM(cost_usd), 0)::float8 AS total FROM hikerapi_usage`;
+  const r = rows[0] as { total: number } | undefined;
+  return r ? Number(r.total) : 0;
+}
+
+export async function getHikerSpentBuckets(args: {
+  bucket: "hour" | "day";
+  since: Date;
+}): Promise<Array<{ at: Date; calls: number; costUsd: number }>> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const truncFn = args.bucket === "hour" ? "hour" : "day";
+  const rows = await sql()`
+    SELECT date_trunc(${truncFn}, called_at) AS at,
+           COUNT(*)::int AS calls,
+           COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
+    FROM hikerapi_usage
+    WHERE called_at >= ${args.since.toISOString()}::timestamptz
+    GROUP BY 1
+    ORDER BY 1 ASC`;
+  return (rows as Array<{ at: Date; calls: number; cost_usd: number }>).map(
+    (r) => ({ at: r.at, calls: r.calls, costUsd: Number(r.cost_usd) }),
+  );
+}
+
+// Last N HikerAPI calls — used for the "recent activity" tail in the
+// settings dialog so the owner can sanity-check what we're spending on.
+export async function listRecentHikerCalls(
+  limit = 30,
+): Promise<Array<{ id: number; calledAt: Date; endpoint: string; costUsd: number; accountId: number | null }>> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, called_at, endpoint, cost_usd::float8 AS cost_usd, account_id
+    FROM hikerapi_usage
+    ORDER BY called_at DESC
+    LIMIT ${limit}`;
+  return (rows as Array<{
+    id: string;
+    called_at: Date;
+    endpoint: string;
+    cost_usd: number;
+    account_id: string | null;
+  }>).map((r) => ({
+    id: Number(r.id),
+    calledAt: r.called_at,
+    endpoint: r.endpoint,
+    costUsd: Number(r.cost_usd),
+    accountId: r.account_id == null ? null : Number(r.account_id),
+  }));
 }
 
 // Story-detection event log. story_id is whatever the source API

@@ -83,6 +83,15 @@ export const DEFAULT_SETTINGS = {
   monitorDefaultCheckReels: "false",
   monitorDefaultCheckProfile: "false",
   monitorDefaultCheckMentioned: "false",
+  // HikerAPI logical budget — we don't know the actual remaining
+  // dollars from HikerAPI's API, so we track every call locally and
+  // gate spending against a total (default $50 = the user's pre-pay)
+  // with periodic approval checkpoints (default every $10).
+  hikerBudgetUsd: "50",
+  hikerApprovalStepUsd: "10",
+  hikerApprovedUsd: "10",
+  hikerCostPerCallUsd: "0.005",
+  hikerOptimizeChangeDetection: "true",
 } as const satisfies Record<string, string>;
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
@@ -126,6 +135,11 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   monitorDefaultCheckReels: optional("MONITOR_DEFAULT_CHECK_REELS"),
   monitorDefaultCheckProfile: optional("MONITOR_DEFAULT_CHECK_PROFILE"),
   monitorDefaultCheckMentioned: optional("MONITOR_DEFAULT_CHECK_MENTIONED"),
+  hikerBudgetUsd: optional("HIKER_BUDGET_USD"),
+  hikerApprovalStepUsd: optional("HIKER_APPROVAL_STEP_USD"),
+  hikerApprovedUsd: optional("HIKER_APPROVED_USD"),
+  hikerCostPerCallUsd: optional("HIKER_COST_PER_CALL_USD"),
+  hikerOptimizeChangeDetection: optional("HIKER_OPTIMIZE_CHANGE_DETECTION"),
 };
 
 export function envOverride(key: SettingKey): string | undefined {

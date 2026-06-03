@@ -145,6 +145,24 @@ export default function MonitoredPage() {
     resetsAt?: string | null;
     expiresAt?: string | null;
   };
+  type BudgetState = {
+    spentUsd: number;
+    approvedUsd: number;
+    budgetUsd: number;
+    stepUsd: number;
+    costPerCallUsd: number;
+    needsApproval: boolean;
+    budgetExceeded: boolean;
+    nextThresholdUsd: number;
+  };
+  type Bucket = { at: string; calls: number; costUsd: number };
+  type HikerCall = {
+    id: number;
+    calledAt: string;
+    endpoint: string;
+    costUsd: number;
+    accountId: number | null;
+  };
   const [usage, setUsage] = useState<Usage | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [usageOutOfCredits, setUsageOutOfCredits] = useState<{
@@ -152,6 +170,13 @@ export default function MonitoredPage() {
     billingUrl: string;
   } | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
+  const [budget, setBudget] = useState<BudgetState | null>(null);
+  const [budgetHourly, setBudgetHourly] = useState<Bucket[]>([]);
+  const [budgetDaily, setBudgetDaily] = useState<Bucket[]>([]);
+  const [budgetRecent, setBudgetRecent] = useState<HikerCall[]>([]);
+  const [budgetLoading, setBudgetLoading] = useState(false);
+  const [budgetDialog, setBudgetDialog] = useState(false);
+  const [approving, setApproving] = useState(false);
 
   const loadUsage = useCallback(async () => {
     setUsageLoading(true);
@@ -186,6 +211,56 @@ export default function MonitoredPage() {
   useEffect(() => {
     loadUsage();
   }, [loadUsage]);
+
+  const loadBudget = useCallback(async () => {
+    setBudgetLoading(true);
+    try {
+      const r = await fetch("/api/monitored/budget");
+      if (!r.ok) return;
+      const j = (await r.json()) as {
+        state: BudgetState;
+        hourly: Bucket[];
+        daily: Bucket[];
+        recent: HikerCall[];
+      };
+      setBudget(j.state);
+      setBudgetHourly(j.hourly);
+      setBudgetDaily(j.daily);
+      setBudgetRecent(j.recent);
+    } finally {
+      setBudgetLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadBudget();
+  }, [loadBudget]);
+
+  async function approveNext(absolute?: number) {
+    setApproving(true);
+    try {
+      const r = await fetch("/api/monitored/budget/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          absolute != null ? { approvedUsd: absolute } : {},
+        ),
+      });
+      if (r.ok) {
+        const j = (await r.json()) as { state: BudgetState };
+        setBudget(j.state);
+        setImportMsg(
+          `✅ تا $${j.state.approvedUsd.toFixed(2)} مجاز شد`,
+        );
+        setTimeout(() => setImportMsg(null), 5000);
+        await loadBudget();
+      } else {
+        alert("خطا در تایید");
+      }
+    } finally {
+      setApproving(false);
+    }
+  }
 
   const [refreshing, setRefreshing] = useState<Set<number>>(new Set());
   const [refreshDialog, setRefreshDialog] = useState<{
@@ -261,6 +336,7 @@ export default function MonitoredPage() {
         setTimeout(() => setImportMsg(null), 4000);
       }
       await load();
+      await loadBudget();
     } finally {
       setRefreshing((s) => {
         const next = new Set(s);
@@ -305,6 +381,7 @@ export default function MonitoredPage() {
         }
         setTimeout(() => setImportMsg(null), 8000);
         await load();
+        await loadBudget();
       } else {
         const j = (await r.json().catch(() => ({}))) as { error?: string };
         alert(j.error ?? "خطا");
@@ -354,6 +431,7 @@ export default function MonitoredPage() {
         }
         setImportMsg(msg);
         await load();
+        await loadBudget();
       }
     } catch (err) {
       setImportMsg(err instanceof Error ? err.message : String(err));
@@ -525,6 +603,111 @@ export default function MonitoredPage() {
           <div className="text-[11px] text-[var(--color-text-dim)]">
             …
           </div>
+        )}
+      </Card>
+
+      <Card
+        className={`mb-3 !p-3 ${
+          budget?.budgetExceeded
+            ? "!border-red-700 !bg-red-900/20"
+            : budget?.needsApproval
+              ? "!border-amber-600 !bg-amber-900/20"
+              : ""
+        }`}
+      >
+        <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+          <div className="text-sm font-medium">
+            {budget?.budgetExceeded
+              ? "🛑 سقف بودجه HikerAPI تمام شد"
+              : budget?.needsApproval
+                ? "⏸ نیاز به تایید برای ادامه‌ی هزینه"
+                : "💵 بودجه HikerAPI (لاجیکال)"}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setBudgetDialog(true)}
+              className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+            >
+              ⚙️ تنظیمات
+            </button>
+            <button
+              onClick={loadBudget}
+              disabled={budgetLoading}
+              className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            >
+              {budgetLoading ? "…" : "🔄"}
+            </button>
+          </div>
+        </div>
+        {budget ? (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-3 flex-wrap text-[11px]">
+              <span>
+                <span className="text-[var(--color-text-dim)]">خرج‌شده:</span>{" "}
+                <strong>${budget.spentUsd.toFixed(2)}</strong>
+              </span>
+              <span>
+                <span className="text-[var(--color-text-dim)]">مجاز تا:</span>{" "}
+                <strong>${budget.approvedUsd.toFixed(2)}</strong>
+              </span>
+              <span>
+                <span className="text-[var(--color-text-dim)]">سقف کلی:</span>{" "}
+                <strong>${budget.budgetUsd.toFixed(2)}</strong>
+              </span>
+              <span className="text-[var(--color-text-dim)]">
+                · checkpoint هر ${budget.stepUsd.toFixed(2)}
+              </span>
+            </div>
+            <div className="h-2 bg-[var(--color-surface-2)] rounded-full overflow-hidden relative">
+              <div
+                className="absolute inset-y-0 left-0 bg-emerald-600/60"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    (budget.approvedUsd / budget.budgetUsd) * 100,
+                  )}%`,
+                }}
+                title={`مجاز: $${budget.approvedUsd.toFixed(2)}`}
+              />
+              <div
+                className={`absolute inset-y-0 left-0 ${
+                  budget.budgetExceeded
+                    ? "bg-red-500"
+                    : budget.needsApproval
+                      ? "bg-amber-500"
+                      : "bg-[var(--color-accent)]"
+                }`}
+                style={{
+                  width: `${Math.min(
+                    100,
+                    (budget.spentUsd / budget.budgetUsd) * 100,
+                  )}%`,
+                }}
+                title={`خرج: $${budget.spentUsd.toFixed(2)}`}
+              />
+            </div>
+            {(budget.needsApproval || budget.budgetExceeded) && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="text-[11px] text-amber-200 flex-1 min-w-[200px]">
+                  {budget.budgetExceeded
+                    ? `سقف کل $${budget.budgetUsd.toFixed(2)} تمام شد. cron متوقفه. اگه بخوای ادامه بدی، اول سقف رو از تنظیمات بالا ببر.`
+                    : `خرج رسید به سقف مجاز $${budget.approvedUsd.toFixed(2)}. تا تایید نکنی، cron و دکمه‌های refresh ۴۰۲ می‌گیرن.`}
+                </div>
+                {!budget.budgetExceeded && (
+                  <button
+                    onClick={() => approveNext()}
+                    disabled={approving}
+                    className="text-xs px-3 py-1.5 rounded-md bg-amber-500 text-black font-medium hover:bg-amber-400 disabled:opacity-50"
+                  >
+                    ✅ تایید ${budget.stepUsd.toFixed(2)} بعدی (تا $
+                    {budget.nextThresholdUsd.toFixed(2)})
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-[11px] text-[var(--color-text-dim)]">…</div>
         )}
       </Card>
 
@@ -1088,6 +1271,276 @@ export default function MonitoredPage() {
           </div>
         </div>
       )}
+
+      {budgetDialog && budget && (
+        <BudgetSettingsDialog
+          budget={budget}
+          hourly={budgetHourly}
+          daily={budgetDaily}
+          recent={budgetRecent}
+          onClose={() => setBudgetDialog(false)}
+          onSaved={async () => {
+            await loadBudget();
+          }}
+          onApproveAbsolute={(v) => approveNext(v)}
+        />
+      )}
     </Shell>
+  );
+}
+
+function BudgetSettingsDialog(props: {
+  budget: {
+    spentUsd: number;
+    approvedUsd: number;
+    budgetUsd: number;
+    stepUsd: number;
+    costPerCallUsd: number;
+    needsApproval: boolean;
+    budgetExceeded: boolean;
+    nextThresholdUsd: number;
+  };
+  hourly: Array<{ at: string; calls: number; costUsd: number }>;
+  daily: Array<{ at: string; calls: number; costUsd: number }>;
+  recent: Array<{
+    id: number;
+    calledAt: string;
+    endpoint: string;
+    costUsd: number;
+    accountId: number | null;
+  }>;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+  onApproveAbsolute: (v: number) => Promise<void>;
+}) {
+  const { budget, hourly, daily, recent, onClose, onSaved, onApproveAbsolute } =
+    props;
+  const [budgetUsd, setBudgetUsd] = useState(String(budget.budgetUsd));
+  const [stepUsd, setStepUsd] = useState(String(budget.stepUsd));
+  const [costPerCallUsd, setCostPerCallUsd] = useState(
+    String(budget.costPerCallUsd),
+  );
+  const [optimize, setOptimize] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const r = await fetch("/api/settings");
+      if (r.ok) {
+        const j = (await r.json()) as {
+          values?: Record<string, string>;
+        };
+        const v = j.values?.hikerOptimizeChangeDetection;
+        if (v != null) {
+          setOptimize(v.toLowerCase() !== "false");
+        }
+      }
+    })();
+  }, []);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          hikerBudgetUsd: budgetUsd,
+          hikerApprovalStepUsd: stepUsd,
+          hikerCostPerCallUsd: costPerCallUsd,
+          hikerOptimizeChangeDetection: String(optimize),
+        }),
+      });
+      await onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const maxBucket = Math.max(
+    0.001,
+    ...hourly.map((b) => b.costUsd),
+    ...daily.map((b) => b.costUsd),
+  );
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-2xl my-8"
+      >
+        <h2 className="text-base font-semibold mb-1">⚙️ تنظیمات بودجه HikerAPI</h2>
+        <p className="text-xs text-[var(--color-text-dim)] mb-4">
+          HikerAPI خودش $ نشون نمی‌ده — ما هر call رو با هزینه تخمینی محلی جمع
+          می‌زنیم. سقف کل + هر چند $ یه‌بار از تو می‌پرسه ادامه بدیم یا نه.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 text-sm">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-[var(--color-text-dim)]">
+              سقف کلی ($)
+            </span>
+            <input
+              type="number"
+              step="0.01"
+              value={budgetUsd}
+              onChange={(e) => setBudgetUsd(e.target.value)}
+              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-[var(--color-text-dim)]">
+              فاصله‌ی تایید ($)
+            </span>
+            <input
+              type="number"
+              step="0.01"
+              value={stepUsd}
+              onChange={(e) => setStepUsd(e.target.value)}
+              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-[var(--color-text-dim)]">
+              هزینه fallback / call ($)
+            </span>
+            <input
+              type="number"
+              step="0.0001"
+              value={costPerCallUsd}
+              onChange={(e) => setCostPerCallUsd(e.target.value)}
+              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+            />
+          </label>
+        </div>
+
+        <label className="flex items-center gap-2 text-sm mb-4 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={optimize}
+            onChange={(e) => setOptimize(e.target.checked)}
+          />
+          <span>
+            🎯 optimize تشخیص: قبل از fetch پست‌ها، فقط user-info ارزون می‌گیره
+            (~$0.001). اگه media_count عوض نشده، fetch پست/ریلز/منشن رو
+            <strong> اصلاً </strong>
+            نمی‌زنه. (ذخیره‌ی ۷۵-۹۰٪)
+          </span>
+        </label>
+
+        <div className="flex gap-2 mb-5">
+          <button
+            onClick={() => onApproveAbsolute(Number(budgetUsd))}
+            className="text-xs px-3 py-1.5 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30"
+            title="تا سقف کلی auto-approve کن"
+          >
+            ✅ تایید کل سقف
+          </button>
+          <button
+            onClick={() => onApproveAbsolute(budget.spentUsd)}
+            className="text-xs px-3 py-1.5 rounded-md border border-amber-700 text-amber-300 hover:bg-amber-900/30"
+            title="مجاز رو به همین خرج فعلی برگردون = pause فوری"
+          >
+            ⏸ pause الان
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={save}
+            disabled={saving}
+            className="text-xs px-4 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+          >
+            {saving ? "ذخیره…" : "💾 ذخیره"}
+          </button>
+        </div>
+
+        <div className="mb-4">
+          <div className="text-xs font-medium mb-1">
+            📅 روزانه (۱۴ روز اخیر)
+          </div>
+          {daily.length === 0 ? (
+            <div className="text-[11px] text-[var(--color-text-dim)]">
+              هنوز callی ثبت نشده
+            </div>
+          ) : (
+            <div className="flex items-end gap-1 h-16">
+              {daily.map((b) => (
+                <div
+                  key={b.at}
+                  title={`${new Date(b.at).toLocaleDateString()} · ${b.calls} call · $${b.costUsd.toFixed(3)}`}
+                  className="flex-1 bg-[var(--color-accent)]/70 rounded-t-sm min-h-[2px] hover:bg-[var(--color-accent)]"
+                  style={{
+                    height: `${Math.max(4, (b.costUsd / maxBucket) * 100)}%`,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="mb-4">
+          <div className="text-xs font-medium mb-1">⏰ ساعتی (۲۴ ساعت اخیر)</div>
+          {hourly.length === 0 ? (
+            <div className="text-[11px] text-[var(--color-text-dim)]">
+              هنوز callی ثبت نشده
+            </div>
+          ) : (
+            <div className="flex items-end gap-0.5 h-16">
+              {hourly.map((b) => (
+                <div
+                  key={b.at}
+                  title={`${new Date(b.at).toLocaleString()} · ${b.calls} call · $${b.costUsd.toFixed(3)}`}
+                  className="flex-1 bg-[var(--color-accent)]/70 rounded-t-sm min-h-[2px] hover:bg-[var(--color-accent)]"
+                  style={{
+                    height: `${Math.max(4, (b.costUsd / maxBucket) * 100)}%`,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="mb-2">
+          <div className="text-xs font-medium mb-1">
+            📜 آخرین call‌ها (۲۰ آخر)
+          </div>
+          {recent.length === 0 ? (
+            <div className="text-[11px] text-[var(--color-text-dim)]">
+              خالی
+            </div>
+          ) : (
+            <div className="max-h-40 overflow-y-auto flex flex-col gap-0.5">
+              {recent.map((c) => (
+                <div
+                  key={c.id}
+                  className="text-[10px] flex items-center gap-2 py-0.5 border-b border-[var(--color-border)]"
+                >
+                  <span className="text-[var(--color-text-dim)] w-24 shrink-0">
+                    {new Date(c.calledAt).toLocaleString()}
+                  </span>
+                  <span dir="ltr" className="flex-1 truncate font-mono">
+                    {c.endpoint}
+                  </span>
+                  <span className="text-[var(--color-text-dim)]">
+                    ${c.costUsd.toFixed(4)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end mt-4">
+          <button
+            onClick={onClose}
+            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+          >
+            بستن
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

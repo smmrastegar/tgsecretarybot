@@ -10,6 +10,7 @@ import {
   listRecentMonitorEvents,
 } from "@/lib/db";
 import { HikerOutOfCreditsError } from "@/lib/hikerapi";
+import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 import { getSettings } from "@/lib/settings";
 
@@ -103,6 +104,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   let forwarded = 0;
   const errors: string[] = [];
   let outOfCredits: { message: string; billingUrl: string } | null = null;
+  let approvalNeeded: HikerApprovalNeededError | null = null;
   if (account && config.hikerApiKey) {
     const target = await resolveTargetChat();
     if (target) {
@@ -122,6 +124,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         if (err instanceof HikerOutOfCreditsError) {
           outOfCredits = { message: err.message, billingUrl: err.billingUrl };
           errors.push(`HikerAPI out of credits: ${err.message}`);
+        } else if (err instanceof HikerApprovalNeededError) {
+          approvalNeeded = err;
+          errors.push(err.message);
         } else {
           errors.push(err instanceof Error ? err.message : String(err));
         }
@@ -136,6 +141,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     errors: errors.slice(0, 5),
     ...(outOfCredits
       ? { outOfCredits: true, billingUrl: outOfCredits.billingUrl }
+      : {}),
+    ...(approvalNeeded
+      ? {
+          approvalNeeded: true,
+          spentUsd: approvalNeeded.spentUsd,
+          approvedUsd: approvalNeeded.approvedUsd,
+          nextThresholdUsd: approvalNeeded.nextThresholdUsd,
+          budgetUsd: approvalNeeded.budgetUsd,
+          reason: approvalNeeded.reason,
+        }
       : {}),
   });
 }

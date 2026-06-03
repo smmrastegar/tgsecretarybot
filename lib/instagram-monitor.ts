@@ -21,6 +21,7 @@ import {
   getUserStories,
   type IGMedia,
 } from "./hikerapi";
+import { getSettings } from "./settings";
 
 export type AccountTarget = {
   chatId: number;
@@ -206,16 +207,27 @@ export async function processAccount(args: {
   let forwarded = 0;
   let latestSeen: Date | null = null;
 
-  let userId = account.instagramUserId;
-  if (!userId) {
+  const settings = await getSettings();
+  const optimize =
+    (settings.hikerOptimizeChangeDetection ?? "true").toLowerCase() !== "false";
+
+  // We always need user info for cheap change-detection (and to lazily
+  // populate instagramUserId). When `optimize` is on and we already
+  // know the user id, this single call lets us decide whether to skip
+  // posts/reels/mentioned entirely. When forceAllKinds is set (manual
+  // refresh / on-add) we still want everything, so we don't gate.
+  let userInfo: { id: string; fullName: string | null; mediaCount: number | null } | null = null;
+  const needFreshUserInfo =
+    !account.instagramUserId ||
+    (optimize && !forceAllKinds);
+  if (needFreshUserInfo) {
     try {
       const u = await getUserByUsername(account.username);
-      userId = u.id;
-      await setInstagramUserId(account.id, userId, u.fullName).catch(() => {});
-      // Mutate the local account so captionFor sees the fresh
-      // full_name on this run too — without this the first caption
-      // would still show the username instead.
-      account.fullName = u.fullName ?? account.fullName;
+      userInfo = { id: u.id, fullName: u.fullName, mediaCount: u.mediaCount };
+      if (!account.instagramUserId) {
+        await setInstagramUserId(account.id, u.id, u.fullName).catch(() => {});
+        account.fullName = u.fullName ?? account.fullName;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`resolve ${account.username}: ${msg.slice(0, 200)}`);
@@ -223,11 +235,33 @@ export async function processAccount(args: {
       return { detected, forwarded, errors, latestSeen };
     }
   }
+  const userId = userInfo?.id ?? account.instagramUserId;
+  if (!userId) {
+    errors.push(`resolve ${account.username}: no user id`);
+    await markMonitoredChecked({ id: account.id, error: "no user id" });
+    return { detected, forwarded, errors, latestSeen };
+  }
+
+  // Cheap change-detection: if media_count is unchanged from the last
+  // tick AND nothing forces a full refresh, skip the expensive feed
+  // pulls. Stories still get checked because IG stories rotate inside
+  // a 24h window without changing media_count.
+  const newMediaCount = userInfo?.mediaCount ?? null;
+  const mediaCountChanged =
+    newMediaCount == null ||
+    account.lastMediaCount == null ||
+    newMediaCount !== account.lastMediaCount;
+  const skipFeedFetch = optimize && !forceAllKinds && !mediaCountChanged;
 
   const want = (key: "story" | "post" | "reel" | "mentioned"): boolean => {
     if (kindOverrides && kindOverrides[key] !== undefined)
       return Boolean(kindOverrides[key]);
     if (forceAllKinds) return true;
+    // posts/reels/mentioned only need to run when media_count moved
+    // (stories don't bump that counter).
+    if (skipFeedFetch && (key === "post" || key === "reel" || key === "mentioned")) {
+      return false;
+    }
     if (key === "story") return account.checkStories;
     if (key === "post") return account.checkPosts;
     if (key === "reel") return account.checkReels;
@@ -311,6 +345,7 @@ export async function processAccount(args: {
     id: account.id,
     lastStoryAt: latestSeen,
     error: null,
+    lastMediaCount: newMediaCount,
   });
   return { detected, forwarded, errors, latestSeen };
 }

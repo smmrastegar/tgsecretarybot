@@ -3,6 +3,7 @@ import { config } from "@/lib/config";
 import { dueMonitoredAccounts, hasDb } from "@/lib/db";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 import { HikerOutOfCreditsError } from "@/lib/hikerapi";
+import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
 import { getBot } from "@/lib/bot";
 
 export const runtime = "nodejs";
@@ -75,6 +76,25 @@ async function run(request: Request): Promise<NextResponse> {
           forwarded,
           errors: [`HikerAPI out of credits: ${err.message}`],
           billingUrl: err.billingUrl,
+        }, { status: 402 });
+      }
+      if (err instanceof HikerApprovalNeededError) {
+        // Same logic — once we hit the local approval ceiling, every
+        // remaining account would just throw the same thing. Stop
+        // and surface the state so the UI flips into "approve next
+        // $10" mode.
+        return NextResponse.json({
+          ok: false,
+          approvalNeeded: true,
+          checked,
+          detected,
+          forwarded,
+          errors: [err.message],
+          spentUsd: err.spentUsd,
+          approvedUsd: err.approvedUsd,
+          nextThresholdUsd: err.nextThresholdUsd,
+          budgetUsd: err.budgetUsd,
+          reason: err.reason,
         }, { status: 402 });
       }
       const msg = err instanceof Error ? err.message : String(err);

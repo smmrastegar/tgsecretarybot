@@ -4,6 +4,7 @@ import { getBot } from "@/lib/bot";
 import { config } from "@/lib/config";
 import { audit, getMonitoredAccount } from "@/lib/db";
 import { HikerOutOfCreditsError } from "@/lib/hikerapi";
+import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 
 export const runtime = "nodejs";
@@ -96,6 +97,21 @@ export async function POST(
           outOfCredits: true,
           error: `HikerAPI out of credits: ${err.message}`,
           billingUrl: err.billingUrl,
+        },
+        { status: 402 },
+      );
+    }
+    if (err instanceof HikerApprovalNeededError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          approvalNeeded: true,
+          error: err.message,
+          spentUsd: err.spentUsd,
+          approvedUsd: err.approvedUsd,
+          nextThresholdUsd: err.nextThresholdUsd,
+          budgetUsd: err.budgetUsd,
+          reason: err.reason,
         },
         { status: 402 },
       );

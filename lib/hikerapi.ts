@@ -11,12 +11,23 @@
 // permalink, caption}.
 
 import { config } from "./config";
+import {
+  assertBudget,
+  HikerApprovalNeededError,
+  recordCall,
+} from "./hikerapi-budget";
+
+export { HikerApprovalNeededError };
 
 export type IGUser = {
   id: string;
   username: string;
   fullName: string | null;
   profilePicUrl: string | null;
+  // Used as a cheap "did anything change since last tick?" signal —
+  // if mediaCount matches our stored last_media_count, we skip the
+  // expensive posts/reels/mentioned fetches entirely.
+  mediaCount: number | null;
 };
 
 export type IGMedia = {
@@ -60,6 +71,10 @@ async function callOne<T>(
   path: string,
   query: Record<string, string>,
 ): Promise<{ data: T; status: number } | { error: string; status: number }> {
+  // Local dollar-budget gate — throws HikerApprovalNeededError if the
+  // estimated cost of this call would push us past the currently
+  // approved slice or the absolute budget.
+  await assertBudget(path);
   const url = new URL(path, config.hikerBaseUrl);
   for (const [k, v] of Object.entries(query)) {
     if (v != null && v !== "") url.searchParams.set(k, v);
@@ -89,6 +104,10 @@ async function callOne<T>(
     }
     return { error: `${res.status} ${path}: ${txt}`, status: res.status };
   }
+  // Only record cost on success — 4xx/5xx don't bill us.
+  await recordCall({ path }).catch((err) =>
+    console.warn("[hiker] recordCall failed:", err),
+  );
   const data = (await res.json()) as T;
   return { data, status: res.status };
 }
@@ -431,6 +450,10 @@ export async function getUserByUsername(username: string): Promise<IGUser> {
   if (!id) {
     throw new Error(`hikerapi user not found: ${username}`);
   }
+  const mediaCount =
+    numOf((u as Record<string, unknown>).media_count) ??
+    numOf((u as Record<string, unknown>).total_posts) ??
+    null;
   return {
     id,
     username:
@@ -438,6 +461,7 @@ export async function getUserByUsername(username: string): Promise<IGUser> {
     fullName: typeof u.full_name === "string" ? u.full_name : null,
     profilePicUrl:
       typeof u.profile_pic_url === "string" ? u.profile_pic_url : null,
+    mediaCount,
   };
 }
 
