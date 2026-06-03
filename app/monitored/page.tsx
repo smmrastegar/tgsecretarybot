@@ -137,11 +137,10 @@ export default function MonitoredPage() {
     await load();
   }
 
-  // Kept for shape compat — HikerAPI doesn't actually expose a $-level
-  // usage endpoint to clients, so the card now just renders the key
-  // status and points to the budget card for real spend.
   type Usage = {
     configured?: boolean;
+    balanceUsd?: number | null;
+    rateLimitPerSec?: number | null;
   };
   type BudgetState = {
     spentUsd: number;
@@ -219,6 +218,11 @@ export default function MonitoredPage() {
       const j = (await r.json().catch(() => ({}))) as {
         configured?: boolean;
         error?: string;
+        outOfCredits?: boolean;
+        message?: string;
+        billingUrl?: string;
+        balanceUsd?: number | null;
+        rateLimitPerSec?: number | null;
         keyPrefix?: string | null;
         keySource?: "db" | "env" | null;
         keyName?: string | null;
@@ -226,10 +230,19 @@ export default function MonitoredPage() {
       if (j.keyPrefix !== undefined) setKeyPrefix(j.keyPrefix);
       if (j.keySource !== undefined) setKeySource(j.keySource ?? null);
       if (j.keyName !== undefined) setKeyName(j.keyName ?? null);
-      if (!r.ok) {
+      if (r.status === 402 && j.outOfCredits) {
+        setUsageOutOfCredits({
+          message: j.message ?? "Insufficient credits",
+          billingUrl: j.billingUrl ?? "https://hikerapi.com/billing",
+        });
+      } else if (!r.ok) {
         setUsageError(j.error ?? `${r.status}`);
       } else {
-        setUsage({ configured: j.configured });
+        setUsage({
+          configured: j.configured,
+          balanceUsd: j.balanceUsd ?? null,
+          rateLimitPerSec: j.rateLimitPerSec ?? null,
+        });
       }
     } catch (err) {
       setUsageError(err instanceof Error ? err.message : String(err));
@@ -703,11 +716,33 @@ export default function MonitoredPage() {
             {usageError}
           </div>
         ) : usage?.configured ? (
-          <div className="text-[11px] text-emerald-300">
-            ✅ کلید لود شده و از سرور قابل دسترسه. هزینه‌ی $ از کارت
-            «💵 بودجه HikerAPI» پایین نشون داده می‌شه — HikerAPI خودش
-            endpoint مصرف $ نداره. 🩺 «تشخیص» بزن تا با یه call واقعی
-            (~$0.001) تست بشه کلید کار می‌کنه.
+          <div className="flex items-center gap-4 flex-wrap text-[12px]">
+            {usage.balanceUsd != null ? (
+              <span>
+                <span className="text-[var(--color-text-dim)]">💰 موجودی:</span>{" "}
+                <strong className="text-emerald-300 tabular-nums">
+                  ${usage.balanceUsd.toFixed(2)}
+                </strong>
+                <span className="text-[10px] text-[var(--color-text-dim)] mr-1">
+                  (از /sys/balance)
+                </span>
+              </span>
+            ) : (
+              <span className="text-emerald-300">
+                ✅ کلید فعاله (موجودی برگشت نخورد)
+              </span>
+            )}
+            {usage.rateLimitPerSec != null && (
+              <span>
+                <span className="text-[var(--color-text-dim)]">rate:</span>{" "}
+                <strong className="tabular-nums">
+                  {usage.rateLimitPerSec}/sec
+                </strong>
+              </span>
+            )}
+            <span className="text-[10px] text-[var(--color-text-dim)]">
+              · هزینه‌ی $ تخمینی از کارت بودجه پایین
+            </span>
           </div>
         ) : (
           <div className="text-[11px] text-red-300">

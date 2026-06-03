@@ -554,19 +554,84 @@ export async function verifyKeyLive(): Promise<{
   };
 }
 
-// Kept as a no-op shim — usage info isn't available from HikerAPI.
-// Callers should rely on local hikerapi_usage tracking (the budget
-// card). Returns a minimal record so the existing UI shape still
-// compiles.
+// HikerAPI exposes /sys/balance — the documented "check your
+// current rate limit" endpoint — which returns the live account
+// balance + rate-limit info. We hit it directly (raw fetch, no
+// budget gate, no retry policy on the cost path) because it's
+// supposed to be free / sys-level. Surfaced into the existing
+// HikerUsage shape so the UI can render real numbers from
+// HikerAPI itself in addition to our local cost tracking.
+export type HikerBalance = {
+  balanceUsd: number | null;
+  rateLimitPerSec: number | null;
+  raw: Record<string, unknown>;
+};
+
+export async function getBalance(): Promise<HikerBalance> {
+  const { key } = await getActiveKey();
+  if (!key) throw new Error("HIKER_API_KEY is not configured (env or override)");
+  const url = new URL("/sys/balance", config.hikerBaseUrl);
+  const res = await fetch(url.toString(), {
+    headers: { "x-access-key": key, Accept: "application/json" },
+  });
+  const txt = await res.text();
+  if (!res.ok) {
+    if (res.status === 402) {
+      throw new HikerOutOfCreditsError(txt.slice(0, 200), "https://hikerapi.com/billing");
+    }
+    throw new Error(`hikerapi ${res.status} /sys/balance: ${txt.slice(0, 200)}`);
+  }
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = JSON.parse(txt) as Record<string, unknown>;
+  } catch {
+    throw new Error(`hikerapi /sys/balance returned non-JSON: ${txt.slice(0, 200)}`);
+  }
+  // We don't know the exact field names HikerAPI uses, so probe
+  // every common shape — they tend to use `balance` (USD float)
+  // and either `rate_limit` or `rps`.
+  const balanceUsd =
+    numOf(raw.balance) ??
+    numOf(raw.balance_usd) ??
+    numOf((raw as { funds?: unknown }).funds) ??
+    numOf(raw.amount) ??
+    null;
+  const rateLimitPerSec =
+    numOf(raw.rate_limit) ??
+    numOf(raw.rps) ??
+    numOf((raw as { rate?: { per_second?: unknown } }).rate?.per_second) ??
+    null;
+  return { balanceUsd, rateLimitPerSec, raw };
+}
+
+// Legacy shim — getUsage now goes through getBalance so the UI's
+// existing "💳 HikerAPI usage" card can render real $ remaining
+// from HikerAPI itself.
 export async function getUsage(): Promise<HikerUsage> {
-  return {
-    plan: null,
-    creditsUsed: null,
-    creditsLimit: null,
-    creditsRemaining: null,
-    resetsAt: null,
-    expiresAt: null,
-  };
+  try {
+    const bal = await getBalance();
+    return {
+      plan: null,
+      creditsUsed: null,
+      creditsLimit: null,
+      creditsRemaining: bal.balanceUsd,
+      resetsAt: null,
+      expiresAt: null,
+      raw: bal.raw,
+    };
+  } catch (err) {
+    if (err instanceof HikerOutOfCreditsError) throw err;
+    // Don't escalate /sys/balance probe errors as fatal — the page
+    // can still render via local tracking.
+    return {
+      plan: null,
+      creditsUsed: null,
+      creditsLimit: null,
+      creditsRemaining: null,
+      resetsAt: null,
+      expiresAt: null,
+    };
+  }
 }
 
 // Diagnose mode — runs a single real lookup so the owner can see

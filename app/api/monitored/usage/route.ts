@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { getActiveKey, maskKey } from "@/lib/hikerapi";
+import {
+  getActiveKey,
+  getBalance,
+  HikerOutOfCreditsError,
+  maskKey,
+} from "@/lib/hikerapi";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// HikerAPI has no $-level account/usage endpoint exposed to API
-// clients — `/v1/auth/me`, `/v1/account`, `/v1/usage` all 404. So
-// this route now just confirms the key is loaded and from which
-// source. The owner gets actual spend numbers from the local
-// "💵 بودجه HikerAPI" card right below this one.
+// /sys/balance is HikerAPI's documented "current rate limit / balance"
+// endpoint. It's the only true server-side $ info we can pull — every
+// other /v1/auth/me etc. path 404s on this account type. We surface
+// the live balance + rate limit alongside our local cost tracking.
 export async function GET(): Promise<NextResponse> {
   try {
     await requireSession();
@@ -18,11 +22,55 @@ export async function GET(): Promise<NextResponse> {
   }
   const { key, source, name } = await getActiveKey();
   const keyPrefix = maskKey(key);
-  return NextResponse.json({
-    ok: !!key,
-    configured: !!key,
-    keyPrefix,
-    keySource: source,
-    keyName: name,
-  });
+  if (!key) {
+    return NextResponse.json(
+      {
+        error: "HIKER_API_KEY not configured (env or override)",
+        configured: false,
+        keyPrefix: null,
+        keySource: null,
+        keyName: name,
+      },
+      { status: 503 },
+    );
+  }
+  try {
+    const bal = await getBalance();
+    return NextResponse.json({
+      ok: true,
+      configured: true,
+      keyPrefix,
+      keySource: source,
+      keyName: name,
+      balanceUsd: bal.balanceUsd,
+      rateLimitPerSec: bal.rateLimitPerSec,
+      raw: bal.raw,
+    });
+  } catch (err) {
+    if (err instanceof HikerOutOfCreditsError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          outOfCredits: true,
+          message: err.message,
+          billingUrl: err.billingUrl,
+          keyPrefix,
+          keySource: source,
+          keyName: name,
+        },
+        { status: 402 },
+      );
+    }
+    return NextResponse.json(
+      {
+        ok: false,
+        configured: true,
+        error: err instanceof Error ? err.message : String(err),
+        keyPrefix,
+        keySource: source,
+        keyName: name,
+      },
+      { status: 502 },
+    );
+  }
 }
