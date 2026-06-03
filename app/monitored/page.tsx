@@ -134,6 +134,40 @@ export default function MonitoredPage() {
     await load();
   }
 
+  const [refreshing, setRefreshing] = useState<Set<number>>(new Set());
+  async function refreshOne(id: number) {
+    setRefreshing((s) => new Set(s).add(id));
+    try {
+      const r = await fetch(`/api/monitored/${id}/refresh`, {
+        method: "POST",
+      });
+      const j = (await r.json().catch(() => ({}))) as {
+        detected?: number;
+        forwarded?: number;
+        errors?: string[];
+        error?: string;
+      };
+      if (!r.ok) {
+        alert(`خطا: ${j.error ?? r.status}`);
+      } else if (j.forwarded && j.forwarded > 0) {
+        setImportMsg(`${j.forwarded} مورد جدید forward شد`);
+        setTimeout(() => setImportMsg(null), 6000);
+      } else if (j.errors && j.errors.length > 0) {
+        alert(`خطا: ${j.errors[0]}`);
+      } else {
+        setImportMsg("چیز جدیدی نبود (همه قبلاً forward شدن)");
+        setTimeout(() => setImportMsg(null), 4000);
+      }
+      await load();
+    } finally {
+      setRefreshing((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   async function addManual() {
     const u = newUsername.trim().replace(/^@/, "");
     if (!u) return;
@@ -639,8 +673,16 @@ export default function MonitoredPage() {
                     </button>
                   )}
                   <button
+                    onClick={() => refreshOne(a.id)}
+                    disabled={refreshing.has(a.id)}
+                    title="همین الان stories + ۳ پست/ریل آخر رو بگیر"
+                    className="ml-auto text-[10px] px-1.5 py-0.5 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+                  >
+                    {refreshing.has(a.id) ? "…" : "🔄"}
+                  </button>
+                  <button
                     onClick={() => remove(a.id)}
-                    className="ml-auto text-[10px] px-1.5 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-red-900/40"
+                    className="text-[10px] px-1.5 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-red-900/40"
                   >
                     🗑
                   </button>

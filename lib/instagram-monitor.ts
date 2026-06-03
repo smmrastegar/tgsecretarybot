@@ -33,24 +33,75 @@ export async function resolveTargetChat(): Promise<AccountTarget | null> {
   return null;
 }
 
+// Telegram HTML parse_mode only allows a tiny tag set + needs entities
+// escaped. We use it for hyperlinks (the "Story" word jumps to the
+// permalink, @username jumps to the profile, mentions go to their
+// profiles, the swipe-up link is a clickable button-style line).
+function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 export function captionFor(args: {
   account: MonitoredAccount;
   kind: "story" | "post" | "reel";
   media: IGMedia;
 }): string {
   const { account, kind, media } = args;
-  const kindLabel =
-    kind === "story" ? "📸 Story" : kind === "reel" ? "🎬 Reel" : "🖼 Post";
-  const lines: string[] = [
-    `${kindLabel} · @${account.username}`,
-    media.takenAt.toLocaleString(),
-  ];
+  const kindWord = kind === "story" ? "Story" : kind === "reel" ? "Reel" : "Post";
+  const kindEmoji = kind === "story" ? "📸" : kind === "reel" ? "🎬" : "🖼";
+  const lines: string[] = [];
+
+  // Full name first, then handle line.
+  const fullName = (account.fullName ?? account.username).trim();
+  lines.push(`<b>${esc(fullName)}</b>`);
+  const profileUrl = `https://instagram.com/${account.username}`;
+  const storyLink = media.permalink
+    ? `<a href="${esc(media.permalink)}">${kindEmoji} ${kindWord}</a>`
+    : `${kindEmoji} ${kindWord}`;
+  const handleLink = `<a href="${esc(profileUrl)}">@${esc(account.username)}</a>`;
+  lines.push(`${storyLink} · ${handleLink}`);
+
+  if (media.externalLink) {
+    lines.push(`🔗 <a href="${esc(media.externalLink)}">link</a>`);
+  }
+  if (media.mentions && media.mentions.length > 0) {
+    const ml = media.mentions
+      .slice(0, 10)
+      .map(
+        (u) =>
+          `<a href="https://instagram.com/${esc(u)}">@${esc(u)}</a>`,
+      )
+      .join(" ");
+    lines.push(`👥 ${ml}`);
+  }
+  if (media.hashtags && media.hashtags.length > 0) {
+    const ht = media.hashtags
+      .slice(0, 15)
+      .map((t) => `#${esc(t)}`)
+      .join(" ");
+    lines.push(ht);
+  }
+  if (media.location) {
+    lines.push(`📍 ${esc(media.location)}`);
+  }
+  if (media.textStickers && media.textStickers.length > 0) {
+    for (const t of media.textStickers.slice(0, 3)) {
+      lines.push(`«${esc(t.slice(0, 200))}»`);
+    }
+  }
   if (media.caption) {
     const trimmed = media.caption.trim();
-    if (trimmed) lines.push("", trimmed.slice(0, 700));
+    if (trimmed) lines.push("", esc(trimmed.slice(0, 500)));
   }
-  if (media.permalink) lines.push("", media.permalink);
-  return lines.join("\n").slice(0, 1024);
+  // Telegram caption is 1024 chars; trim if our HTML exceeds it. The
+  // hard cap matters because Telegram counts HTML markup too.
+  let html = lines.join("\n");
+  if (html.length > 1024) html = html.slice(0, 1024);
+  return html;
 }
 
 export async function sendMediaToChat(args: {
@@ -60,26 +111,35 @@ export async function sendMediaToChat(args: {
   caption: string;
 }): Promise<number> {
   const { bot, chatId, media, caption } = args;
+  const HTML = "HTML" as const;
   if (media.extra.length > 1) {
     const groupItems = media.extra.slice(0, 10).map((m, i) => ({
       type: m.mediaType === "video" ? ("video" as const) : ("photo" as const),
       media: m.mediaUrl,
       caption: i === 0 ? caption : undefined,
+      parse_mode: i === 0 ? HTML : undefined,
     }));
     const sent = await bot.api.sendMediaGroup(chatId, groupItems);
     return sent[0]?.message_id ?? 0;
   }
   if (media.mediaType === "video" && media.mediaUrl) {
-    const sent = await bot.api.sendVideo(chatId, media.mediaUrl, { caption });
+    const sent = await bot.api.sendVideo(chatId, media.mediaUrl, {
+      caption,
+      parse_mode: HTML,
+    });
     return sent.message_id;
   }
   if (media.mediaType === "photo" && media.mediaUrl) {
-    const sent = await bot.api.sendPhoto(chatId, media.mediaUrl, { caption });
+    const sent = await bot.api.sendPhoto(chatId, media.mediaUrl, {
+      caption,
+      parse_mode: HTML,
+    });
     return sent.message_id;
   }
   const sent = await bot.api.sendMessage(
     chatId,
     `${caption}\n\n${media.mediaUrl ?? ""}`.slice(0, 4096),
+    { parse_mode: HTML },
   );
   return sent.message_id;
 }
@@ -114,7 +174,11 @@ export async function processAccount(args: {
     try {
       const u = await getUserByUsername(account.username);
       userId = u.id;
-      await setInstagramUserId(account.id, userId).catch(() => {});
+      await setInstagramUserId(account.id, userId, u.fullName).catch(() => {});
+      // Mutate the local account so captionFor sees the fresh
+      // full_name on this run too — without this the first caption
+      // would still show the username instead.
+      account.fullName = u.fullName ?? account.fullName;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`resolve ${account.username}: ${msg.slice(0, 200)}`);

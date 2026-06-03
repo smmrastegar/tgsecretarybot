@@ -283,6 +283,7 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_profile BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS interval_minutes INT NOT NULL DEFAULT 30`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS instagram_user_id TEXT`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS full_name TEXT`;
     await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'story'`;
     await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS caption TEXT`;
     await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS media_type TEXT`;
@@ -2935,6 +2936,7 @@ export type MonitoredAccount = {
   checkProfile: boolean;
   intervalMinutes: number;
   instagramUserId: string | null;
+  fullName: string | null;
   lastCheckedAt: Date | null;
   lastStoryAt: Date | null;
   lastError: string | null;
@@ -2957,6 +2959,7 @@ function rowToMonitored(r: Record<string, unknown>): MonitoredAccount {
     checkProfile: Boolean(r.check_profile),
     intervalMinutes: Number(r.interval_minutes ?? 30),
     instagramUserId: (r.instagram_user_id as string) ?? null,
+    fullName: (r.full_name as string) ?? null,
     lastCheckedAt: (r.last_checked_at as Date) ?? null,
     lastStoryAt: (r.last_story_at as Date) ?? null,
     lastError: (r.last_error as string) ?? null,
@@ -2974,7 +2977,7 @@ export async function listMonitoredAccounts(opts: {
   const rows = await sql()`
     SELECT id, platform, username, url, external_id, topic_id, enabled,
            check_stories, check_posts, check_reels, check_profile,
-           interval_minutes, instagram_user_id,
+           interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, created_at, updated_at
     FROM monitored_accounts
     WHERE (${opts.platform ?? null}::text IS NULL OR platform = ${opts.platform ?? null})
@@ -3050,7 +3053,7 @@ export async function getMonitoredAccount(
   const rows = await sql()`
     SELECT id, platform, username, url, external_id, topic_id, enabled,
            check_stories, check_posts, check_reels, check_profile,
-           interval_minutes, instagram_user_id,
+           interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, created_at, updated_at
     FROM monitored_accounts WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -3068,7 +3071,7 @@ export async function dueMonitoredAccounts(
   const rows = await sql()`
     SELECT id, platform, username, url, external_id, topic_id, enabled,
            check_stories, check_posts, check_reels, check_profile,
-           interval_minutes, instagram_user_id,
+           interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, created_at, updated_at
     FROM monitored_accounts
     WHERE enabled = TRUE
@@ -3116,7 +3119,7 @@ export async function addMonitoredAccount(args: {
     ON CONFLICT (platform, username) DO UPDATE SET updated_at = NOW()
     RETURNING id, platform, username, url, external_id, topic_id, enabled,
               check_stories, check_posts, check_reels, check_profile,
-              interval_minutes, instagram_user_id,
+              interval_minutes, instagram_user_id, full_name,
               last_checked_at, last_story_at, last_error, created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToMonitored(r) : null;
@@ -3210,11 +3213,14 @@ export async function bulkDeleteMonitoredAccounts(
 export async function setInstagramUserId(
   id: number,
   igUserId: string,
+  fullName?: string | null,
 ): Promise<void> {
   if (!hasDb()) return;
   await sql()`
     UPDATE monitored_accounts
-    SET instagram_user_id = ${igUserId}, updated_at = NOW()
+    SET instagram_user_id = ${igUserId},
+        full_name = COALESCE(${fullName ?? null}, full_name),
+        updated_at = NOW()
     WHERE id = ${id}`;
 }
 

@@ -28,6 +28,13 @@ export type IGMedia = {
   caption: string | null;
   // For carousel posts: each item gets its own object inside `extra`.
   extra: Array<{ mediaUrl: string; mediaType: "photo" | "video" }>;
+  // Entities pulled from stickers / metadata so the caption can
+  // surface them. Each is optional.
+  externalLink?: string | null;
+  mentions?: string[];
+  hashtags?: string[];
+  location?: string | null;
+  textStickers?: string[];
 };
 
 function ensureKey(): string {
@@ -162,6 +169,111 @@ function pkOf(raw: Record<string, unknown>): string {
   return String(pk);
 }
 
+// Story / post entities — HikerAPI sometimes returns them in different
+// places depending on the endpoint version. We look in every place
+// we've ever seen one of these come from and merge.
+function entitiesOf(raw: Record<string, unknown>): {
+  externalLink: string | null;
+  mentions: string[];
+  hashtags: string[];
+  location: string | null;
+  textStickers: string[];
+} {
+  const out = {
+    externalLink: null as string | null,
+    mentions: [] as string[],
+    hashtags: [] as string[],
+    location: null as string | null,
+    textStickers: [] as string[],
+  };
+
+  // External link: story_cta_url is the modern field; older payloads
+  // use link_text / story_link_stickers.
+  const storyCta = raw.story_cta as { url?: unknown } | undefined;
+  const cta =
+    raw.story_cta_url ?? storyCta?.url ?? raw.link;
+  if (typeof cta === "string" && cta.startsWith("http")) {
+    out.externalLink = cta;
+  }
+  const linkStickers = raw.story_link_stickers;
+  if (Array.isArray(linkStickers)) {
+    for (const ls of linkStickers) {
+      if (ls && typeof ls === "object") {
+        const link = ((ls as Record<string, unknown>).story_link as
+          | Record<string, unknown>
+          | undefined)?.url;
+        if (typeof link === "string" && !out.externalLink) out.externalLink = link;
+      }
+    }
+  }
+
+  // Mentions: story_mentions / reel_mentions / mentions
+  const collectMentions = (arr: unknown) => {
+    if (!Array.isArray(arr)) return;
+    for (const m of arr) {
+      if (!m || typeof m !== "object") continue;
+      const user = (m as { user?: unknown }).user as
+        | Record<string, unknown>
+        | undefined;
+      const username =
+        (user && typeof user.username === "string" && user.username) ||
+        (typeof (m as { username?: unknown }).username === "string" &&
+          (m as { username: string }).username) ||
+        null;
+      if (typeof username === "string" && !out.mentions.includes(username)) {
+        out.mentions.push(username);
+      }
+    }
+  };
+  collectMentions(raw.story_mentions);
+  collectMentions(raw.reel_mentions);
+  collectMentions(raw.mentions);
+
+  // Hashtags
+  const collectTags = (arr: unknown) => {
+    if (!Array.isArray(arr)) return;
+    for (const h of arr) {
+      if (!h || typeof h !== "object") continue;
+      const tag =
+        ((h as { hashtag?: unknown }).hashtag as
+          | { name?: unknown }
+          | undefined)?.name ??
+        (h as { name?: unknown }).name;
+      if (typeof tag === "string" && !out.hashtags.includes(tag)) {
+        out.hashtags.push(tag);
+      }
+    }
+  };
+  collectTags(raw.story_hashtags);
+  collectTags(raw.hashtags);
+
+  // Location stickers
+  const locations = raw.story_locations;
+  if (Array.isArray(locations) && locations[0]) {
+    const loc = (locations[0] as { location?: unknown }).location as
+      | { name?: unknown; short_name?: unknown }
+      | undefined;
+    const name = loc?.name ?? loc?.short_name;
+    if (typeof name === "string") out.location = name;
+  } else if (raw.location && typeof raw.location === "object") {
+    const name = (raw.location as { name?: unknown }).name;
+    if (typeof name === "string") out.location = name;
+  }
+
+  // Text stickers
+  if (Array.isArray(raw.story_text)) {
+    for (const t of raw.story_text) {
+      if (t && typeof t === "object") {
+        const text = (t as { text?: unknown }).text;
+        if (typeof text === "string" && text.trim())
+          out.textStickers.push(text.trim());
+      }
+    }
+  }
+
+  return out;
+}
+
 function captionOf(raw: Record<string, unknown>): string | null {
   const cap = raw.caption;
   if (!cap) return null;
@@ -219,6 +331,7 @@ export async function getUserStories(
     .filter((s): s is Record<string, unknown> => !!s && typeof s === "object")
     .map((s) => {
       const { mediaUrl, mediaType } = pickMedia(s);
+      const ent = entitiesOf(s);
       return {
         id: pkOf(s) || `story-${takenAtOf(s).getTime()}`,
         mediaUrl,
@@ -227,6 +340,11 @@ export async function getUserStories(
         permalink: `https://instagram.com/stories/${username}/${pkOf(s)}`,
         caption: captionOf(s),
         extra: [],
+        externalLink: ent.externalLink,
+        mentions: ent.mentions,
+        hashtags: ent.hashtags,
+        location: ent.location,
+        textStickers: ent.textStickers,
       };
     })
     .filter((m) => m.mediaUrl);
@@ -279,6 +397,7 @@ export async function getUserPosts(
     .map((m) => {
       const main = pickMedia(m);
       const extra = expandCarousel(m);
+      const ent = entitiesOf(m);
       return {
         id: pkOf(m),
         mediaUrl: main.mediaUrl ?? extra[0]?.mediaUrl ?? null,
@@ -289,6 +408,11 @@ export async function getUserPosts(
         permalink: permalinkOf(m, username),
         caption: captionOf(m),
         extra,
+        externalLink: ent.externalLink,
+        mentions: ent.mentions,
+        hashtags: ent.hashtags,
+        location: ent.location,
+        textStickers: ent.textStickers,
       };
     })
     .filter((m) => m.mediaUrl);
@@ -302,6 +426,7 @@ export async function getUserReels(
   return items
     .map((m) => {
       const { mediaUrl, mediaType } = pickMedia(m);
+      const ent = entitiesOf(m);
       return {
         id: pkOf(m),
         mediaUrl,
@@ -310,6 +435,11 @@ export async function getUserReels(
         permalink: permalinkOf(m, username),
         caption: captionOf(m),
         extra: [],
+        externalLink: ent.externalLink,
+        mentions: ent.mentions,
+        hashtags: ent.hashtags,
+        location: ent.location,
+        textStickers: ent.textStickers,
       };
     })
     .filter((m) => m.mediaUrl);
