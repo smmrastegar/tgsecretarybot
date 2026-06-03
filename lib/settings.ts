@@ -4,7 +4,13 @@ import {
   envOverride,
   type SettingKey,
 } from "./config";
-import { getAllSettings, setSetting, hasDb } from "./db";
+import {
+  getAllSettings,
+  getTenantSettings,
+  hasDb,
+  setSetting,
+  setTenantSetting,
+} from "./db";
 import { redisDelete, redisEnabled, redisGet, redisSet } from "./redis";
 
 type SettingsCache = { values: Record<SettingKey, string>; expiresAt: number };
@@ -88,6 +94,41 @@ export async function updateSettings(
   }
   invalidateSettingsCache();
   return getSettings();
+}
+
+// Per-tenant settings — merged on top of globals + env. Used by the
+// admin "Settings as tenant" UI and by tenant-scoped reads where the
+// code wants to honor per-tenant overrides (e.g. AI model selection).
+// We deliberately DON'T cache these in module memory: tenant-scoped
+// reads happen for many tenants in a single cron pass and we want
+// each iteration to see the freshest values.
+export async function getSettingsForTenant(
+  tenantId: number,
+): Promise<Record<SettingKey, string>> {
+  const base = await getSettings();
+  if (!hasDb()) return base;
+  const overrides: Record<string, string> = await getTenantSettings(
+    tenantId,
+  ).catch(() => ({}) as Record<string, string>);
+  const merged = { ...base } as Record<SettingKey, string>;
+  for (const k of SETTING_KEYS) {
+    const v = overrides[k];
+    if (v != null) merged[k] = v;
+  }
+  return merged;
+}
+
+export async function updateTenantSettings(
+  tenantId: number,
+  patch: Partial<Record<SettingKey, string>>,
+  actorId?: number,
+): Promise<Record<SettingKey, string>> {
+  if (!hasDb()) throw new Error("DATABASE_URL not configured");
+  for (const [k, v] of Object.entries(patch)) {
+    if (!SETTING_KEYS.includes(k as SettingKey)) continue;
+    await setTenantSetting(tenantId, k, v ?? "", actorId);
+  }
+  return getSettingsForTenant(tenantId);
 }
 
 export type SettingsView = Record<SettingKey, string>;

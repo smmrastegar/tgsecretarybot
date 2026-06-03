@@ -37,6 +37,9 @@ export async function GET(): Promise<NextResponse> {
       const orKeyPrefix = t.openrouterApiKey
         ? `${t.openrouterApiKey.slice(0, 4)}…${t.openrouterApiKey.slice(-3)} (${t.openrouterApiKey.length} chars)`
         : null;
+      const groqKeyPrefix = t.groqApiKey
+        ? `${t.groqApiKey.slice(0, 4)}…${t.groqApiKey.slice(-3)} (${t.groqApiKey.length} chars)`
+        : null;
       return {
         id: t.id,
         name: t.name,
@@ -50,6 +53,7 @@ export async function GET(): Promise<NextResponse> {
         hikerKeyName: t.hikerApiKeyName,
         hikerKeyPrefix: tenantKeyPrefix,
         openrouterKeyPrefix: orKeyPrefix,
+        groqKeyPrefix,
         spentUsd: spent,
         createdAt: t.createdAt,
         updatedAt: t.updatedAt,

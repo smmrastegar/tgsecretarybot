@@ -319,15 +319,27 @@ export default function SettingsPage() {
   const [envLocked, setEnvLocked] = useState<Set<keyof Settings>>(new Set());
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // Admin can edit a specific tenant's overrides via ?tenant=<id>.
+  // The route enforces admin-ness; we just plumb the query param
+  // through to every fetch so reads and writes stay consistent.
+  const tenantId =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("tenant")
+      : null;
+  const tenantQuery = tenantId
+    ? `?tenant=${encodeURIComponent(tenantId)}`
+    : "";
+  const [tenantName, setTenantName] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const r = await fetch("/api/settings");
+    const r = await fetch(`/api/settings${tenantQuery}`);
     if (!r.ok) return;
     const j = (await r.json()) as {
       values: Settings;
       envLocked: Array<keyof Settings>;
-      meta?: { defaultModel?: string };
+      meta?: { defaultModel?: string; tenantId?: number | null; tenantName?: string | null };
     };
+    if (j.meta?.tenantName) setTenantName(j.meta.tenantName);
 
     // Migrate legacy fields so the new editors are pre-populated:
     //  - secretariesJson empty + legacy secretaryUserId set → seed the list
@@ -369,7 +381,7 @@ export default function SettingsPage() {
       if (!envLocked.has(k)) payload[k] = values[k];
     }
     try {
-      const r = await fetch("/api/settings", {
+      const r = await fetch(`/api/settings${tenantQuery}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -426,8 +438,23 @@ export default function SettingsPage() {
 
   return (
     <Shell>
+      {tenantId && (
+        <div className="mb-3 p-3 rounded-lg border border-amber-700 bg-amber-900/20">
+          <div className="text-sm font-medium text-amber-200">
+            🏢 Editing tenant: {tenantName ?? `#${tenantId}`}
+          </div>
+          <div className="text-[11px] text-amber-300/80 mt-1">
+            تغییرات روی این tenant ذخیره می‌شن — مقادیر خالی fallback به global.
+            برای ویرایش global،{" "}
+            <a href="/settings" className="underline">
+              برو settings بدون ?tenant
+            </a>
+            .
+          </div>
+        </div>
+      )}
       <PageTitle
-        title="Settings"
+        title={tenantId ? `Settings · ${tenantName ?? `#${tenantId}`}` : "Settings"}
         subtitle="Everything tunable. Values locked by environment variables are read-only."
         actions={
           <button

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { audit } from "@/lib/db";
 import {
+  deleteTenant,
   getTenant,
   requireAdmin,
   setTenantApiKeys,
@@ -43,6 +44,7 @@ export async function PATCH(
     hikerApiKey?: string | null;
     hikerApiKeyName?: string | null;
     openrouterApiKey?: string | null;
+    groqApiKey?: string | null;
   };
   // Keys go through the setter that distinguishes "leave alone" from
   // "clear"; everything else uses the COALESCE updater.
@@ -50,12 +52,14 @@ export async function PATCH(
     hikerApiKey?: string | null;
     hikerApiKeyName?: string | null;
     openrouterApiKey?: string | null;
+    groqApiKey?: string | null;
   } = {};
   if (body.hikerApiKey !== undefined) keyPatch.hikerApiKey = body.hikerApiKey;
   if (body.hikerApiKeyName !== undefined)
     keyPatch.hikerApiKeyName = body.hikerApiKeyName;
   if (body.openrouterApiKey !== undefined)
     keyPatch.openrouterApiKey = body.openrouterApiKey;
+  if (body.groqApiKey !== undefined) keyPatch.groqApiKey = body.groqApiKey;
   if (Object.keys(keyPatch).length > 0) {
     await setTenantApiKeys(n, keyPatch);
   }
@@ -79,9 +83,49 @@ export async function PATCH(
       hikerApiKey: body.hikerApiKey !== undefined ? "<changed>" : undefined,
       openrouterApiKey:
         body.openrouterApiKey !== undefined ? "<changed>" : undefined,
+      groqApiKey: body.groqApiKey !== undefined ? "<changed>" : undefined,
     },
   });
   return NextResponse.json({ ok: true, tenant: updated });
+}
+
+export async function DELETE(
+  _request: Request,
+  ctx: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  let session;
+  try {
+    session = await requireSession();
+  } catch {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  try {
+    await requireAdmin(session);
+  } catch {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  const { id } = await ctx.params;
+  const n = Number(id);
+  if (!Number.isFinite(n)) {
+    return NextResponse.json({ error: "invalid id" }, { status: 400 });
+  }
+  const t = await getTenant(n);
+  if (!t) return NextResponse.json({ error: "not found" }, { status: 404 });
+  if (t.name === "Default") {
+    return NextResponse.json(
+      { error: "can't delete the Default tenant" },
+      { status: 400 },
+    );
+  }
+  await deleteTenant(n);
+  await audit({
+    actorId: session.userId,
+    actorName: session.username ?? null,
+    action: "admin.tenant_delete",
+    target: String(n),
+    details: { name: t.name },
+  });
+  return NextResponse.json({ ok: true });
 }
 
 export async function GET(

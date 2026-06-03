@@ -17,6 +17,7 @@ type Tenant = {
   hikerKeyName: string | null;
   hikerKeyPrefix: string | null;
   openrouterKeyPrefix: string | null;
+  groqKeyPrefix: string | null;
   spentUsd: number;
   createdAt: string;
   updatedAt: string;
@@ -42,17 +43,62 @@ type Connection = {
   updatedAt: string;
 };
 
+type PlanPreset = {
+  key: string;
+  label: string;
+  hikerBudgetUsd: number;
+  hikerApprovalStepUsd: number;
+  monitoredCap: number;
+  description: string;
+};
+
+type Window = { calls: number; costUsd: number };
+type Bucket = { at: string; calls: number; costUsd: number };
+type HikerCall = {
+  id: number;
+  calledAt: string;
+  endpoint: string;
+  costUsd: number;
+  accountId: number | null;
+};
+type Finance = {
+  tenant: { id: number; name: string; plan: string };
+  state: {
+    spentUsd: number;
+    approvedUsd: number;
+    budgetUsd: number;
+    stepUsd: number;
+    nextThresholdUsd: number;
+  };
+  summary: {
+    lastHour: Window;
+    today: Window;
+    last7d: Window;
+    last30d: Window;
+    allTime: Window;
+  };
+  hourly: Bucket[];
+  daily: Bucket[];
+  weekly: Bucket[];
+  monthly: Bucket[];
+  recent: HikerCall[];
+};
+
 export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [accessDenied, setAccessDenied] = useState(false);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [plans, setPlans] = useState<PlanPreset[]>([]);
   const [tab, setTab] = useState<"tenants" | "admins" | "connections">(
     "tenants",
   );
   const [editing, setEditing] = useState<Tenant | null>(null);
   const [creating, setCreating] = useState(false);
+  const [finance, setFinance] = useState<Finance | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulking, setBulking] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -64,10 +110,11 @@ export default function AdminPage() {
         setAccessDenied(true);
         return;
       }
-      const [t, a, c] = await Promise.all([
+      const [t, a, c, p] = await Promise.all([
         fetch("/api/admin/tenants"),
         fetch("/api/admin/admins"),
         fetch("/api/admin/connections"),
+        fetch("/api/admin/tenants/0/apply-plan"),
       ]);
       if (t.ok) {
         const j = (await t.json()) as { tenants: Tenant[] };
@@ -81,6 +128,10 @@ export default function AdminPage() {
         const j = (await c.json()) as { connections: Connection[] };
         setConnections(j.connections);
       }
+      if (p.ok) {
+        const j = (await p.json()) as { presets: PlanPreset[] };
+        setPlans(j.presets);
+      }
     } finally {
       setLoading(false);
     }
@@ -89,6 +140,54 @@ export default function AdminPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  function toggleSelect(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function runBulk(op: string, plan?: string) {
+    if (selected.size === 0) return;
+    if (op === "delete" && !confirm(`${selected.size} tenant حذف بشن؟`))
+      return;
+    setBulking(true);
+    try {
+      const r = await fetch("/api/admin/tenants/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ op, ids: [...selected], plan }),
+      });
+      const j = (await r.json().catch(() => ({}))) as {
+        succeeded?: number;
+        errors?: Array<{ id: number; error: string }>;
+      };
+      if (j.errors && j.errors.length > 0) {
+        alert(
+          `${j.succeeded ?? 0} موفق · ${j.errors.length} خطا:\n` +
+            j.errors.map((e) => `${e.id}: ${e.error}`).join("\n"),
+        );
+      }
+      setSelected(new Set());
+      await load();
+    } finally {
+      setBulking(false);
+    }
+  }
+
+  async function openFinance(tenantId: number) {
+    setFinance(null);
+    const r = await fetch(`/api/admin/tenants/${tenantId}/finance`);
+    if (r.ok) {
+      const j = (await r.json()) as Finance;
+      setFinance(j);
+    } else {
+      alert("خطا در بارگذاری");
+    }
+  }
 
   if (loading) {
     return (
@@ -115,7 +214,7 @@ export default function AdminPage() {
     <Shell>
       <PageTitle
         title="🛠 Admin"
-        subtitle="مدیریت tenantها، admin‌ها، و assign کردن business_connectionها"
+        subtitle="مدیریت tenantها، حساب‌کتاب مالی، کلیدهای API، و assign کردن business_connectionها"
       />
 
       <div className="flex gap-1 mb-3 flex-wrap">
@@ -143,87 +242,203 @@ export default function AdminPage() {
       {tab === "tenants" && (
         <>
           <Card className="mb-3 !p-3">
-            <button
-              onClick={() => setCreating(true)}
-              className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white"
-            >
-              ➕ tenant جدید
-            </button>
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <button
+                onClick={() => setCreating(true)}
+                className="px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white"
+              >
+                ➕ tenant جدید
+              </button>
+              <button
+                onClick={() => setSelected(new Set(tenants.map((t) => t.id)))}
+                className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+              >
+                انتخاب همه
+              </button>
+              <button
+                onClick={() => setSelected(new Set())}
+                disabled={selected.size === 0}
+                className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              >
+                Clear
+              </button>
+              <span className="text-[var(--color-text-dim)]">
+                {selected.size} انتخاب شده
+              </span>
+            </div>
+            {selected.size > 0 && (
+              <div className="flex items-center gap-2 flex-wrap text-[11px] mt-2 pt-2 border-t border-[var(--color-border)]">
+                <button
+                  onClick={() => runBulk("enable")}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30"
+                >
+                  ▶ روشن
+                </button>
+                <button
+                  onClick={() => runBulk("disable")}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                >
+                  ⏸ خاموش
+                </button>
+                <select
+                  disabled={bulking}
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    runBulk("apply-plan", e.target.value);
+                    e.currentTarget.value = "";
+                  }}
+                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1.5 py-1"
+                >
+                  <option value="">📋 اعمال plan…</option>
+                  {plans.map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => {
+                    if (!confirm(`خرج محلی ${selected.size} tenant ریست بشه؟`))
+                      return;
+                    runBulk("reset-spend");
+                  }}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-amber-700 text-amber-300 hover:bg-amber-900/30"
+                >
+                  🔁 ریست خرج محلی
+                </button>
+                <button
+                  onClick={() => runBulk("delete")}
+                  disabled={bulking}
+                  className="px-2 py-1 rounded-md border border-red-800 text-red-300 hover:bg-red-900/30"
+                >
+                  🗑 حذف
+                </button>
+              </div>
+            )}
           </Card>
 
           <div className="flex flex-col gap-2">
-            {tenants.map((t) => (
-              <Card
-                key={t.id}
-                className={!t.isEnabled ? "opacity-50" : ""}
-              >
-                <div className="flex items-start justify-between gap-2 flex-wrap mb-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-base font-semibold">{t.name}</span>
-                    <Badge tone={t.isEnabled ? "success" : "neutral"}>
-                      {t.isEnabled ? "فعال" : "غیرفعال"}
-                    </Badge>
-                    <Badge tone="info">{t.plan}</Badge>
-                  </div>
-                  <button
-                    onClick={() => setEditing(t)}
-                    className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                  >
-                    ⚙️ ویرایش
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] mb-2">
-                  <div className="p-1.5 rounded-md border border-[var(--color-border)]">
-                    <div className="text-[var(--color-text-dim)]">خرج</div>
-                    <div className="font-semibold tabular-nums">
-                      ${t.spentUsd.toFixed(4)}
+            {tenants.map((t) => {
+              const pct =
+                t.hikerBudgetUsd > 0
+                  ? Math.min(100, (t.spentUsd / t.hikerBudgetUsd) * 100)
+                  : 0;
+              const approvedPct =
+                t.hikerBudgetUsd > 0
+                  ? Math.min(100, (t.hikerApprovedUsd / t.hikerBudgetUsd) * 100)
+                  : 0;
+              return (
+                <Card key={t.id} className={!t.isEnabled ? "opacity-50" : ""}>
+                  <div className="flex items-start justify-between gap-2 flex-wrap mb-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(t.id)}
+                        onChange={() => toggleSelect(t.id)}
+                      />
+                      <span className="text-base font-semibold">{t.name}</span>
+                      <Badge tone={t.isEnabled ? "success" : "neutral"}>
+                        {t.isEnabled ? "فعال" : "غیرفعال"}
+                      </Badge>
+                      <Badge tone="info">{t.plan}</Badge>
+                    </div>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <button
+                        onClick={() => openFinance(t.id)}
+                        className="text-[11px] px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30"
+                        title="جزئیات مالی و چارت‌ها"
+                      >
+                        📊 جزئیات مالی
+                      </button>
+                      <a
+                        href={`/settings?tenant=${t.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                        title="همه‌ی تنظیمات (مدل، owner، auto-reply، ...) per-tenant"
+                      >
+                        ⚙️ تنظیمات
+                      </a>
+                      <button
+                        onClick={() => setEditing(t)}
+                        className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                      >
+                        ✏️ ویرایش
+                      </button>
                     </div>
                   </div>
-                  <div className="p-1.5 rounded-md border border-[var(--color-border)]">
-                    <div className="text-[var(--color-text-dim)]">مجاز</div>
-                    <div className="font-semibold tabular-nums">
-                      ${t.hikerApprovedUsd.toFixed(2)}
+
+                  <div className="mb-2">
+                    <div className="text-[10px] flex items-center justify-between text-[var(--color-text-dim)] mb-0.5">
+                      <span>
+                        خرج <strong>${t.spentUsd.toFixed(4)}</strong>{" "}
+                        / مجاز ${t.hikerApprovedUsd.toFixed(2)} / سقف $
+                        {t.hikerBudgetUsd.toFixed(2)} · step $
+                        {t.hikerApprovalStepUsd.toFixed(2)}
+                      </span>
+                      <span>{pct.toFixed(1)}%</span>
+                    </div>
+                    <div className="h-2 bg-[var(--color-surface-2)] rounded-full overflow-hidden relative">
+                      <div
+                        className="absolute inset-y-0 left-0 bg-emerald-600/40"
+                        style={{ width: `${approvedPct}%` }}
+                      />
+                      <div
+                        className={`absolute inset-y-0 left-0 ${
+                          pct >= 100
+                            ? "bg-red-500"
+                            : pct >= approvedPct
+                              ? "bg-amber-500"
+                              : "bg-[var(--color-accent)]"
+                        }`}
+                        style={{ width: `${pct}%` }}
+                      />
                     </div>
                   </div>
-                  <div className="p-1.5 rounded-md border border-[var(--color-border)]">
-                    <div className="text-[var(--color-text-dim)]">سقف</div>
-                    <div className="font-semibold tabular-nums">
-                      ${t.hikerBudgetUsd.toFixed(2)}
-                    </div>
-                  </div>
-                  <div className="p-1.5 rounded-md border border-[var(--color-border)]">
-                    <div className="text-[var(--color-text-dim)]">step</div>
-                    <div className="font-semibold tabular-nums">
-                      ${t.hikerApprovalStepUsd.toFixed(2)}
-                    </div>
-                  </div>
-                </div>
-                <div className="text-[10px] text-[var(--color-text-dim)] flex flex-wrap gap-3">
-                  <span>
-                    monitored cap: <strong>{t.monitoredCap}</strong>
-                  </span>
-                  {t.hikerKeyPrefix && (
-                    <span dir="ltr">
-                      Hiker: {t.hikerKeyName ? `[${t.hikerKeyName}] ` : ""}
-                      <span className="font-mono">{t.hikerKeyPrefix}</span>
+
+                  <div className="text-[10px] text-[var(--color-text-dim)] flex flex-wrap gap-3">
+                    <span>
+                      monitored cap: <strong>{t.monitoredCap}</strong>
                     </span>
-                  )}
-                  {!t.hikerKeyPrefix && (
-                    <span className="text-amber-400">Hiker: (fallback)</span>
-                  )}
-                  {t.openrouterKeyPrefix && (
-                    <span dir="ltr">
-                      OR: <span className="font-mono">{t.openrouterKeyPrefix}</span>
-                    </span>
-                  )}
-                </div>
-                {t.notes && (
-                  <div className="text-[10px] mt-2 text-[var(--color-text-dim)]">
-                    📝 {t.notes}
+                    {t.hikerKeyPrefix ? (
+                      <span dir="ltr">
+                        Hiker: {t.hikerKeyName ? `[${t.hikerKeyName}] ` : ""}
+                        <span className="font-mono">{t.hikerKeyPrefix}</span>
+                      </span>
+                    ) : (
+                      <span className="text-amber-400">Hiker: (fallback)</span>
+                    )}
+                    {t.openrouterKeyPrefix ? (
+                      <span dir="ltr">
+                        OR:{" "}
+                        <span className="font-mono">
+                          {t.openrouterKeyPrefix}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-amber-400">OR: (fallback)</span>
+                    )}
+                    {t.groqKeyPrefix ? (
+                      <span dir="ltr">
+                        Groq:{" "}
+                        <span className="font-mono">{t.groqKeyPrefix}</span>
+                      </span>
+                    ) : (
+                      <span className="text-amber-400">Groq: (fallback)</span>
+                    )}
                   </div>
-                )}
-              </Card>
-            ))}
+                  {t.notes && (
+                    <div className="text-[10px] mt-2 text-[var(--color-text-dim)]">
+                      📝 {t.notes}
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
           </div>
         </>
       )}
@@ -334,6 +549,7 @@ export default function AdminPage() {
       {creating && (
         <TenantEditDialog
           tenant={null}
+          plans={plans}
           onClose={() => setCreating(false)}
           onSaved={async () => {
             setCreating(false);
@@ -344,12 +560,16 @@ export default function AdminPage() {
       {editing && (
         <TenantEditDialog
           tenant={editing}
+          plans={plans}
           onClose={() => setEditing(null)}
           onSaved={async () => {
             setEditing(null);
             await load();
           }}
         />
+      )}
+      {finance && (
+        <FinanceDialog finance={finance} onClose={() => setFinance(null)} />
       )}
     </Shell>
   );
@@ -412,26 +632,35 @@ function AdminAddForm({ onSaved }: { onSaved: () => Promise<void> }) {
 
 function TenantEditDialog(props: {
   tenant: Tenant | null;
+  plans: PlanPreset[];
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const { tenant, onClose, onSaved } = props;
+  const { tenant, plans, onClose, onSaved } = props;
   const [name, setName] = useState(tenant?.name ?? "");
   const [plan, setPlan] = useState(tenant?.plan ?? "starter");
   const [budget, setBudget] = useState(String(tenant?.hikerBudgetUsd ?? 50));
   const [approved, setApproved] = useState(
     String(tenant?.hikerApprovedUsd ?? 10),
   );
-  const [step, setStep] = useState(
-    String(tenant?.hikerApprovalStepUsd ?? 2),
-  );
+  const [step, setStep] = useState(String(tenant?.hikerApprovalStepUsd ?? 2));
   const [cap, setCap] = useState(String(tenant?.monitoredCap ?? 50));
   const [isEnabled, setIsEnabled] = useState(tenant?.isEnabled ?? true);
   const [notes, setNotes] = useState(tenant?.notes ?? "");
   const [hikerKey, setHikerKey] = useState("");
   const [hikerKeyName, setHikerKeyName] = useState(tenant?.hikerKeyName ?? "");
   const [openrouterKey, setOpenrouterKey] = useState("");
+  const [groqKey, setGroqKey] = useState("");
   const [busy, setBusy] = useState(false);
+
+  function applyPreset(key: string) {
+    const p = plans.find((x) => x.key === key);
+    if (!p) return;
+    setPlan(p.key);
+    setBudget(String(p.hikerBudgetUsd));
+    setStep(String(p.hikerApprovalStepUsd));
+    setCap(String(p.monitoredCap));
+  }
 
   async function save() {
     setBusy(true);
@@ -449,6 +678,7 @@ function TenantEditDialog(props: {
       };
       if (hikerKey.trim()) body.hikerApiKey = hikerKey.trim();
       if (openrouterKey.trim()) body.openrouterApiKey = openrouterKey.trim();
+      if (groqKey.trim()) body.groqApiKey = groqKey.trim();
       const url = tenant
         ? `/api/admin/tenants/${tenant.id}`
         : "/api/admin/tenants";
@@ -479,8 +709,32 @@ function TenantEditDialog(props: {
         className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-2xl my-8"
       >
         <h2 className="text-base font-semibold mb-3">
-          {tenant ? `⚙️ ویرایش ${tenant.name}` : "➕ tenant جدید"}
+          {tenant ? `✏️ ویرایش ${tenant.name}` : "➕ tenant جدید"}
         </h2>
+
+        <div className="mb-3">
+          <div className="text-xs font-medium mb-1">📋 Plan preset</div>
+          <div className="flex gap-1.5 flex-wrap text-[11px]">
+            {plans.map((p) => (
+              <button
+                key={p.key}
+                onClick={() => applyPreset(p.key)}
+                className={`px-2 py-1 rounded-md border ${
+                  plan === p.key
+                    ? "border-[var(--color-accent)] bg-[var(--color-accent)]/15"
+                    : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                }`}
+                title={p.description}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="text-[9px] text-[var(--color-text-dim)] mt-1">
+            preset مقادیر سقف + step + cap رو ست می‌کنه — می‌تونی دستی هم
+            override کنی
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 text-sm">
           <label className="flex flex-col gap-1">
@@ -560,12 +814,10 @@ function TenantEditDialog(props: {
         </label>
 
         <div className="mb-3">
-          <div className="text-xs font-medium mb-1">
-            🔑 کلیدها (per-tenant)
-          </div>
+          <div className="text-xs font-medium mb-1">🔑 کلیدهای API (per-tenant)</div>
           <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
             خالی بذار تا fallback به override کلی یا env. مقدار قبلی نمایش
-            داده نمی‌شه — فقط می‌تونی override کنی.
+            داده نمی‌شه — فقط override کن.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
             <input
@@ -592,6 +844,14 @@ function TenantEditDialog(props: {
               placeholder="OpenRouter sk-or-…"
               className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 font-mono sm:col-span-2"
             />
+            <input
+              dir="ltr"
+              type="password"
+              value={groqKey}
+              onChange={(e) => setGroqKey(e.target.value)}
+              placeholder="Groq gsk_…"
+              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 font-mono sm:col-span-2"
+            />
           </div>
         </div>
 
@@ -604,6 +864,53 @@ function TenantEditDialog(props: {
             className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
           />
         </label>
+
+        {tenant && (
+          <div className="mb-4 p-2 rounded-md border border-amber-700 bg-amber-900/15">
+            <div className="text-[11px] text-amber-200 mb-1">عملیات خطرناک</div>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={async () => {
+                  if (!confirm("کل خرج محلی این tenant ریست بشه؟")) return;
+                  const r = await fetch(
+                    `/api/admin/tenants/${tenant.id}/reset-spend`,
+                    { method: "POST" },
+                  );
+                  if (r.ok) {
+                    await onSaved();
+                  } else alert("خطا");
+                }}
+                className="text-[11px] px-2 py-1 rounded-md border border-amber-700 text-amber-300 hover:bg-amber-900/30"
+              >
+                🔁 ریست خرج محلی
+              </button>
+              <button
+                onClick={async () => {
+                  if (
+                    !confirm(
+                      `حذف کامل ${tenant.name}؟ همه‌ی monitored / usage پاک می‌شه.`,
+                    )
+                  )
+                    return;
+                  const r = await fetch(`/api/admin/tenants/${tenant.id}`, {
+                    method: "DELETE",
+                  });
+                  if (r.ok) {
+                    await onSaved();
+                  } else {
+                    const j = (await r.json().catch(() => ({}))) as {
+                      error?: string;
+                    };
+                    alert(j.error ?? "خطا");
+                  }
+                }}
+                className="text-[11px] px-2 py-1 rounded-md border border-red-700 text-red-300 hover:bg-red-900/30"
+              >
+                🗑 حذف tenant
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-2 justify-end">
           <button
@@ -618,6 +925,154 @@ function TenantEditDialog(props: {
             className="text-xs px-4 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
           >
             {busy ? "ذخیره…" : "💾 ذخیره"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FinanceDialog(props: { finance: Finance; onClose: () => void }) {
+  const { finance, onClose } = props;
+  const maxHourly = Math.max(0.001, ...finance.hourly.map((b) => b.costUsd));
+  const maxDaily = Math.max(0.001, ...finance.daily.map((b) => b.costUsd));
+  const maxWeekly = Math.max(0.001, ...finance.weekly.map((b) => b.costUsd));
+  const maxMonthly = Math.max(0.001, ...finance.monthly.map((b) => b.costUsd));
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-3xl my-8"
+      >
+        <h2 className="text-base font-semibold mb-1">
+          📊 حساب‌کتاب — {finance.tenant.name}
+        </h2>
+        <div className="text-[11px] text-[var(--color-text-dim)] mb-3">
+          plan: <strong>{finance.tenant.plan}</strong>
+        </div>
+
+        <div className="flex items-center gap-3 flex-wrap text-[11px] mb-3 p-2 rounded-md border border-[var(--color-border)]">
+          <span>
+            خرج: <strong>${finance.state.spentUsd.toFixed(4)}</strong>
+          </span>
+          <span>
+            مجاز تا: <strong>${finance.state.approvedUsd.toFixed(2)}</strong>
+          </span>
+          <span>
+            سقف: <strong>${finance.state.budgetUsd.toFixed(2)}</strong>
+          </span>
+          <span>
+            step: <strong>${finance.state.stepUsd.toFixed(2)}</strong>
+          </span>
+        </div>
+
+        <div className="mb-4 overflow-x-auto">
+          <table className="w-full text-[11px] tabular-nums">
+            <thead className="text-[var(--color-text-dim)]">
+              <tr className="text-right">
+                <th className="font-normal py-1">بازه</th>
+                <th className="font-normal py-1">تعداد call</th>
+                <th className="font-normal py-1">هزینه</th>
+                <th className="font-normal py-1">میانگین / call</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(
+                [
+                  ["⏰ ۱ ساعت", finance.summary.lastHour],
+                  ["📅 ۲۴ ساعت", finance.summary.today],
+                  ["🗓 ۷ روز", finance.summary.last7d],
+                  ["🗓 ۳۰ روز", finance.summary.last30d],
+                  ["Σ کل", finance.summary.allTime],
+                ] as const
+              ).map(([label, w]) => (
+                <tr
+                  key={label}
+                  className="border-t border-[var(--color-border)]"
+                >
+                  <td className="py-1">{label}</td>
+                  <td className="py-1">{w.calls.toLocaleString()}</td>
+                  <td className="py-1 font-semibold">
+                    ${w.costUsd.toFixed(4)}
+                  </td>
+                  <td className="py-1 text-[var(--color-text-dim)]">
+                    {w.calls > 0
+                      ? `$${(w.costUsd / w.calls).toFixed(5)}`
+                      : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {(
+          [
+            ["⏰ ساعتی (۲۴ ساعت)", finance.hourly, maxHourly, "bg-[var(--color-accent)]/70"],
+            ["📅 روزانه (۱۴ روز)", finance.daily, maxDaily, "bg-[var(--color-accent)]/70"],
+            ["🗓 هفتگی (۱۲ هفته)", finance.weekly, maxWeekly, "bg-emerald-600/70"],
+            ["🗓 ماهانه (۶ ماه)", finance.monthly, maxMonthly, "bg-amber-500/70"],
+          ] as const
+        ).map(([label, buckets, max, color]) => (
+          <div key={label} className="mb-3">
+            <div className="text-xs font-medium mb-1">{label}</div>
+            {buckets.length === 0 ? (
+              <div className="text-[11px] text-[var(--color-text-dim)]">
+                خالی
+              </div>
+            ) : (
+              <div className="flex items-end gap-0.5 h-12">
+                {buckets.map((b) => (
+                  <div
+                    key={b.at}
+                    title={`${new Date(b.at).toLocaleString()} · ${b.calls} call · $${b.costUsd.toFixed(4)}`}
+                    className={`flex-1 ${color} rounded-t-sm min-h-[2px]`}
+                    style={{
+                      height: `${Math.max(4, (b.costUsd / max) * 100)}%`,
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+
+        <div className="mb-2">
+          <div className="text-xs font-medium mb-1">📜 آخرین callها</div>
+          {finance.recent.length === 0 ? (
+            <div className="text-[11px] text-[var(--color-text-dim)]">خالی</div>
+          ) : (
+            <div className="max-h-48 overflow-y-auto flex flex-col gap-0.5">
+              {finance.recent.map((c) => (
+                <div
+                  key={c.id}
+                  className="text-[10px] flex items-center gap-2 py-0.5 border-b border-[var(--color-border)]"
+                >
+                  <span className="text-[var(--color-text-dim)] w-28 shrink-0">
+                    {new Date(c.calledAt).toLocaleString()}
+                  </span>
+                  <span dir="ltr" className="flex-1 truncate font-mono">
+                    {c.endpoint}
+                  </span>
+                  <span className="text-[var(--color-text-dim)]">
+                    ${c.costUsd.toFixed(4)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end mt-4">
+          <button
+            onClick={onClose}
+            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+          >
+            بستن
           </button>
         </div>
       </div>

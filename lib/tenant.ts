@@ -28,9 +28,61 @@ export type Tenant = {
   hikerApiKey: string | null;
   hikerApiKeyName: string | null;
   openrouterApiKey: string | null;
+  groqApiKey: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
+
+// Plan presets — applied with applyPlanToTenant(). "custom" means
+// "leave defaults alone, admin will set fields manually". Numbers
+// are rough; the admin can always edit afterwards.
+export type PlanPreset = {
+  key: string;
+  label: string;
+  hikerBudgetUsd: number;
+  hikerApprovalStepUsd: number;
+  monitoredCap: number;
+  description: string;
+};
+
+export const PLAN_PRESETS: PlanPreset[] = [
+  {
+    key: "starter",
+    label: "Starter",
+    hikerBudgetUsd: 50,
+    hikerApprovalStepUsd: 10,
+    monitoredCap: 50,
+    description: "$50 سقف · $10 step · 50 اکانت",
+  },
+  {
+    key: "smmr",
+    label: "smmr",
+    hikerBudgetUsd: 50,
+    hikerApprovalStepUsd: 2,
+    monitoredCap: 100,
+    description: "$50 سقف · $2 step (تایید‌های ریز) · 100 اکانت",
+  },
+  {
+    key: "pro",
+    label: "Pro",
+    hikerBudgetUsd: 200,
+    hikerApprovalStepUsd: 25,
+    monitoredCap: 250,
+    description: "$200 سقف · $25 step · 250 اکانت",
+  },
+  {
+    key: "enterprise",
+    label: "Enterprise",
+    hikerBudgetUsd: 1000,
+    hikerApprovalStepUsd: 100,
+    monitoredCap: 2000,
+    description: "$1000 سقف · $100 step · 2000 اکانت",
+  },
+];
+
+export function getPlanPreset(key: string): PlanPreset | null {
+  return PLAN_PRESETS.find((p) => p.key === key) ?? null;
+}
 
 function rowToTenant(r: Record<string, unknown>): Tenant {
   return {
@@ -46,6 +98,7 @@ function rowToTenant(r: Record<string, unknown>): Tenant {
     hikerApiKey: (r.hiker_api_key as string) ?? null,
     hikerApiKeyName: (r.hiker_api_key_name as string) ?? null,
     openrouterApiKey: (r.openrouter_api_key as string) ?? null,
+    groqApiKey: (r.groq_api_key as string) ?? null,
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
   };
@@ -54,6 +107,7 @@ function rowToTenant(r: Record<string, unknown>): Tenant {
 const TENANT_COLUMNS = `id, name, plan, hiker_budget_usd, hiker_approved_usd,
            hiker_approval_step_usd, monitored_cap, is_enabled, notes,
            hiker_api_key, hiker_api_key_name, openrouter_api_key,
+           groq_api_key,
            created_at, updated_at` as const;
 
 export async function listTenants(): Promise<Tenant[]> {
@@ -63,6 +117,7 @@ export async function listTenants(): Promise<Tenant[]> {
     SELECT id, name, plan, hiker_budget_usd, hiker_approved_usd,
            hiker_approval_step_usd, monitored_cap, is_enabled, notes,
            hiker_api_key, hiker_api_key_name, openrouter_api_key,
+           groq_api_key,
            created_at, updated_at
     FROM tenants
     ORDER BY name ASC`;
@@ -76,6 +131,7 @@ export async function getTenant(id: number): Promise<Tenant | null> {
     SELECT id, name, plan, hiker_budget_usd, hiker_approved_usd,
            hiker_approval_step_usd, monitored_cap, is_enabled, notes,
            hiker_api_key, hiker_api_key_name, openrouter_api_key,
+           groq_api_key,
            created_at, updated_at
     FROM tenants WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -89,6 +145,7 @@ export async function getTenantByName(name: string): Promise<Tenant | null> {
     SELECT id, name, plan, hiker_budget_usd, hiker_approved_usd,
            hiker_approval_step_usd, monitored_cap, is_enabled, notes,
            hiker_api_key, hiker_api_key_name, openrouter_api_key,
+           groq_api_key,
            created_at, updated_at
     FROM tenants WHERE name = ${name} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -124,6 +181,7 @@ export async function createTenant(args: {
     RETURNING id, name, plan, hiker_budget_usd, hiker_approved_usd,
               hiker_approval_step_usd, monitored_cap, is_enabled, notes,
               hiker_api_key, hiker_api_key_name, openrouter_api_key,
+              groq_api_key,
               created_at, updated_at`;
   return rowToTenant(rows[0] as Record<string, unknown>);
 }
@@ -164,6 +222,7 @@ export async function updateTenant(
     RETURNING id, name, plan, hiker_budget_usd, hiker_approved_usd,
               hiker_approval_step_usd, monitored_cap, is_enabled, notes,
               hiker_api_key, hiker_api_key_name, openrouter_api_key,
+              groq_api_key,
               created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToTenant(r) : null;
@@ -179,33 +238,94 @@ export async function setTenantApiKeys(
     hikerApiKey?: string | null;
     hikerApiKeyName?: string | null;
     openrouterApiKey?: string | null;
+    groqApiKey?: string | null;
   },
 ): Promise<Tenant | null> {
   if (!hasDb()) return null;
   await ensureSchema();
-  const fields: string[] = [];
   const hk = patch.hikerApiKey === undefined ? null : patch.hikerApiKey || null;
   const hkn =
     patch.hikerApiKeyName === undefined ? null : patch.hikerApiKeyName || null;
   const or =
     patch.openrouterApiKey === undefined ? null : patch.openrouterApiKey || null;
-  if (patch.hikerApiKey !== undefined) fields.push("hiker_api_key");
-  if (patch.hikerApiKeyName !== undefined) fields.push("hiker_api_key_name");
-  if (patch.openrouterApiKey !== undefined) fields.push("openrouter_api_key");
-  if (fields.length === 0) return getTenant(id);
+  const gr =
+    patch.groqApiKey === undefined ? null : patch.groqApiKey || null;
+  if (
+    patch.hikerApiKey === undefined &&
+    patch.hikerApiKeyName === undefined &&
+    patch.openrouterApiKey === undefined &&
+    patch.groqApiKey === undefined
+  ) {
+    return getTenant(id);
+  }
   const rows = await sql()`
     UPDATE tenants SET
       hiker_api_key = CASE WHEN ${patch.hikerApiKey !== undefined}::boolean THEN ${hk} ELSE hiker_api_key END,
       hiker_api_key_name = CASE WHEN ${patch.hikerApiKeyName !== undefined}::boolean THEN ${hkn} ELSE hiker_api_key_name END,
       openrouter_api_key = CASE WHEN ${patch.openrouterApiKey !== undefined}::boolean THEN ${or} ELSE openrouter_api_key END,
+      groq_api_key = CASE WHEN ${patch.groqApiKey !== undefined}::boolean THEN ${gr} ELSE groq_api_key END,
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id, name, plan, hiker_budget_usd, hiker_approved_usd,
               hiker_approval_step_usd, monitored_cap, is_enabled, notes,
               hiker_api_key, hiker_api_key_name, openrouter_api_key,
+              groq_api_key,
               created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToTenant(r) : null;
+}
+
+// Apply a preset plan to a tenant. approved is preserved if it's
+// already higher than the new step (we never silently revoke
+// approvals the owner already had). If approved was tiny, bumps to
+// step. plan field on the tenant is set to the preset key.
+export async function applyPlanToTenant(
+  id: number,
+  planKey: string,
+): Promise<Tenant | null> {
+  const preset = getPlanPreset(planKey);
+  if (!preset) return updateTenant(id, { plan: planKey });
+  const current = await getTenant(id);
+  if (!current) return null;
+  const nextApproved = Math.min(
+    preset.hikerBudgetUsd,
+    Math.max(current.hikerApprovedUsd, preset.hikerApprovalStepUsd),
+  );
+  return updateTenant(id, {
+    plan: preset.key,
+    hikerBudgetUsd: preset.hikerBudgetUsd,
+    hikerApprovalStepUsd: preset.hikerApprovalStepUsd,
+    monitoredCap: preset.monitoredCap,
+    hikerApprovedUsd: nextApproved,
+  });
+}
+
+// Wipe the local cost log for one tenant — used when admin tops up
+// out-of-band and wants a fresh ledger. Only clears OUR tracking;
+// HikerAPI dashboard balance is untouched.
+export async function resetTenantSpend(id: number): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    DELETE FROM hikerapi_usage
+    WHERE tenant_id = ${id}
+    RETURNING id`;
+  return rows.length;
+}
+
+// Hard-delete a tenant + everything that belongs to it. Used by admin
+// to shut down a workspace. We manually cascade because most tenant_id
+// columns are nullable BIGINTs without FK constraints — explicit is
+// safer than relying on cascade rules we didn't set.
+export async function deleteTenant(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  const q = sql();
+  await q`UPDATE business_connections SET tenant_id = NULL WHERE tenant_id = ${id}`;
+  await q`DELETE FROM hikerapi_usage WHERE tenant_id = ${id}`;
+  await q`DELETE FROM monitor_events WHERE tenant_id = ${id}`;
+  await q`DELETE FROM monitored_accounts WHERE tenant_id = ${id}`;
+  await q`DELETE FROM tenants WHERE id = ${id}`;
 }
 
 // Attach a business connection to a tenant. Used by the admin

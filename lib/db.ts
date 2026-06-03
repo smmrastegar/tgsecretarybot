@@ -472,6 +472,20 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hiker_api_key TEXT`;
     await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hiker_api_key_name TEXT`;
     await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS openrouter_api_key TEXT`;
+    await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS groq_api_key TEXT`;
+    // Per-tenant overrides for the same global setting keys that
+    // /api/settings already manages. NULL value means "use global".
+    // Admin manages these via /settings?tenant=<id>.
+    await q`
+      CREATE TABLE IF NOT EXISTS tenant_settings (
+        tenant_id  BIGINT NOT NULL,
+        key        TEXT NOT NULL,
+        value      TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_by BIGINT,
+        PRIMARY KEY (tenant_id, key)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS tenant_settings_tenant_idx ON tenant_settings (tenant_id)`;
     await q`
       CREATE TABLE IF NOT EXISTS admin_users (
         user_id    BIGINT PRIMARY KEY,
@@ -2159,6 +2173,46 @@ export async function setSetting(
     INSERT INTO settings (key, value, updated_by, updated_at)
     VALUES (${key}, ${value}, ${actorId ?? null}, NOW())
     ON CONFLICT (key) DO UPDATE SET
+      value = EXCLUDED.value,
+      updated_by = EXCLUDED.updated_by,
+      updated_at = NOW()`;
+}
+
+// Per-tenant setting overrides. Read by lib/settings.ts when a tenant
+// context is in scope. Empty value clears the override (falls back to
+// global).
+export async function getTenantSettings(
+  tenantId: number,
+): Promise<Record<string, string>> {
+  if (!hasDb()) return {};
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT key, value FROM tenant_settings WHERE tenant_id = ${tenantId}`;
+  const out: Record<string, string> = {};
+  for (const r of rows) {
+    out[(r as { key: string }).key] = (r as { value: string }).value;
+  }
+  return out;
+}
+
+export async function setTenantSetting(
+  tenantId: number,
+  key: string,
+  value: string,
+  actorId?: number,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  if (value === "") {
+    await sql()`
+      DELETE FROM tenant_settings
+      WHERE tenant_id = ${tenantId} AND key = ${key}`;
+    return;
+  }
+  await sql()`
+    INSERT INTO tenant_settings (tenant_id, key, value, updated_by, updated_at)
+    VALUES (${tenantId}, ${key}, ${value}, ${actorId ?? null}, NOW())
+    ON CONFLICT (tenant_id, key) DO UPDATE SET
       value = EXCLUDED.value,
       updated_by = EXCLUDED.updated_by,
       updated_at = NOW()`;
