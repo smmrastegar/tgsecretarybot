@@ -97,6 +97,31 @@ export class HikerOutOfCreditsError extends Error {
   }
 }
 
+// Transient upstream — HikerAPI returns 5xx with InstagramServerError
+// when Instagram itself is sad. Not our fault, not the key's fault.
+// processAccount catches this and skips marking last_error so the
+// next cron tick picks the account back up automatically.
+export class InstagramTransientError extends Error {
+  upstreamStatus: number;
+  constructor(msg: string, upstreamStatus: number) {
+    super(msg);
+    this.name = "InstagramTransientError";
+    this.upstreamStatus = upstreamStatus;
+  }
+}
+
+function isTransientUpstream(status: number, body: string): boolean {
+  if (status < 500 && status !== 429) return false;
+  // HikerAPI uses exc_type to label the failure mode. We treat the
+  // "Instagram side" ones as transient; their own 5xxs (Hiker
+  // internal) we also retry once but escalate after.
+  return (
+    /InstagramServerError|InstagramGatewayError|InstagramRateLimitError|"detail":"Instagram did not respond/i.test(
+      body,
+    ) || status === 502 || status === 503 || status === 504 || status === 429
+  );
+}
+
 async function callOne<T>(
   path: string,
   query: Record<string, string>,
@@ -145,8 +170,10 @@ async function callOne<T>(
 
 // HikerAPI has reshuffled paths between v1 and v2 multiple times; we
 // try the path the user gave us first, then fall back to the v2 alias
-// when the first one 404s. Other status codes (401 / 429 / 500) get
-// surfaced immediately because they're real errors.
+// when the first one 404s. Transient upstream failures (Instagram
+// flaking, 429, 5xx) get a single retry with a short backoff before
+// being surfaced as InstagramTransientError so callers can skip
+// stamping last_error and let the next cron tick try again.
 async function call<T>(
   path: string,
   query: Record<string, string>,
@@ -157,14 +184,36 @@ async function call<T>(
   else if (path.startsWith("/v2/"))
     candidates.push(path.replace(/^\/v2\//, "/v1/"));
   let lastError = "";
+  let lastTransient: { status: number; body: string } | null = null;
   for (const p of candidates) {
-    const res = await callOne<T>(p, query);
-    tried.push(p);
-    if ("data" in res) return res.data;
-    lastError = res.error;
-    if (res.status !== 404) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await callOne<T>(p, query);
+      tried.push(p);
+      if ("data" in res) return res.data;
+      lastError = res.error;
+      if (res.status === 404) {
+        // Try the v2/v1 sibling.
+        break;
+      }
+      if (isTransientUpstream(res.status, res.error)) {
+        lastTransient = { status: res.status, body: res.error };
+        if (attempt === 0) {
+          // 1.2s pause then retry the same path once.
+          await new Promise((r) => setTimeout(r, 1200));
+          continue;
+        }
+        // Both attempts on this path failed transiently — try the
+        // sibling candidate before giving up.
+        break;
+      }
       throw new Error(`hikerapi ${res.error}`);
     }
+  }
+  if (lastTransient) {
+    throw new InstagramTransientError(
+      `hikerapi transient ${lastTransient.status}: ${lastTransient.body.slice(0, 200)}`,
+      lastTransient.status,
+    );
   }
   throw new Error(
     `hikerapi 404 after fallback (${tried.join(", ")}): ${lastError}`,
@@ -388,43 +437,77 @@ export type HikerUsage = {
   raw?: Record<string, unknown>;
 };
 
-// Pull the account / usage info. HikerAPI's path keeps changing so
-// we try the three most common locations and stop at the first 2xx.
-// IMPORTANT: a 402 on one probe does NOT mean the account is out of
-// credits — HikerAPI returns InsufficientFunds on /v1/auth/me when
-// the plan isn't subscribed even if Balance is positive. So we
-// swallow per-probe 402s and only bubble one up if ALL probes failed
-// the same way. (The first successful probe wins.)
-export async function getUsage(): Promise<HikerUsage> {
-  const candidates = ["/v1/auth/me", "/v1/account", "/v1/usage"];
-  let last: { error: string; status: number } | null = null;
-  let outOfCreditsErr: HikerOutOfCreditsError | null = null;
-  for (const p of candidates) {
-    try {
-      const res = await callOne<Record<string, unknown>>(p, {});
-      if ("data" in res) {
-        return normaliseUsage(res.data);
-      }
-      last = res;
-      if (res.status !== 404) {
-        throw new Error(`hikerapi ${res.error}`);
-      }
-    } catch (err) {
-      if (err instanceof HikerOutOfCreditsError) {
-        // Remember it but keep trying — another probe might succeed.
-        outOfCreditsErr = err;
-        continue;
-      }
-      throw err;
+// HikerAPI doesn't expose a $-level account/usage endpoint to API
+// clients — that data only lives on hikerapi.com/usage. So instead
+// of probing dead /v1/auth/me / /v1/account / /v1/usage paths (all
+// of which return 404), we now do one real lightweight lookup
+// against a guaranteed-existing public account. It costs ~\$0.001
+// and confirms the key works end-to-end against the SAME content
+// endpoints we'll use for actual monitoring. Caller decides when to
+// run this — we don't fire it on every page load.
+export async function verifyKeyLive(): Promise<{
+  keyWorks: boolean;
+  sample: { id: string; username: string } | null;
+  status: number;
+  body: string;
+}> {
+  const { key } = await getActiveKey();
+  if (!key) return { keyWorks: false, sample: null, status: 0, body: "no key" };
+  try {
+    const url = new URL("/v1/user/by/username", config.hikerBaseUrl);
+    url.searchParams.set("username", "instagram");
+    const res = await fetch(url.toString(), {
+      headers: { "x-access-key": key, Accept: "application/json" },
+    });
+    const txt = (await res.text()).slice(0, 400);
+    if (!res.ok) {
+      return { keyWorks: false, sample: null, status: res.status, body: txt };
     }
+    // Cost-tracking — we used $0.001 on the test call.
+    await recordCall({ path: "/v1/user/by/username" }).catch(() => {});
+    try {
+      const j = JSON.parse(txt) as Record<string, unknown>;
+      const u = (j.user as Record<string, unknown>) ?? j;
+      const id = pkOf(u);
+      const username =
+        typeof u.username === "string" ? u.username : "instagram";
+      return {
+        keyWorks: !!id,
+        sample: id ? { id, username } : null,
+        status: res.status,
+        body: txt,
+      };
+    } catch {
+      return { keyWorks: false, sample: null, status: res.status, body: txt };
+    }
+  } catch (err) {
+    return {
+      keyWorks: false,
+      sample: null,
+      status: 0,
+      body: err instanceof Error ? err.message : String(err),
+    };
   }
-  if (outOfCreditsErr) throw outOfCreditsErr;
-  throw new Error(`hikerapi usage 404 on ${candidates.join(", ")}: ${last?.error ?? ""}`);
 }
 
-// Diagnose mode — returns the raw outcome of every probe + a masked
-// key prefix so the owner can confirm which key is actually deployed.
-// Used by /api/monitored/usage/diagnose.
+// Kept as a no-op shim — usage info isn't available from HikerAPI.
+// Callers should rely on local hikerapi_usage tracking (the budget
+// card). Returns a minimal record so the existing UI shape still
+// compiles.
+export async function getUsage(): Promise<HikerUsage> {
+  return {
+    plan: null,
+    creditsUsed: null,
+    creditsLimit: null,
+    creditsRemaining: null,
+    resetsAt: null,
+    expiresAt: null,
+  };
+}
+
+// Diagnose mode — runs a single real lookup so the owner can see
+// "yes, the key works against the same endpoints we monitor with".
+// Returns the masked key prefix and the raw outcome.
 export async function diagnoseUsage(): Promise<{
   keyPrefix: string | null;
   keyLoaded: boolean;
@@ -439,38 +522,36 @@ export async function diagnoseUsage(): Promise<{
 }> {
   const { key, source, name } = await getActiveKey();
   const keyPrefix = maskKey(key);
-  const paths = ["/v1/auth/me", "/v1/account", "/v1/usage"];
-  const probes: Array<{ path: string; ok: boolean; status: number; body: string }> = [];
-  for (const p of paths) {
-    if (!key) {
-      probes.push({ path: p, ok: false, status: 0, body: "no key" });
-      continue;
-    }
-    try {
-      const url = new URL(p, config.hikerBaseUrl);
-      const res = await fetch(url.toString(), {
-        headers: {
-          "x-access-key": key,
-          Accept: "application/json",
+  if (!key) {
+    return {
+      keyPrefix,
+      keyLoaded: false,
+      keySource: source,
+      keyName: name,
+      probes: [
+        {
+          path: "/v1/user/by/username?username=instagram",
+          ok: false,
+          status: 0,
+          body: "no key",
         },
-      });
-      const txt = (await res.text()).slice(0, 400);
-      probes.push({ path: p, ok: res.ok, status: res.status, body: txt });
-    } catch (err) {
-      probes.push({
-        path: p,
-        ok: false,
-        status: 0,
-        body: err instanceof Error ? err.message : String(err),
-      });
-    }
+      ],
+    };
   }
+  const live = await verifyKeyLive();
   return {
     keyPrefix,
-    keyLoaded: !!key,
+    keyLoaded: true,
     keySource: source,
     keyName: name,
-    probes,
+    probes: [
+      {
+        path: "/v1/user/by/username?username=instagram",
+        ok: live.keyWorks,
+        status: live.status,
+        body: live.body,
+      },
+    ],
   };
 }
 

@@ -137,13 +137,11 @@ export default function MonitoredPage() {
     await load();
   }
 
+  // Kept for shape compat — HikerAPI doesn't actually expose a $-level
+  // usage endpoint to clients, so the card now just renders the key
+  // status and points to the budget card for real spend.
   type Usage = {
-    plan?: string | null;
-    creditsUsed?: number | null;
-    creditsLimit?: number | null;
-    creditsRemaining?: number | null;
-    resetsAt?: string | null;
-    expiresAt?: string | null;
+    configured?: boolean;
   };
   type BudgetState = {
     spentUsd: number;
@@ -217,11 +215,8 @@ export default function MonitoredPage() {
     try {
       const r = await fetch("/api/monitored/usage");
       const j = (await r.json().catch(() => ({}))) as {
-        usage?: Usage;
+        configured?: boolean;
         error?: string;
-        outOfCredits?: boolean;
-        message?: string;
-        billingUrl?: string;
         keyPrefix?: string | null;
         keySource?: "db" | "env" | null;
         keyName?: string | null;
@@ -229,15 +224,10 @@ export default function MonitoredPage() {
       if (j.keyPrefix !== undefined) setKeyPrefix(j.keyPrefix);
       if (j.keySource !== undefined) setKeySource(j.keySource ?? null);
       if (j.keyName !== undefined) setKeyName(j.keyName ?? null);
-      if (r.status === 402 && j.outOfCredits) {
-        setUsageOutOfCredits({
-          message: j.message ?? "Insufficient credits",
-          billingUrl: j.billingUrl ?? "https://hikerapi.com/billing",
-        });
-      } else if (!r.ok) {
+      if (!r.ok) {
         setUsageError(j.error ?? `${r.status}`);
       } else {
-        setUsage(j.usage ?? null);
+        setUsage({ configured: j.configured });
       }
     } catch (err) {
       setUsageError(err instanceof Error ? err.message : String(err));
@@ -421,7 +411,15 @@ export default function MonitoredPage() {
         setImportMsg(`${j.forwarded} مورد جدید forward شد`);
         setTimeout(() => setImportMsg(null), 6000);
       } else if (j.errors && j.errors.length > 0) {
-        alert(`خطا: ${j.errors[0]}`);
+        const first = j.errors[0]!;
+        // Transient IG failures already retried internally — show as
+        // a soft toast, not a blocking alert.
+        if (/transient/i.test(first)) {
+          setImportMsg(`⏳ Instagram جواب نداد، cron بعدی دوباره تلاش می‌کنه`);
+          setTimeout(() => setImportMsg(null), 6000);
+        } else {
+          alert(`خطا: ${first}`);
+        }
       } else {
         setImportMsg("چیز جدیدی نبود (همه قبلاً forward شدن)");
         setTimeout(() => setImportMsg(null), 4000);
@@ -702,60 +700,16 @@ export default function MonitoredPage() {
           <div className="text-[11px] text-red-300 break-all">
             {usageError}
           </div>
-        ) : usage ? (
-          <div className="flex items-center gap-4 flex-wrap text-[11px]">
-            {usage.plan && (
-              <span>
-                <span className="text-[var(--color-text-dim)]">plan:</span>{" "}
-                <Badge tone="info">{usage.plan}</Badge>
-              </span>
-            )}
-            {usage.creditsUsed != null && usage.creditsLimit != null && (
-              <>
-                <span>
-                  <span className="text-[var(--color-text-dim)]">مصرف:</span>{" "}
-                  <strong>{usage.creditsUsed.toLocaleString()}</strong>
-                  {" / "}
-                  {usage.creditsLimit.toLocaleString()}
-                </span>
-                <div className="flex-1 min-w-[120px] h-2 bg-[var(--color-surface-2)] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[var(--color-accent)]"
-                    style={{
-                      width: `${Math.min(
-                        100,
-                        Math.round(
-                          (usage.creditsUsed / usage.creditsLimit) * 100,
-                        ),
-                      )}%`,
-                    }}
-                  />
-                </div>
-                <span className="text-[var(--color-text-dim)]">
-                  {Math.round((usage.creditsUsed / usage.creditsLimit) * 100)}%
-                </span>
-              </>
-            )}
-            {usage.creditsRemaining != null && (
-              <span>
-                <span className="text-[var(--color-text-dim)]">باقی:</span>{" "}
-                <strong>{usage.creditsRemaining.toLocaleString()}</strong>
-              </span>
-            )}
-            {usage.resetsAt && (
-              <span className="text-[var(--color-text-dim)]">
-                ریست: {new Date(usage.resetsAt).toLocaleString()}
-              </span>
-            )}
-            {usage.expiresAt && (
-              <span className="text-[var(--color-text-dim)]">
-                انقضا: {new Date(usage.expiresAt).toLocaleString()}
-              </span>
-            )}
+        ) : usage?.configured ? (
+          <div className="text-[11px] text-emerald-300">
+            ✅ کلید لود شده و از سرور قابل دسترسه. هزینه‌ی $ از کارت
+            «💵 بودجه HikerAPI» پایین نشون داده می‌شه — HikerAPI خودش
+            endpoint مصرف $ نداره. 🩺 «تشخیص» بزن تا با یه call واقعی
+            (~$0.001) تست بشه کلید کار می‌کنه.
           </div>
         ) : (
-          <div className="text-[11px] text-[var(--color-text-dim)]">
-            …
+          <div className="text-[11px] text-red-300">
+            ⚠️ کلید HikerAPI ست نشده — 🔑 «کلید» رو بزن.
           </div>
         )}
         {diagnose && (

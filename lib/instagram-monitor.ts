@@ -19,6 +19,7 @@ import {
   getUserPosts,
   getUserReels,
   getUserStories,
+  InstagramTransientError,
   type IGMedia,
 } from "./hikerapi";
 import { getSettings } from "./settings";
@@ -231,7 +232,14 @@ export async function processAccount(args: {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`resolve ${account.username}: ${msg.slice(0, 200)}`);
-      await markMonitoredChecked({ id: account.id, error: msg.slice(0, 500) });
+      // Transient upstream (Instagram flaking) — DON'T stamp
+      // last_error or the row stays "errored" forever even though
+      // the next cron tick would succeed on its own.
+      if (err instanceof InstagramTransientError) {
+        await markMonitoredChecked({ id: account.id, error: null });
+      } else {
+        await markMonitoredChecked({ id: account.id, error: msg.slice(0, 500) });
+      }
       return { detected, forwarded, errors, latestSeen };
     }
   }
@@ -303,7 +311,14 @@ export async function processAccount(args: {
       items = await task.fn();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${account.username} ${task.kind}: ${msg.slice(0, 150)}`);
+      if (err instanceof InstagramTransientError) {
+        // Soft-fail this kind for this tick — next cron picks it up.
+        errors.push(
+          `${account.username} ${task.kind}: transient (${err.upstreamStatus}), retrying next cron`,
+        );
+      } else {
+        errors.push(`${account.username} ${task.kind}: ${msg.slice(0, 150)}`);
+      }
       continue;
     }
     if (task.limit) items = items.slice(0, task.limit);
