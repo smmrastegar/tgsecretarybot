@@ -156,6 +156,14 @@ export default function MonitoredPage() {
     nextThresholdUsd: number;
   };
   type Bucket = { at: string; calls: number; costUsd: number };
+  type Window = { calls: number; costUsd: number };
+  type Summary = {
+    lastHour: Window;
+    today: Window;
+    last7d: Window;
+    last30d: Window;
+    allTime: Window;
+  };
   type HikerCall = {
     id: number;
     calledAt: string;
@@ -171,8 +179,11 @@ export default function MonitoredPage() {
   } | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const [budget, setBudget] = useState<BudgetState | null>(null);
+  const [budgetSummary, setBudgetSummary] = useState<Summary | null>(null);
   const [budgetHourly, setBudgetHourly] = useState<Bucket[]>([]);
   const [budgetDaily, setBudgetDaily] = useState<Bucket[]>([]);
+  const [budgetWeekly, setBudgetWeekly] = useState<Bucket[]>([]);
+  const [budgetMonthly, setBudgetMonthly] = useState<Bucket[]>([]);
   const [budgetRecent, setBudgetRecent] = useState<HikerCall[]>([]);
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [budgetDialog, setBudgetDialog] = useState(false);
@@ -219,13 +230,19 @@ export default function MonitoredPage() {
       if (!r.ok) return;
       const j = (await r.json()) as {
         state: BudgetState;
+        summary: Summary;
         hourly: Bucket[];
         daily: Bucket[];
+        weekly: Bucket[];
+        monthly: Bucket[];
         recent: HikerCall[];
       };
       setBudget(j.state);
+      setBudgetSummary(j.summary);
       setBudgetHourly(j.hourly);
       setBudgetDaily(j.daily);
+      setBudgetWeekly(j.weekly);
+      setBudgetMonthly(j.monthly);
       setBudgetRecent(j.recent);
     } finally {
       setBudgetLoading(false);
@@ -644,7 +661,7 @@ export default function MonitoredPage() {
             <div className="flex items-center gap-3 flex-wrap text-[11px]">
               <span>
                 <span className="text-[var(--color-text-dim)]">خرج‌شده:</span>{" "}
-                <strong>${budget.spentUsd.toFixed(2)}</strong>
+                <strong>${budget.spentUsd.toFixed(4)}</strong>
               </span>
               <span>
                 <span className="text-[var(--color-text-dim)]">مجاز تا:</span>{" "}
@@ -658,6 +675,32 @@ export default function MonitoredPage() {
                 · checkpoint هر ${budget.stepUsd.toFixed(2)}
               </span>
             </div>
+            {budgetSummary && (
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 text-[10px] mt-1">
+                {(
+                  [
+                    ["⏰ ساعت اخیر", budgetSummary.lastHour],
+                    ["📅 ۲۴ ساعت", budgetSummary.today],
+                    ["🗓 ۷ روز", budgetSummary.last7d],
+                    ["🗓 ۳۰ روز", budgetSummary.last30d],
+                    ["Σ کل", budgetSummary.allTime],
+                  ] as const
+                ).map(([label, w]) => (
+                  <div
+                    key={label}
+                    className="flex flex-col p-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40"
+                  >
+                    <span className="text-[var(--color-text-dim)]">{label}</span>
+                    <span className="font-semibold tabular-nums">
+                      ${w.costUsd.toFixed(4)}
+                    </span>
+                    <span className="text-[var(--color-text-dim)]">
+                      {w.calls.toLocaleString()} call
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="h-2 bg-[var(--color-surface-2)] rounded-full overflow-hidden relative">
               <div
                 className="absolute inset-y-0 left-0 bg-emerald-600/60"
@@ -1275,8 +1318,11 @@ export default function MonitoredPage() {
       {budgetDialog && budget && (
         <BudgetSettingsDialog
           budget={budget}
+          summary={budgetSummary}
           hourly={budgetHourly}
           daily={budgetDaily}
+          weekly={budgetWeekly}
+          monthly={budgetMonthly}
           recent={budgetRecent}
           onClose={() => setBudgetDialog(false)}
           onSaved={async () => {
@@ -1300,8 +1346,17 @@ function BudgetSettingsDialog(props: {
     budgetExceeded: boolean;
     nextThresholdUsd: number;
   };
+  summary: {
+    lastHour: { calls: number; costUsd: number };
+    today: { calls: number; costUsd: number };
+    last7d: { calls: number; costUsd: number };
+    last30d: { calls: number; costUsd: number };
+    allTime: { calls: number; costUsd: number };
+  } | null;
   hourly: Array<{ at: string; calls: number; costUsd: number }>;
   daily: Array<{ at: string; calls: number; costUsd: number }>;
+  weekly: Array<{ at: string; calls: number; costUsd: number }>;
+  monthly: Array<{ at: string; calls: number; costUsd: number }>;
   recent: Array<{
     id: number;
     calledAt: string;
@@ -1313,8 +1368,18 @@ function BudgetSettingsDialog(props: {
   onSaved: () => Promise<void>;
   onApproveAbsolute: (v: number) => Promise<void>;
 }) {
-  const { budget, hourly, daily, recent, onClose, onSaved, onApproveAbsolute } =
-    props;
+  const {
+    budget,
+    summary,
+    hourly,
+    daily,
+    weekly,
+    monthly,
+    recent,
+    onClose,
+    onSaved,
+    onApproveAbsolute,
+  } = props;
   const [budgetUsd, setBudgetUsd] = useState(String(budget.budgetUsd));
   const [stepUsd, setStepUsd] = useState(String(budget.stepUsd));
   const [costPerCallUsd, setCostPerCallUsd] = useState(
@@ -1357,11 +1422,28 @@ function BudgetSettingsDialog(props: {
     }
   }
 
-  const maxBucket = Math.max(
-    0.001,
-    ...hourly.map((b) => b.costUsd),
-    ...daily.map((b) => b.costUsd),
-  );
+  const maxHourly = Math.max(0.001, ...hourly.map((b) => b.costUsd));
+  const maxDaily = Math.max(0.001, ...daily.map((b) => b.costUsd));
+  const maxWeekly = Math.max(0.001, ...weekly.map((b) => b.costUsd));
+  const maxMonthly = Math.max(0.001, ...monthly.map((b) => b.costUsd));
+
+  // Projections from observed rates: extrapolate the 24h spend out to
+  // a month, and the 7-day spend out to a month, so the owner can
+  // eyeball "at this rate how long does \$50 last".
+  const projDailyToMonth = summary
+    ? summary.today.costUsd * 30
+    : null;
+  const projWeeklyToMonth = summary
+    ? (summary.last7d.costUsd / 7) * 30
+    : null;
+  const daysToBudget = (() => {
+    if (!summary || !budget) return null;
+    const ratePerDay = summary.last7d.costUsd / 7;
+    if (ratePerDay <= 0) return null;
+    const remaining = budget.budgetUsd - budget.spentUsd;
+    if (remaining <= 0) return 0;
+    return remaining / ratePerDay;
+  })();
 
   return (
     <div
@@ -1456,6 +1538,106 @@ function BudgetSettingsDialog(props: {
           </button>
         </div>
 
+        {summary && (
+          <div className="mb-4 p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
+            <div className="text-xs font-medium mb-2">📊 خلاصه دقیق</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px] tabular-nums">
+                <thead className="text-[var(--color-text-dim)]">
+                  <tr className="text-right">
+                    <th className="font-normal py-1">بازه</th>
+                    <th className="font-normal py-1">تعداد call</th>
+                    <th className="font-normal py-1">هزینه</th>
+                    <th className="font-normal py-1">میانگین / call</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(
+                    [
+                      ["⏰ ۱ ساعت اخیر", summary.lastHour],
+                      ["📅 ۲۴ ساعت اخیر", summary.today],
+                      ["🗓 ۷ روز اخیر", summary.last7d],
+                      ["🗓 ۳۰ روز اخیر", summary.last30d],
+                      ["Σ همه‌ی زمان", summary.allTime],
+                    ] as const
+                  ).map(([label, w]) => (
+                    <tr
+                      key={label}
+                      className="border-t border-[var(--color-border)]"
+                    >
+                      <td className="py-1">{label}</td>
+                      <td className="py-1">{w.calls.toLocaleString()}</td>
+                      <td className="py-1 font-semibold">
+                        ${w.costUsd.toFixed(4)}
+                      </td>
+                      <td className="py-1 text-[var(--color-text-dim)]">
+                        {w.calls > 0
+                          ? `$${(w.costUsd / w.calls).toFixed(5)}`
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {(projDailyToMonth != null || projWeeklyToMonth != null) && (
+              <div className="mt-2 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-dim)] flex flex-col gap-0.5">
+                <div>
+                  📈 پیش‌بینی ماهانه (با نرخ ۲۴ ساعت اخیر):{" "}
+                  <strong className="text-[var(--color-text)]">
+                    ${(projDailyToMonth ?? 0).toFixed(2)}
+                  </strong>
+                </div>
+                <div>
+                  📈 پیش‌بینی ماهانه (با نرخ ۷ روز اخیر):{" "}
+                  <strong className="text-[var(--color-text)]">
+                    ${(projWeeklyToMonth ?? 0).toFixed(2)}
+                  </strong>
+                </div>
+                {daysToBudget != null && Number.isFinite(daysToBudget) && (
+                  <div>
+                    ⏳ با این نرخ، باقیمانده‌ی ${budget
+                      ? (budget.budgetUsd - budget.spentUsd).toFixed(2)
+                      : "—"}{" "}
+                    کافیه برای{" "}
+                    <strong className="text-[var(--color-text)]">
+                      {daysToBudget < 1
+                        ? `${Math.round(daysToBudget * 24)} ساعت`
+                        : daysToBudget > 365
+                          ? "بیش از یک سال"
+                          : `${Math.round(daysToBudget)} روز`}
+                    </strong>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mb-4">
+          <div className="text-xs font-medium mb-1">
+            ⏰ ساعتی (۲۴ ساعت اخیر)
+          </div>
+          {hourly.length === 0 ? (
+            <div className="text-[11px] text-[var(--color-text-dim)]">
+              هنوز callی ثبت نشده
+            </div>
+          ) : (
+            <div className="flex items-end gap-0.5 h-16">
+              {hourly.map((b) => (
+                <div
+                  key={b.at}
+                  title={`${new Date(b.at).toLocaleString()} · ${b.calls} call · $${b.costUsd.toFixed(4)}`}
+                  className="flex-1 bg-[var(--color-accent)]/70 rounded-t-sm min-h-[2px] hover:bg-[var(--color-accent)]"
+                  style={{
+                    height: `${Math.max(4, (b.costUsd / maxHourly) * 100)}%`,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="mb-4">
           <div className="text-xs font-medium mb-1">
             📅 روزانه (۱۴ روز اخیر)
@@ -1469,10 +1651,10 @@ function BudgetSettingsDialog(props: {
               {daily.map((b) => (
                 <div
                   key={b.at}
-                  title={`${new Date(b.at).toLocaleDateString()} · ${b.calls} call · $${b.costUsd.toFixed(3)}`}
+                  title={`${new Date(b.at).toLocaleDateString()} · ${b.calls} call · $${b.costUsd.toFixed(4)}`}
                   className="flex-1 bg-[var(--color-accent)]/70 rounded-t-sm min-h-[2px] hover:bg-[var(--color-accent)]"
                   style={{
-                    height: `${Math.max(4, (b.costUsd / maxBucket) * 100)}%`,
+                    height: `${Math.max(4, (b.costUsd / maxDaily) * 100)}%`,
                   }}
                 />
               ))}
@@ -1481,20 +1663,46 @@ function BudgetSettingsDialog(props: {
         </div>
 
         <div className="mb-4">
-          <div className="text-xs font-medium mb-1">⏰ ساعتی (۲۴ ساعت اخیر)</div>
-          {hourly.length === 0 ? (
+          <div className="text-xs font-medium mb-1">
+            🗓 هفتگی (۱۲ هفته اخیر)
+          </div>
+          {weekly.length === 0 ? (
             <div className="text-[11px] text-[var(--color-text-dim)]">
               هنوز callی ثبت نشده
             </div>
           ) : (
-            <div className="flex items-end gap-0.5 h-16">
-              {hourly.map((b) => (
+            <div className="flex items-end gap-1 h-16">
+              {weekly.map((b) => (
                 <div
                   key={b.at}
-                  title={`${new Date(b.at).toLocaleString()} · ${b.calls} call · $${b.costUsd.toFixed(3)}`}
-                  className="flex-1 bg-[var(--color-accent)]/70 rounded-t-sm min-h-[2px] hover:bg-[var(--color-accent)]"
+                  title={`هفته‌ی ${new Date(b.at).toLocaleDateString()} · ${b.calls} call · $${b.costUsd.toFixed(4)}`}
+                  className="flex-1 bg-emerald-600/70 rounded-t-sm min-h-[2px] hover:bg-emerald-500"
                   style={{
-                    height: `${Math.max(4, (b.costUsd / maxBucket) * 100)}%`,
+                    height: `${Math.max(4, (b.costUsd / maxWeekly) * 100)}%`,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="mb-4">
+          <div className="text-xs font-medium mb-1">
+            🗓 ماهانه (۶ ماه اخیر)
+          </div>
+          {monthly.length === 0 ? (
+            <div className="text-[11px] text-[var(--color-text-dim)]">
+              هنوز callی ثبت نشده
+            </div>
+          ) : (
+            <div className="flex items-end gap-1.5 h-16">
+              {monthly.map((b) => (
+                <div
+                  key={b.at}
+                  title={`${new Date(b.at).toLocaleDateString()} · ${b.calls} call · $${b.costUsd.toFixed(4)}`}
+                  className="flex-1 bg-amber-500/70 rounded-t-sm min-h-[2px] hover:bg-amber-400"
+                  style={{
+                    height: `${Math.max(4, (b.costUsd / maxMonthly) * 100)}%`,
                   }}
                 />
               ))}

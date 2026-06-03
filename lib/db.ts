@@ -3301,12 +3301,19 @@ export async function getHikerTotalSpent(): Promise<number> {
 }
 
 export async function getHikerSpentBuckets(args: {
-  bucket: "hour" | "day";
+  bucket: "hour" | "day" | "week" | "month";
   since: Date;
 }): Promise<Array<{ at: Date; calls: number; costUsd: number }>> {
   if (!hasDb()) return [];
   await ensureSchema();
-  const truncFn = args.bucket === "hour" ? "hour" : "day";
+  const truncFn =
+    args.bucket === "hour"
+      ? "hour"
+      : args.bucket === "day"
+        ? "day"
+        : args.bucket === "week"
+          ? "week"
+          : "month";
   const rows = await sql()`
     SELECT date_trunc(${truncFn}, called_at) AS at,
            COUNT(*)::int AS calls,
@@ -3318,6 +3325,28 @@ export async function getHikerSpentBuckets(args: {
   return (rows as Array<{ at: Date; calls: number; cost_usd: number }>).map(
     (r) => ({ at: r.at, calls: r.calls, costUsd: Number(r.cost_usd) }),
   );
+}
+
+// Sum calls + cost over a sliding window. Used for the precise
+// "this hour / today / this week / this month / all-time" summary
+// row that sits at the top of the budget dialog.
+export async function getHikerWindowSummary(
+  since: Date | null,
+): Promise<{ calls: number; costUsd: number }> {
+  if (!hasDb()) return { calls: 0, costUsd: 0 };
+  await ensureSchema();
+  const rows = since
+    ? await sql()`
+        SELECT COUNT(*)::int AS calls,
+               COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
+        FROM hikerapi_usage
+        WHERE called_at >= ${since.toISOString()}::timestamptz`
+    : await sql()`
+        SELECT COUNT(*)::int AS calls,
+               COALESCE(SUM(cost_usd), 0)::float8 AS cost_usd
+        FROM hikerapi_usage`;
+  const r = rows[0] as { calls: number; cost_usd: number } | undefined;
+  return r ? { calls: r.calls, costUsd: Number(r.cost_usd) } : { calls: 0, costUsd: 0 };
 }
 
 // Last N HikerAPI calls — used for the "recent activity" tail in the
