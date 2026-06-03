@@ -497,6 +497,14 @@ export default function MonitoredPage() {
               </div>
             ))}
             <button
+              onClick={() => runBulk("update", { resetError: true })}
+              disabled={bulking}
+              className="px-2 py-1 rounded-md border border-amber-700 text-amber-300 hover:bg-amber-900/30"
+              title="last_error رو پاک می‌کنه و forceفها چک می‌کنه"
+            >
+              🔁 ریست خطاها
+            </button>
+            <button
               onClick={() => runBulk("delete")}
               disabled={bulking}
               className="px-2 py-1 rounded-md border border-red-800 text-red-300 hover:bg-red-900/30"
@@ -566,6 +574,15 @@ export default function MonitoredPage() {
                     </Badge>
                   )}
                   {a.lastError && <Badge tone="danger">خطا</Badge>}
+                  {a.lastError && (
+                    <button
+                      onClick={() => patch(a.id, { resetError: true })}
+                      title="ریست خطا و چک فوری توی cron بعدی"
+                      className="text-[10px] px-1.5 py-0.5 rounded-md border border-amber-700 text-amber-300 hover:bg-amber-900/30"
+                    >
+                      🔁
+                    </button>
+                  )}
                   <button
                     onClick={() => remove(a.id)}
                     className="ml-auto text-[10px] px-1.5 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-red-900/40"

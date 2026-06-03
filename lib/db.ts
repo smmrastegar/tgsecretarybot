@@ -3147,7 +3147,9 @@ export async function updateMonitoredAccountConfig(
 }
 
 // Bulk patch for the /monitored bulk toolbar. Any undefined field is
-// left alone.
+// left alone. `resetError=true` clears last_error AND last_checked_at
+// so the next cron tick re-tries the account immediately instead of
+// waiting for interval_minutes to elapse.
 export async function bulkUpdateMonitoredAccounts(
   ids: number[],
   patch: {
@@ -3157,9 +3159,11 @@ export async function bulkUpdateMonitoredAccounts(
     checkReels?: boolean;
     checkProfile?: boolean;
     intervalMinutes?: number;
+    resetError?: boolean;
   },
 ): Promise<number> {
   if (!hasDb() || ids.length === 0) return 0;
+  const reset = patch.resetError === true;
   const rows = await sql()`
     UPDATE monitored_accounts SET
       enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
@@ -3170,10 +3174,26 @@ export async function bulkUpdateMonitoredAccounts(
       interval_minutes = COALESCE(${
         patch.intervalMinutes ?? null
       }::int, interval_minutes),
+      last_error = CASE WHEN ${reset}::boolean THEN NULL ELSE last_error END,
+      last_checked_at = CASE WHEN ${reset}::boolean THEN NULL ELSE last_checked_at END,
       updated_at = NOW()
     WHERE id = ANY(${ids}::bigint[])
     RETURNING id`;
   return rows.length;
+}
+
+// Single-row reset helper — same semantics as the bulk version but
+// for one account. Returns true if a row was touched.
+export async function resetMonitoredAccountError(id: number): Promise<boolean> {
+  if (!hasDb()) return false;
+  const rows = await sql()`
+    UPDATE monitored_accounts
+    SET last_error = NULL,
+        last_checked_at = NULL,
+        updated_at = NOW()
+    WHERE id = ${id}
+    RETURNING id`;
+  return rows.length > 0;
 }
 
 export async function bulkDeleteMonitoredAccounts(

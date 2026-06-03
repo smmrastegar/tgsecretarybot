@@ -26,6 +26,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       checkReels?: boolean;
       checkProfile?: boolean;
       intervalMinutes?: number;
+      resetError?: boolean;
     };
   };
   const ids = Array.isArray(body.ids)

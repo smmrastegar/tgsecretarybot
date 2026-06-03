@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/auth";
 import {
   audit,
   deleteMonitoredAccount,
+  resetMonitoredAccountError,
   setMonitoredAccountEnabled,
   updateMonitoredAccountConfig,
 } from "@/lib/db";
@@ -32,7 +33,11 @@ export async function PATCH(
     checkReels?: boolean;
     checkProfile?: boolean;
     intervalMinutes?: number;
+    resetError?: boolean;
   };
+  if (body.resetError === true) {
+    await resetMonitoredAccountError(n);
+  }
   if (body.enabled !== undefined) {
     await setMonitoredAccountEnabled(n, Boolean(body.enabled));
   }
