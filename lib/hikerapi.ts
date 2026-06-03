@@ -16,8 +16,37 @@ import {
   HikerApprovalNeededError,
   recordCall,
 } from "./hikerapi-budget";
+import { getSettings } from "./settings";
 
 export { HikerApprovalNeededError };
+
+// DB override wins over env so the owner can rotate the key from the
+// UI without a Vercel redeploy. Empty string in settings → fall back
+// to HIKER_API_KEY env var.
+export async function getActiveKey(): Promise<{
+  key: string | null;
+  source: "db" | "env" | null;
+  name: string | null;
+}> {
+  let dbKey = "";
+  let name = "";
+  try {
+    const s = await getSettings();
+    dbKey = (s.hikerApiKeyOverride ?? "").trim();
+    name = (s.hikerApiKeyName ?? "").trim();
+  } catch {
+    // settings not available (e.g. DB outage) — fall back to env.
+  }
+  if (dbKey) return { key: dbKey, source: "db", name: name || null };
+  if (config.hikerApiKey)
+    return { key: config.hikerApiKey, source: "env", name: name || null };
+  return { key: null, source: null, name: name || null };
+}
+
+export function maskKey(key: string | null): string | null {
+  if (!key) return null;
+  return `${key.slice(0, 5)}…${key.slice(-3)} (${key.length} chars)`;
+}
 
 export type IGUser = {
   id: string;
@@ -48,11 +77,12 @@ export type IGMedia = {
   textStickers?: string[];
 };
 
-function ensureKey(): string {
-  if (!config.hikerApiKey) {
-    throw new Error("HIKER_API_KEY is not configured");
+async function ensureKey(): Promise<string> {
+  const { key } = await getActiveKey();
+  if (!key) {
+    throw new Error("HIKER_API_KEY is not configured (env or override)");
   }
-  return config.hikerApiKey;
+  return key;
 }
 
 // Special exception we throw on 402 from HikerAPI so the caller can
@@ -79,9 +109,10 @@ async function callOne<T>(
   for (const [k, v] of Object.entries(query)) {
     if (v != null && v !== "") url.searchParams.set(k, v);
   }
+  const key = await ensureKey();
   const res = await fetch(url.toString(), {
     headers: {
-      "x-access-key": ensureKey(),
+      "x-access-key": key,
       Accept: "application/json",
     },
   });
@@ -397,6 +428,8 @@ export async function getUsage(): Promise<HikerUsage> {
 export async function diagnoseUsage(): Promise<{
   keyPrefix: string | null;
   keyLoaded: boolean;
+  keySource: "db" | "env" | null;
+  keyName: string | null;
   probes: Array<{
     path: string;
     ok: boolean;
@@ -404,10 +437,8 @@ export async function diagnoseUsage(): Promise<{
     body: string;
   }>;
 }> {
-  const key = config.hikerApiKey ?? null;
-  const keyPrefix = key
-    ? `${key.slice(0, 5)}…${key.slice(-3)} (${key.length} chars)`
-    : null;
+  const { key, source, name } = await getActiveKey();
+  const keyPrefix = maskKey(key);
   const paths = ["/v1/auth/me", "/v1/account", "/v1/usage"];
   const probes: Array<{ path: string; ok: boolean; status: number; body: string }> = [];
   for (const p of paths) {
@@ -434,7 +465,13 @@ export async function diagnoseUsage(): Promise<{
       });
     }
   }
-  return { keyPrefix, keyLoaded: !!key, probes };
+  return {
+    keyPrefix,
+    keyLoaded: !!key,
+    keySource: source,
+    keyName: name,
+    probes,
+  };
 }
 
 function numOf(v: unknown): number | null {

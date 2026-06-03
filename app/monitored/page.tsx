@@ -179,9 +179,13 @@ export default function MonitoredPage() {
   } | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const [keyPrefix, setKeyPrefix] = useState<string | null>(null);
+  const [keySource, setKeySource] = useState<"db" | "env" | null>(null);
+  const [keyName, setKeyName] = useState<string | null>(null);
   type Diagnose = {
     keyPrefix: string | null;
     keyLoaded: boolean;
+    keySource: "db" | "env" | null;
+    keyName: string | null;
     probes: Array<{
       path: string;
       ok: boolean;
@@ -191,6 +195,10 @@ export default function MonitoredPage() {
   };
   const [diagnose, setDiagnose] = useState<Diagnose | null>(null);
   const [diagnoseLoading, setDiagnoseLoading] = useState(false);
+  const [keyDialog, setKeyDialog] = useState(false);
+  const [keyInput, setKeyInput] = useState("");
+  const [keyNameInput, setKeyNameInput] = useState("");
+  const [savingKey, setSavingKey] = useState(false);
   const [budget, setBudget] = useState<BudgetState | null>(null);
   const [budgetSummary, setBudgetSummary] = useState<Summary | null>(null);
   const [budgetHourly, setBudgetHourly] = useState<Bucket[]>([]);
@@ -215,8 +223,12 @@ export default function MonitoredPage() {
         message?: string;
         billingUrl?: string;
         keyPrefix?: string | null;
+        keySource?: "db" | "env" | null;
+        keyName?: string | null;
       };
       if (j.keyPrefix !== undefined) setKeyPrefix(j.keyPrefix);
+      if (j.keySource !== undefined) setKeySource(j.keySource ?? null);
+      if (j.keyName !== undefined) setKeyName(j.keyName ?? null);
       if (r.status === 402 && j.outOfCredits) {
         setUsageOutOfCredits({
           message: j.message ?? "Insufficient credits",
@@ -242,6 +254,8 @@ export default function MonitoredPage() {
         const j = (await r.json()) as Diagnose;
         setDiagnose(j);
         if (j.keyPrefix !== undefined) setKeyPrefix(j.keyPrefix);
+        if (j.keySource !== undefined) setKeySource(j.keySource ?? null);
+        if (j.keyName !== undefined) setKeyName(j.keyName ?? null);
         // If any probe came back 2xx, the key is fine — clear the
         // stale out-of-credits banner so the UI stops yelling.
         if (j.probes.some((p) => p.ok)) {
@@ -255,6 +269,29 @@ export default function MonitoredPage() {
       setDiagnoseLoading(false);
     }
   }, [loadUsage]);
+
+  async function saveKey() {
+    setSavingKey(true);
+    try {
+      const r = await fetch("/api/monitored/usage/key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: keyInput.trim(), name: keyNameInput.trim() }),
+      });
+      if (r.ok) {
+        setKeyInput("");
+        setKeyDialog(false);
+        setUsageOutOfCredits(null);
+        setUsageError(null);
+        await loadUsage();
+        await runDiagnose();
+      } else {
+        alert("خطا در ذخیره کلید");
+      }
+    } finally {
+      setSavingKey(false);
+    }
+  }
 
   useEffect(() => {
     loadUsage();
@@ -572,16 +609,42 @@ export default function MonitoredPage() {
           <div className="text-sm font-medium">
             {usageOutOfCredits ? "💸 HikerAPI پاسخ ۴۰۲ می‌ده" : "💳 HikerAPI usage"}
           </div>
-          <div className="flex items-center gap-2">
-            {keyPrefix && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {keyPrefix ? (
               <span
                 dir="ltr"
                 className="text-[10px] text-[var(--color-text-dim)] font-mono"
-                title="کلیدی که سرور الان داره از env می‌خونه"
+                title="کلیدی که سرور الان داره استفاده می‌کنه"
               >
-                key: {keyPrefix}
+                {keyName ? `${keyName} ` : ""}key: {keyPrefix}
+                {keySource && (
+                  <span
+                    className={`mx-1 px-1 rounded ${
+                      keySource === "db"
+                        ? "bg-emerald-900/40 text-emerald-300"
+                        : "bg-blue-900/40 text-blue-300"
+                    }`}
+                  >
+                    {keySource}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="text-[10px] text-red-300">
+                ⚠️ کلیدی ست نشده
               </span>
             )}
+            <button
+              onClick={() => {
+                setKeyInput("");
+                setKeyNameInput(keyName ?? "");
+                setKeyDialog(true);
+              }}
+              title="کلید HikerAPI رو از همینجا ست کن — بدون redeploy"
+              className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+            >
+              🔑 کلید
+            </button>
             <button
               onClick={runDiagnose}
               disabled={diagnoseLoading}
@@ -1427,6 +1490,91 @@ export default function MonitoredPage() {
                 className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50 hover:opacity-90"
               >
                 بگیر
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {keyDialog && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          onClick={() => setKeyDialog(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-md"
+          >
+            <h2 className="text-base font-semibold mb-1">
+              🔑 کلید HikerAPI
+            </h2>
+            <p className="text-xs text-[var(--color-text-dim)] mb-3">
+              کلید رو اینجا ست کن. توی DB ذخیره می‌شه (با redact) و بر env var
+              ترجیح داده می‌شه. خالی بذار تا fallback به env.
+              {keyPrefix && (
+                <>
+                  <br />
+                  <span dir="ltr" className="font-mono">
+                    فعلاً: {keyName ? `[${keyName}] ` : ""}
+                    {keyPrefix} ({keySource})
+                  </span>
+                </>
+              )}
+            </p>
+            <label className="block text-[11px] text-[var(--color-text-dim)] mb-1">
+              کلید جدید
+            </label>
+            <input
+              dir="ltr"
+              type="password"
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+              placeholder="x-access-key"
+              className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-sm font-mono mb-3"
+            />
+            <label className="block text-[11px] text-[var(--color-text-dim)] mb-1">
+              نام (اختیاری — مثل smmr)
+            </label>
+            <input
+              dir="ltr"
+              type="text"
+              value={keyNameInput}
+              onChange={(e) => setKeyNameInput(e.target.value)}
+              placeholder="smmr"
+              className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-sm mb-4"
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={async () => {
+                  setKeyInput("");
+                  setKeyNameInput("");
+                  await fetch("/api/monitored/usage/key", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ key: "", name: "" }),
+                  });
+                  setKeyDialog(false);
+                  await loadUsage();
+                  await runDiagnose();
+                }}
+                className="text-xs px-3 py-1.5 rounded-md border border-red-700 text-red-300 hover:bg-red-900/30"
+                title="override رو پاک کن، fallback به env"
+              >
+                🗑 پاک کردن override
+              </button>
+              <div className="flex-1" />
+              <button
+                onClick={() => setKeyDialog(false)}
+                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+              >
+                لغو
+              </button>
+              <button
+                onClick={saveKey}
+                disabled={savingKey || !keyInput.trim()}
+                className="text-xs px-4 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+              >
+                {savingKey ? "ذخیره…" : "💾 ذخیره"}
               </button>
             </div>
           </div>

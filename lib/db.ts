@@ -321,6 +321,22 @@ export async function ensureSchema(): Promise<void> {
                 ON CONFLICT (key) DO NOTHING`;
       }
     }
+    // One-time migration: seed the HikerAPI key override + name from
+    // chat so the owner doesn't have to update Vercel env vars and
+    // redeploy just to rotate the key. They can override later via
+    // the 🔑 button on /monitored. We INSERT-only (won't clobber an
+    // existing value), and we use a migration flag so this runs once.
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.hiker_smmr_seed.v1'`;
+      if ((flag as unknown[]).length === 0) {
+        await q`INSERT INTO settings (key, value) VALUES ('hikerApiKeyOverride', 'yuoyucbbl5ogndg5ur4abeovv2hjrwnv')
+                ON CONFLICT (key) DO NOTHING`;
+        await q`INSERT INTO settings (key, value) VALUES ('hikerApiKeyName', 'smmr')
+                ON CONFLICT (key) DO NOTHING`;
+        await q`INSERT INTO settings (key, value) VALUES ('migration.hiker_smmr_seed.v1', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
     // One-time migration: previously, bot-echoed business messages (the
     // AI / auto / friendly replies that Telegram bounces back as
     // business_message with sender_business_bot set) were logged with

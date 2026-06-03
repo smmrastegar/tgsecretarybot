@@ -92,6 +92,13 @@ export const DEFAULT_SETTINGS = {
   hikerApprovedUsd: "10",
   hikerCostPerCallUsd: "0.005",
   hikerOptimizeChangeDetection: "true",
+  // Optional UI-settable override for HIKER_API_KEY. When non-empty
+  // this wins over the env var so the owner can rotate the key
+  // without a Vercel redeploy.
+  hikerApiKeyOverride: "",
+  // Human-readable label for the active key (e.g. "smmr"). Purely
+  // for display.
+  hikerApiKeyName: "",
 } as const satisfies Record<string, string>;
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
@@ -140,6 +147,11 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   hikerApprovedUsd: optional("HIKER_APPROVED_USD"),
   hikerCostPerCallUsd: optional("HIKER_COST_PER_CALL_USD"),
   hikerOptimizeChangeDetection: optional("HIKER_OPTIMIZE_CHANGE_DETECTION"),
+  // Intentionally NOT overridden by env — env is the legacy
+  // HIKER_API_KEY path. The override lives only in DB so the UI
+  // can set it without redeploying.
+  hikerApiKeyOverride: undefined,
+  hikerApiKeyName: optional("HIKER_API_KEY_NAME"),
 };
 
 export function envOverride(key: SettingKey): string | undefined {
