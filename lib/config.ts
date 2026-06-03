@@ -82,6 +82,7 @@ export const DEFAULT_SETTINGS = {
   monitorDefaultCheckPosts: "false",
   monitorDefaultCheckReels: "false",
   monitorDefaultCheckProfile: "false",
+  monitorDefaultCheckMentioned: "false",
 } as const satisfies Record<string, string>;
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
@@ -124,6 +125,7 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   monitorDefaultCheckPosts: optional("MONITOR_DEFAULT_CHECK_POSTS"),
   monitorDefaultCheckReels: optional("MONITOR_DEFAULT_CHECK_REELS"),
   monitorDefaultCheckProfile: optional("MONITOR_DEFAULT_CHECK_PROFILE"),
+  monitorDefaultCheckMentioned: optional("MONITOR_DEFAULT_CHECK_MENTIONED"),
 };
 
 export function envOverride(key: SettingKey): string | undefined {

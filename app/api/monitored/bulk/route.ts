@@ -25,6 +25,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       checkPosts?: boolean;
       checkReels?: boolean;
       checkProfile?: boolean;
+      checkMentioned?: boolean;
       intervalMinutes?: number;
       resetError?: boolean;
     };

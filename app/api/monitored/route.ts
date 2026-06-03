@@ -59,6 +59,7 @@ export async function GET(): Promise<NextResponse> {
       checkPosts: parseBool(settings.monitorDefaultCheckPosts, false),
       checkReels: parseBool(settings.monitorDefaultCheckReels, false),
       checkProfile: parseBool(settings.monitorDefaultCheckProfile, false),
+      checkMentioned: parseBool(settings.monitorDefaultCheckMentioned, false),
     },
   });
 }
@@ -87,6 +88,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       checkPosts: parseBool(settings.monitorDefaultCheckPosts, false),
       checkReels: parseBool(settings.monitorDefaultCheckReels, false),
       checkProfile: parseBool(settings.monitorDefaultCheckProfile, false),
+      checkMentioned: parseBool(settings.monitorDefaultCheckMentioned, false),
     },
   });
   await audit({

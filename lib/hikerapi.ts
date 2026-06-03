@@ -418,6 +418,38 @@ export async function getUserPosts(
     .filter((m) => m.mediaUrl);
 }
 
+export async function getUserMentions(
+  userId: string,
+  username: string,
+): Promise<IGMedia[]> {
+  // "Posts where this user is tagged" — HikerAPI exposes this via
+  // /v2/user/tag/medias (v1 fallback handled by call()).
+  const items = await fetchMediaList("/v2/user/tag/medias", userId);
+  return items
+    .map((m) => {
+      const main = pickMedia(m);
+      const extra = expandCarousel(m);
+      const ent = entitiesOf(m);
+      return {
+        id: pkOf(m),
+        mediaUrl: main.mediaUrl ?? extra[0]?.mediaUrl ?? null,
+        mediaType: main.mediaUrl
+          ? main.mediaType
+          : (extra[0]?.mediaType ?? "photo"),
+        takenAt: takenAtOf(m),
+        permalink: permalinkOf(m, username),
+        caption: captionOf(m),
+        extra,
+        externalLink: ent.externalLink,
+        mentions: ent.mentions,
+        hashtags: ent.hashtags,
+        location: ent.location,
+        textStickers: ent.textStickers,
+      };
+    })
+    .filter((m) => m.mediaUrl);
+}
+
 export async function getUserReels(
   userId: string,
   username: string,

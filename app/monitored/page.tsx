@@ -15,6 +15,7 @@ type Account = {
   checkPosts: boolean;
   checkReels: boolean;
   checkProfile: boolean;
+  checkMentioned: boolean;
   intervalMinutes: number;
   instagramUserId: string | null;
   lastCheckedAt: string | null;
@@ -47,6 +48,7 @@ type Defaults = {
   checkPosts: boolean;
   checkReels: boolean;
   checkProfile: boolean;
+  checkMentioned: boolean;
 };
 
 const INTERVAL_OPTIONS = [5, 10, 15, 30, 60, 120, 240, 480, 1440] as const;
@@ -79,6 +81,7 @@ export default function MonitoredPage() {
     checkPosts: false,
     checkReels: false,
     checkProfile: false,
+    checkMentioned: false,
   });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -135,11 +138,53 @@ export default function MonitoredPage() {
   }
 
   const [refreshing, setRefreshing] = useState<Set<number>>(new Set());
-  async function refreshOne(id: number) {
-    setRefreshing((s) => new Set(s).add(id));
+  const [refreshDialog, setRefreshDialog] = useState<{
+    accountId: number;
+    username: string;
+    stories: boolean;
+    posts: boolean;
+    reels: boolean;
+    mentioned: boolean;
+    countStories: number;
+    countPosts: number;
+    countReels: number;
+    countMentioned: number;
+  } | null>(null);
+
+  function openRefreshDialog(a: Account) {
+    setRefreshDialog({
+      accountId: a.id,
+      username: a.username,
+      stories: a.checkStories || true,
+      posts: a.checkPosts,
+      reels: a.checkReels,
+      mentioned: a.checkMentioned,
+      countStories: 3,
+      countPosts: 3,
+      countReels: 3,
+      countMentioned: 3,
+    });
+  }
+
+  async function runRefresh() {
+    if (!refreshDialog) return;
+    const d = refreshDialog;
+    setRefreshDialog(null);
+    setRefreshing((s) => new Set(s).add(d.accountId));
     try {
-      const r = await fetch(`/api/monitored/${id}/refresh`, {
+      const r = await fetch(`/api/monitored/${d.accountId}/refresh`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stories: d.stories,
+          posts: d.posts,
+          reels: d.reels,
+          mentioned: d.mentioned,
+          countStories: d.countStories,
+          countPosts: d.countPosts,
+          countReels: d.countReels,
+          countMentioned: d.countMentioned,
+        }),
       });
       const j = (await r.json().catch(() => ({}))) as {
         detected?: number;
@@ -162,7 +207,7 @@ export default function MonitoredPage() {
     } finally {
       setRefreshing((s) => {
         const next = new Set(s);
-        next.delete(id);
+        next.delete(d.accountId);
         return next;
       });
     }
@@ -255,6 +300,7 @@ export default function MonitoredPage() {
         monitorDefaultCheckPosts: String(merged.checkPosts),
         monitorDefaultCheckReels: String(merged.checkReels),
         monitorDefaultCheckProfile: String(merged.checkProfile),
+        monitorDefaultCheckMentioned: String(merged.checkMentioned),
       }),
     });
   }
@@ -371,6 +417,7 @@ export default function MonitoredPage() {
               ["checkStories", "📸 stories"],
               ["checkPosts", "🖼 posts"],
               ["checkReels", "🎬 reels"],
+              ["checkMentioned", "🏷 mentioned"],
               ["checkProfile", "👤 profile"],
             ] as const
           ).map(([key, label]) => (
@@ -564,6 +611,7 @@ export default function MonitoredPage() {
                 ["checkStories", "📸 stories"],
                 ["checkPosts", "🖼 posts"],
                 ["checkReels", "🎬 reels"],
+                ["checkMentioned", "🏷 mentioned"],
                 ["checkProfile", "👤 profile"],
               ] as const
             ).map(([key, label]) => (
@@ -673,9 +721,9 @@ export default function MonitoredPage() {
                     </button>
                   )}
                   <button
-                    onClick={() => refreshOne(a.id)}
+                    onClick={() => openRefreshDialog(a)}
                     disabled={refreshing.has(a.id)}
-                    title="همین الان stories + ۳ پست/ریل آخر رو بگیر"
+                    title="فقط چیزایی رو که می‌خوای انتخاب کن و دوباره بگیر"
                     className="ml-auto text-[10px] px-1.5 py-0.5 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
                   >
                     {refreshing.has(a.id) ? "…" : "🔄"}
@@ -693,6 +741,7 @@ export default function MonitoredPage() {
                       ["checkStories", "📸 stories", a.checkStories],
                       ["checkPosts", "🖼 posts", a.checkPosts],
                       ["checkReels", "🎬 reels", a.checkReels],
+                      ["checkMentioned", "🏷 mentioned", a.checkMentioned],
                       ["checkProfile", "👤 profile", a.checkProfile],
                     ] as const
                   ).map(([key, label, value]) => (
@@ -778,6 +827,92 @@ export default function MonitoredPage() {
             ))}
           </div>
         </Card>
+      )}
+
+      {refreshDialog && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          onClick={() => setRefreshDialog(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-md"
+          >
+            <h2 className="text-base font-semibold mb-1">
+              🔄 دوباره گرفتن @{refreshDialog.username}
+            </h2>
+            <p className="text-xs text-[var(--color-text-dim)] mb-4">
+              کدوم‌ها رو می‌خوای + چند تای آخر هر کدوم
+            </p>
+            <div className="flex flex-col gap-2 mb-4 text-sm">
+              {(
+                [
+                  ["stories", "📸 Stories", "countStories"],
+                  ["posts", "🖼 Posts", "countPosts"],
+                  ["reels", "🎬 Reels", "countReels"],
+                  ["mentioned", "🏷 Mentioned (در پست‌های دیگران تگ شده)", "countMentioned"],
+                ] as const
+              ).map(([flag, label, countKey]) => (
+                <div
+                  key={flag}
+                  className="flex items-center gap-2 p-2 rounded-md border border-[var(--color-border)]"
+                >
+                  <input
+                    type="checkbox"
+                    checked={refreshDialog[flag]}
+                    onChange={(e) =>
+                      setRefreshDialog({
+                        ...refreshDialog,
+                        [flag]: e.target.checked,
+                      })
+                    }
+                  />
+                  <label className="flex-1 cursor-pointer">{label}</label>
+                  <span className="text-[var(--color-text-dim)] text-xs">
+                    تعداد:
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    disabled={!refreshDialog[flag]}
+                    value={refreshDialog[countKey]}
+                    onChange={(e) =>
+                      setRefreshDialog({
+                        ...refreshDialog,
+                        [countKey]: Math.max(
+                          1,
+                          Math.min(20, Number(e.target.value) || 3),
+                        ),
+                      })
+                    }
+                    className="w-16 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs disabled:opacity-50"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setRefreshDialog(null)}
+                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+              >
+                لغو
+              </button>
+              <button
+                onClick={runRefresh}
+                disabled={
+                  !refreshDialog.stories &&
+                  !refreshDialog.posts &&
+                  !refreshDialog.reels &&
+                  !refreshDialog.mentioned
+                }
+                className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50 hover:opacity-90"
+              >
+                بگیر
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Shell>
   );

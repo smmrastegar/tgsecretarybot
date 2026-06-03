@@ -15,6 +15,7 @@ import {
 } from "./db";
 import {
   getUserByUsername,
+  getUserMentions,
   getUserPosts,
   getUserReels,
   getUserStories,
@@ -45,14 +46,30 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+export type MediaKind = "story" | "post" | "reel" | "mentioned";
+
 export function captionFor(args: {
   account: MonitoredAccount;
-  kind: "story" | "post" | "reel";
+  kind: MediaKind;
   media: IGMedia;
 }): string {
   const { account, kind, media } = args;
-  const kindWord = kind === "story" ? "Story" : kind === "reel" ? "Reel" : "Post";
-  const kindEmoji = kind === "story" ? "📸" : kind === "reel" ? "🎬" : "🖼";
+  const kindWord =
+    kind === "story"
+      ? "Story"
+      : kind === "reel"
+        ? "Reel"
+        : kind === "mentioned"
+          ? "Tagged"
+          : "Post";
+  const kindEmoji =
+    kind === "story"
+      ? "📸"
+      : kind === "reel"
+        ? "🎬"
+        : kind === "mentioned"
+          ? "🏷"
+          : "🖼";
   const lines: string[] = [];
 
   // Full name first, then handle line.
@@ -156,14 +173,34 @@ export async function processAccount(args: {
   // flood the storage channel with someone's entire feed history.
   postsLimit?: number;
   reelsLimit?: number;
+  mentionedLimit?: number;
+  storiesLimit?: number;
   forceAllKinds?: boolean;
+  // When set, ignore the account's check_* flags and use these
+  // instead (per-call override from the refresh dialog).
+  kindOverrides?: {
+    story?: boolean;
+    post?: boolean;
+    reel?: boolean;
+    mentioned?: boolean;
+  };
 }): Promise<{
   detected: number;
   forwarded: number;
   errors: string[];
   latestSeen: Date | null;
 }> {
-  const { account, target, bot, postsLimit, reelsLimit, forceAllKinds } = args;
+  const {
+    account,
+    target,
+    bot,
+    postsLimit,
+    reelsLimit,
+    mentionedLimit,
+    storiesLimit,
+    forceAllKinds,
+    kindOverrides,
+  } = args;
   const errors: string[] = [];
   let detected = 0;
   let forwarded = 0;
@@ -187,27 +224,43 @@ export async function processAccount(args: {
     }
   }
 
+  const want = (key: "story" | "post" | "reel" | "mentioned"): boolean => {
+    if (kindOverrides && kindOverrides[key] !== undefined)
+      return Boolean(kindOverrides[key]);
+    if (forceAllKinds) return true;
+    if (key === "story") return account.checkStories;
+    if (key === "post") return account.checkPosts;
+    if (key === "reel") return account.checkReels;
+    return account.checkMentioned;
+  };
   const tasks: Array<{
-    kind: "story" | "post" | "reel";
+    kind: MediaKind;
     fn: () => Promise<IGMedia[]>;
     limit?: number;
   }> = [];
-  if (forceAllKinds || account.checkStories)
+  if (want("story"))
     tasks.push({
       kind: "story",
       fn: () => getUserStories(userId!, account.username),
+      limit: storiesLimit,
     });
-  if (forceAllKinds || account.checkPosts)
+  if (want("post"))
     tasks.push({
       kind: "post",
       fn: () => getUserPosts(userId!, account.username),
       limit: postsLimit,
     });
-  if (forceAllKinds || account.checkReels)
+  if (want("reel"))
     tasks.push({
       kind: "reel",
       fn: () => getUserReels(userId!, account.username),
       limit: reelsLimit,
+    });
+  if (want("mentioned"))
+    tasks.push({
+      kind: "mentioned",
+      fn: () => getUserMentions(userId!, account.username),
+      limit: mentionedLimit,
     });
 
   for (const task of tasks) {

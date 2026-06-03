@@ -9,12 +9,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// On-demand "fetch now" for a single account. Re-runs the same
-// pipeline the cron uses (respecting the per-account check_*
-// flags) and grabs the most recent 3 posts / 3 reels on top of
-// whatever stories are live. Used by the 🔄 button on /monitored.
+// On-demand "fetch now" for a single account. The body is optional;
+// if you POST {} we run with the account's existing check_* flags
+// and default count=3 for each kind. The 🔄 dialog on /monitored
+// sends an explicit set of kinds + counts.
 export async function POST(
-  _request: Request,
+  request: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   let session;
@@ -48,12 +48,42 @@ export async function POST(
       { status: 412 },
     );
   }
+  const body = (await request.json().catch(() => ({}))) as {
+    stories?: boolean;
+    posts?: boolean;
+    reels?: boolean;
+    mentioned?: boolean;
+    countStories?: number;
+    countPosts?: number;
+    countReels?: number;
+    countMentioned?: number;
+  };
+  const hasExplicit =
+    body.stories !== undefined ||
+    body.posts !== undefined ||
+    body.reels !== undefined ||
+    body.mentioned !== undefined;
+  const clamp = (n: unknown, def = 3) => {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return def;
+    return Math.max(1, Math.min(20, Math.round(v)));
+  };
   const result = await processAccount({
     account,
     target,
     bot: getBot(),
-    postsLimit: 3,
-    reelsLimit: 3,
+    kindOverrides: hasExplicit
+      ? {
+          story: Boolean(body.stories),
+          post: Boolean(body.posts),
+          reel: Boolean(body.reels),
+          mentioned: Boolean(body.mentioned),
+        }
+      : undefined,
+    storiesLimit: clamp(body.countStories),
+    postsLimit: clamp(body.countPosts),
+    reelsLimit: clamp(body.countReels),
+    mentionedLimit: clamp(body.countMentioned),
   });
   await audit({
     actorId: session.userId,
@@ -64,6 +94,7 @@ export async function POST(
       detected: result.detected,
       forwarded: result.forwarded,
       errorCount: result.errors.length,
+      kinds: body,
     },
   });
   return NextResponse.json({

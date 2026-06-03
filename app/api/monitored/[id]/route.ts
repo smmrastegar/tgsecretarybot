@@ -32,6 +32,7 @@ export async function PATCH(
     checkPosts?: boolean;
     checkReels?: boolean;
     checkProfile?: boolean;
+    checkMentioned?: boolean;
     intervalMinutes?: number;
     resetError?: boolean;
   };
@@ -46,6 +47,7 @@ export async function PATCH(
     body.checkPosts !== undefined ||
     body.checkReels !== undefined ||
     body.checkProfile !== undefined ||
+    body.checkMentioned !== undefined ||
     body.intervalMinutes !== undefined
   ) {
     const interval =
@@ -57,6 +59,7 @@ export async function PATCH(
       checkPosts: body.checkPosts,
       checkReels: body.checkReels,
       checkProfile: body.checkProfile,
+      checkMentioned: body.checkMentioned,
       intervalMinutes: interval,
     });
   }

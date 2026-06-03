@@ -281,6 +281,7 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_posts BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_reels BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_profile BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_mentioned BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS interval_minutes INT NOT NULL DEFAULT 30`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS instagram_user_id TEXT`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS full_name TEXT`;
@@ -2934,6 +2935,7 @@ export type MonitoredAccount = {
   checkPosts: boolean;
   checkReels: boolean;
   checkProfile: boolean;
+  checkMentioned: boolean;
   intervalMinutes: number;
   instagramUserId: string | null;
   fullName: string | null;
@@ -2957,6 +2959,7 @@ function rowToMonitored(r: Record<string, unknown>): MonitoredAccount {
     checkPosts: Boolean(r.check_posts),
     checkReels: Boolean(r.check_reels),
     checkProfile: Boolean(r.check_profile),
+    checkMentioned: Boolean(r.check_mentioned),
     intervalMinutes: Number(r.interval_minutes ?? 30),
     instagramUserId: (r.instagram_user_id as string) ?? null,
     fullName: (r.full_name as string) ?? null,
@@ -2977,7 +2980,7 @@ export async function listMonitoredAccounts(opts: {
   const rows = await sql()`
     SELECT id, platform, username, url, external_id, topic_id, enabled,
            check_stories, check_posts, check_reels, check_profile,
-           interval_minutes, instagram_user_id, full_name,
+           check_mentioned, interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, created_at, updated_at
     FROM monitored_accounts
     WHERE (${opts.platform ?? null}::text IS NULL OR platform = ${opts.platform ?? null})
@@ -3053,7 +3056,7 @@ export async function getMonitoredAccount(
   const rows = await sql()`
     SELECT id, platform, username, url, external_id, topic_id, enabled,
            check_stories, check_posts, check_reels, check_profile,
-           interval_minutes, instagram_user_id, full_name,
+           check_mentioned, interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, created_at, updated_at
     FROM monitored_accounts WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -3071,7 +3074,7 @@ export async function dueMonitoredAccounts(
   const rows = await sql()`
     SELECT id, platform, username, url, external_id, topic_id, enabled,
            check_stories, check_posts, check_reels, check_profile,
-           interval_minutes, instagram_user_id, full_name,
+           check_mentioned, interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, created_at, updated_at
     FROM monitored_accounts
     WHERE enabled = TRUE
@@ -3095,6 +3098,7 @@ export async function addMonitoredAccount(args: {
     checkPosts?: boolean;
     checkReels?: boolean;
     checkProfile?: boolean;
+    checkMentioned?: boolean;
   };
 }): Promise<MonitoredAccount | null> {
   if (!hasDb()) return null;
@@ -3105,7 +3109,7 @@ export async function addMonitoredAccount(args: {
   const rows = await sql()`
     INSERT INTO monitored_accounts (
       platform, username, url, interval_minutes,
-      check_stories, check_posts, check_reels, check_profile
+      check_stories, check_posts, check_reels, check_profile, check_mentioned
     )
     VALUES (
       ${args.platform}, ${username},
@@ -3114,12 +3118,13 @@ export async function addMonitoredAccount(args: {
       ${d.checkStories ?? true},
       ${d.checkPosts ?? false},
       ${d.checkReels ?? false},
-      ${d.checkProfile ?? false}
+      ${d.checkProfile ?? false},
+      ${d.checkMentioned ?? false}
     )
     ON CONFLICT (platform, username) DO UPDATE SET updated_at = NOW()
     RETURNING id, platform, username, url, external_id, topic_id, enabled,
               check_stories, check_posts, check_reels, check_profile,
-              interval_minutes, instagram_user_id, full_name,
+              check_mentioned, interval_minutes, instagram_user_id, full_name,
               last_checked_at, last_story_at, last_error, created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToMonitored(r) : null;
@@ -3132,6 +3137,7 @@ export async function updateMonitoredAccountConfig(
     checkPosts?: boolean;
     checkReels?: boolean;
     checkProfile?: boolean;
+    checkMentioned?: boolean;
     intervalMinutes?: number;
   },
 ): Promise<void> {
@@ -3142,6 +3148,7 @@ export async function updateMonitoredAccountConfig(
       check_posts = COALESCE(${patch.checkPosts ?? null}, check_posts),
       check_reels = COALESCE(${patch.checkReels ?? null}, check_reels),
       check_profile = COALESCE(${patch.checkProfile ?? null}, check_profile),
+      check_mentioned = COALESCE(${patch.checkMentioned ?? null}, check_mentioned),
       interval_minutes = COALESCE(${
         patch.intervalMinutes ?? null
       }::int, interval_minutes),
@@ -3161,6 +3168,7 @@ export async function bulkUpdateMonitoredAccounts(
     checkPosts?: boolean;
     checkReels?: boolean;
     checkProfile?: boolean;
+    checkMentioned?: boolean;
     intervalMinutes?: number;
     resetError?: boolean;
   },
@@ -3174,6 +3182,7 @@ export async function bulkUpdateMonitoredAccounts(
       check_posts = COALESCE(${patch.checkPosts ?? null}::boolean, check_posts),
       check_reels = COALESCE(${patch.checkReels ?? null}::boolean, check_reels),
       check_profile = COALESCE(${patch.checkProfile ?? null}::boolean, check_profile),
+      check_mentioned = COALESCE(${patch.checkMentioned ?? null}::boolean, check_mentioned),
       interval_minutes = COALESCE(${
         patch.intervalMinutes ?? null
       }::int, interval_minutes),
