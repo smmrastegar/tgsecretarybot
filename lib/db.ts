@@ -504,6 +504,28 @@ export async function ensureSchema(): Promise<void> {
     await q`CREATE INDEX IF NOT EXISTS ai_usage_tenant_idx ON ai_usage (tenant_id, created_at DESC) WHERE tenant_id IS NOT NULL`;
     await q`CREATE INDEX IF NOT EXISTS thread_summaries_tenant_idx ON thread_summaries (tenant_id) WHERE tenant_id IS NOT NULL`;
 
+    // Fallback admin seed: if admin_users ended up empty (e.g. the
+    // ADMIN_USER_IDS env wasn't set when commit 1 first ran), promote
+    // every existing business_connection owner to admin so the human
+    // who set up the bot can log in to /admin and take over. Idempotent
+    // — once anyone is in admin_users this no-ops.
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.admin_seed_existing_owners.v1'`;
+      if ((flag as unknown[]).length === 0) {
+        const adminCount = await q`SELECT COUNT(*)::int AS n FROM admin_users`;
+        const n = Number((adminCount[0] as { n: number }).n);
+        if (n === 0) {
+          await q`
+            INSERT INTO admin_users (user_id, username, first_name)
+            SELECT DISTINCT user_id, username, first_name
+            FROM business_connections
+            WHERE user_id IS NOT NULL
+            ON CONFLICT (user_id) DO NOTHING`;
+        }
+        await q`INSERT INTO settings (key, value) VALUES ('migration.admin_seed_existing_owners.v1', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
     // One-time migration: bootstrap the multi-tenant world.
     //   1. Seed admin_users from ADMIN_USER_IDS env CSV.
     //   2. Create a "Default" tenant if none exist.
