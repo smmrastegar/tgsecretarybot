@@ -1758,12 +1758,30 @@ function BudgetSettingsDialog(props: {
   async function save() {
     setSaving(true);
     try {
+      // budget + step are per-tenant now (Commit 2 moved them out of
+      // global settings into the tenants table). Route them through
+      // the approve endpoint, which already knows how to write them.
+      const budgetNum = Number(budgetUsd);
+      const stepNum = Number(stepUsd);
+      if (Number.isFinite(budgetNum) || Number.isFinite(stepNum)) {
+        await fetch("/api/monitored/budget/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            budgetUsd: Number.isFinite(budgetNum) ? budgetNum : undefined,
+            stepUsd: Number.isFinite(stepNum) ? stepNum : undefined,
+            // Don't bump approved — just adjust caps + step. Pass
+            // current approved through unchanged.
+            approvedUsd: budget.approvedUsd,
+          }),
+        });
+      }
+      // cost per call + optimize toggle are still global estimates,
+      // shared across tenants.
       await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          hikerBudgetUsd: budgetUsd,
-          hikerApprovalStepUsd: stepUsd,
           hikerCostPerCallUsd: costPerCallUsd,
           hikerOptimizeChangeDetection: String(optimize),
         }),
