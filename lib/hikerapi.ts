@@ -459,14 +459,23 @@ export async function verifyKeyLive(): Promise<{
     const res = await fetch(url.toString(), {
       headers: { "x-access-key": key, Accept: "application/json" },
     });
-    const txt = (await res.text()).slice(0, 400);
+    // Read full body so JSON.parse doesn't trip on a truncated tail
+    // (HikerAPI's profile_pic_url alone blows past 400 chars). We
+    // only truncate when packaging the response back for the UI.
+    const fullTxt = await res.text();
+    const displayBody = fullTxt.slice(0, 400);
     if (!res.ok) {
-      return { keyWorks: false, sample: null, status: res.status, body: txt };
+      return {
+        keyWorks: false,
+        sample: null,
+        status: res.status,
+        body: displayBody,
+      };
     }
     // Cost-tracking — we used $0.001 on the test call.
     await recordCall({ path: "/v1/user/by/username" }).catch(() => {});
     try {
-      const j = JSON.parse(txt) as Record<string, unknown>;
+      const j = JSON.parse(fullTxt) as Record<string, unknown>;
       const u = (j.user as Record<string, unknown>) ?? j;
       const id = pkOf(u);
       const username =
@@ -475,10 +484,15 @@ export async function verifyKeyLive(): Promise<{
         keyWorks: !!id,
         sample: id ? { id, username } : null,
         status: res.status,
-        body: txt,
+        body: displayBody,
       };
     } catch {
-      return { keyWorks: false, sample: null, status: res.status, body: txt };
+      return {
+        keyWorks: false,
+        sample: null,
+        status: res.status,
+        body: displayBody,
+      };
     }
   } catch (err) {
     return {
