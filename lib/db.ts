@@ -445,6 +445,114 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE processed_updates ADD COLUMN IF NOT EXISTS chat_id BIGINT`;
     await q`ALTER TABLE processed_updates ADD COLUMN IF NOT EXISTS preview TEXT`;
     await q`CREATE INDEX IF NOT EXISTS processed_updates_type_idx ON processed_updates (update_type, processed_at DESC) WHERE update_type IS NOT NULL`;
+
+    // --- Multi-tenant foundation ---
+    // A tenant is an isolated workspace. Each holds its own business
+    // connections, monitored Instagram accounts, message history,
+    // budget, and (later) API key overrides. Tenants are created
+    // and managed by admins; ordinary users land in exactly one
+    // tenant based on the business_connection they own.
+    await q`
+      CREATE TABLE IF NOT EXISTS tenants (
+        id                      BIGSERIAL PRIMARY KEY,
+        name                    TEXT NOT NULL UNIQUE,
+        plan                    TEXT NOT NULL DEFAULT 'starter',
+        hiker_budget_usd        NUMERIC(10, 2) NOT NULL DEFAULT 50,
+        hiker_approved_usd      NUMERIC(10, 2) NOT NULL DEFAULT 10,
+        hiker_approval_step_usd NUMERIC(10, 2) NOT NULL DEFAULT 10,
+        monitored_cap           INT NOT NULL DEFAULT 50,
+        is_enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+        notes                   TEXT,
+        created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`
+      CREATE TABLE IF NOT EXISTS admin_users (
+        user_id    BIGINT PRIMARY KEY,
+        username   TEXT,
+        first_name TEXT,
+        added_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        added_by   BIGINT
+      )`;
+    // tenant_id columns on every tenant-scoped table. All nullable
+    // for now so the existing routes (which don't filter yet) keep
+    // working. Subsequent commits will enforce NOT NULL where it
+    // makes sense.
+    await q`ALTER TABLE business_connections ADD COLUMN IF NOT EXISTS tenant_id BIGINT REFERENCES tenants(id) ON DELETE SET NULL`;
+    await q`ALTER TABLE messages_log         ADD COLUMN IF NOT EXISTS tenant_id BIGINT`;
+    await q`ALTER TABLE chat_rules           ADD COLUMN IF NOT EXISTS tenant_id BIGINT`;
+    await q`ALTER TABLE monitored_accounts   ADD COLUMN IF NOT EXISTS tenant_id BIGINT`;
+    await q`ALTER TABLE monitor_events       ADD COLUMN IF NOT EXISTS tenant_id BIGINT`;
+    await q`ALTER TABLE hikerapi_usage       ADD COLUMN IF NOT EXISTS tenant_id BIGINT`;
+    await q`ALTER TABLE ai_usage             ADD COLUMN IF NOT EXISTS tenant_id BIGINT`;
+    await q`ALTER TABLE thread_summaries     ADD COLUMN IF NOT EXISTS tenant_id BIGINT`;
+    await q`ALTER TABLE extracted_items      ADD COLUMN IF NOT EXISTS tenant_id BIGINT`;
+    await q`ALTER TABLE audit_log            ADD COLUMN IF NOT EXISTS tenant_id BIGINT`;
+    await q`ALTER TABLE ask_queries          ADD COLUMN IF NOT EXISTS tenant_id BIGINT`;
+    await q`CREATE INDEX IF NOT EXISTS business_connections_tenant_idx ON business_connections (tenant_id) WHERE tenant_id IS NOT NULL`;
+    await q`CREATE INDEX IF NOT EXISTS messages_log_tenant_idx ON messages_log (tenant_id, created_at DESC) WHERE tenant_id IS NOT NULL`;
+    await q`CREATE INDEX IF NOT EXISTS chat_rules_tenant_idx ON chat_rules (tenant_id) WHERE tenant_id IS NOT NULL`;
+    await q`CREATE INDEX IF NOT EXISTS monitored_accounts_tenant_idx ON monitored_accounts (tenant_id) WHERE tenant_id IS NOT NULL`;
+    await q`CREATE INDEX IF NOT EXISTS monitor_events_tenant_idx ON monitor_events (tenant_id, detected_at DESC) WHERE tenant_id IS NOT NULL`;
+    await q`CREATE INDEX IF NOT EXISTS hikerapi_usage_tenant_idx ON hikerapi_usage (tenant_id, called_at DESC) WHERE tenant_id IS NOT NULL`;
+    await q`CREATE INDEX IF NOT EXISTS ai_usage_tenant_idx ON ai_usage (tenant_id, created_at DESC) WHERE tenant_id IS NOT NULL`;
+    await q`CREATE INDEX IF NOT EXISTS thread_summaries_tenant_idx ON thread_summaries (tenant_id) WHERE tenant_id IS NOT NULL`;
+
+    // One-time migration: bootstrap the multi-tenant world.
+    //   1. Seed admin_users from ADMIN_USER_IDS env CSV.
+    //   2. Create a "Default" tenant if none exist.
+    //   3. Attach every existing business_connection to that
+    //      Default tenant.
+    //   4. Backfill all tenant_scoped tables row-by-row from the
+    //      owner_user_id / business_connection_id columns they
+    //      already have — orphan rows go to Default too.
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.tenants_bootstrap.v1'`;
+      if ((flag as unknown[]).length === 0) {
+        // Seed admins from env CSV.
+        const adminCsv = (process.env.ADMIN_USER_IDS ?? "").trim();
+        if (adminCsv) {
+          for (const part of adminCsv.split(",")) {
+            const id = Number(part.trim());
+            if (!Number.isFinite(id) || id === 0) continue;
+            await q`INSERT INTO admin_users (user_id) VALUES (${id})
+                    ON CONFLICT (user_id) DO NOTHING`;
+          }
+        }
+        // Default tenant.
+        const tRows = await q`
+          INSERT INTO tenants (name, plan, hiker_budget_usd, hiker_approved_usd, hiker_approval_step_usd, notes)
+          VALUES ('Default', 'starter', 50, 10, 10, 'Auto-created by multi-tenant migration')
+          ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
+          RETURNING id`;
+        const defaultId = Number((tRows[0] as { id: string | number }).id);
+        // Attach every existing business connection to Default
+        // unless it's already attached somewhere.
+        await q`UPDATE business_connections
+                SET tenant_id = ${defaultId}, updated_at = NOW()
+                WHERE tenant_id IS NULL`;
+        // Backfill tenant-scoped tables via the business_connection
+        // join when possible, otherwise straight to Default.
+        await q`UPDATE messages_log AS m
+                SET tenant_id = bc.tenant_id
+                FROM business_connections bc
+                WHERE m.tenant_id IS NULL
+                  AND m.business_connection_id = bc.id
+                  AND bc.tenant_id IS NOT NULL`;
+        await q`UPDATE messages_log SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+        await q`UPDATE chat_rules SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+        await q`UPDATE monitored_accounts SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+        await q`UPDATE monitor_events SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+        await q`UPDATE hikerapi_usage SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+        await q`UPDATE ai_usage SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+        await q`UPDATE thread_summaries SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+        await q`UPDATE extracted_items SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+        await q`UPDATE audit_log SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+        await q`UPDATE ask_queries SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+        await q`INSERT INTO settings (key, value) VALUES ('migration.tenants_bootstrap.v1', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
   })().catch((err) => {
     schemaPromise = null;
     throw err;
@@ -484,6 +592,14 @@ export async function upsertBusinessConnection(args: {
       can_reply = EXCLUDED.can_reply,
       is_enabled = EXCLUDED.is_enabled,
       updated_at = NOW()`;
+  // If this row landed without a tenant_id (brand-new connection),
+  // park it on Default so admin can move it later. We never
+  // clobber an existing assignment — an admin may have already
+  // routed this connection to a non-Default tenant.
+  await q`
+    UPDATE business_connections
+    SET tenant_id = (SELECT id FROM tenants WHERE name = 'Default' LIMIT 1)
+    WHERE id = ${args.id} AND tenant_id IS NULL`;
 }
 
 export async function getBusinessConnection(

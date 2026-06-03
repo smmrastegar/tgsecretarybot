@@ -42,6 +42,12 @@ export const config = {
     "dev-session-secret-change-me",
 
   publicAppUrl: optional("NEXT_PUBLIC_APP_URL"),
+
+  // Multi-tenant bootstrap. Comma-separated Telegram user IDs that
+  // are seeded into admin_users on first run. Required for the
+  // initial admin to log in — after that admins can be added /
+  // removed via the /admin UI.
+  adminUserIdsCsv: optional("ADMIN_USER_IDS") ?? "",
 } as const;
 
 export const DEFAULT_SETTINGS = {
