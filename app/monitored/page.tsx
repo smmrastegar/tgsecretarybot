@@ -426,6 +426,61 @@ export default function MonitoredPage() {
             انتخاب همه ({filtered.length})
           </button>
           <button
+            onClick={() => {
+              const errs = filtered
+                .filter((a) => a.lastError)
+                .map((a) => a.id);
+              setSelected(new Set(errs));
+            }}
+            disabled={
+              filtered.filter((a) => a.lastError).length === 0
+            }
+            className="px-2 py-1 rounded-md border border-amber-700 text-amber-300 hover:bg-amber-900/30 disabled:opacity-50"
+            title="فقط اکانت‌هایی که خطا دارن انتخاب کن"
+          >
+            ⚠️ خطاها ({filtered.filter((a) => a.lastError).length})
+          </button>
+          <button
+            onClick={async () => {
+              const errs = filtered
+                .filter((a) => a.lastError)
+                .map((a) => a.id);
+              if (errs.length === 0) return;
+              if (!confirm(`${errs.length} اکانت خطاخورده ریست بشه؟`))
+                return;
+              setBulking(true);
+              try {
+                const r = await fetch("/api/monitored/bulk", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    op: "update",
+                    ids: errs,
+                    patch: { resetError: true },
+                  }),
+                });
+                if (!r.ok) {
+                  const j = (await r.json().catch(() => ({}))) as {
+                    error?: string;
+                  };
+                  alert(`خطا: ${j.error ?? r.status}`);
+                } else {
+                  await load();
+                }
+              } finally {
+                setBulking(false);
+              }
+            }}
+            disabled={
+              bulking ||
+              filtered.filter((a) => a.lastError).length === 0
+            }
+            className="px-2 py-1 rounded-md border border-amber-700 bg-amber-900/30 text-amber-200 hover:bg-amber-900/50 disabled:opacity-50"
+            title="همه‌ی اکانت‌های خطاخورده رو با یک کلیک ریست کن"
+          >
+            🔁 ریست همه‌ی خطاها
+          </button>
+          <button
             onClick={() => setSelected(new Set())}
             disabled={selected.size === 0}
             className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
