@@ -652,13 +652,19 @@ export async function maybeAutoSummarizeOnArrival(args: {
     // Previous logged row (any kind, owner or other) BEFORE the row
     // that handleBusinessMessage / handleGroupMessage just inserted.
     const rows = await sql()`
-      SELECT created_at FROM messages_log
+      SELECT created_at, from_owner FROM messages_log
       WHERE chat_id = ${msg.chat.id}
         AND message_id <> ${msg.message_id}
       ORDER BY created_at DESC
       LIMIT 1`;
-    const prev = rows[0] as { created_at: Date } | undefined;
+    const prev = rows[0] as
+      | { created_at: Date; from_owner: boolean }
+      | undefined;
     if (!prev) return;
+    // If the previous message was from the OWNER, the previous thread
+    // was "open" (we replied last, waiting for them) — don't summarise
+    // or generate a suggested reply, even if a long gap passed.
+    if (prev.from_owner) return;
     const gapMs = Date.now() - new Date(prev.created_at).getTime();
     if (gapMs < gapMin * 60_000) return;
     // The previous thread JUST closed (we got the first message after
@@ -716,6 +722,12 @@ export async function deliverAutoSummary(args: {
     .filter((m) => m.threadNo === threadNo)
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   if (threadMsgs.length === 0) return false;
+  // If the OWNER sent the last message of this thread, the thread is
+  // still "open" from our side — we already replied; no summary or
+  // suggested reply needed regardless of how long the silence is.
+  if (threadMsgs[threadMsgs.length - 1]!.fromOwner) {
+    return false;
+  }
 
   const settings = await getSettings();
   const chatLabel =
