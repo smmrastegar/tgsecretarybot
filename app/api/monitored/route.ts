@@ -5,13 +5,20 @@ import { config } from "@/lib/config";
 import {
   addMonitoredAccount,
   audit,
+  listChatsByFunction,
   listMonitoredAccounts,
   listRecentMonitorEvents,
 } from "@/lib/db";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
+import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function parseBool(v: string | undefined, def: boolean): boolean {
+  if (v == null) return def;
+  return v.toLowerCase() === "true" || v === "1" || v.toLowerCase() === "on";
+}
 
 export async function GET(): Promise<NextResponse> {
   try {
@@ -19,11 +26,41 @@ export async function GET(): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const [accounts, events] = await Promise.all([
+  const [accounts, events, storages, downloaders, settings] = await Promise.all([
     listMonitoredAccounts({ platform: "instagram" }),
     listRecentMonitorEvents(100),
+    listChatsByFunction("storage"),
+    listChatsByFunction("downloader"),
+    getSettings(),
   ]);
-  return NextResponse.json({ accounts, events });
+  const target = storages[0] ?? downloaders[0] ?? null;
+  return NextResponse.json({
+    accounts,
+    events,
+    storageChats: storages.map((c) => ({
+      chatId: c.chatId,
+      chatTitle: c.chatTitle,
+      firstName: c.firstName,
+      lastName: c.lastName,
+      nickname: c.nickname,
+    })),
+    downloaderChats: downloaders.map((c) => ({
+      chatId: c.chatId,
+      chatTitle: c.chatTitle,
+      firstName: c.firstName,
+      lastName: c.lastName,
+      nickname: c.nickname,
+    })),
+    targetChatId: target?.chatId ?? null,
+    defaults: {
+      intervalMinutes:
+        Number(settings.monitorDefaultIntervalMinutes) || 30,
+      checkStories: parseBool(settings.monitorDefaultCheckStories, true),
+      checkPosts: parseBool(settings.monitorDefaultCheckPosts, false),
+      checkReels: parseBool(settings.monitorDefaultCheckReels, false),
+      checkProfile: parseBool(settings.monitorDefaultCheckProfile, false),
+    },
+  });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -38,14 +75,19 @@ export async function POST(request: Request): Promise<NextResponse> {
   };
   const username = (body.username ?? "").trim().replace(/^@/, "").toLowerCase();
   if (!username || !/^[a-z0-9._]+$/.test(username)) {
-    return NextResponse.json(
-      { error: "username invalid" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "username invalid" }, { status: 400 });
   }
+  const settings = await getSettings();
   const account = await addMonitoredAccount({
     platform: "instagram",
     username,
+    defaults: {
+      intervalMinutes: Number(settings.monitorDefaultIntervalMinutes) || 30,
+      checkStories: parseBool(settings.monitorDefaultCheckStories, true),
+      checkPosts: parseBool(settings.monitorDefaultCheckPosts, false),
+      checkReels: parseBool(settings.monitorDefaultCheckReels, false),
+      checkProfile: parseBool(settings.monitorDefaultCheckProfile, false),
+    },
   });
   await audit({
     actorId: session.userId,
@@ -54,10 +96,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     target: account ? String(account.id) : null,
     details: { username },
   });
-  // Immediate on-add fetch: pull the last 3 posts + current stories
-  // (regardless of the per-account flags — owner expects to see
-  // something right away to confirm the account is reachable). The
-  // cron continues normal duty afterwards.
   let detected = 0;
   let forwarded = 0;
   const errors: string[] = [];

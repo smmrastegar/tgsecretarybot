@@ -3079,20 +3079,40 @@ export async function dueMonitoredAccounts(
   return (rows as Array<Record<string, unknown>>).map(rowToMonitored);
 }
 
-// Manual add: insert a single account by username. Returns the row.
+// Manual add: insert a single account by username. Pulls defaults
+// (which kinds to check + how often) from the settings table so the
+// owner can control behaviour of newly-added accounts in one place.
 export async function addMonitoredAccount(args: {
   platform: string;
   username: string;
   url?: string | null;
+  defaults?: {
+    intervalMinutes?: number;
+    checkStories?: boolean;
+    checkPosts?: boolean;
+    checkReels?: boolean;
+    checkProfile?: boolean;
+  };
 }): Promise<MonitoredAccount | null> {
   if (!hasDb()) return null;
   await ensureSchema();
   const username = args.username.trim().toLowerCase();
   if (!username) return null;
+  const d = args.defaults ?? {};
   const rows = await sql()`
-    INSERT INTO monitored_accounts (platform, username, url)
-    VALUES (${args.platform}, ${username},
-            ${args.url ?? `https://instagram.com/${username}`})
+    INSERT INTO monitored_accounts (
+      platform, username, url, interval_minutes,
+      check_stories, check_posts, check_reels, check_profile
+    )
+    VALUES (
+      ${args.platform}, ${username},
+      ${args.url ?? `https://instagram.com/${username}`},
+      ${d.intervalMinutes ?? 30},
+      ${d.checkStories ?? true},
+      ${d.checkPosts ?? false},
+      ${d.checkReels ?? false},
+      ${d.checkProfile ?? false}
+    )
     ON CONFLICT (platform, username) DO UPDATE SET updated_at = NOW()
     RETURNING id, platform, username, url, external_id, topic_id, enabled,
               check_stories, check_posts, check_reels, check_profile,
@@ -3124,6 +3144,47 @@ export async function updateMonitoredAccountConfig(
       }::int, interval_minutes),
       updated_at = NOW()
     WHERE id = ${id}`;
+}
+
+// Bulk patch for the /monitored bulk toolbar. Any undefined field is
+// left alone.
+export async function bulkUpdateMonitoredAccounts(
+  ids: number[],
+  patch: {
+    enabled?: boolean;
+    checkStories?: boolean;
+    checkPosts?: boolean;
+    checkReels?: boolean;
+    checkProfile?: boolean;
+    intervalMinutes?: number;
+  },
+): Promise<number> {
+  if (!hasDb() || ids.length === 0) return 0;
+  const rows = await sql()`
+    UPDATE monitored_accounts SET
+      enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
+      check_stories = COALESCE(${patch.checkStories ?? null}::boolean, check_stories),
+      check_posts = COALESCE(${patch.checkPosts ?? null}::boolean, check_posts),
+      check_reels = COALESCE(${patch.checkReels ?? null}::boolean, check_reels),
+      check_profile = COALESCE(${patch.checkProfile ?? null}::boolean, check_profile),
+      interval_minutes = COALESCE(${
+        patch.intervalMinutes ?? null
+      }::int, interval_minutes),
+      updated_at = NOW()
+    WHERE id = ANY(${ids}::bigint[])
+    RETURNING id`;
+  return rows.length;
+}
+
+export async function bulkDeleteMonitoredAccounts(
+  ids: number[],
+): Promise<number> {
+  if (!hasDb() || ids.length === 0) return 0;
+  const rows = await sql()`
+    DELETE FROM monitored_accounts
+    WHERE id = ANY(${ids}::bigint[])
+    RETURNING id`;
+  return rows.length;
 }
 
 export async function setInstagramUserId(

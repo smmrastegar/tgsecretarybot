@@ -77,6 +77,11 @@ export const DEFAULT_SETTINGS = {
   markMessagesAsRead: "true",
   autoExtractEnabled: "true",
   autoExtractMinImportance: "4",
+  monitorDefaultIntervalMinutes: "30",
+  monitorDefaultCheckStories: "true",
+  monitorDefaultCheckPosts: "false",
+  monitorDefaultCheckReels: "false",
+  monitorDefaultCheckProfile: "false",
 } as const satisfies Record<string, string>;
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
@@ -114,6 +119,11 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   markMessagesAsRead: optional("MARK_MESSAGES_AS_READ"),
   autoExtractEnabled: optional("AUTO_EXTRACT_ENABLED"),
   autoExtractMinImportance: optional("AUTO_EXTRACT_MIN_IMPORTANCE"),
+  monitorDefaultIntervalMinutes: optional("MONITOR_DEFAULT_INTERVAL_MINUTES"),
+  monitorDefaultCheckStories: optional("MONITOR_DEFAULT_CHECK_STORIES"),
+  monitorDefaultCheckPosts: optional("MONITOR_DEFAULT_CHECK_POSTS"),
+  monitorDefaultCheckReels: optional("MONITOR_DEFAULT_CHECK_REELS"),
+  monitorDefaultCheckProfile: optional("MONITOR_DEFAULT_CHECK_PROFILE"),
 };
 
 export function envOverride(key: SettingKey): string | undefined {

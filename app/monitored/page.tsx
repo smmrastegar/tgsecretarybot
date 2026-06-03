@@ -33,26 +33,82 @@ type Event = {
   error: string | null;
 };
 
+type ChatBrief = {
+  chatId: number;
+  chatTitle: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  nickname: string | null;
+};
+
+type Defaults = {
+  intervalMinutes: number;
+  checkStories: boolean;
+  checkPosts: boolean;
+  checkReels: boolean;
+  checkProfile: boolean;
+};
+
 const INTERVAL_OPTIONS = [5, 10, 15, 30, 60, 120, 240, 480, 1440] as const;
+
+function intervalLabel(m: number): string {
+  if (m < 60) return `${m} دقیقه`;
+  if (m === 60) return "۱ ساعت";
+  if (m === 1440) return "۲۴ ساعت";
+  return `${m / 60} ساعت`;
+}
+
+function chatLabel(c: ChatBrief): string {
+  return (
+    [c.firstName, c.lastName].filter(Boolean).join(" ").trim() ||
+    c.nickname ||
+    c.chatTitle ||
+    `chat ${c.chatId}`
+  );
+}
 
 export default function MonitoredPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+  const [storageChats, setStorageChats] = useState<ChatBrief[]>([]);
+  const [downloaderChats, setDownloaderChats] = useState<ChatBrief[]>([]);
+  const [targetChatId, setTargetChatId] = useState<number | null>(null);
+  const [defaults, setDefaults] = useState<Defaults>({
+    intervalMinutes: 30,
+    checkStories: true,
+    checkPosts: false,
+    checkReels: false,
+    checkProfile: false,
+  });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [newUsername, setNewUsername] = useState("");
   const [adding, setAdding] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulking, setBulking] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await fetch("/api/monitored");
       if (r.ok) {
-        const j = (await r.json()) as { accounts: Account[]; events: Event[] };
+        const j = (await r.json()) as {
+          accounts: Account[];
+          events: Event[];
+          storageChats: ChatBrief[];
+          downloaderChats: ChatBrief[];
+          targetChatId: number | null;
+          defaults: Defaults;
+        };
         setAccounts(j.accounts);
         setEvents(j.events);
+        setStorageChats(j.storageChats);
+        setDownloaderChats(j.downloaderChats);
+        setTargetChatId(j.targetChatId);
+        setDefaults(j.defaults);
+        setSelected(new Set());
       }
     } finally {
       setLoading(false);
@@ -140,7 +196,7 @@ export default function MonitoredPage() {
         };
         let msg = `${jx.inserted ?? 0} اضافه شد · ${jx.updated ?? 0} آپدیت شد`;
         if (jx.immediatelyProcessed && jx.immediatelyProcessed > 0) {
-          msg += ` · ${jx.immediatelyProcessed} مورد فوراً پردازش شد (${jx.forwarded ?? 0} forward)`;
+          msg += ` · ${jx.immediatelyProcessed} فوراً پردازش شد (${jx.forwarded ?? 0} forward)`;
         }
         setImportMsg(msg);
         await load();
@@ -153,36 +209,186 @@ export default function MonitoredPage() {
     }
   }
 
+  async function saveDefaults(next: Partial<Defaults>) {
+    const merged = { ...defaults, ...next };
+    setDefaults(merged);
+    await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        monitorDefaultIntervalMinutes: String(merged.intervalMinutes),
+        monitorDefaultCheckStories: String(merged.checkStories),
+        monitorDefaultCheckPosts: String(merged.checkPosts),
+        monitorDefaultCheckReels: String(merged.checkReels),
+        monitorDefaultCheckProfile: String(merged.checkProfile),
+      }),
+    });
+  }
+
+  function toggleSelect(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   const q = search.trim().toLowerCase();
   const filtered = q
     ? accounts.filter((a) => a.username.toLowerCase().includes(q))
     : accounts;
 
+  function selectAllFiltered() {
+    setSelected(new Set(filtered.map((a) => a.id)));
+  }
+
+  async function runBulk(
+    op: "update" | "delete",
+    patch?: Record<string, unknown>,
+  ) {
+    if (selected.size === 0) return;
+    if (op === "delete" && !confirm(`${selected.size} اکانت حذف بشن؟`)) return;
+    setBulking(true);
+    try {
+      const r = await fetch("/api/monitored/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ op, ids: [...selected], patch }),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        alert(`خطا: ${j.error ?? r.status}`);
+      } else {
+        await load();
+      }
+    } finally {
+      setBulking(false);
+    }
+  }
+
   return (
     <Shell>
       <PageTitle
         title="📸 Instagram Monitor"
-        subtitle="اکانت‌های public اینستاگرام رو هر چند دقیقه چک می‌کنه. استوری / پست / ریلز جدید دانلود و توی چتی که role=storage هست پست می‌شه. برای فعال شدن، HIKER_API_KEY روی Vercel ست بشه."
+        subtitle="استوری / پست / ریلز اکانت‌های public اینستاگرام رو دانلود و توی کانال storage پست می‌کنه."
       />
 
       <Card className="mb-3 !p-3">
-        <div className="flex items-center gap-2 flex-wrap text-xs">
+        <div className="text-sm font-medium mb-2">📦 کانال‌های Storage</div>
+        {storageChats.length === 0 && downloaderChats.length === 0 ? (
+          <div className="text-[11px] text-red-300">
+            ⚠️ هیچ کانالی با role=storage ست نشده. برو /chats و یه کانال رو role
+            «📦 Storage» بده.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1 text-[11px]">
+            {storageChats.map((c) => (
+              <div
+                key={c.chatId}
+                className="flex items-center gap-2 p-1.5 border border-[var(--color-border)] rounded-md"
+              >
+                <Badge tone="info">📦</Badge>
+                <a
+                  href={`/chats/${c.chatId}`}
+                  className="font-medium hover:underline"
+                >
+                  {chatLabel(c)}
+                </a>
+                {targetChatId === c.chatId && (
+                  <Badge tone="success">✓ فعال</Badge>
+                )}
+              </div>
+            ))}
+            {storageChats.length === 0 &&
+              downloaderChats.map((c) => (
+                <div
+                  key={c.chatId}
+                  className="flex items-center gap-2 p-1.5 border border-[var(--color-border)] rounded-md"
+                >
+                  <Badge tone="info">📥</Badge>
+                  <a
+                    href={`/chats/${c.chatId}`}
+                    className="font-medium hover:underline"
+                  >
+                    {chatLabel(c)}
+                  </a>
+                  {targetChatId === c.chatId && (
+                    <Badge tone="warn">fallback</Badge>
+                  )}
+                </div>
+              ))}
+            <div className="text-[10px] text-[var(--color-text-dim)] mt-1">
+              اولین storage chat به‌عنوان مقصد استفاده می‌شه. اگه storage نباشه،
+              اولین downloader fallback می‌شه.
+            </div>
+          </div>
+        )}
+      </Card>
+
+      <Card className="mb-3 !p-3">
+        <div className="text-sm font-medium mb-2">⚙️ پیش‌فرض اکانت‌های جدید</div>
+        <div className="text-[11px] text-[var(--color-text-dim)] mb-2">
+          وقتی اکانت جدید اضافه می‌کنی (دستی یا CSV)، با این پیش‌فرض‌ها ساخته می‌شه.
+        </div>
+        <div className="flex items-center gap-3 flex-wrap text-[11px]">
+          {(
+            [
+              ["checkStories", "📸 stories"],
+              ["checkPosts", "🖼 posts"],
+              ["checkReels", "🎬 reels"],
+              ["checkProfile", "👤 profile"],
+            ] as const
+          ).map(([key, label]) => (
+            <label key={key} className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={defaults[key]}
+                onChange={(e) => saveDefaults({ [key]: e.target.checked })}
+              />
+              {label}
+            </label>
+          ))}
+          <span className="text-[var(--color-text-dim)]">هر</span>
+          <select
+            value={defaults.intervalMinutes}
+            onChange={(e) =>
+              saveDefaults({ intervalMinutes: Number(e.target.value) })
+            }
+            className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1.5 py-0.5"
+          >
+            {INTERVAL_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {intervalLabel(m)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Card>
+
+      <Card className="mb-3 !p-3">
+        <div className="text-sm font-medium mb-2">➕ اضافه کردن اکانت</div>
+        <div className="flex items-center gap-2 flex-wrap">
           <input
             dir="ltr"
             type="text"
             value={newUsername}
             onChange={(e) => setNewUsername(e.target.value)}
-            placeholder="username اینستاگرام (بدون @)"
-            className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs flex-1 min-w-[180px]"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void addManual();
+            }}
+            placeholder="username اینستاگرام (مثل ali_chaychi_)"
+            className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm flex-1 min-w-[200px]"
           />
           <button
             onClick={addManual}
             disabled={adding || !newUsername.trim()}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+            className="text-xs px-4 py-2 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
           >
-            {adding ? "…" : "+ افزودن"}
+            {adding ? "در حال افزودن…" : "+ افزودن"}
           </button>
-          <label className="px-3 py-1.5 rounded-md border border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-surface-2)]">
+          <span className="text-[var(--color-text-dim)] text-[10px]">یا</span>
+          <label className="px-3 py-2 rounded-md border border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-surface-2)] text-xs">
             <input
               type="file"
               accept=".csv,text/csv"
@@ -194,19 +400,110 @@ export default function MonitoredPage() {
               }}
               className="hidden"
             />
-            {importing ? "آپلود…" : "📤 CSV"}
+            {importing ? "آپلود…" : "📤 آپلود CSV"}
           </label>
+        </div>
+        {importMsg && (
+          <div className="text-[11px] mt-2 text-emerald-400">{importMsg}</div>
+        )}
+      </Card>
+
+      <Card className="mb-3 !p-3">
+        <div className="flex items-center gap-2 flex-wrap text-xs">
           <input
             dir="auto"
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="جستجو…"
-            className="ml-auto bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs"
+            placeholder="جستجو در username…"
+            className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 flex-1 min-w-[140px]"
           />
+          <button
+            onClick={selectAllFiltered}
+            disabled={filtered.length === 0}
+            className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+          >
+            انتخاب همه ({filtered.length})
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            disabled={selected.size === 0}
+            className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+          >
+            Clear
+          </button>
+          <span className="text-[var(--color-text-dim)]">
+            {selected.size} انتخاب شده
+          </span>
         </div>
-        {importMsg && (
-          <div className="text-[11px] mt-2 text-emerald-400">{importMsg}</div>
+        {selected.size > 0 && (
+          <div className="flex items-center gap-2 flex-wrap text-[11px] mt-2 pt-2 border-t border-[var(--color-border)]">
+            <button
+              onClick={() => runBulk("update", { enabled: true })}
+              disabled={bulking}
+              className="px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30"
+            >
+              ▶ روشن کردن همه
+            </button>
+            <button
+              onClick={() => runBulk("update", { enabled: false })}
+              disabled={bulking}
+              className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+            >
+              ⏸ خاموش کردن همه
+            </button>
+            <select
+              disabled={bulking}
+              defaultValue=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (!v) return;
+                void runBulk("update", { intervalMinutes: Number(v) });
+                e.currentTarget.value = "";
+              }}
+              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1.5 py-1"
+            >
+              <option value="">⏱ ست interval…</option>
+              {INTERVAL_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  {intervalLabel(m)}
+                </option>
+              ))}
+            </select>
+            {(
+              [
+                ["checkStories", "📸 stories"],
+                ["checkPosts", "🖼 posts"],
+                ["checkReels", "🎬 reels"],
+                ["checkProfile", "👤 profile"],
+              ] as const
+            ).map(([key, label]) => (
+              <div key={key} className="flex items-center gap-1">
+                <button
+                  onClick={() => runBulk("update", { [key]: true })}
+                  disabled={bulking}
+                  className="px-1.5 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                >
+                  + {label}
+                </button>
+                <button
+                  onClick={() => runBulk("update", { [key]: false })}
+                  disabled={bulking}
+                  className="px-1.5 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                  title={`${label} خاموش`}
+                >
+                  −
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => runBulk("delete")}
+              disabled={bulking}
+              className="px-2 py-1 rounded-md border border-red-800 text-red-300 hover:bg-red-900/30"
+            >
+              🗑 حذف همه
+            </button>
+          </div>
         )}
       </Card>
 
@@ -215,7 +512,7 @@ export default function MonitoredPage() {
       ) : accounts.length === 0 ? (
         <Card>
           <p className="text-sm text-[var(--color-text-dim)]">
-            اکانتی نیست. یکی اضافه کن یا CSV آپلود کن.
+            اکانتی نیست. بالا یکی اضافه کن یا CSV آپلود کن.
           </p>
         </Card>
       ) : (
@@ -227,9 +524,19 @@ export default function MonitoredPage() {
             {filtered.map((a) => (
               <div
                 key={a.id}
-                className="text-xs p-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/40"
+                className={`text-xs p-2 rounded-md border ${
+                  selected.has(a.id)
+                    ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10"
+                    : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/40"
+                }`}
               >
                 <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(a.id)}
+                    onChange={() => toggleSelect(a.id)}
+                    title="انتخاب برای bulk"
+                  />
                   <input
                     type="checkbox"
                     checked={a.enabled}
@@ -258,9 +565,7 @@ export default function MonitoredPage() {
                       آخرین: {relTime(a.lastStoryAt)}
                     </Badge>
                   )}
-                  {a.lastError && (
-                    <Badge tone="danger" >خطا</Badge>
-                  )}
+                  {a.lastError && <Badge tone="danger">خطا</Badge>}
                   <button
                     onClick={() => remove(a.id)}
                     className="ml-auto text-[10px] px-1.5 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-red-900/40"
@@ -277,7 +582,10 @@ export default function MonitoredPage() {
                       ["checkProfile", "👤 profile", a.checkProfile],
                     ] as const
                   ).map(([key, label, value]) => (
-                    <label key={key} className="flex items-center gap-1 cursor-pointer">
+                    <label
+                      key={key}
+                      className="flex items-center gap-1 cursor-pointer"
+                    >
                       <input
                         type="checkbox"
                         checked={value}
@@ -288,27 +596,17 @@ export default function MonitoredPage() {
                       {label}
                     </label>
                   ))}
-                  <span className="text-[var(--color-text-dim)]">
-                    هر
-                  </span>
+                  <span className="text-[var(--color-text-dim)]">هر</span>
                   <select
                     value={a.intervalMinutes}
                     onChange={(e) =>
-                      patch(a.id, {
-                        intervalMinutes: Number(e.target.value),
-                      })
+                      patch(a.id, { intervalMinutes: Number(e.target.value) })
                     }
                     className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1.5 py-0.5"
                   >
                     {INTERVAL_OPTIONS.map((m) => (
                       <option key={m} value={m}>
-                        {m < 60
-                          ? `${m} دقیقه`
-                          : m === 60
-                            ? "۱ ساعت"
-                            : m === 1440
-                              ? "۲۴ ساعت"
-                              : `${m / 60} ساعت`}
+                        {intervalLabel(m)}
                       </option>
                     ))}
                   </select>
