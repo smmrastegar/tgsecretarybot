@@ -165,17 +165,13 @@ export async function maybeRouteMedia(args: {
       try {
         let sent: Message | null = null;
         if (msg.voice) {
-          sent = await bot.api.sendVoice(t.chatId, msg.voice.file_id, {
-            caption: captionPrefix,
-            parse_mode: "HTML",
-            reply_markup: transcribeKeyboard(t.chatId, 0).inline_keyboard
-              ? undefined // placeholder; will edit after send to attach with real id
-              : undefined,
-          });
+          // Send the voice WITHOUT a caption — the follow-up reply
+          // below carries the "🔁 از …" prefix plus the inline
+          // 📝 Transcribe button. We tried sendVoice+editReplyMarkup
+          // first but the edit silently no-ops in channels, leaving
+          // voices in voice_storage with no button.
+          sent = await bot.api.sendVoice(t.chatId, msg.voice.file_id);
         } else if (msg.video_note) {
-          // video_note has no caption support; we send the note then
-          // a separate text reply with the button so transcribe still
-          // works.
           sent = await bot.api.sendVideoNote(
             t.chatId,
             msg.video_note.file_id,
@@ -192,29 +188,18 @@ export async function maybeRouteMedia(args: {
             sourceMessageId: msg.message_id,
             sourceSenderName: sender,
           });
-          // Attach the 📝 Transcribe button now that we know the
-          // sent message id. For voice we edit reply_markup; for
-          // video_note (which doesn't support markup directly) we
-          // send a follow-up text message with the button.
-          if (msg.voice) {
-            await bot.api
-              .editMessageReplyMarkup(t.chatId, sent.message_id, {
-                reply_markup: transcribeKeyboard(t.chatId, sent.message_id),
-              })
-              .catch((err) =>
-                console.warn("[media-router] editMarkup failed:", err),
-              );
-          } else {
-            await bot.api
-              .sendMessage(t.chatId, captionPrefix, {
-                parse_mode: "HTML",
-                reply_to_message_id: sent.message_id,
-                reply_markup: transcribeKeyboard(t.chatId, sent.message_id),
-              })
-              .catch((err) =>
-                console.warn("[media-router] follow-up failed:", err),
-              );
-          }
+          // Single follow-up reply with the source prefix + inline
+          // 📝 Transcribe button. Same shape for voice and video_note
+          // so the click handler doesn't have to special-case.
+          await bot.api
+            .sendMessage(t.chatId, captionPrefix, {
+              parse_mode: "HTML",
+              reply_to_message_id: sent.message_id,
+              reply_markup: transcribeKeyboard(t.chatId, sent.message_id),
+            })
+            .catch((err) =>
+              console.warn("[media-router] follow-up failed:", err),
+            );
           result.routed.push({
             to: "voice",
             chatId: t.chatId,
