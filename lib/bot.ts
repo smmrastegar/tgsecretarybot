@@ -1543,7 +1543,10 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   const mediaKind = media?.kind ?? null;
 
   // Owner sent this themselves: record their activity, close any open
-  // secretary session for this chat, then bail.
+  // secretary session for this chat, then bail. media-router still
+  // gets fired below so the owner's OWN voices/photos auto-route to
+  // their *_storage channels (they're often the most useful ones to
+  // archive — voice notes to friends, photos taken with the camera).
   if (owner && msg.from && msg.from.id === owner.userId) {
     const active = await findActiveSecretarySessionForSender({
       bcId,
@@ -1588,6 +1591,19 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       } catch (err) {
         console.error("[db] owner-log failed:", err);
       }
+    }
+    // Fire media-router for owner-sent media too. We refetch the
+    // chat rule here because the regular fetch below sits AFTER
+    // the early return.
+    try {
+      const ownerRule = await getChatRule(msg.chat.id).catch(() => null);
+      void maybeRouteMedia({ rule: ownerRule, msg, bot }).then((r) => {
+        if (r.errors.length > 0) {
+          console.warn("[media-router/owner] errors:", r.errors);
+        }
+      });
+    } catch (err) {
+      console.error("[media-router/owner] dispatch failed:", err);
     }
     return;
   }
