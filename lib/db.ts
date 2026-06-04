@@ -257,6 +257,25 @@ export async function ensureSchema(): Promise<void> {
                 ON CONFLICT (key) DO NOTHING`;
       }
     }
+    // One-time correction: earlier code in setChatAutomation /
+    // setChatFunctionRoles defaulted chat_type to 'private' on
+    // first-write — which is wrong for channels (negative chat_ids).
+    // Pull the right type from messages_log when we have history;
+    // otherwise guess from the sign of chat_id (negative → supergroup).
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.chat_type_correction.v1'`;
+      if ((flag as unknown[]).length === 0) {
+        await q`
+          UPDATE chat_rules r
+          SET chat_type = COALESCE(
+            (SELECT chat_type FROM messages_log WHERE chat_id = r.chat_id LIMIT 1),
+            CASE WHEN r.chat_id < 0 THEN 'supergroup' ELSE 'private' END
+          )
+          WHERE r.chat_type = 'private' AND r.chat_id < 0`;
+        await q`INSERT INTO settings (key, value) VALUES ('migration.chat_type_correction.v1', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
     // Per-chat notes — addresses, locations, contacts, key points.
     // kind is one of: address|location|contact|note|date|phone|url.
     // source_message_id links back to the original message in
@@ -1889,11 +1908,21 @@ export async function setChatAutomation(
 ): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
+  // Don't default chat_type to 'private' — Telegram channels and
+  // supergroups have negative IDs and DEFINITELY aren't DMs. Look up
+  // the real type from the first messages_log row for this chat; if
+  // we can't find one (no history yet), guess from the id (negative
+  // = supergroup, positive = private).
+  const guessed = chatId < 0 ? "supergroup" : "private";
   await sql()`
     INSERT INTO chat_rules (chat_id, chat_type,
       auto_forward_voice, auto_forward_video, auto_forward_photo,
       auto_forward_location, auto_extract_notes, updated_at)
-    VALUES (${chatId}, 'private',
+    VALUES (${chatId},
+      COALESCE(
+        (SELECT chat_type FROM messages_log WHERE chat_id = ${chatId} LIMIT 1),
+        ${guessed}
+      ),
       ${patch.autoForwardVoice ?? false},
       ${patch.autoForwardVideo ?? false},
       ${patch.autoForwardPhoto ?? false},
@@ -2176,11 +2205,19 @@ export async function setChatFunctionRoles(
   }
   // Mirror to the legacy single-role column for callers still on
   // the old API: pick the first role (sorted by insertion order).
-  // chat_rules row must exist; create if not.
+  // chat_rules row must exist; create if not. Same chat_type lookup
+  // dance as setChatAutomation so we don't stamp 'private' onto a
+  // channel that's never had a chat_rules row before.
   const primary = filtered[0] ?? null;
+  const guessed = chatId < 0 ? "supergroup" : "private";
   await q`
     INSERT INTO chat_rules (chat_id, chat_type, function_role, updated_at)
-    VALUES (${chatId}, 'private', ${primary}, NOW())
+    VALUES (${chatId},
+      COALESCE(
+        (SELECT chat_type FROM messages_log WHERE chat_id = ${chatId} LIMIT 1),
+        ${guessed}
+      ),
+      ${primary}, NOW())
     ON CONFLICT (chat_id) DO UPDATE SET
       function_role = ${primary},
       updated_at = NOW()`;

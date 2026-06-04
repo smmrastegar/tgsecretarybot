@@ -620,7 +620,16 @@ export default function ChatDetailPage() {
                 <div className="text-xs text-[var(--color-text-dim)] mt-1 flex flex-wrap items-center gap-2">
                   {personHandle && <span>@{personHandle}</span>}
                   <span>id {personId}</span>
-                  <span>· {chatTypeLabel(rule?.chatType ?? "private")}</span>
+                  <span>
+                    ·{" "}
+                    {chatTypeLabel(
+                      rule?.chatType && rule.chatType !== "private"
+                        ? rule.chatType
+                        : chatId < 0
+                          ? "supergroup"
+                          : "private",
+                    )}
+                  </span>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-1 items-center">
                   {rule?.vip && <Badge tone="warn">⭐ VIP</Badge>}
@@ -656,7 +665,7 @@ export default function ChatDetailPage() {
                   </div>
                 )}
 
-                {rule?.chatType === "private" && !rule?.isBot && (
+                {chatId > 0 && rule?.chatType === "private" && !rule?.isBot && (
                 <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
                   <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
                     Personal info (used by AI to adjust tone)
@@ -863,7 +872,7 @@ export default function ChatDetailPage() {
                 </div>
                 )}
 
-                {rule?.chatType === "private" && (
+                {chatId > 0 && rule?.chatType === "private" && (
                   <div className="mt-2 max-w-lg">
                     <label className="flex items-center gap-2 text-xs cursor-pointer">
                       <input
