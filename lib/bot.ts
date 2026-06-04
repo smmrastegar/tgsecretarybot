@@ -2748,6 +2748,17 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         msg,
         bot,
       });
+      // Same media-router fan-out the business-message path has, so
+      // voice/video/photo arriving in a group OR channel ALSO gets
+      // routed to the configured *_storage chats. Without this, only
+      // DMs with Business connections triggered routing — which is
+      // what trapped the user earlier (their voice was in a non-
+      // business chat and the routing log stayed empty).
+      void maybeRouteMedia({ rule, msg, bot }).then((r) => {
+        if (r.errors.length > 0) {
+          console.warn("[media-router/group] errors:", r.errors);
+        }
+      });
     } catch (err) {
       console.error("[db] group-log failed:", err);
     }
