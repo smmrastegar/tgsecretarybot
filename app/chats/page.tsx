@@ -184,12 +184,25 @@ export default function ChatsPage() {
   }
 
   async function runBulk(
-    op: "mode" | "vip" | "muted" | "function" | "auto_summarize",
+    op:
+      | "mode"
+      | "vip"
+      | "muted"
+      | "function"
+      | "auto_summarize"
+      | "automation",
     extra: {
       mode?: ChatMode;
       value?: boolean;
       role?: string | null;
       gapMinutes?: number;
+      automation?: {
+        autoForwardVoice?: boolean;
+        autoForwardVideo?: boolean;
+        autoForwardPhoto?: boolean;
+        autoForwardLocation?: boolean;
+        autoExtractNotes?: boolean;
+      };
     } = {},
   ) {
     if (selected.size === 0) return;
@@ -464,6 +477,47 @@ export default function ChatsPage() {
                   <option value="30">روشن، گپ ۳۰ دقیقه</option>
                   <option value="60">روشن، گپ ۱ ساعت</option>
                   <option value="off">— Off —</option>
+                </select>
+                <select
+                  disabled={bulking}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    const [field, value] = v.split(":");
+                    if (!field) return;
+                    const on = value === "on";
+                    void runBulk("automation", {
+                      automation: { [field]: on },
+                    });
+                    e.currentTarget.value = "";
+                  }}
+                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
+                  title="Bulk اتومیشن — voice/video/photo/location → storage channels، یا استخراج خودکار Notes"
+                >
+                  <option value="">🤖 Automation…</option>
+                  <option value="autoForwardVoice:on">
+                    🎤 voice/video-note → on
+                  </option>
+                  <option value="autoForwardVoice:off">
+                    🎤 voice/video-note → off
+                  </option>
+                  <option value="autoForwardVideo:on">🎬 video → on</option>
+                  <option value="autoForwardVideo:off">🎬 video → off</option>
+                  <option value="autoForwardPhoto:on">🖼 photo → on</option>
+                  <option value="autoForwardPhoto:off">🖼 photo → off</option>
+                  <option value="autoForwardLocation:on">
+                    📍 location → on
+                  </option>
+                  <option value="autoForwardLocation:off">
+                    📍 location → off
+                  </option>
+                  <option value="autoExtractNotes:on">
+                    📒 extract notes → on
+                  </option>
+                  <option value="autoExtractNotes:off">
+                    📒 extract notes → off
+                  </option>
                 </select>
               </div>
             )}
