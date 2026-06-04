@@ -32,6 +32,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     "skipped_no_owner",
     "skipped_owner_self",
     "passed_to_router",
+    "skipped_no_bcid",
+    "skipped_no_content",
   ];
   const chatId = chatIdRaw ? Number(chatIdRaw) : undefined;
   const decision = ALLOWED.includes(decisionRaw as MediaRoutingDecision)

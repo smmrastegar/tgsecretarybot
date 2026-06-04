@@ -2147,7 +2147,8 @@ export type MediaRoutingDecision =
   | "skipped_owner_self" // diagnostic: entered the owner-self branch but
   //                          maybeRouteMedia was NOT called from here yet
   | "passed_to_router" // diagnostic: about to call maybeRouteMedia
-  ;
+  | "skipped_no_bcid" // diagnostic: business_message without business_connection_id
+  | "skipped_no_content"; // diagnostic: hasContent guard returned false
 
 export type MediaRoutingLogEntry = {
   id: number;

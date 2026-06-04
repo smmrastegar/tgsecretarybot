@@ -1484,7 +1484,24 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     }).catch(() => {});
   }
   const bcId = msg.business_connection_id;
-  if (!bcId) return;
+  if (!bcId) {
+    if (msg.voice || msg.video_note || msg.video || msg.photo) {
+      const kind = msg.voice
+        ? "voice"
+        : msg.video_note
+          ? "video_note"
+          : msg.video
+            ? "video"
+            : "photo";
+      void logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind,
+        decision: "skipped_no_bcid",
+      }).catch(() => {});
+    }
+    return;
+  }
 
   const owner = await resolveOwner(bcId, bot);
   const text = describeMessage(msg);
@@ -1500,7 +1517,24 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       msg.sticker ||
       msg.video_note,
   );
-  if (!hasContent) return;
+  if (!hasContent) {
+    if (msg.voice || msg.video_note || msg.video || msg.photo) {
+      const kind = msg.voice
+        ? "voice"
+        : msg.video_note
+          ? "video_note"
+          : msg.video
+            ? "video"
+            : "photo";
+      void logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind,
+        decision: "skipped_no_content",
+      }).catch(() => {});
+    }
+    return;
+  }
 
   // When the bot itself sends a message via business_connection_id (e.g.
   // an ai_chat / auto_reply / friendly_reply / secretary relay), Telegram

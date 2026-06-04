@@ -59,6 +59,8 @@ const DECISION_LABEL: Record<string, string> = {
   skipped_no_owner: "👤 رد شد چون owner پیدا نشد",
   skipped_owner_self: "👤 شاخه‌ی owner-self (router داره صدا می‌خوره)",
   passed_to_router: "→ rule گرفته شد، router داره اجرا می‌شه",
+  skipped_no_bcid: "⚠️ بدون business_connection_id",
+  skipped_no_content: "⚠️ hasContent=false (نباید برای voice پیش بیاد)",
 };
 
 export default function MediaRoutingPage() {
