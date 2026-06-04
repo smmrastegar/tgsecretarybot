@@ -1894,6 +1894,31 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         console.error("[db] media-log failed:", err);
       }
     }
+    // Voice / video_note / photo without a caption all land here.
+    // Without this call they'd skip the media-router entirely (the
+    // existing maybeRouteMedia below sits past this early-return),
+    // which was the root cause of voices arriving in messages_log
+    // but never showing up in voice_storage.
+    if (msg.voice || msg.video_note || msg.video || msg.photo) {
+      const kind = msg.voice
+        ? "voice"
+        : msg.video_note
+          ? "video_note"
+          : msg.video
+            ? "video"
+            : "photo";
+      void logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind,
+        decision: "passed_to_router",
+      }).catch(() => {});
+    }
+    void maybeRouteMedia({ rule, msg, bot }).then((r) => {
+      if (r.errors.length > 0) {
+        console.warn("[media-router/media-only] errors:", r.errors);
+      }
+    });
     return;
   }
 
