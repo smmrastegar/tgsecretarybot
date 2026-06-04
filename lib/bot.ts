@@ -1725,6 +1725,37 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   const rule = await getChatRule(msg.chat.id).catch(() => null);
   const settings = await getSettings();
 
+  // Fire media-router here, BEFORE every other early-return below
+  // (grace window, secretary relay, urgent-skip, etc.) can intercept
+  // the message. Otherwise photos/videos with a caption — which skip
+  // the no-text-no-caption branch above — get trapped by the grace
+  // check at line ~1944 and never reach the legacy router call near
+  // the bottom of this function. Skipping is per-flag inside
+  // maybeRouteMedia itself; this is just making sure we get a chance
+  // to consider it for every incoming message.
+  if (msg.voice || msg.video_note || msg.video || msg.photo || msg.location) {
+    if (msg.voice || msg.video_note || msg.video || msg.photo) {
+      const kind = msg.voice
+        ? "voice"
+        : msg.video_note
+          ? "video_note"
+          : msg.video
+            ? "video"
+            : "photo";
+      void logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind,
+        decision: "passed_to_router",
+      }).catch(() => {});
+    }
+    void maybeRouteMedia({ rule, msg, bot }).then((r) => {
+      if (r.errors.length > 0) {
+        console.warn("[media-router/main-early] errors:", r.errors);
+      }
+    });
+  }
+
   // Best-effort auto-fill of per-chat first/last name from the sender's
   // Telegram profile, only when the owner hasn't set them yet.
   if (msg.chat.type === "private" && msg.from) {
@@ -1914,26 +1945,8 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     // existing maybeRouteMedia below sits past this early-return),
     // which was the root cause of voices arriving in messages_log
     // but never showing up in voice_storage.
-    if (msg.voice || msg.video_note || msg.video || msg.photo) {
-      const kind = msg.voice
-        ? "voice"
-        : msg.video_note
-          ? "video_note"
-          : msg.video
-            ? "video"
-            : "photo";
-      void logMediaRouting({
-        sourceChatId: msg.chat.id,
-        sourceMessageId: msg.message_id,
-        kind,
-        decision: "passed_to_router",
-      }).catch(() => {});
-    }
-    void maybeRouteMedia({ rule, msg, bot }).then((r) => {
-      if (r.errors.length > 0) {
-        console.warn("[media-router/media-only] errors:", r.errors);
-      }
-    });
+    // media-router already fired at the top of this function (early-
+    // call) so we don't double-route here.
     return;
   }
 
@@ -2181,14 +2194,9 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         msg,
         bot,
       });
-      // Per-chat media routing — copies voice/video/photo to the
-      // *_storage channels and saves locations as chat_notes when
-      // the corresponding auto_forward_* flag is on.
-      void maybeRouteMedia({ rule, msg, bot }).then((r) => {
-        if (r.errors.length > 0) {
-          console.warn("[media-router] errors:", r.errors);
-        }
-      });
+      // media-router was already fired at the top of this function
+      // (early-call right after we resolved the rule), so we don't
+      // double-route here.
     } catch (err) {
       console.error("[db] log failed:", err);
     }
