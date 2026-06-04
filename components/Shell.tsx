@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquare,
+  NotebookText,
   Settings,
   Shield,
   Users2,
@@ -28,6 +29,7 @@ const NAV = [
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/chats", label: "Chats", icon: Users2 },
   { href: "/reminders", label: "Actions", icon: Bell },
+  { href: "/notes", label: "Notes", icon: NotebookText },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

@@ -11,6 +11,11 @@ import {
 } from "./classifier";
 import { sttConfigured, transcribeAudio } from "./stt";
 import {
+  getRoutedMessage,
+  markTranscribed,
+  maybeRouteMedia,
+} from "./media-router";
+import {
   defaultSecretary,
   getSecretaries,
   type Secretary,
@@ -338,6 +343,119 @@ async function maybeDescribeMedia(args: {
 //   as:resum:<chatId>:<startSec>   — re-generate the summary
 //   as:send:<chatId>:<startSec>    — send the previously-suggested
 //                                    reply to the source chat
+// 📝 Transcribe button on voice / video-note copies forwarded into
+// the voice_storage channel. callback_data format:
+//   tx:<storageChatId>:<storageMessageId>
+// We look up the original file_id from media_router_messages so the
+// callback data fits in the 64-byte limit.
+async function handleTranscribeCallback(
+  ctx: Context,
+  data: string,
+  bot: Bot,
+): Promise<void> {
+  const parts = data.split(":");
+  if (parts.length < 3) {
+    await ctx.answerCallbackQuery({ text: "bad callback", show_alert: true });
+    return;
+  }
+  const storageChatId = Number(parts[1]);
+  const storageMessageId = Number(parts[2]);
+  if (!Number.isFinite(storageChatId) || !Number.isFinite(storageMessageId)) {
+    await ctx.answerCallbackQuery({ text: "bad callback", show_alert: true });
+    return;
+  }
+  if (!sttConfigured()) {
+    await ctx.answerCallbackQuery({
+      text: "STT not configured — set GROQ_API_KEY or OPENROUTER_API_KEY.",
+      show_alert: true,
+    });
+    return;
+  }
+  const row = await getRoutedMessage({ storageChatId, storageMessageId });
+  if (!row) {
+    await ctx.answerCallbackQuery({
+      text: "media metadata not found",
+      show_alert: true,
+    });
+    return;
+  }
+  if (row.transcript) {
+    await ctx.answerCallbackQuery({
+      text: "Already transcribed.",
+    });
+    return;
+  }
+  await ctx.answerCallbackQuery({ text: "در حال transcribe…" });
+  try {
+    const { text } = await transcribeAudio({
+      botToken: config.telegramBotToken,
+      fileId: row.fileId,
+      chatId: storageChatId,
+    });
+    const transcript = (text ?? "").trim();
+    if (!transcript) {
+      await bot.api.sendMessage(
+        storageChatId,
+        "📝 transcript خالی برگشت.",
+        { reply_to_message_id: storageMessageId },
+      ).catch(() => {});
+      return;
+    }
+    await markTranscribed({
+      storageChatId,
+      storageMessageId,
+      transcript,
+    });
+    // Reply directly under the original copy so the text and audio
+    // stay paired in the channel. We don't editMessageCaption on the
+    // voice itself because video_note doesn't support captions and
+    // we want one consistent UX.
+    const header = row.sourceSenderName
+      ? `📝 <b>${escapeForHtml(row.sourceSenderName)}</b>:`
+      : "📝";
+    const chunks = chunkText(`${header}\n${escapeForHtml(transcript)}`, 4000);
+    for (const chunk of chunks) {
+      await bot.api.sendMessage(storageChatId, chunk, {
+        parse_mode: "HTML",
+        reply_to_message_id: storageMessageId,
+      });
+    }
+    // Strip the button now that there's a transcript.
+    await bot.api
+      .editMessageReplyMarkup(storageChatId, storageMessageId, {
+        reply_markup: undefined,
+      })
+      .catch(() => {});
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[transcribe] failed:", msg);
+    await bot.api.sendMessage(
+      storageChatId,
+      `📝 transcribe ناموفق: ${msg.slice(0, 200)}`,
+      { reply_to_message_id: storageMessageId },
+    ).catch(() => {});
+  }
+}
+
+function escapeForHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function chunkText(s: string, max: number): string[] {
+  if (s.length <= max) return [s];
+  const out: string[] = [];
+  let i = 0;
+  while (i < s.length) {
+    out.push(s.slice(i, i + max));
+    i += max;
+  }
+  return out;
+}
+
 async function handleAutoSummaryCallback(
   ctx: Context,
   data: string,
@@ -1071,6 +1189,12 @@ function buildBot(): Bot {
     if (data.startsWith("as:")) {
       await handleAutoSummaryCallback(ctx, data, bot).catch((err) =>
         console.error("[as_callback] failed:", err),
+      );
+      return;
+    }
+    if (data.startsWith("tx:")) {
+      await handleTranscribeCallback(ctx, data, bot).catch((err) =>
+        console.error("[transcribe] failed:", err),
       );
       return;
     }
@@ -1901,6 +2025,14 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         rule,
         msg,
         bot,
+      });
+      // Per-chat media routing — copies voice/video/photo to the
+      // *_storage channels and saves locations as chat_notes when
+      // the corresponding auto_forward_* flag is on.
+      void maybeRouteMedia({ rule, msg, bot }).then((r) => {
+        if (r.errors.length > 0) {
+          console.warn("[media-router] errors:", r.errors);
+        }
       });
     } catch (err) {
       console.error("[db] log failed:", err);

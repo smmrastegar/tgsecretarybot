@@ -44,6 +44,12 @@ const TILES: Array<{
     desc: "اصطلاحات و توضیحاتی که به AI تزریق می‌شه",
   },
   {
+    href: "/notes",
+    emoji: "📒",
+    label: "Notes",
+    desc: "آدرس‌ها، لوکیشن‌ها، شماره‌ها و نکات مهم استخراج‌شده از هر چت",
+  },
+  {
     href: "/costs",
     emoji: "💵",
     label: "Costs",

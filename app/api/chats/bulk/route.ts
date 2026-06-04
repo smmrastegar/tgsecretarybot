@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/auth";
 import {
   audit,
   bulkSetAutoSummarize,
+  bulkSetChatAutomation,
   bulkSetChatFlag,
   bulkSetChatFunction,
   bulkSetChatMode,
@@ -23,12 +24,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const body = (await request.json().catch(() => ({}))) as {
-    op?: "mode" | "vip" | "muted" | "function" | "auto_summarize";
+    op?:
+      | "mode"
+      | "vip"
+      | "muted"
+      | "function"
+      | "auto_summarize"
+      | "automation";
     chatIds?: number[];
     mode?: ChatMode;
     value?: boolean;
     role?: FunctionRole | null;
     gapMinutes?: number;
+    automation?: {
+      autoForwardVoice?: boolean;
+      autoForwardVideo?: boolean;
+      autoForwardPhoto?: boolean;
+      autoForwardLocation?: boolean;
+      autoExtractNotes?: boolean;
+    };
   };
   const op = body.op;
   const chatIds = Array.isArray(body.chatIds)
@@ -74,6 +88,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       enabled,
       Number.isFinite(gap) ? gap : 5,
     );
+  } else if (op === "automation") {
+    if (!body.automation) {
+      return NextResponse.json(
+        { error: "automation payload required" },
+        { status: 400 },
+      );
+    }
+    affected = await bulkSetChatAutomation(chatIds, body.automation);
   } else {
     return NextResponse.json({ error: "unknown op" }, { status: 400 });
   }

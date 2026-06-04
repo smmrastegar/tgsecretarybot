@@ -219,6 +219,57 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_summarize_enabled BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_summarize_gap_minutes INT NOT NULL DEFAULT 5`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS last_auto_summary_at TIMESTAMPTZ`;
+    // Per-chat media-routing toggles. When ON, any incoming voice /
+    // video / photo / location is auto-copied to the corresponding
+    // *_storage role chat. Voice / video-note copies include a 📝
+    // Transcribe inline button. auto_extract_notes runs an AI pass
+    // that pulls addresses / locations / contacts into chat_notes.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_forward_voice BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_forward_video BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_forward_photo BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_forward_location BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_extract_notes BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Per-chat notes — addresses, locations, contacts, key points.
+    // kind is one of: address|location|contact|note|date|phone|url.
+    // source_message_id links back to the original message in
+    // messages_log when known.
+    await q`
+      CREATE TABLE IF NOT EXISTS chat_notes (
+        id                BIGSERIAL PRIMARY KEY,
+        chat_id           BIGINT NOT NULL,
+        tenant_id         BIGINT,
+        source_message_id BIGINT,
+        kind              TEXT NOT NULL,
+        title             TEXT,
+        content           TEXT NOT NULL,
+        metadata          JSONB,
+        sender_name       TEXT,
+        archived_at       TIMESTAMPTZ,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS chat_notes_chat_idx ON chat_notes (chat_id, created_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS chat_notes_tenant_idx ON chat_notes (tenant_id, created_at DESC) WHERE tenant_id IS NOT NULL`;
+    await q`CREATE INDEX IF NOT EXISTS chat_notes_kind_idx ON chat_notes (kind, created_at DESC)`;
+    // Tracks each copy we sent to a *_storage chat — used by the
+    // 📝 Transcribe inline button to find the original voice/video
+    // file id without stuffing it into callback_data (which is
+    // limited to 64 bytes).
+    await q`
+      CREATE TABLE IF NOT EXISTS media_router_messages (
+        storage_chat_id    BIGINT NOT NULL,
+        storage_message_id BIGINT NOT NULL,
+        file_id            TEXT NOT NULL,
+        kind               TEXT NOT NULL,
+        source_chat_id     BIGINT,
+        source_message_id  BIGINT,
+        source_sender_name TEXT,
+        tenant_id          BIGINT,
+        transcript         TEXT,
+        transcribed_at     TIMESTAMPTZ,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (storage_chat_id, storage_message_id)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS media_router_messages_source_idx ON media_router_messages (source_chat_id, source_message_id)`;
     // Persisted per-thread AI summaries so the dashboard doesn't lose
     // them on reload and so we can detect when a thread has new
     // activity that arrived after the last summary.
@@ -1351,6 +1402,10 @@ export const FUNCTION_ROLES = [
   "news",
   "summary_inbox",
   "storage",
+  "voice_storage",
+  "video_storage",
+  "photo_storage",
+  "notes_inbox",
 ] as const;
 export type FunctionRole = (typeof FUNCTION_ROLES)[number];
 
@@ -1364,6 +1419,14 @@ export const FUNCTION_ROLE_LABELS: Record<FunctionRole, string> = {
     "Summary inbox (channel/group that receives auto-summaries from ai_listen chats)",
   storage:
     "Storage (channel that receives Instagram stories / posts / reels via HikerAPI)",
+  voice_storage:
+    "Voice storage (auto-forwarded voice + video notes from chats with auto_forward_voice). Inline 📝 button transcribes in-place.",
+  video_storage:
+    "Video storage (auto-forwarded videos from chats with auto_forward_video)",
+  photo_storage:
+    "Photo storage (auto-forwarded photos from chats with auto_forward_photo)",
+  notes_inbox:
+    "Notes inbox (auto-extracted addresses, locations, contacts and key points from chats with auto_extract_notes)",
 };
 
 export type ChatRule = {
@@ -1395,6 +1458,11 @@ export type ChatRule = {
   autoSummarizeEnabled: boolean;
   autoSummarizeGapMinutes: number;
   lastAutoSummaryAt: Date | null;
+  autoForwardVoice: boolean;
+  autoForwardVideo: boolean;
+  autoForwardPhoto: boolean;
+  autoForwardLocation: boolean;
+  autoExtractNotes: boolean;
   isBot: boolean;
   graceSkippedAt: Date | null;
   updatedAt: Date;
@@ -1447,6 +1515,11 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
         ? Number(r.auto_summarize_gap_minutes)
         : 5,
     lastAutoSummaryAt: (r.last_auto_summary_at as Date) ?? null,
+    autoForwardVoice: Boolean(r.auto_forward_voice),
+    autoForwardVideo: Boolean(r.auto_forward_video),
+    autoForwardPhoto: Boolean(r.auto_forward_photo),
+    autoForwardLocation: Boolean(r.auto_forward_location),
+    autoExtractNotes: Boolean(r.auto_extract_notes),
     isBot: Boolean(r.is_bot),
     graceSkippedAt: (r.grace_skipped_at as Date) ?? null,
     updatedAt: r.updated_at as Date,
@@ -1466,7 +1539,10 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            ai_process_voice, ai_process_stickers, ai_process_gifs,
            function_role, function_config,
            auto_summarize_enabled, auto_summarize_gap_minutes,
-           last_auto_summary_at, is_bot,
+           last_auto_summary_at,
+           auto_forward_voice, auto_forward_video, auto_forward_photo,
+           auto_forward_location, auto_extract_notes,
+           is_bot,
            grace_skipped_at, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -1768,6 +1844,212 @@ export async function setAutoSummarize(
       updated_at = NOW()`;
 }
 
+export type ChatAutomationPatch = {
+  autoForwardVoice?: boolean;
+  autoForwardVideo?: boolean;
+  autoForwardPhoto?: boolean;
+  autoForwardLocation?: boolean;
+  autoExtractNotes?: boolean;
+};
+
+export async function setChatAutomation(
+  chatId: number,
+  patch: ChatAutomationPatch,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type,
+      auto_forward_voice, auto_forward_video, auto_forward_photo,
+      auto_forward_location, auto_extract_notes, updated_at)
+    VALUES (${chatId}, 'private',
+      ${patch.autoForwardVoice ?? false},
+      ${patch.autoForwardVideo ?? false},
+      ${patch.autoForwardPhoto ?? false},
+      ${patch.autoForwardLocation ?? false},
+      ${patch.autoExtractNotes ?? false},
+      NOW())
+    ON CONFLICT (chat_id) DO UPDATE SET
+      auto_forward_voice = COALESCE(${patch.autoForwardVoice ?? null}::boolean, chat_rules.auto_forward_voice),
+      auto_forward_video = COALESCE(${patch.autoForwardVideo ?? null}::boolean, chat_rules.auto_forward_video),
+      auto_forward_photo = COALESCE(${patch.autoForwardPhoto ?? null}::boolean, chat_rules.auto_forward_photo),
+      auto_forward_location = COALESCE(${patch.autoForwardLocation ?? null}::boolean, chat_rules.auto_forward_location),
+      auto_extract_notes = COALESCE(${patch.autoExtractNotes ?? null}::boolean, chat_rules.auto_extract_notes),
+      updated_at = NOW()`;
+}
+
+export async function bulkSetChatAutomation(
+  chatIds: number[],
+  patch: ChatAutomationPatch,
+): Promise<number> {
+  if (!hasDb() || chatIds.length === 0) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title,
+      auto_forward_voice, auto_forward_video, auto_forward_photo,
+      auto_forward_location, auto_extract_notes, updated_at)
+    SELECT m.chat_id, MAX(m.chat_type), MAX(m.chat_title),
+           ${patch.autoForwardVoice ?? false},
+           ${patch.autoForwardVideo ?? false},
+           ${patch.autoForwardPhoto ?? false},
+           ${patch.autoForwardLocation ?? false},
+           ${patch.autoExtractNotes ?? false},
+           NOW()
+    FROM messages_log m
+    WHERE m.chat_id = ANY(${chatIds}::bigint[])
+    GROUP BY m.chat_id
+    ON CONFLICT (chat_id) DO UPDATE SET
+      auto_forward_voice = COALESCE(${patch.autoForwardVoice ?? null}::boolean, chat_rules.auto_forward_voice),
+      auto_forward_video = COALESCE(${patch.autoForwardVideo ?? null}::boolean, chat_rules.auto_forward_video),
+      auto_forward_photo = COALESCE(${patch.autoForwardPhoto ?? null}::boolean, chat_rules.auto_forward_photo),
+      auto_forward_location = COALESCE(${patch.autoForwardLocation ?? null}::boolean, chat_rules.auto_forward_location),
+      auto_extract_notes = COALESCE(${patch.autoExtractNotes ?? null}::boolean, chat_rules.auto_extract_notes),
+      updated_at = NOW()
+    RETURNING chat_id`;
+  return rows.length;
+}
+
+// --- Chat notes ---
+
+export type ChatNote = {
+  id: number;
+  chatId: number;
+  tenantId: number | null;
+  sourceMessageId: number | null;
+  kind: string;
+  title: string | null;
+  content: string;
+  metadata: Record<string, unknown> | null;
+  senderName: string | null;
+  archivedAt: Date | null;
+  createdAt: Date;
+};
+
+function rowToChatNote(r: Record<string, unknown>): ChatNote {
+  return {
+    id: Number(r.id),
+    chatId: Number(r.chat_id),
+    tenantId: r.tenant_id == null ? null : Number(r.tenant_id),
+    sourceMessageId:
+      r.source_message_id == null ? null : Number(r.source_message_id),
+    kind: r.kind as string,
+    title: (r.title as string) ?? null,
+    content: r.content as string,
+    metadata:
+      r.metadata && typeof r.metadata === "object"
+        ? (r.metadata as Record<string, unknown>)
+        : null,
+    senderName: (r.sender_name as string) ?? null,
+    archivedAt: (r.archived_at as Date) ?? null,
+    createdAt: r.created_at as Date,
+  };
+}
+
+export async function addChatNote(args: {
+  chatId: number;
+  tenantId?: number | null;
+  sourceMessageId?: number | null;
+  kind: string;
+  title?: string | null;
+  content: string;
+  metadata?: Record<string, unknown> | null;
+  senderName?: string | null;
+}): Promise<ChatNote | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO chat_notes (chat_id, tenant_id, source_message_id, kind, title, content, metadata, sender_name)
+    VALUES (${args.chatId}, ${args.tenantId ?? null},
+            ${args.sourceMessageId ?? null}, ${args.kind},
+            ${args.title ?? null}, ${args.content},
+            ${args.metadata ? JSON.stringify(args.metadata) : null}::jsonb,
+            ${args.senderName ?? null})
+    RETURNING id, chat_id, tenant_id, source_message_id, kind, title, content,
+              metadata, sender_name, archived_at, created_at`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToChatNote(r) : null;
+}
+
+export async function listChatNotes(opts: {
+  chatId?: number;
+  tenantId?: number | null;
+  kind?: string;
+  includeArchived?: boolean;
+  limit?: number;
+}): Promise<ChatNote[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, chat_id, tenant_id, source_message_id, kind, title, content,
+           metadata, sender_name, archived_at, created_at
+    FROM chat_notes
+    WHERE (${opts.chatId ?? null}::bigint IS NULL OR chat_id = ${opts.chatId ?? null})
+      AND (${opts.tenantId ?? null}::bigint IS NULL OR tenant_id = ${opts.tenantId ?? null})
+      AND (${opts.kind ?? null}::text IS NULL OR kind = ${opts.kind ?? null})
+      AND (${opts.includeArchived ?? false}::boolean OR archived_at IS NULL)
+    ORDER BY created_at DESC
+    LIMIT ${opts.limit ?? 200}`;
+  return (rows as Array<Record<string, unknown>>).map(rowToChatNote);
+}
+
+// Per-chat aggregate counts — used by the /notes index ("X notes from
+// chat Y, mostly addresses"). Returns one row per chat with totals.
+export async function chatNoteSummaryByChat(
+  tenantId?: number | null,
+): Promise<Array<{
+  chatId: number;
+  total: number;
+  byKind: Record<string, number>;
+  lastNoteAt: Date;
+}>> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT chat_id,
+           COUNT(*)::int AS total,
+           MAX(created_at) AS last_note_at,
+           jsonb_object_agg(kind, kind_count) AS by_kind
+    FROM (
+      SELECT chat_id, kind, COUNT(*)::int AS kind_count, MAX(created_at) AS created_at
+      FROM chat_notes
+      WHERE archived_at IS NULL
+        AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
+      GROUP BY chat_id, kind
+    ) g
+    GROUP BY chat_id
+    ORDER BY last_note_at DESC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    chatId: Number(r.chat_id),
+    total: Number(r.total),
+    byKind:
+      r.by_kind && typeof r.by_kind === "object"
+        ? (Object.fromEntries(
+            Object.entries(r.by_kind as Record<string, unknown>).map(
+              ([k, v]) => [k, Number(v)],
+            ),
+          ) as Record<string, number>)
+        : {},
+    lastNoteAt: r.last_note_at as Date,
+  }));
+}
+
+export async function deleteChatNote(id: number): Promise<boolean> {
+  if (!hasDb()) return false;
+  const rows = await sql()`DELETE FROM chat_notes WHERE id = ${id} RETURNING id`;
+  return rows.length > 0;
+}
+
+export async function archiveChatNote(
+  id: number,
+  archived: boolean,
+): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE chat_notes
+    SET archived_at = CASE WHEN ${archived}::boolean THEN NOW() ELSE NULL END
+    WHERE id = ${id}`;
+}
+
 export async function markAutoSummaryDelivered(chatId: number): Promise<void> {
   if (!hasDb()) return;
   await sql()`
@@ -1801,7 +2083,10 @@ export async function listChatsByFunction(
            ai_process_voice, ai_process_stickers, ai_process_gifs,
            function_role, function_config,
            auto_summarize_enabled, auto_summarize_gap_minutes,
-           last_auto_summary_at, is_bot,
+           last_auto_summary_at,
+           auto_forward_voice, auto_forward_video, auto_forward_photo,
+           auto_forward_location, auto_extract_notes,
+           is_bot,
            grace_skipped_at, updated_at
     FROM chat_rules
     WHERE function_role = ${role}

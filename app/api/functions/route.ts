@@ -15,25 +15,18 @@ export async function GET(): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const byRole: Record<
-    FunctionRole,
-    Array<{
-      chatId: number;
-      chatTitle: string | null;
-      chatType: string;
-      firstName: string | null;
-      lastName: string | null;
-      nickname: string | null;
-      functionConfig: Record<string, unknown> | null;
-    }>
-  > = {
-    downloader: [],
-    sms_inbox: [],
-    download_archive: [],
-    news: [],
-    summary_inbox: [],
-    storage: [],
+  type ChatRow = {
+    chatId: number;
+    chatTitle: string | null;
+    chatType: string;
+    firstName: string | null;
+    lastName: string | null;
+    nickname: string | null;
+    functionConfig: Record<string, unknown> | null;
   };
+  const byRole = Object.fromEntries(
+    FUNCTION_ROLES.map((r) => [r, [] as ChatRow[]]),
+  ) as Record<FunctionRole, ChatRow[]>;
   for (const r of FUNCTION_ROLES) {
     const rows = await listChatsByFunction(r);
     byRole[r] = rows.map((c) => ({

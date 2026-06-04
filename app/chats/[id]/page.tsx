@@ -107,11 +107,20 @@ type Rule = {
     | "news"
     | "summary_inbox"
     | "storage"
+    | "voice_storage"
+    | "video_storage"
+    | "photo_storage"
+    | "notes_inbox"
     | null;
   functionConfig: Record<string, unknown> | null;
   autoSummarizeEnabled: boolean;
   autoSummarizeGapMinutes: number;
   lastAutoSummaryAt: string | null;
+  autoForwardVoice: boolean;
+  autoForwardVideo: boolean;
+  autoForwardPhoto: boolean;
+  autoForwardLocation: boolean;
+  autoExtractNotes: boolean;
   isBot: boolean;
   graceSkippedAt: string | null;
   updatedAt: string;
@@ -506,6 +515,26 @@ export default function ChatDetailPage() {
     await fetch(`/api/chats/${chatId}/skip-grace`, { method: "POST" });
     setSaving(false);
     load();
+  }
+
+  async function patchAutomation(patch: {
+    autoForwardVoice?: boolean;
+    autoForwardVideo?: boolean;
+    autoForwardPhoto?: boolean;
+    autoForwardLocation?: boolean;
+    autoExtractNotes?: boolean;
+  }) {
+    setSaving(true);
+    try {
+      await fetch(`/api/chats/${chatId}/automation`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      await load();
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function patchRule(patch: Record<string, unknown>) {
@@ -1219,6 +1248,72 @@ export default function ChatDetailPage() {
                   </div>
                 </div>
               )}
+            {rule && (
+            <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+              <div className="text-xs font-medium mb-2">
+                🤖 اتومیشن — کپی خودکار به کانال‌های Storage
+              </div>
+              <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
+                هر voice/video/photo که توی این چت بیاد، خودکار توی کانال نقش‌دار
+                ست‌شده کپی می‌شه. لوکیشن‌ها و موارد مهم توی{" "}
+                <a href="/notes" className="underline">
+                  Notes
+                </a>{" "}
+                ذخیره می‌شن. کانال‌های هدف باید از{" "}
+                <a href="/functions" className="underline">
+                  Functions
+                </a>{" "}
+                به‌عنوان voice_storage / video_storage / photo_storage /
+                notes_inbox تگ شده باشن.
+              </div>
+              <div className="flex flex-col gap-1.5 text-xs">
+                {(
+                  [
+                    [
+                      "autoForwardVoice",
+                      "🎤 voice + 🎥 video-note → voice_storage (با دکمه‌ی 📝 Transcribe)",
+                      rule.autoForwardVoice,
+                    ],
+                    [
+                      "autoForwardVideo",
+                      "🎬 video → video_storage",
+                      rule.autoForwardVideo,
+                    ],
+                    [
+                      "autoForwardPhoto",
+                      "🖼 photo → photo_storage",
+                      rule.autoForwardPhoto,
+                    ],
+                    [
+                      "autoForwardLocation",
+                      "📍 location → Notes + notes_inbox",
+                      rule.autoForwardLocation,
+                    ],
+                    [
+                      "autoExtractNotes",
+                      "📒 استخراج خودکار آدرس/تماس/نکات مهم با AI",
+                      rule.autoExtractNotes,
+                    ],
+                  ] as const
+                ).map(([key, label, value]) => (
+                  <label
+                    key={key}
+                    className="flex items-center gap-2 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(value)}
+                      disabled={saving}
+                      onChange={(e) =>
+                        patchAutomation({ [key]: e.target.checked })
+                      }
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            )}
           </Card>
 
           <PageTitle
