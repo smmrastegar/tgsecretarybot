@@ -2141,7 +2141,13 @@ export type MediaRoutingDecision =
   | "received_business" // diagnostic: media reached handleBusinessMessage
   | "received_group" // diagnostic: media reached handleAnyChatPost
   | "received_secretary" // diagnostic: media reached handleSecretaryReply
-  | "received_edit"; // diagnostic: media reached handleBusinessEdit
+  | "received_edit" // diagnostic: media reached handleBusinessEdit
+  | "skipped_bot_echo" // diagnostic: returned at the sender_business_bot guard
+  | "skipped_no_owner" // diagnostic: resolveOwner returned null
+  | "skipped_owner_self" // diagnostic: entered the owner-self branch but
+  //                          maybeRouteMedia was NOT called from here yet
+  | "passed_to_router" // diagnostic: about to call maybeRouteMedia
+  ;
 
 export type MediaRoutingLogEntry = {
   id: number;

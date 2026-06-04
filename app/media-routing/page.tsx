@@ -55,6 +55,10 @@ const DECISION_LABEL: Record<string, string> = {
   received_group: "📨 پیام رسید — مسیر group/channel",
   received_secretary: "📨 پیام رسید — مسیر secretary",
   received_edit: "📨 ویرایش پیام رسید",
+  skipped_bot_echo: "🤖 رد شد چون bot-echo بود",
+  skipped_no_owner: "👤 رد شد چون owner پیدا نشد",
+  skipped_owner_self: "👤 شاخه‌ی owner-self (router داره صدا می‌خوره)",
+  passed_to_router: "→ rule گرفته شد، router داره اجرا می‌شه",
 };
 
 export default function MediaRoutingPage() {

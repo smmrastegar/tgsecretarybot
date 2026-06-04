@@ -1510,6 +1510,21 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   if (
     (msg as unknown as { sender_business_bot?: unknown }).sender_business_bot
   ) {
+    if (msg.voice || msg.video_note || msg.video || msg.photo) {
+      const kind = msg.voice
+        ? "voice"
+        : msg.video_note
+          ? "video_note"
+          : msg.video
+            ? "video"
+            : "photo";
+      void logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind,
+        decision: "skipped_bot_echo",
+      }).catch(() => {});
+    }
     if (hasDb()) {
       const senderName =
         [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ").trim() ||
@@ -1567,6 +1582,21 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   // gets fired below so the owner's OWN voices/photos auto-route to
   // their *_storage channels (they're often the most useful ones to
   // archive — voice notes to friends, photos taken with the camera).
+  if (!owner && (msg.voice || msg.video_note || msg.video || msg.photo)) {
+    const kind = msg.voice
+      ? "voice"
+      : msg.video_note
+        ? "video_note"
+        : msg.video
+          ? "video"
+          : "photo";
+    void logMediaRouting({
+      sourceChatId: msg.chat.id,
+      sourceMessageId: msg.message_id,
+      kind,
+      decision: "skipped_no_owner",
+    }).catch(() => {});
+  }
   if (owner && msg.from && msg.from.id === owner.userId) {
     const active = await findActiveSecretarySessionForSender({
       bcId,
@@ -1615,6 +1645,21 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     // Fire media-router for owner-sent media too. We refetch the
     // chat rule here because the regular fetch below sits AFTER
     // the early return.
+    if (msg.voice || msg.video_note || msg.video || msg.photo) {
+      const kind = msg.voice
+        ? "voice"
+        : msg.video_note
+          ? "video_note"
+          : msg.video
+            ? "video"
+            : "photo";
+      void logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind,
+        decision: "passed_to_router",
+      }).catch(() => {});
+    }
     try {
       const ownerRule = await getChatRule(msg.chat.id).catch(() => null);
       void maybeRouteMedia({ rule: ownerRule, msg, bot }).then((r) => {
