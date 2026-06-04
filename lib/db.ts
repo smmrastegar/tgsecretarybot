@@ -229,6 +229,34 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_forward_photo BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_forward_location BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_extract_notes BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Multi-role per chat. The legacy chat_rules.function_role is
+    // kept for backwards compat; new code reads from chat_function_roles.
+    // A chat can carry several roles at once — e.g. the same channel
+    // can be both a Storage AND a Notes inbox.
+    await q`
+      CREATE TABLE IF NOT EXISTS chat_function_roles (
+        chat_id     BIGINT NOT NULL,
+        role        TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (chat_id, role)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS chat_function_roles_role_idx ON chat_function_roles (role)`;
+    // One-time backfill: copy the single function_role into the
+    // junction table so existing rules keep working under the
+    // multi-role read path.
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.chat_function_roles_backfill.v1'`;
+      if ((flag as unknown[]).length === 0) {
+        await q`
+          INSERT INTO chat_function_roles (chat_id, role)
+          SELECT chat_id, function_role
+          FROM chat_rules
+          WHERE function_role IS NOT NULL
+          ON CONFLICT (chat_id, role) DO NOTHING`;
+        await q`INSERT INTO settings (key, value) VALUES ('migration.chat_function_roles_backfill.v1', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
     // Per-chat notes — addresses, locations, contacts, key points.
     // kind is one of: address|location|contact|note|date|phone|url.
     // source_message_id links back to the original message in
@@ -1403,6 +1431,7 @@ export const FUNCTION_ROLES = [
   "summary_inbox",
   "storage",
   "voice_storage",
+  "video_note_storage",
   "video_storage",
   "photo_storage",
   "notes_inbox",
@@ -1420,9 +1449,11 @@ export const FUNCTION_ROLE_LABELS: Record<FunctionRole, string> = {
   storage:
     "Storage (channel that receives Instagram stories / posts / reels via HikerAPI)",
   voice_storage:
-    "Voice storage (auto-forwarded voice + video notes from chats with auto_forward_voice). Inline 📝 button transcribes in-place.",
+    "Voice storage (auto-forwarded voice messages). Inline 📝 button transcribes in-place.",
+  video_note_storage:
+    "Video-note storage (round video bubbles). Inline 📝 button transcribes in-place. Falls back to voice_storage if not set.",
   video_storage:
-    "Video storage (auto-forwarded videos from chats with auto_forward_video)",
+    "Video storage (auto-forwarded regular videos from chats with auto_forward_video)",
   photo_storage:
     "Photo storage (auto-forwarded photos from chats with auto_forward_photo)",
   notes_inbox:
@@ -2073,26 +2104,86 @@ export async function listChatsByFunction(
 ): Promise<ChatRule[]> {
   if (!hasDb()) return [];
   await ensureSchema();
+  // Pull chats whose junction table OR legacy function_role column
+  // contains this role. The OR keeps the path safe even if the
+  // migration hasn't run yet on a stale deploy.
   const rows = await sql()`
-    SELECT chat_id, chat_type, chat_title, vip, muted, custom_reply, notes,
-           mode, mode_changed_at, secretary_user_id,
-           first_name, last_name, nickname, relationship,
-           relationship_notes, talk_style_notes,
-           tone_profile, tone_profile_at,
-           flood_cooldown_until, flood_deflected_at,
-           ai_process_voice, ai_process_stickers, ai_process_gifs,
-           function_role, function_config,
-           auto_summarize_enabled, auto_summarize_gap_minutes,
-           last_auto_summary_at,
-           auto_forward_voice, auto_forward_video, auto_forward_photo,
-           auto_forward_location, auto_extract_notes,
-           is_bot,
-           grace_skipped_at, updated_at
-    FROM chat_rules
-    WHERE function_role = ${role}
-      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
-    ORDER BY updated_at DESC`;
+    SELECT r.chat_id, r.chat_type, r.chat_title, r.vip, r.muted, r.custom_reply, r.notes,
+           r.mode, r.mode_changed_at, r.secretary_user_id,
+           r.first_name, r.last_name, r.nickname, r.relationship,
+           r.relationship_notes, r.talk_style_notes,
+           r.tone_profile, r.tone_profile_at,
+           r.flood_cooldown_until, r.flood_deflected_at,
+           r.ai_process_voice, r.ai_process_stickers, r.ai_process_gifs,
+           r.function_role, r.function_config,
+           r.auto_summarize_enabled, r.auto_summarize_gap_minutes,
+           r.last_auto_summary_at,
+           r.auto_forward_voice, r.auto_forward_video, r.auto_forward_photo,
+           r.auto_forward_location, r.auto_extract_notes,
+           r.is_bot,
+           r.grace_skipped_at, r.updated_at
+    FROM chat_rules r
+    WHERE (
+      r.function_role = ${role}
+      OR EXISTS (
+        SELECT 1 FROM chat_function_roles f
+        WHERE f.chat_id = r.chat_id AND f.role = ${role}
+      )
+    )
+      AND (${tenantId ?? null}::bigint IS NULL OR r.tenant_id = ${tenantId ?? null})
+    ORDER BY r.updated_at DESC`;
   return (rows as Array<Record<string, unknown>>).map(rowToChatRule);
+}
+
+// All function roles for a single chat, sorted alphabetically. New
+// code should read from here; the legacy ChatRule.functionRole single
+// value stays exposed for backwards compat with callers that haven't
+// been migrated to multi-role yet.
+export async function getChatFunctionRoles(
+  chatId: number,
+): Promise<FunctionRole[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT role FROM chat_function_roles
+    WHERE chat_id = ${chatId}
+    ORDER BY role ASC`;
+  return (rows as Array<{ role: string }>)
+    .map((r) => r.role)
+    .filter((r): r is FunctionRole =>
+      (FUNCTION_ROLES as readonly string[]).includes(r),
+    );
+}
+
+export async function setChatFunctionRoles(
+  chatId: number,
+  roles: FunctionRole[],
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  const q = sql();
+  // Replace strategy — clear then insert. Roles list is small (≤10
+  // total) so the round-trip cost is negligible.
+  await q`DELETE FROM chat_function_roles WHERE chat_id = ${chatId}`;
+  const filtered = roles.filter((r) =>
+    (FUNCTION_ROLES as readonly string[]).includes(r),
+  );
+  for (const role of filtered) {
+    await q`
+      INSERT INTO chat_function_roles (chat_id, role)
+      VALUES (${chatId}, ${role})
+      ON CONFLICT (chat_id, role) DO NOTHING`;
+  }
+  // Mirror to the legacy single-role column for callers still on
+  // the old API: pick the first role (sorted by insertion order).
+  // chat_rules row must exist; create if not.
+  const primary = filtered[0] ?? null;
+  await q`
+    INSERT INTO chat_rules (chat_id, chat_type, function_role, updated_at)
+    VALUES (${chatId}, 'private', ${primary}, NOW())
+    ON CONFLICT (chat_id) DO UPDATE SET
+      function_role = ${primary},
+      updated_at = NOW()`;
 }
 
 // Persist a fine-tuned tone profile for a chat. Separate from

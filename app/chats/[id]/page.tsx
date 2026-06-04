@@ -133,7 +133,15 @@ const FUNCTION_ROLE_LABELS: Record<string, string> = {
   news: "📰 News source",
   summary_inbox: "📬 Summary inbox",
   storage: "📦 Storage (Instagram media)",
+  voice_storage: "🎤 Voice storage",
+  video_note_storage: "🎥 Video-note storage (round bubbles)",
+  video_storage: "🎬 Video storage",
+  photo_storage: "🖼 Photo storage",
+  notes_inbox: "📒 Notes inbox",
 };
+const ALL_FUNCTION_ROLES = Object.keys(FUNCTION_ROLE_LABELS) as Array<
+  keyof typeof FUNCTION_ROLE_LABELS
+>;
 
 type GraceInfo = {
   minutes: number;
@@ -272,6 +280,7 @@ export default function ChatDetailPage() {
   const router = useRouter();
   const chatId = Number(params.id);
   const [rule, setRule] = useState<Rule | null>(null);
+  const [functionRoles, setFunctionRoles] = useState<string[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [grace, setGrace] = useState<GraceInfo | null>(null);
@@ -393,12 +402,14 @@ export default function ChatDetailPage() {
     }
     const j = (await r.json()) as {
       rule: Rule | null;
+      functionRoles?: string[];
       messages: Message[];
       stats: Stats;
       hasMore: boolean;
       grace?: GraceInfo;
     };
     setRule(j.rule);
+    setFunctionRoles(j.functionRoles ?? []);
     setMessages(j.messages);
     setStats(j.stats);
     setHasMore(j.hasMore);
@@ -1115,35 +1126,55 @@ export default function ChatDetailPage() {
 
               <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
                 <div className="text-xs font-medium mb-1.5">
-                  🧩 نقش (Function) این چت
+                  🧩 نقش‌های (Functions) این چت
                 </div>
                 <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
-                  اگه این چت یه ابزار خاصه (مثلاً bot دانلود، یا SMS inbox) از
-                  اینجا انتخاب کن — رفتار کلاسیفایر و بقیه فیچرها روی این
-                  نقش تنظیم می‌شه.
+                  هر چت می‌تونه چند نقش هم‌زمان داشته باشه (مثلاً یه کانال هم
+                  📦 Storage باشه هم 📒 Notes inbox). تیک‌های پایین رو هر تعداد
+                  بخوای روشن کن.
                 </div>
-                <select
-                  disabled={saving}
-                  value={rule?.functionRole ?? ""}
-                  onChange={(e) =>
-                    fetch(`/api/chats/${chatId}/function`, {
-                      method: "PUT",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        role: e.target.value || null,
-                        config: rule?.functionConfig ?? null,
-                      }),
-                    }).then(() => load())
-                  }
-                  className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-xs"
-                >
-                  <option value="">— بدون نقش خاص —</option>
-                  {Object.entries(FUNCTION_ROLE_LABELS).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
+                <div className="flex flex-col gap-1.5 text-xs">
+                  {ALL_FUNCTION_ROLES.map((k) => (
+                    <label
+                      key={k}
+                      className="flex items-center gap-2 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={functionRoles.includes(k)}
+                        disabled={saving}
+                        onChange={async (e) => {
+                          const next = e.target.checked
+                            ? Array.from(new Set([...functionRoles, k]))
+                            : functionRoles.filter((r) => r !== k);
+                          setSaving(true);
+                          try {
+                            await fetch(`/api/chats/${chatId}/function`, {
+                              method: "PUT",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                roles: next,
+                                config: rule?.functionConfig ?? null,
+                              }),
+                            });
+                            await load();
+                          } finally {
+                            setSaving(false);
+                          }
+                        }}
+                      />
+                      {FUNCTION_ROLE_LABELS[k]}
+                    </label>
                   ))}
-                </select>
+                </div>
+                {functionRoles.length > 0 && (
+                  <div className="text-[10px] text-[var(--color-text-dim)] mt-2">
+                    فعال:{" "}
+                    {functionRoles
+                      .map((r) => FUNCTION_ROLE_LABELS[r] ?? r)
+                      .join(" · ")}
+                  </div>
+                )}
               </div>
 
               {rule?.mode === "ai_listen" && (

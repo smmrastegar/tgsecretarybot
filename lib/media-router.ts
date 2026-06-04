@@ -91,13 +91,23 @@ export async function maybeRouteMedia(args: {
   const chatLabel = sourceChatLabel(rule, msg);
   const captionPrefix = `🔁 از <b>${escapeHtml(chatLabel)}</b> · ${escapeHtml(sender)}`;
 
-  // Voice + video-note share the same target channel.
+  // Voice → voice_storage. Video-notes → video_note_storage if set,
+  // otherwise fall back to voice_storage (so a single channel still
+  // works for users who haven't bothered splitting them).
   if (
     rule.autoForwardVoice &&
     (msg.voice || msg.video_note) &&
     !rule.muted
   ) {
-    const targets = await listChatsByFunction("voice_storage");
+    let targets;
+    if (msg.video_note) {
+      targets = await listChatsByFunction("video_note_storage");
+      if (targets.length === 0) {
+        targets = await listChatsByFunction("voice_storage");
+      }
+    } else {
+      targets = await listChatsByFunction("voice_storage");
+    }
     const t = targets[0];
     if (!t) {
       result.errors.push("no voice_storage chat configured");
