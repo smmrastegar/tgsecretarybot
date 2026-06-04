@@ -115,6 +115,13 @@ export default function AdminPage() {
   const [external, setExternal] = useState<ExternalStatus | null>(null);
   const [externalLoading, setExternalLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  type SyncResult = {
+    total: number;
+    succeeded: number;
+    failed: number;
+    errors: Array<{ username: string; status: number; body: string }>;
+  };
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [editing, setEditing] = useState<Tenant | null>(null);
   const [creating, setCreating] = useState(false);
   const [finance, setFinance] = useState<Finance | null>(null);
@@ -596,8 +603,11 @@ export default function AdminPage() {
               setExternalLoading(false);
             }
           }}
+          syncResult={syncResult}
+          onDismissSync={() => setSyncResult(null)}
           onSync={async () => {
             setSyncing(true);
+            setSyncResult(null);
             try {
               const r = await fetch("/api/admin/external-monitor/sync", {
                 method: "POST",
@@ -608,12 +618,12 @@ export default function AdminPage() {
                 failed?: number;
                 errors?: Array<{ username: string; status: number; body: string }>;
               };
-              alert(
-                `Sync: ${j.succeeded ?? 0} / ${j.total ?? 0} موفق · ${j.failed ?? 0} خطا` +
-                  (j.errors && j.errors.length > 0
-                    ? `\n\n${j.errors.slice(0, 5).map((e) => `${e.username}: ${e.status} ${e.body.slice(0, 60)}`).join("\n")}`
-                    : ""),
-              );
+              setSyncResult({
+                total: j.total ?? 0,
+                succeeded: j.succeeded ?? 0,
+                failed: j.failed ?? 0,
+                errors: j.errors ?? [],
+              });
               const r2 = await fetch("/api/admin/external-monitor");
               if (r2.ok) setExternal((await r2.json()) as ExternalStatus);
             } finally {
@@ -1180,12 +1190,69 @@ function ExternalMonitorPanel(props: {
   data: ExternalStatusProp | null;
   loading: boolean;
   syncing: boolean;
+  syncResult: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    errors: Array<{ username: string; status: number; body: string }>;
+  } | null;
+  onDismissSync: () => void;
   onReload: () => Promise<void>;
   onSync: () => Promise<void>;
 }) {
-  const { data, loading, syncing, onReload, onSync } = props;
+  const { data, loading, syncing, syncResult, onDismissSync, onReload, onSync } =
+    props;
   return (
     <div className="flex flex-col gap-3">
+      {syncResult && (
+        <div
+          className={`p-3 rounded-lg border ${
+            syncResult.failed === 0
+              ? "border-emerald-700 bg-emerald-900/20 text-emerald-200"
+              : syncResult.succeeded > 0
+                ? "border-amber-700 bg-amber-900/20 text-amber-200"
+                : "border-red-700 bg-red-900/20 text-red-200"
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex-1">
+              <div className="text-sm font-medium">
+                {syncResult.failed === 0
+                  ? "✅ Sync کامل"
+                  : syncResult.succeeded > 0
+                    ? "⚠️ Sync جزئی"
+                    : "❌ Sync ناموفق"}
+              </div>
+              <div className="text-[11px] mt-0.5">
+                {syncResult.succeeded} / {syncResult.total} موفق
+                {syncResult.failed > 0 && ` · ${syncResult.failed} خطا`}
+              </div>
+              {syncResult.errors.length > 0 && (
+                <div className="mt-2 max-h-32 overflow-y-auto flex flex-col gap-0.5 text-[10px] font-mono">
+                  {syncResult.errors.slice(0, 10).map((e) => (
+                    <div key={e.username} dir="ltr" className="break-all">
+                      @{e.username} · {e.status || "—"} ·{" "}
+                      {e.body.slice(0, 100)}
+                    </div>
+                  ))}
+                  {syncResult.errors.length > 10 && (
+                    <div className="text-[var(--color-text-dim)]">
+                      … و {syncResult.errors.length - 10} مورد دیگه
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={onDismissSync}
+              aria-label="dismiss"
+              className="text-[12px] opacity-60 hover:opacity-100 px-1"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
       <Card className="!p-3">
         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
           <div className="text-sm font-medium">🛰 External change detector</div>
