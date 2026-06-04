@@ -1676,9 +1676,12 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         console.error("[db] owner-log failed:", err);
       }
     }
-    // Fire media-router for owner-sent media too. We refetch the
-    // chat rule here because the regular fetch below sits AFTER
-    // the early return.
+    // Owner-sent voices / videos / photos are NOT routed to the
+    // *_storage channels. The owner already has these on their own
+    // device; copying them just clutters the archive with duplicates.
+    // Only incoming media from the other party gets routed (handled
+    // in the main path below). We still log the diagnostic so the
+    // operator can see the message reached this branch.
     if (msg.voice || msg.video_note || msg.video || msg.photo) {
       const kind = msg.voice
         ? "voice"
@@ -1691,18 +1694,8 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         sourceChatId: msg.chat.id,
         sourceMessageId: msg.message_id,
         kind,
-        decision: "passed_to_router",
+        decision: "skipped_owner_self",
       }).catch(() => {});
-    }
-    try {
-      const ownerRule = await getChatRule(msg.chat.id).catch(() => null);
-      void maybeRouteMedia({ rule: ownerRule, msg, bot }).then((r) => {
-        if (r.errors.length > 0) {
-          console.warn("[media-router/owner] errors:", r.errors);
-        }
-      });
-    } catch (err) {
-      console.error("[media-router/owner] dispatch failed:", err);
     }
     return;
   }
@@ -2907,16 +2900,36 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         bot,
       });
       // Same media-router fan-out the business-message path has, so
-      // voice/video/photo arriving in a group OR channel ALSO gets
-      // routed to the configured *_storage chats. Without this, only
-      // DMs with Business connections triggered routing — which is
-      // what trapped the user earlier (their voice was in a non-
-      // business chat and the routing log stayed empty).
-      void maybeRouteMedia({ rule, msg, bot }).then((r) => {
-        if (r.errors.length > 0) {
-          console.warn("[media-router/group] errors:", r.errors);
+      // voice/video/photo arriving in a group OR channel gets routed
+      // to the configured *_storage chats. We skip routing when the
+      // sender is one of our registered Business owners — the owner
+      // doesn't want to see their OWN voices/photos echoed back into
+      // their storage channels.
+      const senderIsOwner =
+        msg.from?.id != null && (await isAllowedUser(msg.from.id).catch(() => false));
+      if (senderIsOwner) {
+        if (msg.voice || msg.video_note || msg.video || msg.photo) {
+          const kind = msg.voice
+            ? "voice"
+            : msg.video_note
+              ? "video_note"
+              : msg.video
+                ? "video"
+                : "photo";
+          void logMediaRouting({
+            sourceChatId: msg.chat.id,
+            sourceMessageId: msg.message_id,
+            kind,
+            decision: "skipped_owner_self",
+          }).catch(() => {});
         }
-      });
+      } else {
+        void maybeRouteMedia({ rule, msg, bot }).then((r) => {
+          if (r.errors.length > 0) {
+            console.warn("[media-router/group] errors:", r.errors);
+          }
+        });
+      }
     } catch (err) {
       console.error("[db] group-log failed:", err);
     }
