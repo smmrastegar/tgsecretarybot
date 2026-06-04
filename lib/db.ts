@@ -317,6 +317,25 @@ export async function ensureSchema(): Promise<void> {
         PRIMARY KEY (storage_chat_id, storage_message_id)
       )`;
     await q`CREATE INDEX IF NOT EXISTS media_router_messages_source_idx ON media_router_messages (source_chat_id, source_message_id)`;
+    // Debug log for the media-router. One row per routing decision
+    // (routed / skipped because flag off / skipped because muted /
+    // no target / error). Lets the operator see WHY a voice didn't
+    // land in the voice_storage channel when it should have.
+    await q`
+      CREATE TABLE IF NOT EXISTS media_routing_log (
+        id                 BIGSERIAL PRIMARY KEY,
+        source_chat_id     BIGINT NOT NULL,
+        source_message_id  BIGINT,
+        kind               TEXT NOT NULL,
+        decision           TEXT NOT NULL,
+        target_role        TEXT,
+        target_chat_id     BIGINT,
+        target_message_id  BIGINT,
+        error              TEXT,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS media_routing_log_created_idx ON media_routing_log (created_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS media_routing_log_source_idx ON media_routing_log (source_chat_id, created_at DESC)`;
     // Persisted per-thread AI summaries so the dashboard doesn't lose
     // them on reload and so we can detect when a thread has new
     // activity that arrived after the last summary.
@@ -2108,6 +2127,82 @@ export async function archiveChatNote(
     UPDATE chat_notes
     SET archived_at = CASE WHEN ${archived}::boolean THEN NOW() ELSE NULL END
     WHERE id = ${id}`;
+}
+
+// --- Media routing log ---
+
+export type MediaRoutingDecision =
+  | "routed" // voice/video/photo copied to target storage chat
+  | "no_rule" // source chat has no chat_rules row
+  | "flag_off" // auto_forward_* is false on the source chat
+  | "muted" // source chat muted, so we skip routing
+  | "no_target" // no chat tagged with the target role
+  | "error"; // sendXxx call threw
+
+export type MediaRoutingLogEntry = {
+  id: number;
+  sourceChatId: number;
+  sourceMessageId: number | null;
+  kind: string;
+  decision: MediaRoutingDecision;
+  targetRole: string | null;
+  targetChatId: number | null;
+  targetMessageId: number | null;
+  error: string | null;
+  createdAt: Date;
+};
+
+export async function logMediaRouting(args: {
+  sourceChatId: number;
+  sourceMessageId?: number | null;
+  kind: string;
+  decision: MediaRoutingDecision;
+  targetRole?: string | null;
+  targetChatId?: number | null;
+  targetMessageId?: number | null;
+  error?: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    INSERT INTO media_routing_log (
+      source_chat_id, source_message_id, kind, decision,
+      target_role, target_chat_id, target_message_id, error
+    )
+    VALUES (${args.sourceChatId}, ${args.sourceMessageId ?? null},
+            ${args.kind}, ${args.decision},
+            ${args.targetRole ?? null}, ${args.targetChatId ?? null},
+            ${args.targetMessageId ?? null}, ${args.error ?? null})`;
+}
+
+export async function listMediaRoutingLog(opts: {
+  chatId?: number | null;
+  decision?: MediaRoutingDecision;
+  limit?: number;
+} = {}): Promise<MediaRoutingLogEntry[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, source_chat_id, source_message_id, kind, decision,
+           target_role, target_chat_id, target_message_id, error, created_at
+    FROM media_routing_log
+    WHERE (${opts.chatId ?? null}::bigint IS NULL OR source_chat_id = ${opts.chatId ?? null})
+      AND (${opts.decision ?? null}::text IS NULL OR decision = ${opts.decision ?? null})
+    ORDER BY created_at DESC
+    LIMIT ${opts.limit ?? 200}`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    sourceChatId: Number(r.source_chat_id),
+    sourceMessageId:
+      r.source_message_id == null ? null : Number(r.source_message_id),
+    kind: r.kind as string,
+    decision: r.decision as MediaRoutingDecision,
+    targetRole: (r.target_role as string) ?? null,
+    targetChatId: r.target_chat_id == null ? null : Number(r.target_chat_id),
+    targetMessageId:
+      r.target_message_id == null ? null : Number(r.target_message_id),
+    error: (r.error as string) ?? null,
+    createdAt: r.created_at as Date,
+  }));
 }
 
 export async function markAutoSummaryDelivered(chatId: number): Promise<void> {

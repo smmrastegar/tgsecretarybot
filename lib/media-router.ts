@@ -16,6 +16,7 @@ import {
   type ChatRule,
   hasDb,
   listChatsByFunction,
+  logMediaRouting,
   sql,
 } from "./db";
 import { getCurrentTenantId } from "./tenant-context";
@@ -85,7 +86,33 @@ export async function maybeRouteMedia(args: {
 }): Promise<RouteResult> {
   const { rule, msg, bot } = args;
   const result: RouteResult = { routed: [], errors: [] };
-  if (!rule) return result;
+
+  // What kind of payload is this? We use this for logging even when
+  // the chat has no rule yet (so the operator can see "voice arrived
+  // here but I have no chat_rules row for it").
+  const payloadKind = msg.voice
+    ? "voice"
+    : msg.video_note
+      ? "video_note"
+      : msg.video
+        ? "video"
+        : msg.photo
+          ? "photo"
+          : msg.location
+            ? "location"
+            : null;
+
+  if (!rule) {
+    if (payloadKind) {
+      await logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind: payloadKind,
+        decision: "no_rule",
+      }).catch(() => {});
+    }
+    return result;
+  }
 
   const sender = senderName(msg);
   const chatLabel = sourceChatLabel(rule, msg);
@@ -94,23 +121,46 @@ export async function maybeRouteMedia(args: {
   // Voice → voice_storage. Video-notes → video_note_storage if set,
   // otherwise fall back to voice_storage (so a single channel still
   // works for users who haven't bothered splitting them).
-  if (
-    rule.autoForwardVoice &&
-    (msg.voice || msg.video_note) &&
-    !rule.muted
-  ) {
+  if (msg.voice || msg.video_note) {
+    const kind = msg.voice ? "voice" : "video_note";
+    if (!rule.autoForwardVoice) {
+      await logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind,
+        decision: "flag_off",
+      }).catch(() => {});
+    } else if (rule.muted) {
+      await logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind,
+        decision: "muted",
+      }).catch(() => {});
+    } else {
     let targets;
+    let targetRole: string;
     if (msg.video_note) {
       targets = await listChatsByFunction("video_note_storage");
+      targetRole = "video_note_storage";
       if (targets.length === 0) {
         targets = await listChatsByFunction("voice_storage");
+        targetRole = "voice_storage";
       }
     } else {
       targets = await listChatsByFunction("voice_storage");
+      targetRole = "voice_storage";
     }
     const t = targets[0];
     if (!t) {
       result.errors.push("no voice_storage chat configured");
+      await logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind,
+        decision: "no_target",
+        targetRole,
+      }).catch(() => {});
     } else {
       try {
         let sent: Message | null = null;
@@ -170,19 +220,53 @@ export async function maybeRouteMedia(args: {
             chatId: t.chatId,
             messageId: sent.message_id,
           });
+          await logMediaRouting({
+            sourceChatId: msg.chat.id,
+            sourceMessageId: msg.message_id,
+            kind,
+            decision: "routed",
+            targetRole,
+            targetChatId: t.chatId,
+            targetMessageId: sent.message_id,
+          }).catch(() => {});
         }
       } catch (err) {
-        result.errors.push(
-          `voice -> ${t.chatId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        const errMsg = err instanceof Error ? err.message : String(err);
+        result.errors.push(`voice -> ${t.chatId}: ${errMsg}`);
+        await logMediaRouting({
+          sourceChatId: msg.chat.id,
+          sourceMessageId: msg.message_id,
+          kind,
+          decision: "error",
+          targetRole,
+          targetChatId: t.chatId,
+          error: errMsg.slice(0, 500),
+        }).catch(() => {});
       }
+    }
     }
   }
 
-  if (rule.autoForwardVideo && msg.video) {
+  if (msg.video) {
+    if (!rule.autoForwardVideo) {
+      await logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind: "video",
+        decision: "flag_off",
+      }).catch(() => {});
+    } else {
     const t = (await listChatsByFunction("video_storage"))[0];
-    if (!t) result.errors.push("no video_storage chat configured");
-    else {
+    if (!t) {
+      result.errors.push("no video_storage chat configured");
+      await logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind: "video",
+        decision: "no_target",
+        targetRole: "video_storage",
+      }).catch(() => {});
+    } else {
       try {
         const sent = await bot.api.sendVideo(t.chatId, msg.video.file_id, {
           caption: `${captionPrefix}${msg.caption ? "\n\n" + escapeHtml(msg.caption) : ""}`,
@@ -202,19 +286,53 @@ export async function maybeRouteMedia(args: {
           chatId: t.chatId,
           messageId: sent.message_id,
         });
+        await logMediaRouting({
+          sourceChatId: msg.chat.id,
+          sourceMessageId: msg.message_id,
+          kind: "video",
+          decision: "routed",
+          targetRole: "video_storage",
+          targetChatId: t.chatId,
+          targetMessageId: sent.message_id,
+        }).catch(() => {});
       } catch (err) {
-        result.errors.push(
-          `video -> ${t.chatId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        const errMsg = err instanceof Error ? err.message : String(err);
+        result.errors.push(`video -> ${t.chatId}: ${errMsg}`);
+        await logMediaRouting({
+          sourceChatId: msg.chat.id,
+          sourceMessageId: msg.message_id,
+          kind: "video",
+          decision: "error",
+          targetRole: "video_storage",
+          targetChatId: t.chatId,
+          error: errMsg.slice(0, 500),
+        }).catch(() => {});
       }
+    }
     }
   }
 
-  if (rule.autoForwardPhoto && msg.photo && msg.photo.length > 0) {
+  if (msg.photo && msg.photo.length > 0) {
+    if (!rule.autoForwardPhoto) {
+      await logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind: "photo",
+        decision: "flag_off",
+      }).catch(() => {});
+    } else {
     const t = (await listChatsByFunction("photo_storage"))[0];
     const biggest = msg.photo[msg.photo.length - 1];
-    if (!t) result.errors.push("no photo_storage chat configured");
-    else if (biggest) {
+    if (!t) {
+      result.errors.push("no photo_storage chat configured");
+      await logMediaRouting({
+        sourceChatId: msg.chat.id,
+        sourceMessageId: msg.message_id,
+        kind: "photo",
+        decision: "no_target",
+        targetRole: "photo_storage",
+      }).catch(() => {});
+    } else if (biggest) {
       try {
         const sent = await bot.api.sendPhoto(t.chatId, biggest.file_id, {
           caption: `${captionPrefix}${msg.caption ? "\n\n" + escapeHtml(msg.caption) : ""}`,
@@ -234,11 +352,29 @@ export async function maybeRouteMedia(args: {
           chatId: t.chatId,
           messageId: sent.message_id,
         });
+        await logMediaRouting({
+          sourceChatId: msg.chat.id,
+          sourceMessageId: msg.message_id,
+          kind: "photo",
+          decision: "routed",
+          targetRole: "photo_storage",
+          targetChatId: t.chatId,
+          targetMessageId: sent.message_id,
+        }).catch(() => {});
       } catch (err) {
-        result.errors.push(
-          `photo -> ${t.chatId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        const errMsg = err instanceof Error ? err.message : String(err);
+        result.errors.push(`photo -> ${t.chatId}: ${errMsg}`);
+        await logMediaRouting({
+          sourceChatId: msg.chat.id,
+          sourceMessageId: msg.message_id,
+          kind: "photo",
+          decision: "error",
+          targetRole: "photo_storage",
+          targetChatId: t.chatId,
+          error: errMsg.slice(0, 500),
+        }).catch(() => {});
       }
+    }
     }
   }
 

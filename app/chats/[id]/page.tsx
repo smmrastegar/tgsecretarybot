@@ -1354,6 +1354,9 @@ export default function ChatDetailPage() {
               </div>
             </div>
             )}
+            {rule && (
+              <MediaRoutingLog chatId={chatId} />
+            )}
           </Card>
 
           <PageTitle
@@ -1687,5 +1690,133 @@ export default function ChatDetailPage() {
         </>
       )}
     </Shell>
+  );
+}
+
+type LogEntry = {
+  id: number;
+  sourceChatId: number;
+  sourceMessageId: number | null;
+  kind: string;
+  decision: string;
+  targetRole: string | null;
+  targetChatId: number | null;
+  targetMessageId: number | null;
+  error: string | null;
+  createdAt: string;
+};
+
+function MediaRoutingLog({ chatId }: { chatId: number }) {
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(
+        `/api/media-routing-log?chatId=${chatId}`,
+      );
+      if (r.ok) {
+        const j = (await r.json()) as { log: LogEntry[] };
+        setLog(j.log);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [chatId]);
+
+  useEffect(() => {
+    if (open) reload();
+  }, [open, reload]);
+
+  const decisionStyle: Record<string, string> = {
+    routed: "border-emerald-700 bg-emerald-900/20 text-emerald-300",
+    no_rule: "border-[var(--color-border)] bg-[var(--color-surface-2)]/30",
+    flag_off: "border-amber-700 bg-amber-900/20 text-amber-300",
+    muted: "border-amber-700 bg-amber-900/20 text-amber-300",
+    no_target: "border-red-700 bg-red-900/20 text-red-300",
+    error: "border-red-700 bg-red-900/20 text-red-300",
+  };
+  const decisionLabel: Record<string, string> = {
+    routed: "✅ کپی شد",
+    no_rule: "ℹ️ chat_rules نداره",
+    flag_off: "⏸ flag خاموش",
+    muted: "🔇 muted",
+    no_target: "❌ کانال هدف ست نیست",
+    error: "🔴 خطای ارسال",
+  };
+
+  return (
+    <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+      <button
+        onClick={() => setOpen(!open)}
+        className="text-xs font-medium flex items-center gap-2 hover:text-white text-[var(--color-text-dim)]"
+      >
+        <span>{open ? "▼" : "▶"}</span>
+        🛰 Media routing log
+        <span className="text-[10px]">
+          (دلیل اینکه چرا voice/video/photo رفت یا نرفت)
+        </span>
+      </button>
+      {open && (
+        <div className="mt-2">
+          <div className="flex items-center gap-2 mb-2">
+            <button
+              onClick={reload}
+              disabled={loading}
+              className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            >
+              {loading ? "…" : "🔄"}
+            </button>
+            <span className="text-[10px] text-[var(--color-text-dim)]">
+              {log.length} مورد آخر برای این چت
+            </span>
+          </div>
+          {log.length === 0 ? (
+            <div className="text-[11px] text-[var(--color-text-dim)]">
+              لاگ خالیه. اولین voice/video/photo که توی این چت بیاد، تصمیم
+              router اینجا ثبت می‌شه.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1 max-h-72 overflow-y-auto">
+              {log.map((e) => (
+                <div
+                  key={e.id}
+                  className={`text-[11px] p-1.5 rounded-md border ${
+                    decisionStyle[e.decision] ?? "border-[var(--color-border)]"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">
+                      {decisionLabel[e.decision] ?? e.decision}
+                    </span>
+                    <span className="text-[10px]" dir="ltr">
+                      {e.kind}
+                    </span>
+                    {e.targetChatId && (
+                      <span className="text-[10px]" dir="ltr">
+                        → {e.targetRole}:{e.targetChatId}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-[var(--color-text-dim)] ml-auto">
+                      {relTime(e.createdAt)}
+                    </span>
+                  </div>
+                  {e.error && (
+                    <div
+                      dir="ltr"
+                      className="text-[10px] mt-1 break-all font-mono opacity-80"
+                    >
+                      {e.error}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
