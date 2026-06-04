@@ -122,6 +122,16 @@ export default function ChatsPage() {
   const [typeFilter, setTypeFilter] = useState<
     "all" | "private" | "bot" | "group" | "channel"
   >("all");
+  // "unset" = chats with no relationship value at all (null). A
+  // specific value filters to exactly that relationship. "all" = no
+  // filter. Same convention applies to roleFilter / flagFilter.
+  const [relationshipFilter, setRelationshipFilter] = useState<
+    "all" | "unset" | Relationship
+  >("all");
+  const [roleFilter, setRoleFilter] = useState<"all" | "unset" | string>(
+    "all",
+  );
+  const [flagFilter, setFlagFilter] = useState<"all" | "vip" | "muted">("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulking, setBulking] = useState(false);
 
@@ -171,6 +181,18 @@ export default function ChatsPage() {
   const filteredChats = chats.filter((c) => {
     if (modeFilter !== "all" && c.mode !== modeFilter) return false;
     if (!chatMatchesType(c, typeFilter)) return false;
+    if (relationshipFilter === "unset") {
+      if (c.relationship) return false;
+    } else if (relationshipFilter !== "all") {
+      if (c.relationship !== relationshipFilter) return false;
+    }
+    if (roleFilter === "unset") {
+      if (c.functionRole) return false;
+    } else if (roleFilter !== "all") {
+      if (c.functionRole !== roleFilter) return false;
+    }
+    if (flagFilter === "vip" && !c.vip) return false;
+    if (flagFilter === "muted" && !c.muted) return false;
     if (!chatMatchesSearch(c, search.trim().toLowerCase())) return false;
     return true;
   });
@@ -370,6 +392,89 @@ export default function ChatsPage() {
                   );
                 })}
               </select>
+              <span className="text-[var(--color-text-dim)]">رابطه:</span>
+              <select
+                value={relationshipFilter}
+                onChange={(e) =>
+                  setRelationshipFilter(
+                    e.target.value as "all" | "unset" | Relationship,
+                  )
+                }
+                className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+              >
+                <option value="all">همه ({chats.length})</option>
+                <option value="unset">
+                  بدون رابطه ({chats.filter((c) => !c.relationship).length})
+                </option>
+                {(Object.keys(RELATIONSHIP_LABELS) as Relationship[]).map(
+                  (r) => {
+                    const n = chats.filter((c) => c.relationship === r).length;
+                    if (n === 0) return null;
+                    return (
+                      <option key={r} value={r}>
+                        {RELATIONSHIP_LABELS[r]} ({n})
+                      </option>
+                    );
+                  },
+                )}
+              </select>
+              <span className="text-[var(--color-text-dim)]">نقش:</span>
+              <select
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value)}
+                className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+              >
+                <option value="all">همه ({chats.length})</option>
+                <option value="unset">
+                  بدون نقش ({chats.filter((c) => !c.functionRole).length})
+                </option>
+                {Object.keys(FUNCTION_ROLE_BADGE).map((r) => {
+                  const n = chats.filter((c) => c.functionRole === r).length;
+                  if (n === 0) return null;
+                  return (
+                    <option key={r} value={r}>
+                      {FUNCTION_ROLE_BADGE[r]} {r} ({n})
+                    </option>
+                  );
+                })}
+              </select>
+              <span className="text-[var(--color-text-dim)]">لیبل:</span>
+              <select
+                value={flagFilter}
+                onChange={(e) =>
+                  setFlagFilter(e.target.value as "all" | "vip" | "muted")
+                }
+                className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+              >
+                <option value="all">همه</option>
+                <option value="vip">
+                  ⭐ VIP ({chats.filter((c) => c.vip).length})
+                </option>
+                <option value="muted">
+                  🔇 Muted ({chats.filter((c) => c.muted).length})
+                </option>
+              </select>
+              {(relationshipFilter !== "all" ||
+                roleFilter !== "all" ||
+                flagFilter !== "all" ||
+                modeFilter !== "all" ||
+                typeFilter !== "all" ||
+                search.trim()) && (
+                <button
+                  onClick={() => {
+                    setRelationshipFilter("all");
+                    setRoleFilter("all");
+                    setFlagFilter("all");
+                    setModeFilter("all");
+                    setTypeFilter("all");
+                    setSearch("");
+                  }}
+                  className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text-dim)]"
+                  title="پاک کردن همه فیلترها"
+                >
+                  ✕ پاک
+                </button>
+              )}
               <span className="text-[var(--color-text-dim)] ml-auto">
                 {filteredChats.length} نمایش / {selected.size} انتخاب
               </span>
