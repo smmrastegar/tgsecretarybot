@@ -50,6 +50,12 @@ const TILES: Array<{
     desc: "آدرس‌ها، لوکیشن‌ها، شماره‌ها و نکات مهم استخراج‌شده از هر چت",
   },
   {
+    href: "/media-routing",
+    emoji: "🛰",
+    label: "Media routing",
+    desc: "debug: چرا یه voice/video/photo توی کانال هدف کپی نشد",
+  },
+  {
     href: "/costs",
     emoji: "💵",
     label: "Costs",

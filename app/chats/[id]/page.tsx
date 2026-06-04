@@ -1749,16 +1749,24 @@ function MediaRoutingLog({ chatId }: { chatId: number }) {
 
   return (
     <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-      <button
-        onClick={() => setOpen(!open)}
-        className="text-xs font-medium flex items-center gap-2 hover:text-white text-[var(--color-text-dim)]"
-      >
-        <span>{open ? "▼" : "▶"}</span>
-        🛰 Media routing log
-        <span className="text-[10px]">
-          (دلیل اینکه چرا voice/video/photo رفت یا نرفت)
-        </span>
-      </button>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <button
+          onClick={() => setOpen(!open)}
+          className="text-xs font-medium flex items-center gap-2 hover:text-white text-[var(--color-text-dim)]"
+        >
+          <span>{open ? "▼" : "▶"}</span>
+          🛰 Media routing log
+          <span className="text-[10px]">
+            (دلیل اینکه چرا voice/video/photo رفت یا نرفت)
+          </span>
+        </button>
+        <a
+          href="/media-routing"
+          className="text-[10px] text-[var(--color-text-dim)] hover:text-white underline-offset-2 hover:underline"
+        >
+          → همه‌ی چت‌ها
+        </a>
+      </div>
       {open && (
         <div className="mt-2">
           <div className="flex items-center gap-2 mb-2">
