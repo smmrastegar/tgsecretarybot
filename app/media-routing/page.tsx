@@ -27,6 +27,8 @@ const DECISIONS = [
   ["no_target", "❌ کانال هدف ست نیست"],
   ["no_rule", "ℹ️ chat_rules نداره"],
   ["error", "🔴 خطای ارسال"],
+  ["received_business", "📨 رسید (business)"],
+  ["received_group", "📨 رسید (group/channel)"],
 ] as const;
 
 const DECISION_STYLE: Record<string, string> = {
@@ -36,6 +38,10 @@ const DECISION_STYLE: Record<string, string> = {
   muted: "border-amber-700 bg-amber-900/20 text-amber-300",
   no_target: "border-red-700 bg-red-900/20 text-red-300",
   error: "border-red-700 bg-red-900/20 text-red-300",
+  received_business: "border-blue-700 bg-blue-900/15 text-blue-300",
+  received_group: "border-blue-700 bg-blue-900/15 text-blue-300",
+  received_secretary: "border-blue-700 bg-blue-900/15 text-blue-300",
+  received_edit: "border-blue-700 bg-blue-900/15 text-blue-300",
 };
 
 const DECISION_LABEL: Record<string, string> = {
@@ -45,6 +51,10 @@ const DECISION_LABEL: Record<string, string> = {
   muted: "🔇 muted",
   no_target: "❌ کانال هدف ست نیست",
   error: "🔴 خطای ارسال",
+  received_business: "📨 پیام رسید — مسیر business",
+  received_group: "📨 پیام رسید — مسیر group/channel",
+  received_secretary: "📨 پیام رسید — مسیر secretary",
+  received_edit: "📨 ویرایش پیام رسید",
 };
 
 export default function MediaRoutingPage() {

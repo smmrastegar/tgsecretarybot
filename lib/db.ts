@@ -2137,7 +2137,11 @@ export type MediaRoutingDecision =
   | "flag_off" // auto_forward_* is false on the source chat
   | "muted" // source chat muted, so we skip routing
   | "no_target" // no chat tagged with the target role
-  | "error"; // sendXxx call threw
+  | "error" // sendXxx call threw
+  | "received_business" // diagnostic: media reached handleBusinessMessage
+  | "received_group" // diagnostic: media reached handleAnyChatPost
+  | "received_secretary" // diagnostic: media reached handleSecretaryReply
+  | "received_edit"; // diagnostic: media reached handleBusinessEdit
 
 export type MediaRoutingLogEntry = {
   id: number;

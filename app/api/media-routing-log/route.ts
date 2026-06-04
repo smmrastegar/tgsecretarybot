@@ -24,6 +24,10 @@ export async function GET(request: Request): Promise<NextResponse> {
     "muted",
     "no_target",
     "error",
+    "received_business",
+    "received_group",
+    "received_secretary",
+    "received_edit",
   ];
   const chatId = chatIdRaw ? Number(chatIdRaw) : undefined;
   const decision = ALLOWED.includes(decisionRaw as MediaRoutingDecision)

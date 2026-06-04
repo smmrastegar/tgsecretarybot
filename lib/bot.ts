@@ -62,6 +62,7 @@ import {
   touchSecretarySession,
   upsertBusinessConnection,
   audit,
+  logMediaRouting,
   type ChatMode,
   type SecretarySession,
 } from "./db";
@@ -1463,6 +1464,25 @@ async function resolveOwner(bcId: string, bot: Bot): Promise<OwnerCacheEntry | n
 }
 
 async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
+  // Diagnostic — every media payload that reaches this handler gets a
+  // "received_business" row in media_routing_log so we can tell apart
+  // "the bot never saw it" (no received row) from "the bot saw it but
+  // bailed before routing" (received row but no follow-up).
+  if (msg.voice || msg.video_note || msg.video || msg.photo) {
+    const kind = msg.voice
+      ? "voice"
+      : msg.video_note
+        ? "video_note"
+        : msg.video
+          ? "video"
+          : "photo";
+    void logMediaRouting({
+      sourceChatId: msg.chat.id,
+      sourceMessageId: msg.message_id,
+      kind,
+      decision: "received_business",
+    }).catch(() => {});
+  }
   const bcId = msg.business_connection_id;
   if (!bcId) return;
 
@@ -2578,6 +2598,24 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
 }
 
 async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
+  // Diagnostic mirror of handleBusinessMessage's "received" entry.
+  // Used to tell apart "bot never saw the message" from "bot saw it
+  // but bailed early".
+  if (msg.voice || msg.video_note || msg.video || msg.photo) {
+    const kind = msg.voice
+      ? "voice"
+      : msg.video_note
+        ? "video_note"
+        : msg.video
+          ? "video"
+          : "photo";
+    void logMediaRouting({
+      sourceChatId: msg.chat.id,
+      sourceMessageId: msg.message_id,
+      kind,
+      decision: "received_group",
+    }).catch(() => {});
+  }
 
   const hasContent = Boolean(
     msg.text ||
