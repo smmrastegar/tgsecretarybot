@@ -486,6 +486,20 @@ export async function ensureSchema(): Promise<void> {
         PRIMARY KEY (tenant_id, key)
       )`;
     await q`CREATE INDEX IF NOT EXISTS tenant_settings_tenant_idx ON tenant_settings (tenant_id)`;
+    // Tracks which usernames we've registered with the external
+    // change-detector. last_status is the HTTP status from the most
+    // recent push so the admin can see drift.
+    await q`
+      CREATE TABLE IF NOT EXISTS monitor_subscriptions (
+        username          TEXT PRIMARY KEY,
+        registered_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        unregistered_at   TIMESTAMPTZ,
+        last_pushed_at    TIMESTAMPTZ,
+        last_status       INT,
+        last_notified_at  TIMESTAMPTZ,
+        notify_count      INT NOT NULL DEFAULT 0
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS monitor_subscriptions_active_idx ON monitor_subscriptions (registered_at DESC) WHERE unregistered_at IS NULL`;
     await q`
       CREATE TABLE IF NOT EXISTS admin_users (
         user_id    BIGINT PRIMARY KEY,
@@ -3180,6 +3194,7 @@ export type MonitoredAccount = {
   lastStoryAt: Date | null;
   lastError: string | null;
   lastMediaCount: number | null;
+  tenantId: number | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -3206,6 +3221,7 @@ function rowToMonitored(r: Record<string, unknown>): MonitoredAccount {
     lastError: (r.last_error as string) ?? null,
     lastMediaCount:
       r.last_media_count == null ? null : Number(r.last_media_count),
+    tenantId: r.tenant_id == null ? null : Number(r.tenant_id),
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
   };
@@ -3223,6 +3239,7 @@ export async function listMonitoredAccounts(opts: {
            check_stories, check_posts, check_reels, check_profile,
            check_mentioned, interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, last_media_count,
+           tenant_id,
            created_at, updated_at
     FROM monitored_accounts
     WHERE (${opts.platform ?? null}::text IS NULL OR platform = ${opts.platform ?? null})
@@ -3315,6 +3332,7 @@ export async function getMonitoredAccount(
            check_stories, check_posts, check_reels, check_profile,
            check_mentioned, interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, last_media_count,
+           tenant_id,
            created_at, updated_at
     FROM monitored_accounts
     WHERE id = ${id}
@@ -3338,6 +3356,7 @@ export async function dueMonitoredAccounts(
            check_stories, check_posts, check_reels, check_profile,
            check_mentioned, interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, last_media_count,
+           tenant_id,
            created_at, updated_at
     FROM monitored_accounts
     WHERE enabled = TRUE
@@ -3395,6 +3414,7 @@ export async function addMonitoredAccount(args: {
               check_stories, check_posts, check_reels, check_profile,
               check_mentioned, interval_minutes, instagram_user_id, full_name,
               last_checked_at, last_story_at, last_error, last_media_count,
+              tenant_id,
               created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToMonitored(r) : null;

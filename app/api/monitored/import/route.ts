@@ -11,6 +11,7 @@ import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 import { requireTenant } from "@/lib/tenant";
 import { runWithTenant } from "@/lib/tenant-context";
+import { registerAccount } from "@/lib/external-monitor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -135,6 +136,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     action: "monitor.import",
     details: { inserted, updated, parsed: parsed.length, tenantId: tenant.id },
   });
+  // Push every imported username to the external change-detector,
+  // fire-and-forget. registerAccount() is idempotent so re-pushing
+  // an existing one is harmless.
+  for (const it of items) {
+    registerAccount({ username: it.username }).catch((err) =>
+      console.warn("[external-monitor] import register failed:", err),
+    );
+  }
 
   const IMMEDIATE_ON_ADD = 5;
   let detected = 0;

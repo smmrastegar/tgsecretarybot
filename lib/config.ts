@@ -89,6 +89,13 @@ export const DEFAULT_SETTINGS = {
   monitorDefaultCheckReels: "false",
   monitorDefaultCheckProfile: "false",
   monitorDefaultCheckMentioned: "false",
+  // External "change detector" — an upstream service that polls
+  // Instagram cheaply on its own and webhooks us when something
+  // actually changes. We do the expensive Hiker fetch only on
+  // those pings. See docs/EXTERNAL_MONITOR_API.md for the contract.
+  monitorExternalEnabled: "false",
+  monitorExternalBaseUrl: "",
+  monitorExternalSecret: "",
   // HikerAPI logical budget — we don't know the actual remaining
   // dollars from HikerAPI's API, so we track every call locally and
   // gate spending against a total (default $50 = the user's pre-pay)
@@ -148,6 +155,9 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   monitorDefaultCheckReels: optional("MONITOR_DEFAULT_CHECK_REELS"),
   monitorDefaultCheckProfile: optional("MONITOR_DEFAULT_CHECK_PROFILE"),
   monitorDefaultCheckMentioned: optional("MONITOR_DEFAULT_CHECK_MENTIONED"),
+  monitorExternalEnabled: optional("MONITOR_EXTERNAL_ENABLED"),
+  monitorExternalBaseUrl: optional("MONITOR_EXTERNAL_BASE_URL"),
+  monitorExternalSecret: optional("MONITOR_EXTERNAL_SECRET"),
   hikerBudgetUsd: optional("HIKER_BUDGET_USD"),
   hikerApprovalStepUsd: optional("HIKER_APPROVAL_STEP_USD"),
   hikerApprovedUsd: optional("HIKER_APPROVED_USD"),

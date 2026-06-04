@@ -3,10 +3,12 @@ import { requireSession } from "@/lib/auth";
 import {
   audit,
   deleteMonitoredAccount,
+  getMonitoredAccount,
   resetMonitoredAccountError,
   setMonitoredAccountEnabled,
   updateMonitoredAccountConfig,
 } from "@/lib/db";
+import { unregisterAccount } from "@/lib/external-monitor";
 import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
@@ -111,13 +113,29 @@ export async function DELETE(
   if (!Number.isFinite(n)) {
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
   }
+  // Capture the username BEFORE delete so we can tell the external
+  // service. Only unregister if no other tenant still tracks it.
+  const acc = await getMonitoredAccount(n, tenant.id);
   await deleteMonitoredAccount(n, tenant.id);
+  if (acc?.username) {
+    // Re-check across all tenants — if anyone else tracks the same
+    // username, leave the subscription alone.
+    const { listMonitoredAccounts } = await import("@/lib/db");
+    const stillTracked = (
+      await listMonitoredAccounts({ platform: "instagram" })
+    ).some((x) => x.username === acc.username);
+    if (!stillTracked) {
+      unregisterAccount(acc.username).catch((err) =>
+        console.warn("[external-monitor] unregister failed:", err),
+      );
+    }
+  }
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,
     action: "monitor.delete",
     target: String(n),
-    details: { tenantId: tenant.id },
+    details: { tenantId: tenant.id, username: acc?.username },
   });
   return NextResponse.json({ ok: true });
 }

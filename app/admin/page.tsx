@@ -91,9 +91,30 @@ export default function AdminPage() {
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [plans, setPlans] = useState<PlanPreset[]>([]);
-  const [tab, setTab] = useState<"tenants" | "admins" | "connections">(
-    "tenants",
-  );
+  const [tab, setTab] = useState<
+    "tenants" | "admins" | "connections" | "external"
+  >("tenants");
+  type ExternalStatus = {
+    config: { enabled: boolean; baseUrl: string | null; secretConfigured: boolean };
+    health: { ok: boolean; status: number; body: string; baseUrl: string | null };
+    stats: {
+      activeSubscriptions: number;
+      totalSubscriptions: number;
+      totalNotificationsReceived: number;
+    };
+    subscriptions: Array<{
+      username: string;
+      registeredAt: string;
+      unregisteredAt: string | null;
+      lastPushedAt: string | null;
+      lastStatus: number | null;
+      lastNotifiedAt: string | null;
+      notifyCount: number;
+    }>;
+  };
+  const [external, setExternal] = useState<ExternalStatus | null>(null);
+  const [externalLoading, setExternalLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [editing, setEditing] = useState<Tenant | null>(null);
   const [creating, setCreating] = useState(false);
   const [finance, setFinance] = useState<Finance | null>(null);
@@ -140,6 +161,17 @@ export default function AdminPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (tab !== "external" || external != null) return;
+    setExternalLoading(true);
+    fetch("/api/admin/external-monitor")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: ExternalStatus | null) => {
+        if (j) setExternal(j);
+      })
+      .finally(() => setExternalLoading(false));
+  }, [tab, external]);
 
   function toggleSelect(id: number) {
     setSelected((prev) => {
@@ -223,6 +255,7 @@ export default function AdminPage() {
             ["tenants", "🏢 Tenants", tenants.length],
             ["admins", "👮 Admins", admins.length],
             ["connections", "🔗 Connections", connections.length],
+            ["external", "🛰 External monitor", external?.stats.activeSubscriptions ?? 0],
           ] as const
         ).map(([key, label, count]) => (
           <button
@@ -544,6 +577,50 @@ export default function AdminPage() {
             ))}
           </div>
         </Card>
+      )}
+
+      {tab === "external" && (
+        <ExternalMonitorPanel
+          data={external}
+          loading={externalLoading}
+          syncing={syncing}
+          onReload={async () => {
+            setExternalLoading(true);
+            try {
+              const r = await fetch("/api/admin/external-monitor");
+              if (r.ok) {
+                const j = (await r.json()) as ExternalStatus;
+                setExternal(j);
+              }
+            } finally {
+              setExternalLoading(false);
+            }
+          }}
+          onSync={async () => {
+            setSyncing(true);
+            try {
+              const r = await fetch("/api/admin/external-monitor/sync", {
+                method: "POST",
+              });
+              const j = (await r.json().catch(() => ({}))) as {
+                total?: number;
+                succeeded?: number;
+                failed?: number;
+                errors?: Array<{ username: string; status: number; body: string }>;
+              };
+              alert(
+                `Sync: ${j.succeeded ?? 0} / ${j.total ?? 0} موفق · ${j.failed ?? 0} خطا` +
+                  (j.errors && j.errors.length > 0
+                    ? `\n\n${j.errors.slice(0, 5).map((e) => `${e.username}: ${e.status} ${e.body.slice(0, 60)}`).join("\n")}`
+                    : ""),
+              );
+              const r2 = await fetch("/api/admin/external-monitor");
+              if (r2.ok) setExternal((await r2.json()) as ExternalStatus);
+            } finally {
+              setSyncing(false);
+            }
+          }}
+        />
       )}
 
       {creating && (
@@ -1076,6 +1153,224 @@ function FinanceDialog(props: { finance: Finance; onClose: () => void }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+type ExternalStatusProp = {
+  config: { enabled: boolean; baseUrl: string | null; secretConfigured: boolean };
+  health: { ok: boolean; status: number; body: string; baseUrl: string | null };
+  stats: {
+    activeSubscriptions: number;
+    totalSubscriptions: number;
+    totalNotificationsReceived: number;
+  };
+  subscriptions: Array<{
+    username: string;
+    registeredAt: string;
+    unregisteredAt: string | null;
+    lastPushedAt: string | null;
+    lastStatus: number | null;
+    lastNotifiedAt: string | null;
+    notifyCount: number;
+  }>;
+};
+
+function ExternalMonitorPanel(props: {
+  data: ExternalStatusProp | null;
+  loading: boolean;
+  syncing: boolean;
+  onReload: () => Promise<void>;
+  onSync: () => Promise<void>;
+}) {
+  const { data, loading, syncing, onReload, onSync } = props;
+  return (
+    <div className="flex flex-col gap-3">
+      <Card className="!p-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <div className="text-sm font-medium">🛰 External change detector</div>
+          <div className="flex gap-2">
+            <a
+              href="/settings#monitorExternal"
+              className="text-[10px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+            >
+              ⚙️ تنظیمات (settings)
+            </a>
+            <button
+              onClick={onReload}
+              disabled={loading}
+              className="text-[10px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            >
+              {loading ? "…" : "🔄"}
+            </button>
+            <button
+              onClick={onSync}
+              disabled={syncing || !data?.config.enabled}
+              className="text-[10px] px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+              title="همه‌ی usernameهای فعال رو دوباره push کن"
+            >
+              {syncing ? "Sync…" : "🔁 Sync all"}
+            </button>
+          </div>
+        </div>
+        {!data ? (
+          <div className="text-[11px] text-[var(--color-text-dim)]">
+            بارگذاری…
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] mb-2">
+              <div className="p-2 rounded-md border border-[var(--color-border)]">
+                <div className="text-[var(--color-text-dim)] mb-0.5">وضعیت</div>
+                <div>
+                  {data.config.enabled ? (
+                    <span className="text-emerald-300">✅ فعال</span>
+                  ) : (
+                    <span className="text-amber-400">⏸ غیرفعال</span>
+                  )}
+                  {" · "}
+                  {data.config.secretConfigured ? (
+                    <span className="text-emerald-300">secret ✓</span>
+                  ) : (
+                    <span className="text-red-300">secret ✗</span>
+                  )}
+                </div>
+                {data.config.baseUrl && (
+                  <div dir="ltr" className="font-mono text-[10px] mt-0.5 break-all text-[var(--color-text-dim)]">
+                    {data.config.baseUrl}
+                  </div>
+                )}
+              </div>
+              <div className="p-2 rounded-md border border-[var(--color-border)]">
+                <div className="text-[var(--color-text-dim)] mb-0.5">
+                  🩺 Health (آخرین بار)
+                </div>
+                <div>
+                  {data.health.ok ? (
+                    <span className="text-emerald-300">
+                      ✅ {data.health.status}
+                    </span>
+                  ) : (
+                    <span className="text-red-300">
+                      ✗ {data.health.status || "—"}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[9px] text-[var(--color-text-dim)] mt-0.5 break-all font-mono">
+                  {data.health.body.slice(0, 200)}
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-[11px]">
+              <div className="p-2 rounded-md border border-[var(--color-border)] text-center">
+                <div className="text-[var(--color-text-dim)] text-[10px]">
+                  فعال
+                </div>
+                <div className="text-base font-bold tabular-nums">
+                  {data.stats.activeSubscriptions}
+                </div>
+              </div>
+              <div className="p-2 rounded-md border border-[var(--color-border)] text-center">
+                <div className="text-[var(--color-text-dim)] text-[10px]">
+                  کل ثبت‌شده
+                </div>
+                <div className="text-base font-bold tabular-nums">
+                  {data.stats.totalSubscriptions}
+                </div>
+              </div>
+              <div className="p-2 rounded-md border border-[var(--color-border)] text-center">
+                <div className="text-[var(--color-text-dim)] text-[10px]">
+                  notify دریافتی
+                </div>
+                <div className="text-base font-bold tabular-nums">
+                  {data.stats.totalNotificationsReceived}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </Card>
+
+      <Card className="!p-3">
+        <div className="text-xs font-medium mb-2">📋 Subscriptions</div>
+        {!data || data.subscriptions.length === 0 ? (
+          <div className="text-[11px] text-[var(--color-text-dim)]">
+            خالی. وقتی owner یه اکانت اضافه می‌کنه اینجا میاد.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-0.5">
+            {data.subscriptions.map((s) => {
+              const pushOk = s.lastStatus && s.lastStatus >= 200 && s.lastStatus < 300;
+              return (
+                <div
+                  key={s.username}
+                  className={`text-[11px] flex items-center gap-2 p-1.5 rounded-md border ${
+                    s.unregisteredAt
+                      ? "border-[var(--color-border)] opacity-50"
+                      : "border-[var(--color-border)]"
+                  } flex-wrap`}
+                >
+                  <span className="font-medium" dir="ltr">
+                    @{s.username}
+                  </span>
+                  {s.unregisteredAt ? (
+                    <Badge tone="neutral">unregistered</Badge>
+                  ) : pushOk ? (
+                    <Badge tone="success">{s.lastStatus}</Badge>
+                  ) : s.lastStatus ? (
+                    <Badge tone="danger">{s.lastStatus}</Badge>
+                  ) : (
+                    <Badge tone="info">pending</Badge>
+                  )}
+                  <span className="text-[10px] text-[var(--color-text-dim)]">
+                    notified ×{s.notifyCount}
+                  </span>
+                  <div className="flex-1" />
+                  {s.lastNotifiedAt && (
+                    <span className="text-[9px] text-[var(--color-text-dim)]">
+                      آخرین notify: {new Date(s.lastNotifiedAt).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
+      <Card className="!p-3">
+        <div className="text-xs font-medium mb-1">📄 Docs برای سرویس خارجی</div>
+        <p className="text-[11px] text-[var(--color-text-dim)] mb-2">
+          contract کامل (endpointها، HMAC، نمونه‌ی پایتون) توی repo:
+          <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)] font-mono text-[10px]" dir="ltr">
+            docs/EXTERNAL_MONITOR_API.md
+          </code>
+        </p>
+        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+          سرویس خارجی این چیزا رو باید بدونه:
+        </p>
+        <ul className="text-[10px] text-[var(--color-text-dim)] list-disc list-inside space-y-0.5">
+          <li>
+            URL ما برای notify:
+            <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)] font-mono" dir="ltr">
+              POST /api/monitored/notify
+            </code>
+          </li>
+          <li>
+            Health endpoint ما (بدون auth):
+            <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)] font-mono" dir="ltr">
+              GET /api/monitored/notify/health
+            </code>
+          </li>
+          <li>
+            Header امضا:
+            <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)] font-mono" dir="ltr">
+              X-Signature: hex(HMAC_SHA256(body, secret))
+            </code>
+          </li>
+          <li>سرویس خارجی باید endpointهای <code dir="ltr">POST /accounts</code>, <code dir="ltr">DELETE /accounts/&lt;username&gt;</code>, <code dir="ltr">GET /health</code> رو expose کنه.</li>
+        </ul>
+      </Card>
     </div>
   );
 }

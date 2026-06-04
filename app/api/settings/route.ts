@@ -13,7 +13,10 @@ import { getTenant, isAdmin } from "@/lib/tenant";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SENSITIVE_KEYS: SettingKey[] = ["hikerApiKeyOverride"];
+const SENSITIVE_KEYS: SettingKey[] = [
+  "hikerApiKeyOverride",
+  "monitorExternalSecret",
+];
 function redactSettings(
   values: Record<SettingKey, string>,
 ): Record<SettingKey, string> {
@@ -103,6 +106,12 @@ export async function PUT(request: Request): Promise<NextResponse> {
   const body = (await request.json()) as Partial<Record<SettingKey, string>>;
   const patch: Partial<Record<SettingKey, string>> = {};
   const SKIP: SettingKey[] = ["hikerApiKeyOverride"];
+  // Treat the redaction placeholder as "don't change" — settings UI
+  // shows ******** for sensitive keys, so naive resubmit would
+  // otherwise overwrite the real secret with literal stars.
+  for (const k of SENSITIVE_KEYS) {
+    if (body[k] === "********") delete body[k];
+  }
   for (const k of SETTING_KEYS) {
     if (SKIP.includes(k)) continue;
     if (k in body && typeof body[k] === "string") patch[k] = body[k];
