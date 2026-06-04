@@ -66,17 +66,15 @@ async function recordCopy(args: {
     ON CONFLICT (storage_chat_id, storage_message_id) DO NOTHING`;
 }
 
-function transcribeKeyboard(
-  storageChatId: number,
-  storageMessageId: number,
-): InlineKeyboard {
-  // callback_data is capped at 64 bytes. tx:<chatId>:<msgId> stays
-  // well under that. The handler reads the row from
-  // media_router_messages to recover the file_id.
-  return new InlineKeyboard().text(
-    "📝 Transcribe",
-    `tx:${storageChatId}:${storageMessageId}`,
-  );
+function transcribeKeyboard(): InlineKeyboard {
+  // callback_data is intentionally a constant. The handler reads the
+  // storage chat_id + message_id from ctx.callbackQuery.message itself
+  // — the button is always attached to the message it transcribes, so
+  // there's no need to encode them here. This lets us attach the
+  // button via reply_markup on the original sendVoice call (atomic)
+  // instead of an editMessageReplyMarkup follow-up that silently
+  // no-ops in channels.
+  return new InlineKeyboard().text("📝 Transcribe", "tx:lookup");
 }
 
 export async function maybeRouteMedia(args: {
@@ -165,16 +163,23 @@ export async function maybeRouteMedia(args: {
       try {
         let sent: Message | null = null;
         if (msg.voice) {
-          // Send the voice WITHOUT a caption — the follow-up reply
-          // below carries the "🔁 از …" prefix plus the inline
-          // 📝 Transcribe button. We tried sendVoice+editReplyMarkup
-          // first but the edit silently no-ops in channels, leaving
-          // voices in voice_storage with no button.
-          sent = await bot.api.sendVoice(t.chatId, msg.voice.file_id);
+          // Atomic: voice + caption + Transcribe button in one call.
+          // No follow-up reply, no editMarkup — both of those failed
+          // in channels and left messages without context or button.
+          sent = await bot.api.sendVoice(t.chatId, msg.voice.file_id, {
+            caption: captionPrefix,
+            parse_mode: "HTML",
+            reply_markup: transcribeKeyboard(),
+          });
         } else if (msg.video_note) {
+          // video_note doesn't accept a caption, but it DOES accept
+          // reply_markup so we get the Transcribe button attached
+          // directly. Source/sender info goes in a follow-up that
+          // we attempt to send right after — best-effort.
           sent = await bot.api.sendVideoNote(
             t.chatId,
             msg.video_note.file_id,
+            { reply_markup: transcribeKeyboard() },
           );
         }
         if (sent) {
@@ -188,18 +193,19 @@ export async function maybeRouteMedia(args: {
             sourceMessageId: msg.message_id,
             sourceSenderName: sender,
           });
-          // Single follow-up reply with the source prefix + inline
-          // 📝 Transcribe button. Same shape for voice and video_note
-          // so the click handler doesn't have to special-case.
-          await bot.api
-            .sendMessage(t.chatId, captionPrefix, {
-              parse_mode: "HTML",
-              reply_to_message_id: sent.message_id,
-              reply_markup: transcribeKeyboard(t.chatId, sent.message_id),
-            })
-            .catch((err) =>
-              console.warn("[media-router] follow-up failed:", err),
-            );
+          // For video_note, also send a small text companion with the
+          // source info. Best-effort — if the channel rejects replies
+          // we still have the button on the round bubble itself.
+          if (msg.video_note) {
+            await bot.api
+              .sendMessage(t.chatId, captionPrefix, { parse_mode: "HTML" })
+              .catch((err) =>
+                console.warn(
+                  "[media-router] video_note caption follow-up failed:",
+                  err,
+                ),
+              );
+          }
           result.routed.push({
             to: "voice",
             chatId: t.chatId,

@@ -345,26 +345,22 @@ async function maybeDescribeMedia(args: {
 //   as:send:<chatId>:<startSec>    — send the previously-suggested
 //                                    reply to the source chat
 // 📝 Transcribe button on voice / video-note copies forwarded into
-// the voice_storage channel. callback_data format:
-//   tx:<storageChatId>:<storageMessageId>
-// We look up the original file_id from media_router_messages so the
-// callback data fits in the 64-byte limit.
+// the voice_storage channel. callback_data is the constant "tx:lookup"
+// — the button is always attached to the storage message itself, so
+// we recover the chat + message ids from ctx.callbackQuery.message and
+// look up the source file_id in media_router_messages.
 async function handleTranscribeCallback(
   ctx: Context,
-  data: string,
+  _data: string,
   bot: Bot,
 ): Promise<void> {
-  const parts = data.split(":");
-  if (parts.length < 3) {
-    await ctx.answerCallbackQuery({ text: "bad callback", show_alert: true });
+  const cbMsg = ctx.callbackQuery?.message;
+  if (!cbMsg) {
+    await ctx.answerCallbackQuery({ text: "no message context", show_alert: true });
     return;
   }
-  const storageChatId = Number(parts[1]);
-  const storageMessageId = Number(parts[2]);
-  if (!Number.isFinite(storageChatId) || !Number.isFinite(storageMessageId)) {
-    await ctx.answerCallbackQuery({ text: "bad callback", show_alert: true });
-    return;
-  }
+  const storageChatId = cbMsg.chat.id;
+  const storageMessageId = cbMsg.message_id;
   if (!sttConfigured()) {
     await ctx.answerCallbackQuery({
       text: "STT not configured — set GROQ_API_KEY or OPENROUTER_API_KEY.",
