@@ -368,25 +368,51 @@ async function handleTranscribeCallback(
     });
     return;
   }
+  // Look up media_router_messages first (fast path with cached
+  // metadata). If the row is missing for any reason (the recordCopy
+  // race-lost, or the bot was added to a channel manually before we
+  // started tracking it), fall back to the file id on the callback
+  // message itself — the Transcribe button is always attached to the
+  // voice/video_note, so the file_id is RIGHT THERE.
   const row = await getRoutedMessage({ storageChatId, storageMessageId });
-  if (!row) {
+  let fileId: string | null = row?.fileId ?? null;
+  let senderName: string | null = row?.sourceSenderName ?? null;
+  let alreadyTranscribed: string | null = row?.transcript ?? null;
+  if (!fileId) {
+    type MessageWithMedia = {
+      voice?: { file_id: string };
+      video_note?: { file_id: string };
+      audio?: { file_id: string };
+      reply_to_message?: MessageWithMedia;
+    };
+    const m = cbMsg as MessageWithMedia;
+    fileId =
+      m.voice?.file_id ??
+      m.video_note?.file_id ??
+      m.audio?.file_id ??
+      // Sometimes the button is on the follow-up caption message
+      // (video_note case) where the audio is on the replied-to msg.
+      m.reply_to_message?.voice?.file_id ??
+      m.reply_to_message?.video_note?.file_id ??
+      m.reply_to_message?.audio?.file_id ??
+      null;
+  }
+  if (!fileId) {
     await ctx.answerCallbackQuery({
       text: "media metadata not found",
       show_alert: true,
     });
     return;
   }
-  if (row.transcript) {
-    await ctx.answerCallbackQuery({
-      text: "Already transcribed.",
-    });
+  if (alreadyTranscribed) {
+    await ctx.answerCallbackQuery({ text: "Already transcribed." });
     return;
   }
   await ctx.answerCallbackQuery({ text: "در حال transcribe…" });
   try {
     const { text } = await transcribeAudio({
       botToken: config.telegramBotToken,
-      fileId: row.fileId,
+      fileId,
       chatId: storageChatId,
     });
     const transcript = (text ?? "").trim();
@@ -407,8 +433,8 @@ async function handleTranscribeCallback(
     // stay paired in the channel. We don't editMessageCaption on the
     // voice itself because video_note doesn't support captions and
     // we want one consistent UX.
-    const header = row.sourceSenderName
-      ? `📝 <b>${escapeForHtml(row.sourceSenderName)}</b>:`
+    const header = senderName
+      ? `📝 <b>${escapeForHtml(senderName)}</b>:`
       : "📝";
     const chunks = chunkText(`${header}\n${escapeForHtml(transcript)}`, 4000);
     for (const chunk of chunks) {
