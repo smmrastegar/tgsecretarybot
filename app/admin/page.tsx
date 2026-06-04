@@ -1190,12 +1190,6 @@ function ExternalMonitorPanel(props: {
         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
           <div className="text-sm font-medium">🛰 External change detector</div>
           <div className="flex gap-2">
-            <a
-              href="/settings#monitorExternal"
-              className="text-[10px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-            >
-              ⚙️ تنظیمات (settings)
-            </a>
             <button
               onClick={onReload}
               disabled={loading}
@@ -1292,6 +1286,17 @@ function ExternalMonitorPanel(props: {
       </Card>
 
       <Card className="!p-3">
+        <ExternalConfigForm
+          initial={{
+            enabled: data?.config.enabled ?? false,
+            baseUrl: data?.config.baseUrl ?? "",
+            secretConfigured: data?.config.secretConfigured ?? false,
+          }}
+          onSaved={onReload}
+        />
+      </Card>
+
+      <Card className="!p-3">
         <div className="text-xs font-medium mb-2">📋 Subscriptions</div>
         {!data || data.subscriptions.length === 0 ? (
           <div className="text-[11px] text-[var(--color-text-dim)]">
@@ -1372,5 +1377,114 @@ function ExternalMonitorPanel(props: {
         </ul>
       </Card>
     </div>
+  );
+}
+
+function ExternalConfigForm(props: {
+  initial: { enabled: boolean; baseUrl: string; secretConfigured: boolean };
+  onSaved: () => Promise<void>;
+}) {
+  const { initial, onSaved } = props;
+  const [enabled, setEnabled] = useState(initial.enabled);
+  const [baseUrl, setBaseUrl] = useState(initial.baseUrl);
+  const [secret, setSecret] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEnabled(initial.enabled);
+    setBaseUrl(initial.baseUrl);
+  }, [initial.enabled, initial.baseUrl]);
+
+  async function save() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const body: Record<string, string> = {
+        monitorExternalEnabled: enabled ? "true" : "false",
+        monitorExternalBaseUrl: baseUrl.trim().replace(/\/+$/, ""),
+      };
+      if (secret.trim()) body.monitorExternalSecret = secret.trim();
+      const r = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        setMsg(`❌ ${j.error ?? r.status}`);
+        return;
+      }
+      setSecret("");
+      setMsg("✅ ذخیره شد");
+      setTimeout(() => setMsg(null), 4000);
+      await onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="text-xs font-medium mb-2">⚙️ پیکربندی</div>
+      <div className="flex flex-col gap-2 text-sm">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+          />
+          <span>
+            🔌 اتصال فعال
+            <span className="text-[10px] text-[var(--color-text-dim)] mr-2">
+              (خاموش شه ربات نه register می‌فرسته نه notify قبول می‌کنه)
+            </span>
+          </span>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-[var(--color-text-dim)]">
+            🌐 Base URL سرویس خارجی
+          </span>
+          <input
+            dir="ltr"
+            type="text"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder="http://144.126.199.205:8080"
+            className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 font-mono text-xs"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-[var(--color-text-dim)]">
+            🔑 Shared HMAC secret
+            <span className="text-[9px] mr-2">
+              {initial.secretConfigured
+                ? "(در حال حاضر ست شده — برای rotate کن وارد کن)"
+                : "(هنوز ست نشده)"}
+            </span>
+          </span>
+          <input
+            dir="ltr"
+            type="password"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+            placeholder={
+              initial.secretConfigured ? "********" : "hex 64 chars"
+            }
+            className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 font-mono text-xs"
+          />
+        </label>
+        <div className="flex items-center gap-2 mt-1">
+          <button
+            onClick={save}
+            disabled={saving}
+            className="text-xs px-4 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+          >
+            {saving ? "ذخیره…" : "💾 ذخیره"}
+          </button>
+          {msg && <span className="text-[11px]">{msg}</span>}
+        </div>
+      </div>
+    </>
   );
 }
