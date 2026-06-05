@@ -1912,8 +1912,8 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   const canAiProcessMedia =
     msg.chat.type === "private" &&
     (rule?.mode ?? "off") === "ai_chat" &&
-    ((rule?.aiProcessVoice &&
-      (msg.voice || msg.audio || msg.video_note)) ||
+    ((rule?.aiProcessVoice && (msg.voice || msg.audio)) ||
+      (rule?.aiProcessVideoNotes && msg.video_note) ||
       (rule?.aiProcessStickers && msg.sticker) ||
       (rule?.aiProcessGifs && msg.animation) ||
       (rule?.aiProcessPhotos &&
@@ -2189,6 +2189,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         aiProcessStickers: rule?.aiProcessStickers ?? false,
         aiProcessGifs: rule?.aiProcessGifs ?? false,
         aiProcessPhotos: rule?.aiProcessPhotos ?? false,
+        aiProcessVideoNotes: rule?.aiProcessVideoNotes ?? false,
         bot,
       });
     }
@@ -3374,6 +3375,7 @@ async function sendAiConversation(args: {
   aiProcessStickers: boolean;
   aiProcessGifs: boolean;
   aiProcessPhotos: boolean;
+  aiProcessVideoNotes: boolean;
   bot: Bot;
 }): Promise<boolean> {
   const {
@@ -3392,6 +3394,7 @@ async function sendAiConversation(args: {
     aiProcessStickers,
     aiProcessGifs,
     aiProcessPhotos,
+    aiProcessVideoNotes,
     bot,
   } = args;
   if (msg.chat.type !== "private") return false;
@@ -3420,8 +3423,10 @@ async function sendAiConversation(args: {
   let processedMediaKind: string | null = null;
 
   if (!userText) {
-    const voiceId =
-      msg.voice?.file_id ?? msg.audio?.file_id ?? msg.video_note?.file_id ?? null;
+    // voice + audio share the aiProcessVoice toggle; video_note has
+    // its own (📹) since the visual circle is a separate experience.
+    const voiceId = msg.voice?.file_id ?? msg.audio?.file_id ?? null;
+    const videoNoteId = msg.video_note?.file_id ?? null;
     const stickerId = msg.sticker?.file_id ?? null;
     const animationId = msg.animation?.file_id ?? null;
     const photoId =
@@ -3440,14 +3445,27 @@ async function sendAiConversation(args: {
         if (tr.text) {
           userText = tr.text;
           processedMediaTranscript = tr.text;
-          processedMediaKind = msg.voice
-            ? "voice"
-            : msg.audio
-              ? "audio"
-              : "video_note";
+          processedMediaKind = msg.voice ? "voice" : "audio";
         }
       } catch (err) {
         console.warn("[ai_chat] voice STT failed:", err);
+      }
+    } else if (videoNoteId && aiProcessVideoNotes && sttConfigured()) {
+      try {
+        const tr = await transcribeAudio({
+          botToken: config.telegramBotToken,
+          fileId: videoNoteId,
+          language: settings.sttLanguage || "fa",
+          chatId: msg.chat.id,
+          businessConnectionId: bcId,
+        });
+        if (tr.text) {
+          userText = `[video note] ${tr.text}`;
+          processedMediaTranscript = tr.text;
+          processedMediaKind = "video_note";
+        }
+      } catch (err) {
+        console.warn("[ai_chat] video_note STT failed:", err);
       }
     } else if (stickerId && aiProcessStickers) {
       const desc = await describeMedia({

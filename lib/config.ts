@@ -114,6 +114,7 @@ export const DEFAULT_SETTINGS = {
   chatDefaultAiProcessStickers: "false",
   chatDefaultAiProcessGifs: "false",
   chatDefaultAiProcessPhotos: "false",
+  chatDefaultAiProcessVideoNotes: "false",
   // HikerAPI logical budget — we don't know the actual remaining
   // dollars from HikerAPI's API, so we track every call locally and
   // gate spending against a total (default $50 = the user's pre-pay)
@@ -190,6 +191,7 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   chatDefaultAiProcessStickers: optional("CHAT_DEFAULT_AI_PROCESS_STICKERS"),
   chatDefaultAiProcessGifs: optional("CHAT_DEFAULT_AI_PROCESS_GIFS"),
   chatDefaultAiProcessPhotos: optional("CHAT_DEFAULT_AI_PROCESS_PHOTOS"),
+  chatDefaultAiProcessVideoNotes: optional("CHAT_DEFAULT_AI_PROCESS_VIDEO_NOTES"),
   hikerBudgetUsd: optional("HIKER_BUDGET_USD"),
   hikerApprovalStepUsd: optional("HIKER_APPROVAL_STEP_USD"),
   hikerApprovedUsd: optional("HIKER_APPROVED_USD"),

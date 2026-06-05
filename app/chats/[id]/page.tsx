@@ -107,6 +107,7 @@ type Rule = {
   aiProcessStickers: boolean;
   aiProcessGifs: boolean;
   aiProcessPhotos: boolean;
+  aiProcessVideoNotes: boolean;
   functionRole:
     | "downloader"
     | "sms_inbox"
@@ -1346,8 +1347,8 @@ export default function ChatDetailPage() {
                   </div>
                   <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
                     وقتی روشن باشه، AI به جای اینکه ساکت بمونه ویس / استیکر /
-                    GIF / عکس رو می‌فهمه و جواب می‌ده. transcript روی پیام
-                    پایدار می‌مونه و دفعه‌ی بعد نیازی به دکمه نیست.
+                    GIF / عکس / ویدیو نوت رو می‌فهمه و جواب می‌ده. transcript
+                    روی پیام پایدار می‌مونه و دفعه‌ی بعد نیازی به دکمه نیست.
                   </div>
                   <div className="flex flex-col gap-1.5 text-xs">
                     {(
@@ -1356,6 +1357,7 @@ export default function ChatDetailPage() {
                         ["aiProcessStickers", "🎨 استیکر", rule.aiProcessStickers],
                         ["aiProcessGifs", "🎞 گیف", rule.aiProcessGifs],
                         ["aiProcessPhotos", "📷 عکس", rule.aiProcessPhotos],
+                        ["aiProcessVideoNotes", "📹 ویدیو نوت", rule.aiProcessVideoNotes],
                       ] as const
                     ).map(([key, label, value]) => (
                       <label
