@@ -10,6 +10,24 @@ type Overview = {
   totalCalls: number;
   last24hCostUsd: number;
 };
+
+type BudgetState = {
+  spentUsd: number;
+  approvedUsd: number;
+  budgetUsd: number;
+  stepUsd: number;
+  needsApproval: boolean;
+  budgetExceeded: boolean;
+  nextThresholdUsd: number;
+  tenantId: number | null;
+  tenantName: string | null;
+};
+type Credits = {
+  totalCredits: number;
+  totalUsage: number;
+  remaining: number;
+  fetchedAt: string;
+};
 type Row = {
   purpose?: string;
   model?: string;
@@ -36,6 +54,10 @@ export default function CostsPage() {
   const [predictN, setPredictN] = useState(1000);
   const [days, setDays] = useState(30);
   const [loading, setLoading] = useState(true);
+  const [budget, setBudget] = useState<BudgetState | null>(null);
+  const [credits, setCredits] = useState<Credits | null>(null);
+  const [creditsError, setCreditsError] = useState<string | null>(null);
+  const [approving, setApproving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,9 +75,70 @@ export default function CostsPage() {
     setLoading(false);
   }, [days]);
 
+  const loadBudget = useCallback(async () => {
+    try {
+      const r = await fetch("/api/openrouter/budget");
+      if (!r.ok) return;
+      const j = (await r.json()) as {
+        state: BudgetState;
+        credits: Credits | null;
+        creditsError: string | null;
+      };
+      setBudget(j.state);
+      setCredits(j.credits);
+      setCreditsError(j.creditsError);
+    } catch {}
+  }, []);
+
+  const approveNext = useCallback(async () => {
+    setApproving(true);
+    try {
+      const r = await fetch("/api/openrouter/budget/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (r.ok) {
+        const j = (await r.json()) as { state: BudgetState };
+        setBudget(j.state);
+      }
+    } finally {
+      setApproving(false);
+    }
+  }, []);
+
+  const extendBudget = useCallback(async () => {
+    if (!budget) return;
+    const next = window.prompt(
+      "سقف جدید OpenRouter (USD):",
+      String(Math.max(budget.budgetUsd + 10, budget.spentUsd + 10).toFixed(2)),
+    );
+    if (!next) return;
+    const v = Number(next);
+    if (!Number.isFinite(v) || v <= 0) return;
+    setApproving(true);
+    try {
+      const r = await fetch("/api/openrouter/budget/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ budgetUsd: v, extendBudget: true }),
+      });
+      if (r.ok) {
+        const j = (await r.json()) as { state: BudgetState };
+        setBudget(j.state);
+      }
+    } finally {
+      setApproving(false);
+    }
+  }, [budget]);
+
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    loadBudget();
+  }, [loadBudget]);
 
   const totalCalls = byPurpose.reduce((s, r) => s + r.calls, 0);
   const totalCost = byPurpose.reduce((s, r) => s + r.totalCostUsd, 0);
@@ -117,6 +200,133 @@ export default function CostsPage() {
             value={`${(byPurpose.reduce((s, r) => s + r.totalTokens, 0) / 1000).toFixed(1)}k`}
           />
         </div>
+      )}
+
+      {budget && (
+        <Card className="mb-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+            <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
+              💳 OpenRouter — اعتبار و بودجه
+            </div>
+            {budget.tenantName && (
+              <span className="text-[10px] text-[var(--color-text-dim)]">
+                tenant: {budget.tenantName}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+            <div>
+              <div className="text-[10px] text-[var(--color-text-dim)]">
+                موجودی واقعی OpenRouter
+              </div>
+              <div className="text-base tabular-nums">
+                {credits
+                  ? `$${credits.remaining.toFixed(2)}`
+                  : creditsError
+                    ? <span className="text-red-300 text-xs">{creditsError.slice(0, 40)}</span>
+                    : "—"}
+              </div>
+              {credits && (
+                <div className="text-[9px] text-[var(--color-text-dim)] mt-0.5">
+                  از ${credits.totalCredits.toFixed(2)} خرید · ${credits.totalUsage.toFixed(2)} مصرف
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="text-[10px] text-[var(--color-text-dim)]">
+                خرج‌شده‌ی tenant
+              </div>
+              <div className="text-base tabular-nums">
+                ${budget.spentUsd.toFixed(2)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] text-[var(--color-text-dim)]">
+                approved
+              </div>
+              <div className="text-base tabular-nums">
+                ${budget.approvedUsd.toFixed(2)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] text-[var(--color-text-dim)]">
+                سقف بودجه
+              </div>
+              <div className="text-base tabular-nums">
+                ${budget.budgetUsd.toFixed(2)}
+              </div>
+            </div>
+          </div>
+          <div className="h-2 bg-[var(--color-surface-2)] rounded overflow-hidden mb-3">
+            <div
+              className={
+                budget.budgetExceeded
+                  ? "h-full bg-red-500"
+                  : budget.needsApproval
+                    ? "h-full bg-amber-500"
+                    : "h-full bg-emerald-500"
+              }
+              style={{
+                width: `${Math.min(
+                  100,
+                  (budget.spentUsd / Math.max(budget.budgetUsd, 0.01)) * 100,
+                ).toFixed(1)}%`,
+              }}
+            />
+          </div>
+          {budget.budgetExceeded ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge tone="danger">
+                🛑 سقف رد شد — تمام call‌های OpenRouter بلاک شدن
+              </Badge>
+              <button
+                onClick={extendBudget}
+                disabled={approving}
+                className="text-xs px-3 py-1.5 rounded-md border border-amber-700 bg-amber-900/30 text-amber-200 hover:bg-amber-900/50 disabled:opacity-50"
+              >
+                ⬆ بالا بردن سقف
+              </button>
+            </div>
+          ) : budget.needsApproval ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge tone="warn">
+                ⚠ approval لازمه — بعدی $
+                {budget.nextThresholdUsd.toFixed(2)}
+              </Badge>
+              <button
+                onClick={approveNext}
+                disabled={approving}
+                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] disabled:opacity-50"
+              >
+                ✓ تایید +${budget.stepUsd.toFixed(2)}
+              </button>
+              <button
+                onClick={extendBudget}
+                disabled={approving}
+                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              >
+                سقف رو دستی ست کن
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-dim)]">
+              <span>
+                step بعدی: $
+                {Math.min(
+                  budget.approvedUsd + budget.stepUsd,
+                  budget.budgetUsd,
+                ).toFixed(2)}
+              </span>
+              <button
+                onClick={extendBudget}
+                disabled={approving}
+                className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              >
+                ست سقف
+              </button>
+            </div>
+          )}
+        </Card>
       )}
 
       {loading && <Card className="mb-4">Loading…</Card>}

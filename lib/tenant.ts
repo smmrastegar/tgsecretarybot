@@ -22,6 +22,9 @@ export type Tenant = {
   hikerBudgetUsd: number;
   hikerApprovedUsd: number;
   hikerApprovalStepUsd: number;
+  openrouterBudgetUsd: number;
+  openrouterApprovedUsd: number;
+  openrouterApprovalStepUsd: number;
   monitoredCap: number;
   isEnabled: boolean;
   notes: string | null;
@@ -92,6 +95,14 @@ function rowToTenant(r: Record<string, unknown>): Tenant {
     hikerBudgetUsd: Number(r.hiker_budget_usd),
     hikerApprovedUsd: Number(r.hiker_approved_usd),
     hikerApprovalStepUsd: Number(r.hiker_approval_step_usd),
+    openrouterBudgetUsd:
+      r.openrouter_budget_usd != null ? Number(r.openrouter_budget_usd) : 20,
+    openrouterApprovedUsd:
+      r.openrouter_approved_usd != null ? Number(r.openrouter_approved_usd) : 5,
+    openrouterApprovalStepUsd:
+      r.openrouter_approval_step_usd != null
+        ? Number(r.openrouter_approval_step_usd)
+        : 5,
     monitoredCap: Number(r.monitored_cap),
     isEnabled: Boolean(r.is_enabled),
     notes: (r.notes as string) ?? null,
@@ -105,7 +116,9 @@ function rowToTenant(r: Record<string, unknown>): Tenant {
 }
 
 const TENANT_COLUMNS = `id, name, plan, hiker_budget_usd, hiker_approved_usd,
-           hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+           hiker_approval_step_usd,
+           openrouter_budget_usd, openrouter_approved_usd, openrouter_approval_step_usd,
+           monitored_cap, is_enabled, notes,
            hiker_api_key, hiker_api_key_name, openrouter_api_key,
            groq_api_key,
            created_at, updated_at` as const;
@@ -115,7 +128,9 @@ export async function listTenants(): Promise<Tenant[]> {
   await ensureSchema();
   const rows = await sql()`
     SELECT id, name, plan, hiker_budget_usd, hiker_approved_usd,
-           hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+           hiker_approval_step_usd,
+           openrouter_budget_usd, openrouter_approved_usd, openrouter_approval_step_usd,
+           monitored_cap, is_enabled, notes,
            hiker_api_key, hiker_api_key_name, openrouter_api_key,
            groq_api_key,
            created_at, updated_at
@@ -129,7 +144,9 @@ export async function getTenant(id: number): Promise<Tenant | null> {
   await ensureSchema();
   const rows = await sql()`
     SELECT id, name, plan, hiker_budget_usd, hiker_approved_usd,
-           hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+           hiker_approval_step_usd,
+           openrouter_budget_usd, openrouter_approved_usd, openrouter_approval_step_usd,
+           monitored_cap, is_enabled, notes,
            hiker_api_key, hiker_api_key_name, openrouter_api_key,
            groq_api_key,
            created_at, updated_at
@@ -143,7 +160,9 @@ export async function getTenantByName(name: string): Promise<Tenant | null> {
   await ensureSchema();
   const rows = await sql()`
     SELECT id, name, plan, hiker_budget_usd, hiker_approved_usd,
-           hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+           hiker_approval_step_usd,
+           openrouter_budget_usd, openrouter_approved_usd, openrouter_approval_step_usd,
+           monitored_cap, is_enabled, notes,
            hiker_api_key, hiker_api_key_name, openrouter_api_key,
            groq_api_key,
            created_at, updated_at
@@ -179,7 +198,9 @@ export async function createTenant(args: {
     )
     ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
     RETURNING id, name, plan, hiker_budget_usd, hiker_approved_usd,
-              hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+              hiker_approval_step_usd,
+              openrouter_budget_usd, openrouter_approved_usd, openrouter_approval_step_usd,
+              monitored_cap, is_enabled, notes,
               hiker_api_key, hiker_api_key_name, openrouter_api_key,
               groq_api_key,
               created_at, updated_at`;
@@ -194,6 +215,9 @@ export async function updateTenant(
     hikerBudgetUsd: number;
     hikerApprovedUsd: number;
     hikerApprovalStepUsd: number;
+    openrouterBudgetUsd: number;
+    openrouterApprovedUsd: number;
+    openrouterApprovalStepUsd: number;
     monitoredCap: number;
     isEnabled: boolean;
     notes: string | null;
@@ -211,6 +235,9 @@ export async function updateTenant(
       hiker_budget_usd = COALESCE(${patch.hikerBudgetUsd ?? null}::numeric, hiker_budget_usd),
       hiker_approved_usd = COALESCE(${patch.hikerApprovedUsd ?? null}::numeric, hiker_approved_usd),
       hiker_approval_step_usd = COALESCE(${patch.hikerApprovalStepUsd ?? null}::numeric, hiker_approval_step_usd),
+      openrouter_budget_usd = COALESCE(${patch.openrouterBudgetUsd ?? null}::numeric, openrouter_budget_usd),
+      openrouter_approved_usd = COALESCE(${patch.openrouterApprovedUsd ?? null}::numeric, openrouter_approved_usd),
+      openrouter_approval_step_usd = COALESCE(${patch.openrouterApprovalStepUsd ?? null}::numeric, openrouter_approval_step_usd),
       monitored_cap = COALESCE(${patch.monitoredCap ?? null}::int, monitored_cap),
       is_enabled = COALESCE(${patch.isEnabled ?? null}::boolean, is_enabled),
       notes = COALESCE(${patch.notes ?? null}, notes),
@@ -220,7 +247,9 @@ export async function updateTenant(
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id, name, plan, hiker_budget_usd, hiker_approved_usd,
-              hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+              hiker_approval_step_usd,
+              openrouter_budget_usd, openrouter_approved_usd, openrouter_approval_step_usd,
+              monitored_cap, is_enabled, notes,
               hiker_api_key, hiker_api_key_name, openrouter_api_key,
               groq_api_key,
               created_at, updated_at`;
@@ -267,7 +296,9 @@ export async function setTenantApiKeys(
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id, name, plan, hiker_budget_usd, hiker_approved_usd,
-              hiker_approval_step_usd, monitored_cap, is_enabled, notes,
+              hiker_approval_step_usd,
+              openrouter_budget_usd, openrouter_approved_usd, openrouter_approval_step_usd,
+              monitored_cap, is_enabled, notes,
               hiker_api_key, hiker_api_key_name, openrouter_api_key,
               groq_api_key,
               created_at, updated_at`;
@@ -355,8 +386,11 @@ export async function getTenantForUser(
   await ensureSchema();
   const rows = await sql()`
     SELECT t.id, t.name, t.plan, t.hiker_budget_usd, t.hiker_approved_usd,
-           t.hiker_approval_step_usd, t.monitored_cap, t.is_enabled, t.notes,
+           t.hiker_approval_step_usd,
+           t.openrouter_budget_usd, t.openrouter_approved_usd, t.openrouter_approval_step_usd,
+           t.monitored_cap, t.is_enabled, t.notes,
            t.hiker_api_key, t.hiker_api_key_name, t.openrouter_api_key,
+           t.groq_api_key,
            t.created_at, t.updated_at
     FROM business_connections bc
     JOIN tenants t ON t.id = bc.tenant_id

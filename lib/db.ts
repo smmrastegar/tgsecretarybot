@@ -669,6 +669,13 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hiker_api_key_name TEXT`;
     await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS openrouter_api_key TEXT`;
     await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS groq_api_key TEXT`;
+    // Per-tenant OpenRouter budget (same shape as the hiker_* columns).
+    // Default $20 cap, $5 currently approved, $5 step — small enough
+    // that a fresh deploy without explicit budget won't burn through
+    // an unintended balance.
+    await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS openrouter_budget_usd        NUMERIC(10, 2) NOT NULL DEFAULT 20`;
+    await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS openrouter_approved_usd      NUMERIC(10, 2) NOT NULL DEFAULT 5`;
+    await q`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS openrouter_approval_step_usd NUMERIC(10, 2) NOT NULL DEFAULT 5`;
     // Per-tenant overrides for the same global setting keys that
     // /api/settings already manages. NULL value means "use global".
     // Admin manages these via /settings?tenant=<id>.
@@ -2680,14 +2687,27 @@ export type AiUsage = {
 export async function recordAiUsage(u: AiUsage): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
+  // Pull tenant from AsyncLocalStorage when set. Avoids requiring
+  // every caller to thread tenantId — the budget gate at the call
+  // site relies on this row being attributed correctly.
+  const { getCurrentTenantId } = await import("./tenant-context");
+  const tenantId = getCurrentTenantId();
   await sql()`
     INSERT INTO ai_usage (
       chat_id, business_connection_id, model, purpose,
-      prompt_tokens, completion_tokens, total_tokens, cost_usd
+      prompt_tokens, completion_tokens, total_tokens, cost_usd, tenant_id
     ) VALUES (
       ${u.chatId ?? null}, ${u.businessConnectionId ?? null}, ${u.model}, ${u.purpose},
-      ${u.promptTokens}, ${u.completionTokens}, ${u.totalTokens}, ${u.costUsd}
+      ${u.promptTokens}, ${u.completionTokens}, ${u.totalTokens}, ${u.costUsd},
+      ${tenantId ?? null}
     )`;
+  // Keep the openrouter budget cache in sync so a flurry of calls in
+  // the same instance sees the new spend without waiting for the 10s
+  // TTL. Imported lazily to avoid a circular require.
+  if (tenantId != null && u.costUsd > 0) {
+    const { bumpOpenrouterSpent } = await import("./openrouter-budget");
+    bumpOpenrouterSpent(tenantId, u.costUsd);
+  }
 }
 
 export async function aiUsageOverview(): Promise<{

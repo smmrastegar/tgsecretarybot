@@ -2,6 +2,7 @@ import { config } from "./config";
 import { getSettings } from "./settings";
 import { findKnowledgeMatches, recordAiUsage } from "./db";
 import { downloadTelegramFile } from "./stt";
+import { assertOpenrouterBudget } from "./openrouter-budget";
 
 // Look up knowledge-base entries whose title or any alias appears in
 // the given text and return them in a payload-friendly shape ready to
@@ -186,6 +187,13 @@ async function callOpenRouter(
     "X-Title": config.openrouterAppName,
   };
   if (config.openrouterAppUrl) headers["HTTP-Referer"] = config.openrouterAppUrl;
+
+  // Budget gate. Bails before hitting the network if this tenant has
+  // already passed approved or the absolute cap. Throws
+  // OpenrouterApprovalNeededError which surfaces in the dashboard so
+  // the operator can extend the approved slice or raise the cap.
+  // No-op when no tenant context is set.
+  await assertOpenrouterBudget();
 
   const requested = await modelsToTry(opts.purpose);
   const seen = new Set<string>();
