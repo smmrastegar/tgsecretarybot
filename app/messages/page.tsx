@@ -307,11 +307,13 @@ export default function MessagesPage() {
               )}
               <div className="flex flex-col gap-1 min-w-0">
                 {group.messages.slice(0, 5).map((m) => {
-                  const visibleText = m.transcript
-                    ? m.transcript
-                    : m.mediaDescription
-                      ? m.mediaDescription
-                      : m.messageText;
+                  // For audio kinds (voice / video_note) the transcript
+                  // IS the meaningful content so we use it as the bubble
+                  // body. For visual kinds the bubble keeps the original
+                  // [photo]/[sticker]/[GIF] placeholder (or caption) and
+                  // the AI description renders as a separate block below
+                  // — that's what the operator asked for.
+                  const visibleText = m.transcript ?? m.messageText;
                   return (
                   <div
                     key={m.id}
@@ -367,6 +369,18 @@ export default function MessagesPage() {
                     {m.mediaKind && !m.deletedAt && (
                       <div className="flex justify-center">
                         <MediaView messageId={m.id} kind={m.mediaKind} />
+                      </div>
+                    )}
+                    {m.mediaDescription && !m.deletedAt && (
+                      <div
+                        dir="auto"
+                        style={{
+                          unicodeBidi: "plaintext",
+                          textAlign: "start",
+                        }}
+                        className="text-[10px] text-[var(--color-text-dim)] max-w-full whitespace-pre-wrap break-words border-l-2 border-[var(--color-border)] pl-2"
+                      >
+                        🖼 {truncate(m.mediaDescription, 200)}
                       </div>
                     )}
                   </div>
@@ -476,6 +490,20 @@ export default function MessagesPage() {
                     className="whitespace-pre-wrap break-words"
                   >
                     {m.transcript}
+                  </div>
+                </div>
+              )}
+              {m.mediaDescription && (
+                <div className="mt-2 p-2 rounded-md bg-[var(--color-surface-2)] text-sm">
+                  <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
+                    🖼 تفسیر AI
+                  </div>
+                  <div
+                    dir="auto"
+                    style={{ unicodeBidi: "plaintext", textAlign: "start" }}
+                    className="whitespace-pre-wrap break-words"
+                  >
+                    {m.mediaDescription}
                   </div>
                 </div>
               )}

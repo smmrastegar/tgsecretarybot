@@ -76,6 +76,7 @@ type Message = {
   autoReplied: boolean;
   mediaKind: string | null;
   transcript: string | null;
+  mediaDescription: string | null;
   deletedAt: string | null;
   editedAt: string | null;
   editCount: number;
@@ -1736,6 +1737,20 @@ export default function ChatDetailPage() {
                     </div>
                     {m.mediaKind && !m.deletedAt && (
                       <MediaView messageId={m.id} kind={m.mediaKind} />
+                    )}
+                    {m.mediaDescription && !m.deletedAt && (
+                      <div
+                        dir="auto"
+                        style={{
+                          unicodeBidi: "plaintext",
+                          textAlign: "start",
+                          overflowWrap: "anywhere",
+                          wordBreak: "break-word",
+                        }}
+                        className="text-[11px] text-[var(--color-text-dim)] max-w-full whitespace-pre-wrap border-l-2 border-[var(--color-border)] pl-2 mt-1"
+                      >
+                        🖼 {m.mediaDescription}
+                      </div>
                     )}
                     <div className="flex gap-1 flex-wrap text-[10px] px-1">
                       {m.deletedAt && (
