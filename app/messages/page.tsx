@@ -513,19 +513,19 @@ export default function MessagesPage() {
             </Card>
             );
           })}
-          {hasMore && (
-            <div
-              ref={sentinelRef}
-              className="text-center text-[11px] text-[var(--color-text-dim)] py-4"
-            >
-              {loadingMore ? "در حال بارگذاری بیشتر…" : "اسکرول کن تا بقیه بیاد"}
-            </div>
-          )}
-          {!hasMore && messages.length > 0 && (
-            <div className="text-center text-[10px] text-[var(--color-text-dim)] py-4">
-              · پایان لیست ({messages.length} پیام) ·
-            </div>
-          )}
+        </div>
+      )}
+      {messages.length > 0 && hasMore && (
+        <div
+          ref={sentinelRef}
+          className="text-center text-[11px] text-[var(--color-text-dim)] py-4"
+        >
+          {loadingMore ? "در حال بارگذاری بیشتر…" : "اسکرول کن تا بقیه بیاد"}
+        </div>
+      )}
+      {messages.length > 0 && !hasMore && (
+        <div className="text-center text-[10px] text-[var(--color-text-dim)] py-4">
+          · پایان لیست ({messages.length} پیام) ·
         </div>
       )}
     </Shell>
