@@ -3550,12 +3550,18 @@ async function sendAiConversation(args: {
   // text reply. Falls through to the normal text path on any failure
   // (model down, no reference URL, etc.) so the user still gets an
   // answer.
-  if (aiGeneratePhoto && looksLikePhotoRequest(userText)) {
-    const refUrl = (settings.ownerPhotoUrl ?? "").trim();
-    if (refUrl) {
+  if (aiGeneratePhoto) {
+    const intent = looksLikePhotoRequest(userText);
+    console.log(
+      `[ai_chat] photo-gen check chat=${msg.chat.id} intent=${intent} userText="${userText.slice(0, 80)}"`,
+    );
+    if (intent) {
       try {
+        // Reference resolution (uploaded blob → ownerPhotoUrl) lives
+        // inside generatePersonalPhoto; we pass the URL field as a
+        // fallback only.
         const img = await generatePersonalPhoto({
-          referenceUrl: refUrl,
+          referenceUrl: (settings.ownerPhotoUrl ?? "").trim(),
           userRequest: userText,
           chatId: msg.chat.id,
           businessConnectionId: bcId,
@@ -3580,6 +3586,9 @@ async function sendAiConversation(args: {
           ownerLabel: settings.ownerName ?? "owner",
           mediaKind: "photo",
         });
+        console.log(
+          `[ai_chat] photo-gen success chat=${msg.chat.id} bytes=${img.data.length}`,
+        );
         return true;
       } catch (err) {
         console.warn(
@@ -3587,10 +3596,6 @@ async function sendAiConversation(args: {
           err,
         );
       }
-    } else {
-      console.warn(
-        "[ai_chat] aiGeneratePhoto is on but ownerPhotoUrl is empty — falling back to text",
-      );
     }
   }
 
