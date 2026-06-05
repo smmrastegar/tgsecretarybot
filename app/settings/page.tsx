@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { PageTitle } from "@/components/Card";
 import DebugModeToggle from "@/components/DebugModeToggle";
@@ -83,7 +84,32 @@ const TILES: Array<{
   },
 ];
 
+// Admin-only tile — appended at the end of TILES when /api/admin/me
+// confirms the current user is in admin_users. Mobile has no sidebar,
+// so without this the operator can't reach /admin from the phone.
+const ADMIN_TILE: (typeof TILES)[number] = {
+  href: "/admin",
+  emoji: "🛡",
+  label: "Admin",
+  desc: "tenants، کاربران ادمین، کلیدهای API، impersonation",
+};
+
 export default function SettingsTilesPage() {
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/admin/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { admin?: boolean } | null) => {
+        if (!cancelled) setIsAdmin(!!d?.admin);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const tiles = isAdmin ? [...TILES, ADMIN_TILE] : TILES;
   return (
     <Shell>
       <PageTitle
@@ -94,7 +120,7 @@ export default function SettingsTilesPage() {
       <DebugModeToggle />
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-        {TILES.map((t) => (
+        {tiles.map((t) => (
           <Link
             key={t.href}
             href={t.href}
