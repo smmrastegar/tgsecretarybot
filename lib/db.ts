@@ -1448,6 +1448,8 @@ export const CHAT_MODES: ChatMode[] = [
 ];
 
 export const RELATIONSHIPS = [
+  "close_family",
+  "family",
   "close_friend",
   "friend",
   "work_acquaintance",

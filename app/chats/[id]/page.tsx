@@ -26,6 +26,8 @@ const MODE_LABELS: Record<ChatMode, string> = {
 };
 
 type Relationship =
+  | "close_family"
+  | "family"
   | "close_friend"
   | "friend"
   | "work_acquaintance"
@@ -35,6 +37,8 @@ type Relationship =
   | "stranger";
 
 const RELATIONSHIP_LABELS: Record<Relationship, string> = {
+  close_family: "فامیل نزدیک",
+  family: "فامیل",
   close_friend: "دوست خیلی صمیمی",
   friend: "دوست معمولی",
   work_acquaintance: "آشنای کاری",
@@ -48,6 +52,8 @@ const RELATIONSHIP_TONES: Record<
   Relationship,
   "neutral" | "success" | "warn" | "danger" | "info"
 > = {
+  close_family: "success",
+  family: "info",
   close_friend: "success",
   friend: "info",
   work_acquaintance: "neutral",
