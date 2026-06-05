@@ -1902,7 +1902,24 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   // (voice, photo, sticker, GIF, video, …) without a caption is still real
   // content the owner should see in All Messages / chat detail, and in
   // secretary mode it should also reach the secretary's thread.
-  if (!msg.text && !msg.caption) {
+  //
+  // Exception: ai_chat mode with the matching ai_process_* flag on. In
+  // that case the AI reply path (sendAiConversation) is the one that
+  // actually transcribes/describes the media, so we must NOT early-
+  // return — otherwise the toggle would be silently ignored and the
+  // user would see the bot stay quiet on every voice / sticker / GIF
+  // / photo without caption (the exact bug we shipped before).
+  const canAiProcessMedia =
+    msg.chat.type === "private" &&
+    (rule?.mode ?? "off") === "ai_chat" &&
+    ((rule?.aiProcessVoice &&
+      (msg.voice || msg.audio || msg.video_note)) ||
+      (rule?.aiProcessStickers && msg.sticker) ||
+      (rule?.aiProcessGifs && msg.animation) ||
+      (rule?.aiProcessPhotos &&
+        msg.photo &&
+        msg.photo.length > 0));
+  if (!msg.text && !msg.caption && !canAiProcessMedia) {
     let forwardedToSecretary = false;
     const secEnabled =
       (settings.secretaryEnabled ?? "false").toLowerCase() === "true";
