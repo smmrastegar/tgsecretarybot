@@ -39,23 +39,48 @@ async function run(request: Request): Promise<NextResponse> {
   // message after the last delivered summary, and where the latest
   // message is older than the configured gap (i.e. the conversation
   // has actually paused). For each, summarise that paused thread.
-  // last_msg = the single most-recent message per chat (any sender).
-  // We require from_owner = FALSE — if the owner sent the last message
-  // the thread is "open from our side" and we shouldn't summarise or
-  // suggest a reply (we already replied; we're waiting for them).
+  //
+  // Smart-timing mode (default): the *initiator* of the pending burst
+  // (sender of the first message after the previous summary) must also
+  // be the sender of the last message — i.e. they fired off their final
+  // line and the gap is now measured from THAT line. This handles the
+  // "I asked something, they answered, I added one more line and went
+  // silent" case where the asker is the owner.
+  //
+  // Legacy mode: just require that the other person sent the last
+  // message (the original behaviour).
   const rows = (await sql()`
     WITH last_msg AS (
       SELECT DISTINCT ON (chat_id)
-        chat_id, created_at AS at, from_owner
+        chat_id, created_at AS at, from_owner, sender_id
       FROM messages_log
       ORDER BY chat_id, created_at DESC
+    ),
+    initiator AS (
+      SELECT DISTINCT ON (m.chat_id)
+        m.chat_id, m.sender_id, m.from_owner
+      FROM messages_log m
+      JOIN chat_rules r ON r.chat_id = m.chat_id
+      WHERE r.last_auto_summary_at IS NULL
+         OR m.created_at > r.last_auto_summary_at
+      ORDER BY m.chat_id, m.created_at ASC
     )
     SELECT r.chat_id, lm.at AS last_msg_at
     FROM chat_rules r
     JOIN last_msg lm ON lm.chat_id = r.chat_id
+    LEFT JOIN initiator i ON i.chat_id = r.chat_id
     WHERE r.mode = 'ai_listen'
       AND r.auto_summarize_enabled = TRUE
-      AND lm.from_owner = FALSE
+      AND (
+        (r.auto_summarize_smart_timing = TRUE
+          AND i.chat_id IS NOT NULL
+          AND (
+            (lm.sender_id IS NOT NULL AND lm.sender_id = i.sender_id)
+            OR (lm.sender_id IS NULL AND lm.from_owner = i.from_owner)
+          ))
+        OR
+        (r.auto_summarize_smart_timing = FALSE AND lm.from_owner = FALSE)
+      )
       AND (
         r.last_auto_summary_at IS NULL
         OR lm.at > r.last_auto_summary_at

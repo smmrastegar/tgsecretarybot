@@ -46,6 +46,7 @@ type Settings = {
   chatDefaultAutoExtractNotes: string;
   chatDefaultAutoSummarizeEnabled: string;
   chatDefaultAutoSummarizeGapMinutes: string;
+  chatDefaultAutoSummarizeSmartTiming: string;
   chatDefaultAiProcessVoice: string;
   chatDefaultAiProcessStickers: string;
   chatDefaultAiProcessGifs: string;
@@ -270,6 +271,11 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         key: "chatDefaultAutoSummarizeGapMinutes",
         label: "🕐 gap سکوت برای close thread (دقیقه)",
         type: "number",
+      },
+      {
+        key: "chatDefaultAutoSummarizeSmartTiming",
+        label: "🧠 timing هوشمند — gap از آخرین پیام «شروع‌کننده» حساب شه",
+        type: "toggle",
       },
       {
         key: "chatDefaultAiProcessVoice",

@@ -218,6 +218,12 @@ export async function ensureSchema(): Promise<void> {
     // summary into the configured summary_inbox channel.
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_summarize_enabled BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_summarize_gap_minutes INT NOT NULL DEFAULT 5`;
+    // Smart timing: only summarize when the last message in the pending
+    // burst is from the *initiator* (the person who fired off the first
+    // message after the previous summary), and measure the gap from that
+    // person's last message. Without it, we just wait for any pause where
+    // the other person sent last. Default ON so new chats inherit it.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_summarize_smart_timing BOOLEAN NOT NULL DEFAULT TRUE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS last_auto_summary_at TIMESTAMPTZ`;
     // Per-chat media-routing toggles. When ON, any incoming voice /
     // video / photo / location is auto-copied to the corresponding
@@ -1573,6 +1579,7 @@ export type ChatRule = {
   functionConfig: Record<string, unknown> | null;
   autoSummarizeEnabled: boolean;
   autoSummarizeGapMinutes: number;
+  autoSummarizeSmartTiming: boolean;
   lastAutoSummaryAt: Date | null;
   autoForwardVoice: boolean;
   autoForwardVideo: boolean;
@@ -1630,6 +1637,10 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
       Number(r.auto_summarize_gap_minutes) > 0
         ? Number(r.auto_summarize_gap_minutes)
         : 5,
+    autoSummarizeSmartTiming:
+      r.auto_summarize_smart_timing == null
+        ? true
+        : Boolean(r.auto_summarize_smart_timing),
     lastAutoSummaryAt: (r.last_auto_summary_at as Date) ?? null,
     autoForwardVoice: Boolean(r.auto_forward_voice),
     autoForwardVideo: Boolean(r.auto_forward_video),
@@ -1655,6 +1666,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            ai_process_voice, ai_process_stickers, ai_process_gifs,
            function_role, function_config,
            auto_summarize_enabled, auto_summarize_gap_minutes,
+           auto_summarize_smart_timing,
            last_auto_summary_at,
            auto_forward_voice, auto_forward_video, auto_forward_photo,
            auto_forward_location, auto_extract_notes,
@@ -1906,6 +1918,7 @@ export async function bulkSetAutoSummarize(
   chatIds: number[],
   enabled: boolean,
   gapMinutes: number,
+  smartTiming: boolean = true,
 ): Promise<number> {
   if (!hasDb() || chatIds.length === 0) return 0;
   await ensureSchema();
@@ -1913,15 +1926,17 @@ export async function bulkSetAutoSummarize(
   const rows = await sql()`
     INSERT INTO chat_rules (chat_id, chat_type, chat_title,
                             auto_summarize_enabled, auto_summarize_gap_minutes,
+                            auto_summarize_smart_timing,
                             updated_at)
     SELECT m.chat_id, MAX(m.chat_type), MAX(m.chat_title),
-           ${enabled}, ${gap}, NOW()
+           ${enabled}, ${gap}, ${smartTiming}, NOW()
     FROM messages_log m
     WHERE m.chat_id = ANY(${chatIds}::bigint[])
     GROUP BY m.chat_id
     ON CONFLICT (chat_id) DO UPDATE SET
       auto_summarize_enabled = ${enabled},
       auto_summarize_gap_minutes = ${gap},
+      auto_summarize_smart_timing = ${smartTiming},
       updated_at = NOW()
     RETURNING chat_id`;
   return rows.length;
@@ -1934,6 +1949,7 @@ export async function setAutoSummarize(
   chatId: number,
   enabled: boolean,
   gapMinutes: number,
+  smartTiming: boolean = true,
 ): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
@@ -1942,7 +1958,9 @@ export async function setAutoSummarize(
   // messages_log (or default to "private") so a plain UPDATE doesn't
   // noop when no row exists yet.
   await sql()`
-    INSERT INTO chat_rules (chat_id, chat_type, chat_title, auto_summarize_enabled, auto_summarize_gap_minutes, updated_at)
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title,
+                            auto_summarize_enabled, auto_summarize_gap_minutes,
+                            auto_summarize_smart_timing, updated_at)
     VALUES (
       ${chatId},
       COALESCE(
@@ -1952,11 +1970,13 @@ export async function setAutoSummarize(
       (SELECT MAX(chat_title) FROM messages_log WHERE chat_id = ${chatId}),
       ${enabled},
       ${gap},
+      ${smartTiming},
       NOW()
     )
     ON CONFLICT (chat_id) DO UPDATE SET
       auto_summarize_enabled = ${enabled},
       auto_summarize_gap_minutes = ${gap},
+      auto_summarize_smart_timing = ${smartTiming},
       updated_at = NOW()`;
 }
 
@@ -2299,6 +2319,7 @@ export async function listChatsByFunction(
            r.ai_process_voice, r.ai_process_stickers, r.ai_process_gifs,
            r.function_role, r.function_config,
            r.auto_summarize_enabled, r.auto_summarize_gap_minutes,
+           r.auto_summarize_smart_timing,
            r.last_auto_summary_at,
            r.auto_forward_voice, r.auto_forward_video, r.auto_forward_photo,
            r.auto_forward_location, r.auto_extract_notes,

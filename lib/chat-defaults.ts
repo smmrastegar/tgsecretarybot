@@ -25,6 +25,7 @@ export type ChatDefaults = {
   autoExtractNotes: boolean;
   autoSummarizeEnabled: boolean;
   autoSummarizeGapMinutes: number;
+  autoSummarizeSmartTiming: boolean;
   aiProcessVoice: boolean;
   aiProcessStickers: boolean;
   aiProcessGifs: boolean;
@@ -57,6 +58,7 @@ export async function getChatDefaults(): Promise<ChatDefaults> {
     autoExtractNotes: asBool(s.chatDefaultAutoExtractNotes, false),
     autoSummarizeEnabled: asBool(s.chatDefaultAutoSummarizeEnabled, false),
     autoSummarizeGapMinutes: gap,
+    autoSummarizeSmartTiming: asBool(s.chatDefaultAutoSummarizeSmartTiming, true),
     aiProcessVoice: asBool(s.chatDefaultAiProcessVoice, false),
     aiProcessStickers: asBool(s.chatDefaultAiProcessStickers, false),
     aiProcessGifs: asBool(s.chatDefaultAiProcessGifs, false),
@@ -84,6 +86,7 @@ export async function ensureChatRuleWithDefaults(args: {
       auto_forward_voice, auto_forward_video, auto_forward_photo,
       auto_forward_location, auto_extract_notes,
       auto_summarize_enabled, auto_summarize_gap_minutes,
+      auto_summarize_smart_timing,
       ai_process_voice, ai_process_stickers, ai_process_gifs,
       updated_at
     )
@@ -94,6 +97,7 @@ export async function ensureChatRuleWithDefaults(args: {
       ${d.autoForwardVoice}, ${d.autoForwardVideo}, ${d.autoForwardPhoto},
       ${d.autoForwardLocation}, ${d.autoExtractNotes},
       ${d.autoSummarizeEnabled}, ${d.autoSummarizeGapMinutes},
+      ${d.autoSummarizeSmartTiming},
       ${d.aiProcessVoice}, ${d.aiProcessStickers}, ${d.aiProcessGifs},
       NOW()
     )

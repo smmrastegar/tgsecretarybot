@@ -36,6 +36,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     value?: boolean;
     role?: FunctionRole | null;
     gapMinutes?: number;
+    smartTiming?: boolean;
     automation?: {
       autoForwardVoice?: boolean;
       autoForwardVideo?: boolean;
@@ -83,10 +84,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   } else if (op === "auto_summarize") {
     const enabled = Boolean(body.value);
     const gap = Number(body.gapMinutes ?? 5);
+    const smartTiming =
+      body.smartTiming == null ? true : Boolean(body.smartTiming);
     affected = await bulkSetAutoSummarize(
       chatIds,
       enabled,
       Number.isFinite(gap) ? gap : 5,
+      smartTiming,
     );
   } else if (op === "automation") {
     if (!body.automation) {

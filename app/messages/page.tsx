@@ -356,7 +356,7 @@ export default function MessagesPage() {
                       }}
                       className={`px-2.5 py-1.5 rounded-2xl text-xs whitespace-pre-wrap max-w-full ${
                         m.deletedAt
-                          ? "bg-red-900/20 border border-red-900/40 text-[var(--color-text-dim)] line-through rounded-md"
+                          ? "bg-red-900/20 border border-red-900/40 text-[var(--color-text-dim)] rounded-md"
                           : m.fromOwner
                             ? "bg-[var(--color-accent)] text-white rounded-br-md"
                             : "bg-[var(--color-surface-2)] rounded-bl-md"

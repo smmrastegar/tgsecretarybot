@@ -121,6 +121,7 @@ type Rule = {
   functionConfig: Record<string, unknown> | null;
   autoSummarizeEnabled: boolean;
   autoSummarizeGapMinutes: number;
+  autoSummarizeSmartTiming: boolean;
   lastAutoSummaryAt: string | null;
   autoForwardVoice: boolean;
   autoForwardVideo: boolean;
@@ -1266,6 +1267,7 @@ export default function ChatDetailPage() {
                             body: JSON.stringify({
                               enabled: e.target.checked,
                               gapMinutes: rule.autoSummarizeGapMinutes ?? 5,
+                              smartTiming: rule.autoSummarizeSmartTiming ?? true,
                             }),
                           }).then(() => load())
                         }
@@ -1287,6 +1289,7 @@ export default function ChatDetailPage() {
                           body: JSON.stringify({
                             enabled: rule.autoSummarizeEnabled,
                             gapMinutes: Number(e.target.value),
+                            smartTiming: rule.autoSummarizeSmartTiming ?? true,
                           }),
                         }).then(() => load())
                       }
@@ -1299,6 +1302,33 @@ export default function ChatDetailPage() {
                       <option value="30">۳۰ دقیقه</option>
                       <option value="60">۱ ساعت</option>
                     </select>
+                  </div>
+                  <div className="mt-2">
+                    <label className="flex items-start gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={rule.autoSummarizeSmartTiming ?? true}
+                        disabled={saving || !rule.autoSummarizeEnabled}
+                        onChange={(e) =>
+                          fetch(`/api/chats/${chatId}/auto-summarize`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              enabled: rule.autoSummarizeEnabled,
+                              gapMinutes: rule.autoSummarizeGapMinutes ?? 5,
+                              smartTiming: e.target.checked,
+                            }),
+                          }).then(() => load())
+                        }
+                      />
+                      <span>
+                        🧠 <b>timing هوشمند</b> — گپ از آخرین پیامِ «کسی که
+                        thread رو شروع کرده» حساب بشه. یعنی اگه طرف پرسیده و
+                        تو جواب دادی و باز خودش یه چیزی اضافه کرده، تایمر از
+                        پیام آخرِ <i>اون</i> شروع می‌شه (نه از پیام تو).
+                      </span>
+                    </label>
                   </div>
                   {rule.lastAutoSummaryAt && (
                     <div className="text-[10px] text-[var(--color-text-dim)] mt-2">
@@ -1675,7 +1705,7 @@ export default function ChatDetailPage() {
                       style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
                       className={`p-3 rounded-2xl text-sm whitespace-pre-wrap max-w-full ${
                         m.deletedAt
-                          ? "bg-red-900/20 border border-red-900/40 text-[var(--color-text-dim)] line-through rounded-md"
+                          ? "bg-red-900/20 border border-red-900/40 text-[var(--color-text-dim)] rounded-md"
                           : mine
                             ? "bg-[var(--color-accent)] text-white rounded-br-md"
                             : "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-bl-md"

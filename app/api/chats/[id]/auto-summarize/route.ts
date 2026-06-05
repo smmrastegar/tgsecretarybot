@@ -23,16 +23,24 @@ export async function PUT(
   const body = (await request.json().catch(() => ({}))) as {
     enabled?: boolean;
     gapMinutes?: number;
+    smartTiming?: boolean;
   };
   const enabled = Boolean(body.enabled);
   const gap = Number(body.gapMinutes);
-  await setAutoSummarize(chatId, enabled, Number.isFinite(gap) ? gap : 5);
+  const smartTiming =
+    body.smartTiming == null ? true : Boolean(body.smartTiming);
+  await setAutoSummarize(
+    chatId,
+    enabled,
+    Number.isFinite(gap) ? gap : 5,
+    smartTiming,
+  );
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,
     action: "chat.auto_summarize_set",
     target: String(chatId),
-    details: { enabled, gapMinutes: gap },
+    details: { enabled, gapMinutes: gap, smartTiming },
   });
   return NextResponse.json({ ok: true });
 }
