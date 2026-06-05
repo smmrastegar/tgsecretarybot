@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // Floating debug widget that wraps the global fetch and records the
-// duration of every API call the current page made. Activated by
-// adding ?debug=1 to any URL. Useful for the user to figure out
-// "why is this page so slow" and paste the breakdown back.
+// duration of every API call the current page made. Toggled by the
+// admin-only switch on /settings (sticky via localStorage) or by
+// adding ?debug=1 to any URL (one-off).
 //
-// We also surface Server-Timing values when the backend ships them.
+// Draggable by the header bar; remembers position + minimised state
+// across reloads in localStorage. ✕ closes (and clears the global
+// debug flag); — minimises to a small pill that re-expands on click.
 
 type CallRecord = {
   id: number;
@@ -83,14 +85,50 @@ function installFetchInterceptor() {
   };
 }
 
+type Pos = { x: number; y: number };
+
+function loadPos(): Pos | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem("debug.pos");
+  if (!raw) return null;
+  try {
+    const j = JSON.parse(raw) as Pos;
+    if (typeof j.x === "number" && typeof j.y === "number") return j;
+  } catch {}
+  return null;
+}
+
+function savePos(p: Pos) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem("debug.pos", JSON.stringify(p));
+}
+
+function loadMinimised(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem("debug.min") === "1";
+}
+
+function saveMinimised(v: boolean) {
+  if (typeof window === "undefined") return;
+  if (v) window.localStorage.setItem("debug.min", "1");
+  else window.localStorage.removeItem("debug.min");
+}
+
 export default function DebugTimings() {
   const [enabled, setEnabled] = useState(false);
   const [, setTick] = useState(0);
+  const [pos, setPos] = useState<Pos | null>(null);
+  const [minimised, setMinimised] = useState(false);
+  const widgetRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+  } | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    // Activation: ?debug=1 in the URL (one-off) OR a persistent
-    // localStorage flag set by the toggle in /settings (admin-only).
     const sp = new URLSearchParams(window.location.search);
     const fromUrl = sp.get("debug") === "1";
     const fromStorage = window.localStorage.getItem("debug") === "1";
@@ -98,14 +136,13 @@ export default function DebugTimings() {
       installFetchInterceptor();
       setEnabled(true);
       if (fromUrl && !fromStorage) {
-        // Sticky once the URL flag landed once.
         window.localStorage.setItem("debug", "1");
       }
     }
+    setPos(loadPos());
+    setMinimised(loadMinimised());
     const cb = () => setTick((t) => t + 1);
     listeners.add(cb);
-    // Also react to localStorage changes from other tabs / the
-    // settings toggle.
     function onStorage(e: StorageEvent) {
       if (e.key !== "debug") return;
       if (e.newValue === "1") {
@@ -122,29 +159,149 @@ export default function DebugTimings() {
     };
   }, []);
 
+  // Drag handlers. Use pointerdown/move/up so it works on touch + mouse.
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      // Don't start a drag if the user clicked one of the header buttons.
+      const target = e.target as HTMLElement;
+      if (target.closest("button")) return;
+      e.preventDefault();
+      const rect = widgetRef.current?.getBoundingClientRect();
+      const origX =
+        pos?.x ?? (rect ? window.innerWidth - rect.right + rect.width : 12);
+      const origY =
+        pos?.y ?? (rect ? window.innerHeight - rect.bottom + rect.height : 12);
+      // Switch from bottom/right anchoring to top/left on first drag.
+      const startLeft = rect ? rect.left : window.innerWidth - origX;
+      const startTop = rect ? rect.top : window.innerHeight - origY;
+      dragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        origX: startLeft,
+        origY: startTop,
+      };
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+    },
+    [pos],
+  );
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const dx = e.clientX - d.startX;
+      const dy = e.clientY - d.startY;
+      const rect = widgetRef.current?.getBoundingClientRect();
+      const w = rect?.width ?? 320;
+      const h = rect?.height ?? 60;
+      const nx = Math.max(0, Math.min(window.innerWidth - w, d.origX + dx));
+      const ny = Math.max(0, Math.min(window.innerHeight - h, d.origY + dy));
+      setPos({ x: nx, y: ny });
+    },
+    [],
+  );
+  const onPointerUp = useCallback(() => {
+    if (dragRef.current && pos) savePos(pos);
+    dragRef.current = null;
+  }, [pos]);
+
   if (!enabled) return null;
 
   const recent = records.slice(0, 30);
   const total = recent.reduce((a, r) => a + r.durationMs, 0);
   const slowest = [...recent].sort((a, b) => b.durationMs - a.durationMs)[0];
 
-  return (
-    <div className="fixed bottom-3 right-3 z-[70] max-w-md max-h-[60vh] overflow-y-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg p-3 text-[10px]">
-      <div className="flex items-center justify-between mb-1 sticky top-0 bg-[var(--color-surface)] -mx-3 px-3 pb-1 border-b border-[var(--color-border)]">
-        <span className="font-semibold">🔬 Debug timings</span>
-        <button
-          onClick={() => {
-            setEnabled(false);
-            if (typeof window !== "undefined") {
-              window.localStorage.removeItem("debug");
-            }
-          }}
-          className="text-[var(--color-text-dim)] hover:text-white px-1"
+  // Style: when we have a saved position, use top/left. Otherwise
+  // anchor to bottom-right.
+  const positionStyle: React.CSSProperties = pos
+    ? { top: pos.y, left: pos.x, right: "auto", bottom: "auto" }
+    : { bottom: 12, right: 12 };
+
+  if (minimised) {
+    return (
+      <div
+        ref={widgetRef}
+        style={{ ...positionStyle, position: "fixed", zIndex: 70 }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        className="cursor-grab active:cursor-grabbing select-none flex items-center gap-1.5 px-2 py-1 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] shadow-lg text-[10px]"
+      >
+        <span
+          className={
+            slowest && slowest.durationMs > 1500
+              ? "text-red-300"
+              : slowest && slowest.durationMs > 700
+                ? "text-amber-300"
+                : "text-emerald-300"
+          }
         >
-          ✕
+          🔬
+        </span>
+        <span className="tabular-nums">
+          {recent.length} · {total.toFixed(0)}ms
+        </span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setMinimised(false);
+            saveMinimised(false);
+          }}
+          className="text-[var(--color-text-dim)] hover:text-white"
+          aria-label="expand"
+        >
+          🗖
         </button>
       </div>
-      <div className="text-[9px] text-[var(--color-text-dim)] mb-1">
+    );
+  }
+
+  return (
+    <div
+      ref={widgetRef}
+      style={{
+        ...positionStyle,
+        position: "fixed",
+        zIndex: 70,
+        width: 360,
+        maxWidth: "calc(100vw - 24px)",
+      }}
+      className="max-h-[60vh] overflow-y-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg p-3 text-[10px]"
+    >
+      <div
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        className="flex items-center justify-between mb-1 sticky top-0 bg-[var(--color-surface)] -mx-3 -mt-3 px-3 pt-3 pb-1 border-b border-[var(--color-border)] cursor-grab active:cursor-grabbing select-none"
+      >
+        <span className="font-semibold">🔬 Debug timings</span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setMinimised(true);
+              saveMinimised(true);
+            }}
+            aria-label="minimise"
+            className="text-[var(--color-text-dim)] hover:text-white px-1"
+          >
+            ━
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setEnabled(false);
+              if (typeof window !== "undefined") {
+                window.localStorage.removeItem("debug");
+              }
+            }}
+            aria-label="close"
+            className="text-[var(--color-text-dim)] hover:text-white px-1"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+      <div className="text-[9px] text-[var(--color-text-dim)] mt-2 mb-1">
         {recent.length} fetch · مجموع {total.toFixed(0)}ms · کندترین:{" "}
         {slowest ? `${slowest.durationMs.toFixed(0)}ms (${shortUrl(slowest.url)})` : "—"}
       </div>
