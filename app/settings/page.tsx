@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
+import DebugModeToggle from "@/components/DebugModeToggle";
 
 // Less-frequent pages live as tiles at the top of Settings instead of
 // the main sidebar — keeping the bottom navbar readable on mobile.
@@ -555,6 +556,8 @@ export default function SettingsPage() {
           </button>
         }
       />
+
+      <DebugModeToggle />
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-6">
         {TILES.map((t) => (

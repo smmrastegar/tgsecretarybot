@@ -89,15 +89,36 @@ export default function DebugTimings() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    // Activation: ?debug=1 in the URL (one-off) OR a persistent
+    // localStorage flag set by the toggle in /settings (admin-only).
     const sp = new URLSearchParams(window.location.search);
-    if (sp.get("debug") === "1") {
+    const fromUrl = sp.get("debug") === "1";
+    const fromStorage = window.localStorage.getItem("debug") === "1";
+    if (fromUrl || fromStorage) {
       installFetchInterceptor();
       setEnabled(true);
+      if (fromUrl && !fromStorage) {
+        // Sticky once the URL flag landed once.
+        window.localStorage.setItem("debug", "1");
+      }
     }
     const cb = () => setTick((t) => t + 1);
     listeners.add(cb);
+    // Also react to localStorage changes from other tabs / the
+    // settings toggle.
+    function onStorage(e: StorageEvent) {
+      if (e.key !== "debug") return;
+      if (e.newValue === "1") {
+        installFetchInterceptor();
+        setEnabled(true);
+      } else {
+        setEnabled(false);
+      }
+    }
+    window.addEventListener("storage", onStorage);
     return () => {
       listeners.delete(cb);
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 
@@ -112,7 +133,12 @@ export default function DebugTimings() {
       <div className="flex items-center justify-between mb-1 sticky top-0 bg-[var(--color-surface)] -mx-3 px-3 pb-1 border-b border-[var(--color-border)]">
         <span className="font-semibold">🔬 Debug timings</span>
         <button
-          onClick={() => setEnabled(false)}
+          onClick={() => {
+            setEnabled(false);
+            if (typeof window !== "undefined") {
+              window.localStorage.removeItem("debug");
+            }
+          }}
           className="text-[var(--color-text-dim)] hover:text-white px-1"
         >
           ✕
