@@ -3396,6 +3396,16 @@ async function sendAiConversation(args: {
   } = args;
   if (msg.chat.type !== "private") return false;
 
+  // Fire the read receipt eagerly — STT + AI generation can take 5–10s
+  // and Telegram's "voice unlistened" dot stays visible the whole time.
+  // We're committed to attempting a reply here (we're in ai_chat mode
+  // for a DM), so mark the incoming message read now. The post-send
+  // markBusinessRead below becomes a backup; readBusinessMessage is
+  // idempotent.
+  void markBusinessRead(bot, bcId, msg.chat.id, msg.message_id).catch(
+    () => {},
+  );
+
   // Default: only text/caption messages get an AI reply. With per-chat
   // ai_process_voice / _stickers / _gifs flags, we ALSO process the
   // corresponding media kind: transcribe voice via STT, describe
