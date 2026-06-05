@@ -3422,96 +3422,117 @@ async function sendAiConversation(args: {
   let processedMediaDescription: string | null = null;
   let processedMediaKind: string | null = null;
 
-  if (!userText) {
-    // voice + audio share the aiProcessVoice toggle; video_note has
-    // its own (📹) since the visual circle is a separate experience.
-    const voiceId = msg.voice?.file_id ?? msg.audio?.file_id ?? null;
-    const videoNoteId = msg.video_note?.file_id ?? null;
-    const stickerId = msg.sticker?.file_id ?? null;
-    const animationId = msg.animation?.file_id ?? null;
-    const photoId =
-      msg.photo && msg.photo.length > 0
-        ? msg.photo[msg.photo.length - 1]?.file_id ?? null
-        : null;
-    if (voiceId && aiProcessVoice && sttConfigured()) {
-      try {
-        const tr = await transcribeAudio({
-          botToken: config.telegramBotToken,
-          fileId: voiceId,
-          language: settings.sttLanguage || "fa",
-          chatId: msg.chat.id,
-          businessConnectionId: bcId,
-        });
-        if (tr.text) {
-          userText = tr.text;
-          processedMediaTranscript = tr.text;
-          processedMediaKind = msg.voice ? "voice" : "audio";
-        }
-      } catch (err) {
-        console.warn("[ai_chat] voice STT failed:", err);
-      }
-    } else if (videoNoteId && aiProcessVideoNotes && sttConfigured()) {
-      try {
-        const tr = await transcribeAudio({
-          botToken: config.telegramBotToken,
-          fileId: videoNoteId,
-          language: settings.sttLanguage || "fa",
-          chatId: msg.chat.id,
-          businessConnectionId: bcId,
-        });
-        if (tr.text) {
-          userText = `[video note] ${tr.text}`;
-          processedMediaTranscript = tr.text;
-          processedMediaKind = "video_note";
-        }
-      } catch (err) {
-        console.warn("[ai_chat] video_note STT failed:", err);
-      }
-    } else if (stickerId && aiProcessStickers) {
-      const desc = await describeMedia({
-        fileId: stickerId,
-        kind: "sticker",
+  const voiceId = msg.voice?.file_id ?? msg.audio?.file_id ?? null;
+  const videoNoteId = msg.video_note?.file_id ?? null;
+  const stickerId = msg.sticker?.file_id ?? null;
+  const animationId = msg.animation?.file_id ?? null;
+  const photoId =
+    msg.photo && msg.photo.length > 0
+      ? msg.photo[msg.photo.length - 1]?.file_id ?? null
+      : null;
+
+  // Audio kinds (voice / audio / video_note): only process when there's
+  // no caption — the transcript IS the message text, so a typed caption
+  // already covers it. voice + audio share aiProcessVoice; video_note
+  // has its own (📹) since the circular clip is a separate UX.
+  if (!userText && voiceId && aiProcessVoice && sttConfigured()) {
+    try {
+      const tr = await transcribeAudio({
+        botToken: config.telegramBotToken,
+        fileId: voiceId,
+        language: settings.sttLanguage || "fa",
         chatId: msg.chat.id,
         businessConnectionId: bcId,
-      }).catch(() => null);
-      const text = desc
-        ? [desc.description, desc.textInImage].filter(Boolean).join("\n")
-        : "";
-      if (text) {
-        userText = `[sticker] ${text}`;
-        processedMediaDescription = text;
-        processedMediaKind = "sticker";
+      });
+      if (tr.text) {
+        userText = tr.text;
+        processedMediaTranscript = tr.text;
+        processedMediaKind = msg.voice ? "voice" : "audio";
       }
-    } else if (animationId && aiProcessGifs) {
-      const desc = await describeMedia({
-        fileId: animationId,
-        kind: "animation",
+    } catch (err) {
+      console.warn("[ai_chat] voice STT failed:", err);
+    }
+  }
+  if (
+    !userText &&
+    videoNoteId &&
+    aiProcessVideoNotes &&
+    sttConfigured()
+  ) {
+    try {
+      const tr = await transcribeAudio({
+        botToken: config.telegramBotToken,
+        fileId: videoNoteId,
+        language: settings.sttLanguage || "fa",
         chatId: msg.chat.id,
         businessConnectionId: bcId,
-      }).catch(() => null);
-      const text = desc
-        ? [desc.description, desc.textInImage].filter(Boolean).join("\n")
-        : "";
-      if (text) {
-        userText = `[GIF] ${text}`;
-        processedMediaDescription = text;
-        processedMediaKind = "animation";
+      });
+      if (tr.text) {
+        userText = `[video note] ${tr.text}`;
+        processedMediaTranscript = tr.text;
+        processedMediaKind = "video_note";
       }
-    } else if (photoId && aiProcessPhotos) {
-      const desc = await describeMedia({
-        fileId: photoId,
-        kind: "photo",
-        chatId: msg.chat.id,
-        businessConnectionId: bcId,
-      }).catch(() => null);
-      const text = desc
-        ? [desc.description, desc.textInImage].filter(Boolean).join("\n")
-        : "";
-      if (text) {
-        userText = `[photo] ${text}`;
-        processedMediaDescription = text;
-        processedMediaKind = "photo";
-      }
+    } catch (err) {
+      console.warn("[ai_chat] video_note STT failed:", err);
+    }
+  }
+
+  // Visual kinds (photo / sticker / GIF): describe ALWAYS when the
+  // toggle is on, even if a caption is present. The AI needs to see
+  // what's in the image to answer questions like «این چیه؟» or «این
+  // جا کجاست؟». Description is appended to any existing caption so
+  // both reach the model.
+  const appendVisual = (label: string, body: string): void => {
+    userText = userText
+      ? `${userText}\n\n[${label}: ${body}]`
+      : `[${label}] ${body}`;
+  };
+  if (photoId && aiProcessPhotos) {
+    const desc = await describeMedia({
+      fileId: photoId,
+      kind: "photo",
+      chatId: msg.chat.id,
+      businessConnectionId: bcId,
+    }).catch(() => null);
+    const text = desc
+      ? [desc.description, desc.textInImage].filter(Boolean).join("\n")
+      : "";
+    if (text) {
+      appendVisual("photo", text);
+      processedMediaDescription = text;
+      processedMediaKind = "photo";
+    }
+  }
+  if (stickerId && aiProcessStickers) {
+    const desc = await describeMedia({
+      fileId: stickerId,
+      kind: "sticker",
+      chatId: msg.chat.id,
+      businessConnectionId: bcId,
+    }).catch(() => null);
+    const text = desc
+      ? [desc.description, desc.textInImage].filter(Boolean).join("\n")
+      : "";
+    if (text) {
+      appendVisual("sticker", text);
+      processedMediaDescription = text;
+      processedMediaKind = "sticker";
+    }
+  }
+  if (animationId && aiProcessGifs) {
+    const desc = await describeMedia({
+      fileId: animationId,
+      kind: "animation",
+      chatId: msg.chat.id,
+      businessConnectionId: bcId,
+    }).catch(() => null);
+    const text = desc
+      ? [desc.description, desc.textInImage].filter(Boolean).join("\n")
+      : "";
+    if (text) {
+      appendVisual("GIF", text);
+      processedMediaDescription = text;
+      processedMediaKind = "animation";
     }
   }
 
