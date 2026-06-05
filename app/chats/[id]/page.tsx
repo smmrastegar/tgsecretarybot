@@ -288,6 +288,17 @@ export default function ChatDetailPage() {
   const [rule, setRule] = useState<Rule | null>(null);
   const [functionRoles, setFunctionRoles] = useState<string[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [suggesting, setSuggesting] = useState(false);
+  type Suggestion = {
+    firstName: string | null;
+    lastName: string | null;
+    nickname: string | null;
+    relationship: string | null;
+    relationshipNotes: string | null;
+    talkStyleNotes: string | null;
+    reasoning: string;
+  };
+  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [grace, setGrace] = useState<GraceInfo | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -673,8 +684,47 @@ export default function ChatDetailPage() {
 
                 {chatId > 0 && rule?.chatType === "private" && !rule?.isBot && (
                 <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
-                  <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
-                    Personal info (used by AI to adjust tone)
+                  <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                    <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)]">
+                      Personal info (used by AI to adjust tone)
+                    </div>
+                    <button
+                      onClick={async () => {
+                        setSuggesting(true);
+                        try {
+                          const r = await fetch(
+                            `/api/chats/${chatId}/suggest`,
+                            { method: "POST" },
+                          );
+                          if (!r.ok) {
+                            const j = (await r.json().catch(() => ({}))) as {
+                              error?: string;
+                            };
+                            alert(`خطا: ${j.error ?? r.status}`);
+                            return;
+                          }
+                          const j = (await r.json()) as {
+                            suggestion: {
+                              firstName: string | null;
+                              lastName: string | null;
+                              nickname: string | null;
+                              relationship: string | null;
+                              relationshipNotes: string | null;
+                              talkStyleNotes: string | null;
+                              reasoning: string;
+                            };
+                          };
+                          setSuggestion(j.suggestion);
+                        } finally {
+                          setSuggesting(false);
+                        }
+                      }}
+                      disabled={suggesting}
+                      className="text-[10px] px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
+                      title="AI پیام‌های این چت رو می‌خونه و فیلدها رو پیشنهاد می‌ده (فارسی)"
+                    >
+                      {suggesting ? "در حال…" : "🤖 پیشنهاد AI"}
+                    </button>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
@@ -1694,6 +1744,102 @@ export default function ChatDetailPage() {
             </div>
           )}
         </>
+      )}
+      {suggestion && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 overflow-y-auto"
+          onClick={() => setSuggestion(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-lg my-8"
+          >
+            <h2 className="text-base font-semibold mb-3">
+              🤖 پیشنهاد AI برای این چت
+            </h2>
+            <div className="text-[11px] text-[var(--color-text-dim)] mb-3 leading-relaxed">
+              {suggestion.reasoning}
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-3 text-sm">
+              {(
+                [
+                  ["First name", suggestion.firstName],
+                  ["Last name", suggestion.lastName],
+                  ["Nickname", suggestion.nickname],
+                  [
+                    "Relationship",
+                    suggestion.relationship
+                      ? RELATIONSHIP_LABELS[
+                          suggestion.relationship as keyof typeof RELATIONSHIP_LABELS
+                        ] ?? suggestion.relationship
+                      : null,
+                  ],
+                ] as const
+              ).map(([label, val]) => (
+                <div
+                  key={label}
+                  className="p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40"
+                >
+                  <div className="text-[10px] text-[var(--color-text-dim)]">
+                    {label}
+                  </div>
+                  <div className="text-[12px] mt-0.5">
+                    {val ?? <span className="opacity-50">—</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {(suggestion.relationshipNotes ||
+              suggestion.talkStyleNotes) && (
+              <div className="flex flex-col gap-2 mb-3">
+                {suggestion.relationshipNotes && (
+                  <div className="p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
+                    <div className="text-[10px] text-[var(--color-text-dim)] mb-0.5">
+                      شرح رابطه
+                    </div>
+                    <div className="text-[12px]">
+                      {suggestion.relationshipNotes}
+                    </div>
+                  </div>
+                )}
+                {suggestion.talkStyleNotes && (
+                  <div className="p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
+                    <div className="text-[10px] text-[var(--color-text-dim)] mb-0.5">
+                      لحن صحبت
+                    </div>
+                    <div className="text-[12px]">
+                      {suggestion.talkStyleNotes}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setSuggestion(null)}
+                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+              >
+                رد کن
+              </button>
+              <button
+                onClick={async () => {
+                  await patchRule({
+                    firstName: suggestion.firstName,
+                    lastName: suggestion.lastName,
+                    nickname: suggestion.nickname,
+                    relationship: suggestion.relationship,
+                    relationshipNotes: suggestion.relationshipNotes,
+                    talkStyleNotes: suggestion.talkStyleNotes,
+                  });
+                  setSuggestion(null);
+                }}
+                className="text-xs px-4 py-1.5 rounded-md bg-[var(--color-accent)] text-white"
+              >
+                ✅ اعمال کن
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Shell>
   );

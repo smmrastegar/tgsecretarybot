@@ -15,6 +15,7 @@ import {
   markTranscribed,
   maybeRouteMedia,
 } from "./media-router";
+import { ensureChatRuleWithDefaults } from "./chat-defaults";
 import {
   defaultSecretary,
   getSecretaries,
@@ -1722,8 +1723,24 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     return;
   }
 
-  const rule = await getChatRule(msg.chat.id).catch(() => null);
+  let rule = await getChatRule(msg.chat.id).catch(() => null);
   const settings = await getSettings();
+  // First time the bot sees this chat — stamp a chat_rules row with
+  // the operator's configured defaults so future loads see the
+  // intended starting state instead of the column-level defaults.
+  if (!rule) {
+    await ensureChatRuleWithDefaults({
+      chatId: msg.chat.id,
+      chatType: msg.chat.type,
+      chatTitle:
+        "title" in msg.chat && typeof msg.chat.title === "string"
+          ? msg.chat.title
+          : null,
+    }).catch((err) =>
+      console.warn("[chat-defaults] ensure failed:", err),
+    );
+    rule = await getChatRule(msg.chat.id).catch(() => null);
+  }
 
   // Fire media-router here, BEFORE every other early-return below
   // (grace window, secretary relay, urgent-skip, etc.) can intercept
@@ -2776,7 +2793,17 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
   const mediaFileId = media?.fileId ?? null;
   const mediaKind = media?.kind ?? null;
 
-  const rule = await getChatRule(msg.chat.id).catch(() => null);
+  let rule = await getChatRule(msg.chat.id).catch(() => null);
+  if (!rule) {
+    await ensureChatRuleWithDefaults({
+      chatId: msg.chat.id,
+      chatType: msg.chat.type,
+      chatTitle: chatTitle,
+    }).catch((err) =>
+      console.warn("[chat-defaults] ensure failed:", err),
+    );
+    rule = await getChatRule(msg.chat.id).catch(() => null);
+  }
   const settings = await getSettings();
   const mode: ChatMode = rule?.mode ?? "off";
 

@@ -241,6 +241,33 @@ export async function ensureSchema(): Promise<void> {
         PRIMARY KEY (chat_id, role)
       )`;
     await q`CREATE INDEX IF NOT EXISTS chat_function_roles_role_idx ON chat_function_roles (role)`;
+    // Optional category per (chat_id, role) so operator can group
+    // their function assignments into "personal", "work", "shared",
+    // etc. — default categories are auto-seeded; user can add more.
+    await q`ALTER TABLE chat_function_roles ADD COLUMN IF NOT EXISTS category TEXT`;
+    await q`
+      CREATE TABLE IF NOT EXISTS function_categories (
+        slug        TEXT PRIMARY KEY,
+        label       TEXT NOT NULL,
+        emoji       TEXT,
+        sort_order  INT NOT NULL DEFAULT 100,
+        is_builtin  BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.function_categories_seed.v1'`;
+      if ((flag as unknown[]).length === 0) {
+        await q`INSERT INTO function_categories (slug, label, emoji, sort_order, is_builtin) VALUES
+          ('default', 'پیش‌فرض', '⭐', 10, TRUE),
+          ('personal', 'شخصی', '👤', 20, TRUE),
+          ('work', 'کاری', '💼', 30, TRUE),
+          ('media', 'مدیا', '🎬', 40, TRUE),
+          ('archive', 'آرشیو', '🗄', 50, TRUE)
+          ON CONFLICT (slug) DO NOTHING`;
+        await q`INSERT INTO settings (key, value) VALUES ('migration.function_categories_seed.v1', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
     // One-time backfill: copy the single function_role into the
     // junction table so existing rules keep working under the
     // multi-role read path.

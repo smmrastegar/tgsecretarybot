@@ -107,6 +107,18 @@ type Settings = {
   markMessagesAsRead: string;
   autoExtractEnabled: string;
   autoExtractMinImportance: string;
+  chatDefaultMode: string;
+  chatDefaultRelationship: string;
+  chatDefaultAutoForwardVoice: string;
+  chatDefaultAutoForwardVideo: string;
+  chatDefaultAutoForwardPhoto: string;
+  chatDefaultAutoForwardLocation: string;
+  chatDefaultAutoExtractNotes: string;
+  chatDefaultAutoSummarizeEnabled: string;
+  chatDefaultAutoSummarizeGapMinutes: string;
+  chatDefaultAiProcessVoice: string;
+  chatDefaultAiProcessStickers: string;
+  chatDefaultAiProcessGifs: string;
 };
 
 type FieldConfig = {
@@ -278,6 +290,71 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         label: "Minimum importance to auto-extract (0-10)",
         hint: "Skip messages classified below this importance to save AI cost. Default 4: ignores ads/spam, processes anything that looks like real conversation.",
         type: "number",
+      },
+    ],
+  },
+  {
+    title: "پیش‌فرض چت‌های جدید",
+    fields: [
+      {
+        key: "chatDefaultMode",
+        label: "Mode پیش‌فرض",
+        hint: "وقتی بات اولین بار یه چت رو می‌بینه، rule‌اش با این مقدار ساخته می‌شه. روی هر چت قابل override.",
+      },
+      {
+        key: "chatDefaultRelationship",
+        label: "Relationship پیش‌فرض (اختیاری)",
+        hint: "خالی = بدون رابطه. مقادیر معتبر: close_family / family / close_friend / friend / work_acquaintance / employer / formal / suspicious / stranger.",
+      },
+      {
+        key: "chatDefaultAutoForwardVoice",
+        label: "🎤 auto-forward voice + video-note (پیش‌فرض)",
+        type: "toggle",
+      },
+      {
+        key: "chatDefaultAutoForwardVideo",
+        label: "🎬 auto-forward video (پیش‌فرض)",
+        type: "toggle",
+      },
+      {
+        key: "chatDefaultAutoForwardPhoto",
+        label: "🖼 auto-forward photo (پیش‌فرض)",
+        type: "toggle",
+      },
+      {
+        key: "chatDefaultAutoForwardLocation",
+        label: "📍 auto-forward location (پیش‌فرض)",
+        type: "toggle",
+      },
+      {
+        key: "chatDefaultAutoExtractNotes",
+        label: "📒 استخراج خودکار Notes با AI (پیش‌فرض)",
+        type: "toggle",
+      },
+      {
+        key: "chatDefaultAutoSummarizeEnabled",
+        label: "📬 Auto-summarize threads (پیش‌فرض)",
+        type: "toggle",
+      },
+      {
+        key: "chatDefaultAutoSummarizeGapMinutes",
+        label: "🕐 gap سکوت برای close thread (دقیقه)",
+        type: "number",
+      },
+      {
+        key: "chatDefaultAiProcessVoice",
+        label: "🎤 AI process voice (پیش‌فرض)",
+        type: "toggle",
+      },
+      {
+        key: "chatDefaultAiProcessStickers",
+        label: "🎨 AI process sticker (پیش‌فرض)",
+        type: "toggle",
+      },
+      {
+        key: "chatDefaultAiProcessGifs",
+        label: "🎞 AI process GIF (پیش‌فرض)",
+        type: "toggle",
       },
     ],
   },

@@ -96,6 +96,22 @@ export const DEFAULT_SETTINGS = {
   monitorExternalEnabled: "false",
   monitorExternalBaseUrl: "",
   monitorExternalSecret: "",
+  // Defaults applied to NEW chats — first time the bot sees a chat it
+  // upserts a chat_rules row with these values, and the chat detail
+  // page pre-fills the form with them for any chat that doesn't yet
+  // have a rule. Owner can override on per-chat basis afterwards.
+  chatDefaultMode: "off",
+  chatDefaultRelationship: "",
+  chatDefaultAutoForwardVoice: "false",
+  chatDefaultAutoForwardVideo: "false",
+  chatDefaultAutoForwardPhoto: "false",
+  chatDefaultAutoForwardLocation: "false",
+  chatDefaultAutoExtractNotes: "false",
+  chatDefaultAutoSummarizeEnabled: "false",
+  chatDefaultAutoSummarizeGapMinutes: "5",
+  chatDefaultAiProcessVoice: "false",
+  chatDefaultAiProcessStickers: "false",
+  chatDefaultAiProcessGifs: "false",
   // HikerAPI logical budget — we don't know the actual remaining
   // dollars from HikerAPI's API, so we track every call locally and
   // gate spending against a total (default $50 = the user's pre-pay)
@@ -158,6 +174,18 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   monitorExternalEnabled: optional("MONITOR_EXTERNAL_ENABLED"),
   monitorExternalBaseUrl: optional("MONITOR_EXTERNAL_BASE_URL"),
   monitorExternalSecret: optional("MONITOR_EXTERNAL_SECRET"),
+  chatDefaultMode: optional("CHAT_DEFAULT_MODE"),
+  chatDefaultRelationship: optional("CHAT_DEFAULT_RELATIONSHIP"),
+  chatDefaultAutoForwardVoice: optional("CHAT_DEFAULT_AUTO_FORWARD_VOICE"),
+  chatDefaultAutoForwardVideo: optional("CHAT_DEFAULT_AUTO_FORWARD_VIDEO"),
+  chatDefaultAutoForwardPhoto: optional("CHAT_DEFAULT_AUTO_FORWARD_PHOTO"),
+  chatDefaultAutoForwardLocation: optional("CHAT_DEFAULT_AUTO_FORWARD_LOCATION"),
+  chatDefaultAutoExtractNotes: optional("CHAT_DEFAULT_AUTO_EXTRACT_NOTES"),
+  chatDefaultAutoSummarizeEnabled: optional("CHAT_DEFAULT_AUTO_SUMMARIZE_ENABLED"),
+  chatDefaultAutoSummarizeGapMinutes: optional("CHAT_DEFAULT_AUTO_SUMMARIZE_GAP_MINUTES"),
+  chatDefaultAiProcessVoice: optional("CHAT_DEFAULT_AI_PROCESS_VOICE"),
+  chatDefaultAiProcessStickers: optional("CHAT_DEFAULT_AI_PROCESS_STICKERS"),
+  chatDefaultAiProcessGifs: optional("CHAT_DEFAULT_AI_PROCESS_GIFS"),
   hikerBudgetUsd: optional("HIKER_BUDGET_USD"),
   hikerApprovalStepUsd: optional("HIKER_APPROVAL_STEP_USD"),
   hikerApprovedUsd: optional("HIKER_APPROVED_USD"),

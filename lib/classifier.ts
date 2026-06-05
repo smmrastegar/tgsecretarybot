@@ -1267,3 +1267,152 @@ export async function extractActions(input: {
     return [];
   }
 }
+
+// AI-powered "guess what this chat should look like" — used by the
+// 🤖 پیشنهاد AI button on /chats/[id] when the operator hasn't
+// filled out the metadata. Reads recent messages from the chat
+// plus a snapshot of similar already-labelled chats and proposes:
+//
+//   - firstName / lastName / nickname (Persian or English)
+//   - relationship (one of the RELATIONSHIPS enum)
+//   - relationshipNotes (Persian, free-form)
+//   - talkStyleNotes (Persian, free-form)
+//   - reasoning (Persian, why we picked these)
+//
+// We do NOT propose function role / automation toggles — those are
+// purely operational decisions and shouldn't be auto-set.
+
+export type ChatSettingSuggestion = {
+  firstName: string | null;
+  lastName: string | null;
+  nickname: string | null;
+  relationship: string | null;
+  relationshipNotes: string | null;
+  talkStyleNotes: string | null;
+  reasoning: string;
+};
+
+export async function suggestChatSettings(input: {
+  chatId: number;
+  chatType: string;
+  chatTitle: string | null;
+  ownerName: string;
+  // recent messages in this chat, oldest first
+  messages: Array<{ fromOwner: boolean; senderName: string; text: string; at: Date }>;
+  // a handful of already-labelled chats with similar shape, for
+  // pattern-matching ("looks like other ai_chat DMs labelled 'friend'")
+  examples?: Array<{
+    firstName: string | null;
+    lastName: string | null;
+    nickname: string | null;
+    relationship: string | null;
+    relationshipNotes: string | null;
+    talkStyleNotes: string | null;
+    sampleMessages: string[];
+  }>;
+}): Promise<ChatSettingSuggestion> {
+  const payload = {
+    chat_id: input.chatId,
+    chat_type: input.chatType,
+    chat_title: input.chatTitle,
+    owner_name: input.ownerName,
+    messages: input.messages.slice(-60).map((m) => ({
+      from: m.fromOwner ? "owner" : "other",
+      sender: m.senderName,
+      text: (m.text ?? "").slice(0, 500),
+      at: m.at.toISOString(),
+    })),
+    examples: (input.examples ?? []).slice(0, 8).map((e) => ({
+      first_name: e.firstName,
+      last_name: e.lastName,
+      nickname: e.nickname,
+      relationship: e.relationship,
+      relationship_notes: e.relationshipNotes,
+      talk_style_notes: e.talkStyleNotes,
+      sample_messages: e.sampleMessages.slice(0, 5),
+    })),
+    valid_relationships: [
+      "close_family",
+      "family",
+      "close_friend",
+      "friend",
+      "work_acquaintance",
+      "employer",
+      "formal",
+      "suspicious",
+      "stranger",
+    ],
+  };
+  const SYSTEM = `تو دستیار من برای ست‌کردن متادیتای یه چت تلگرامی هستی.
+بر اساس پیام‌های موجود توی این چت + پترن چت‌های مشابه که قبلاً برچسب خوردن، یه JSON تک‌آبجکت برگردون با این کلیدها:
+{
+  "first_name": string|null,
+  "last_name": string|null,
+  "nickname": string|null,
+  "relationship": یکی از مقادیر valid_relationships یا null,
+  "relationship_notes": string|null,
+  "talk_style_notes": string|null,
+  "reasoning": string
+}
+قواعد:
+- خروجی فقط JSON — هیچ متن دیگه‌ای، هیچ markdown، هیچ توضیح.
+- همه‌ی مقادیر باید **فارسی** باشن (مگه اسم واقعی فرد که اگه انگلیسی هست انگلیسی نگه‌دار).
+- اگه از پیام‌ها مشخص نشد، null بذار. حدس بی‌اساس نزن.
+- relationship باید **دقیقاً** یکی از valid_relationships باشه (یا null).
+- talk_style_notes یعنی توضیح کوتاه راجع به لحن صحبت طرف مقابل (مثلاً «خیلی خودمونی»، «همیشه شما می‌گه»، «شوخی و طعنه زیاد»).
+- relationship_notes توضیح ماهیت رابطه‌ست (مثلاً «همکار قدیمی پروژه X»، «خاله بزرگه»، «دانشجو که از کلاس می‌شناسه»).
+- reasoning یه پاراگراف کوتاه فارسی که می‌گه چرا این مقادیر رو پیشنهاد دادی — کدوم پیام‌ها یا کدوم چت مشابه راهنماییت کرد.`;
+
+  const raw = await callOpenRouter(
+    [
+      { role: "system", content: SYSTEM },
+      { role: "user", content: JSON.stringify(payload) },
+    ],
+    {
+      jsonObject: true,
+      maxTokens: 800,
+      temperature: 0.2,
+      purpose: "suggest_chat_settings",
+      chatId: input.chatId,
+    },
+  );
+  type ParsedReply = {
+    first_name?: string | null;
+    last_name?: string | null;
+    nickname?: string | null;
+    relationship?: string | null;
+    relationship_notes?: string | null;
+    talk_style_notes?: string | null;
+    reasoning?: string;
+  };
+  let parsed: ParsedReply = {};
+  try {
+    parsed = JSON.parse(raw) as ParsedReply;
+  } catch {
+    return {
+      firstName: null,
+      lastName: null,
+      nickname: null,
+      relationship: null,
+      relationshipNotes: null,
+      talkStyleNotes: null,
+      reasoning: "پاسخ AI قابل parse نبود.",
+    };
+  }
+  const cleanStr = (v: unknown): string | null => {
+    if (typeof v !== "string") return null;
+    const t = v.trim();
+    return t.length === 0 ? null : t;
+  };
+  const validRels = payload.valid_relationships;
+  const relRaw = cleanStr(parsed.relationship);
+  return {
+    firstName: cleanStr(parsed.first_name),
+    lastName: cleanStr(parsed.last_name),
+    nickname: cleanStr(parsed.nickname),
+    relationship: relRaw && validRels.includes(relRaw) ? relRaw : null,
+    relationshipNotes: cleanStr(parsed.relationship_notes),
+    talkStyleNotes: cleanStr(parsed.talk_style_notes),
+    reasoning: cleanStr(parsed.reasoning) ?? "(بدون توضیح)",
+  };
+}
