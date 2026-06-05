@@ -5,10 +5,22 @@ import { getOwnerAsset, recordAiUsage } from "./db";
 // Gemini 2.5 Flash Image ("nano-banana 2") on OpenRouter. Takes a
 // reference photo + a text prompt and returns a generated image.
 // Pricing: ~$0.04 per image (~$30 / 1000 generations).
-// Model can be overridden via env so we don't have to redeploy when
-// OpenRouter renames the preview slug.
-const IMAGE_MODEL =
-  process.env.OPENROUTER_IMAGE_MODEL || "google/gemini-2.5-flash-image-preview";
+//
+// OpenRouter has shuffled the model slug several times. We try a
+// list of known names in order until one succeeds, and let env
+// override prepend extra candidates. The first non-empty response
+// wins, the rest are skipped.
+const ENV_IMAGE_MODEL = process.env.OPENROUTER_IMAGE_MODEL?.trim();
+const FALLBACK_IMAGE_MODELS: string[] = [
+  "google/gemini-2.5-flash-image-preview",
+  "google/gemini-2.5-flash-image",
+  "google/gemini-2.0-flash-exp:free",
+];
+const IMAGE_MODELS = (
+  ENV_IMAGE_MODEL
+    ? [ENV_IMAGE_MODEL, ...FALLBACK_IMAGE_MODELS]
+    : FALLBACK_IMAGE_MODELS
+).filter((m, i, arr) => arr.indexOf(m) === i);
 const IMAGE_API_TIMEOUT_MS = 60_000;
 const COST_PER_IMAGE_USD = 0.04;
 
@@ -91,20 +103,6 @@ export async function generatePersonalPhoto(args: {
     "Output ONLY the image. No text, no captions, no watermarks, no signatures.",
   ].join("\n");
 
-  const body = {
-    model: IMAGE_MODEL,
-    modalities: ["image", "text"],
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: prompt },
-          { type: "image_url", image_url: { url: referenceImageUrl } },
-        ],
-      },
-    ],
-  };
-
   const headers: Record<string, string> = {
     Authorization: `Bearer ${config.openrouterApiKey}`,
     "Content-Type": "application/json",
@@ -113,79 +111,148 @@ export async function generatePersonalPhoto(args: {
   if (config.openrouterAppUrl) headers["HTTP-Referer"] = config.openrouterAppUrl;
 
   console.log(
-    `[image-gen] model=${IMAGE_MODEL} refSource=${
+    `[image-gen] start refSource=${
       uploaded ? "uploaded-blob" : "url"
-    } refBytes=${uploaded ? uploaded.data.length : "n/a"}`,
+    } refBytes=${uploaded ? uploaded.data.length : "n/a"} models=${IMAGE_MODELS.join(",")}`,
   );
-  const res = await fetchWithTimeout(
-    "https://openrouter.ai/api/v1/chat/completions",
-    { method: "POST", headers, body: JSON.stringify(body) },
-    IMAGE_API_TIMEOUT_MS,
-  );
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`image-gen ${res.status}: ${txt.slice(0, 400)}`);
-  }
-  const json = (await res.json()) as {
-    choices?: Array<{
-      message?: {
-        images?: Array<{ image_url?: { url?: string } | string } | string>;
-        content?: string | Array<{ type?: string; image_url?: { url?: string } | string }>;
-      };
-    }>;
-    error?: { message?: string };
-    usage?: { total_tokens?: number };
-  };
-  if (json.error) throw new Error(json.error.message ?? "image-gen error");
 
-  // OpenRouter's Gemini image responses have shifted shape across
-  // versions. We try, in priority order:
-  //   choices[0].message.images[0].image_url.url  (current)
-  //   choices[0].message.images[0]                (sometimes a raw URL)
-  //   choices[0].message.content[].image_url.url  (when modalities is array)
-  const msg0 = json.choices?.[0]?.message;
-  const imagesField = msg0?.images;
-  const first = imagesField?.[0];
-  let dataUrl: string | undefined =
-    typeof first === "string"
-      ? first
-      : first
-        ? (first.image_url as { url?: string } | undefined)?.url ??
-          (typeof first.image_url === "string" ? first.image_url : undefined)
-        : undefined;
-  if (!dataUrl && Array.isArray(msg0?.content)) {
-    for (const part of msg0.content) {
-      if (part && typeof part === "object" && part.image_url) {
-        const u =
-          typeof part.image_url === "string"
-            ? part.image_url
-            : (part.image_url as { url?: string }).url;
-        if (u) {
-          dataUrl = u;
-          break;
+  const errors: string[] = [];
+  let dataUrl: string | undefined;
+  let usedModel = "";
+
+  for (const model of IMAGE_MODELS) {
+    const body = {
+      model,
+      modalities: ["image", "text"],
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: referenceImageUrl } },
+          ],
+        },
+      ],
+    };
+
+    let res: Response;
+    try {
+      res = await fetchWithTimeout(
+        "https://openrouter.ai/api/v1/chat/completions",
+        { method: "POST", headers, body: JSON.stringify(body) },
+        IMAGE_API_TIMEOUT_MS,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[image-gen] ${model} network error: ${msg}`);
+      errors.push(`${model}: ${msg}`);
+      continue;
+    }
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      console.warn(
+        `[image-gen] ${model} HTTP ${res.status}: ${txt.slice(0, 300)}`,
+      );
+      errors.push(`${model}: ${res.status} ${txt.slice(0, 120)}`);
+      continue;
+    }
+    const json = (await res.json()) as {
+      choices?: Array<{
+        message?: {
+          images?: Array<{ image_url?: { url?: string } | string } | string>;
+          content?:
+            | string
+            | Array<{ type?: string; image_url?: { url?: string } | string }>;
+        };
+      }>;
+      error?: { message?: string };
+    };
+    if (json.error) {
+      console.warn(`[image-gen] ${model} body error: ${json.error.message}`);
+      errors.push(`${model}: ${json.error.message ?? "error"}`);
+      continue;
+    }
+
+    // OpenRouter's Gemini image responses have shifted shape across
+    // versions. Try, in priority order:
+    //   choices[0].message.images[0].image_url.url  (current)
+    //   choices[0].message.images[0]                (sometimes a raw URL)
+    //   choices[0].message.content[].image_url.url  (when modalities is array)
+    const msg0 = json.choices?.[0]?.message;
+    const imagesField = msg0?.images;
+    const first = imagesField?.[0];
+    let candidate: string | undefined =
+      typeof first === "string"
+        ? first
+        : first
+          ? (first.image_url as { url?: string } | undefined)?.url ??
+            (typeof first.image_url === "string" ? first.image_url : undefined)
+          : undefined;
+    if (!candidate && Array.isArray(msg0?.content)) {
+      for (const part of msg0.content) {
+        if (part && typeof part === "object" && part.image_url) {
+          const u =
+            typeof part.image_url === "string"
+              ? part.image_url
+              : (part.image_url as { url?: string }).url;
+          if (u) {
+            candidate = u;
+            break;
+          }
         }
       }
     }
+    if (!candidate) {
+      console.warn(
+        `[image-gen] ${model} no image in response. shape: ${JSON.stringify(json).slice(0, 500)}`,
+      );
+      errors.push(`${model}: no image in response`);
+      continue;
+    }
+    dataUrl = candidate;
+    usedModel = model;
+    console.log(`[image-gen] success model=${model} bytes=${candidate.length}`);
+    break;
   }
+
   if (!dataUrl) {
-    console.warn(
-      `[image-gen] no image in response. shape: ${JSON.stringify(json).slice(0, 600)}`,
+    throw new Error(
+      `image-gen — all models failed: ${errors.join(" | ").slice(0, 600)}`,
     );
-    throw new Error("image-gen response had no image");
   }
   const m = /^data:([^;]+);base64,(.+)$/i.exec(dataUrl);
-  if (!m) throw new Error("image-gen response wasn't a data URL");
+  if (!m) {
+    // Treat the URL itself as the deliverable if it's not data: (some
+    // models return a hosted URL).
+    if (/^https?:/i.test(dataUrl)) {
+      const fetched = await fetchWithTimeout(dataUrl, {}, IMAGE_API_TIMEOUT_MS);
+      if (!fetched.ok) {
+        throw new Error(`image-gen URL fetch ${fetched.status}`);
+      }
+      const mime = fetched.headers.get("content-type") ?? "image/png";
+      const data = new Uint8Array(await fetched.arrayBuffer());
+      await recordAiUsage({
+        chatId: args.chatId ?? null,
+        businessConnectionId: args.businessConnectionId ?? null,
+        model: usedModel,
+        purpose: "generate_photo",
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        costUsd: COST_PER_IMAGE_USD,
+      }).catch((err) => console.error("[image-gen] usage record failed:", err));
+      return { data, mime };
+    }
+    throw new Error("image-gen response wasn't a data URL");
+  }
   const mime = m[1] ?? "image/png";
   const b64 = m[2] ?? "";
   const data = new Uint8Array(Buffer.from(b64, "base64"));
 
-  // Log cost — image gen is flat-priced per image rather than
-  // token-based, so the token columns stay zero and cost goes into
-  // costUsd directly.
   await recordAiUsage({
     chatId: args.chatId ?? null,
     businessConnectionId: args.businessConnectionId ?? null,
-    model: IMAGE_MODEL,
+    model: usedModel,
     purpose: "generate_photo",
     promptTokens: 0,
     completionTokens: 0,
