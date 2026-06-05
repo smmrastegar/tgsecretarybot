@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
+import OwnerPhotoUploader from "@/components/OwnerPhotoUploader";
 
 type Settings = {
   ownerName: string;
@@ -532,6 +533,8 @@ export default function SettingsPage() {
       )}
 
       <div className="flex flex-col gap-4 md:gap-6">
+        {/* Owner reference photo — uploads a file instead of needing a URL. */}
+        <OwnerPhotoUploader />
         {/* Custom rich editor: Secretaries */}
         <Card>
           <h2 className="text-sm font-semibold mb-1">Secretaries</h2>

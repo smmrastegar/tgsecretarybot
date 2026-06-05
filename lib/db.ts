@@ -689,6 +689,21 @@ export async function ensureSchema(): Promise<void> {
         PRIMARY KEY (tenant_id, key)
       )`;
     await q`CREATE INDEX IF NOT EXISTS tenant_settings_tenant_idx ON tenant_settings (tenant_id)`;
+    // Owner-uploaded binary assets (currently just the reference photo
+    // used by ai_generate_photo). Stored as BYTEA so the operator
+    // doesn't have to host an image somewhere public. tenant_id is
+    // nullable for global / single-tenant installs; the unique index
+    // uses COALESCE so NULL and 0 both collapse to one row per kind.
+    await q`
+      CREATE TABLE IF NOT EXISTS owner_assets (
+        id          BIGSERIAL PRIMARY KEY,
+        kind        TEXT NOT NULL,
+        tenant_id   BIGINT,
+        mime        TEXT NOT NULL,
+        data        BYTEA NOT NULL,
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE UNIQUE INDEX IF NOT EXISTS owner_assets_kind_tenant_uniq ON owner_assets (kind, COALESCE(tenant_id, 0))`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
     // recent push so the admin can see drift.
@@ -2708,6 +2723,68 @@ export async function recordAiUsage(u: AiUsage): Promise<void> {
     const { bumpOpenrouterSpent } = await import("./openrouter-budget");
     bumpOpenrouterSpent(tenantId, u.costUsd);
   }
+}
+
+// --- Owner-uploaded binary assets ---
+
+export type OwnerAsset = { mime: string; data: Uint8Array; updatedAt: Date };
+
+export async function setOwnerAsset(args: {
+  kind: string;
+  mime: string;
+  data: Uint8Array;
+  tenantId?: number | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  const tenantId = args.tenantId ?? null;
+  // Delete-then-insert because the unique index uses COALESCE on
+  // tenant_id and ON CONFLICT can't target an expression index in
+  // every Postgres version. Race is harmless — worst case the latest
+  // upload wins.
+  await sql()`
+    DELETE FROM owner_assets
+    WHERE kind = ${args.kind}
+      AND COALESCE(tenant_id, 0) = COALESCE(${tenantId}, 0)`;
+  await sql()`
+    INSERT INTO owner_assets (kind, tenant_id, mime, data, updated_at)
+    VALUES (${args.kind}, ${tenantId}, ${args.mime}, ${args.data}, NOW())`;
+}
+
+export async function getOwnerAsset(
+  kind: string,
+  tenantId?: number | null,
+): Promise<OwnerAsset | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT mime, data, updated_at
+    FROM owner_assets
+    WHERE kind = ${kind}
+      AND COALESCE(tenant_id, 0) = COALESCE(${tenantId ?? null}, 0)
+    LIMIT 1`;
+  const r = rows[0] as
+    | { mime: string; data: Uint8Array; updated_at: Date }
+    | undefined;
+  if (!r) return null;
+  // neon driver returns BYTEA as a Buffer; normalise to Uint8Array.
+  const data =
+    r.data instanceof Uint8Array
+      ? r.data
+      : new Uint8Array(r.data as ArrayBufferLike);
+  return { mime: r.mime, data, updatedAt: r.updated_at };
+}
+
+export async function deleteOwnerAsset(
+  kind: string,
+  tenantId?: number | null,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    DELETE FROM owner_assets
+    WHERE kind = ${kind}
+      AND COALESCE(tenant_id, 0) = COALESCE(${tenantId ?? null}, 0)`;
 }
 
 export async function aiUsageOverview(): Promise<{

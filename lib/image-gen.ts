@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { config } from "./config";
-import { recordAiUsage } from "./db";
+import { getOwnerAsset, recordAiUsage } from "./db";
 
 // Gemini 2.5 Flash Image ("nano-banana 2") on OpenRouter. Takes a
 // reference photo + a text prompt and returns a generated image.
@@ -55,6 +55,12 @@ export type GeneratedImage = {
 // Calls Gemini's image-gen model with the operator's reference photo
 // + a short prompt describing what to render. Returns raw bytes ready
 // to pass into grammy's InputFile.
+//
+// Reference resolution priority:
+//   1. Uploaded blob in owner_assets ('photo') — what the dashboard
+//      file picker writes.
+//   2. settings.ownerPhotoUrl — public URL fallback for power users
+//      who'd rather host it elsewhere.
 export async function generatePersonalPhoto(args: {
   referenceUrl: string;
   userRequest: string;
@@ -64,8 +70,15 @@ export async function generatePersonalPhoto(args: {
   if (!config.openrouterApiKey) {
     throw new Error("OPENROUTER_API_KEY not set");
   }
-  if (!args.referenceUrl) {
-    throw new Error("owner reference photo URL not set");
+  let referenceImageUrl: string;
+  const uploaded = await getOwnerAsset("photo").catch(() => null);
+  if (uploaded) {
+    const b64 = Buffer.from(uploaded.data).toString("base64");
+    referenceImageUrl = `data:${uploaded.mime};base64,${b64}`;
+  } else if (args.referenceUrl) {
+    referenceImageUrl = args.referenceUrl;
+  } else {
+    throw new Error("owner reference photo not set (upload one in Settings)");
   }
 
   const prompt = [
@@ -84,7 +97,7 @@ export async function generatePersonalPhoto(args: {
         role: "user",
         content: [
           { type: "text", text: prompt },
-          { type: "image_url", image_url: { url: args.referenceUrl } },
+          { type: "image_url", image_url: { url: referenceImageUrl } },
         ],
       },
     ],
