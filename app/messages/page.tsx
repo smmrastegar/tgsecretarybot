@@ -20,13 +20,15 @@ function groupByChat(messages: Message[]): Array<{
     map.get(m.chatId)!.push(m);
   }
   return [...map.entries()]
-    .map(([chatId, msgs]) => ({
-      chatId,
-      chatTitle: msgs[0]!.chatTitle,
-      senderName:
-        msgs.find((m) => !m.fromOwner)?.senderName ?? msgs[0]!.senderName,
-      messages: msgs,
-    }))
+    .map(([chatId, msgs]) => {
+      const sample = msgs.find((m) => !m.fromOwner) ?? msgs[0]!;
+      return {
+        chatId,
+        chatTitle: msgs[0]!.chatTitle,
+        senderName: displaySender(sample),
+        messages: msgs,
+      };
+    })
     .sort((a, b) =>
       b.messages[0]!.createdAt.localeCompare(a.messages[0]!.createdAt),
     );
@@ -40,6 +42,28 @@ const SOURCE_LABEL: Record<string, { label: string; tone: "info" | "success" | "
   owner_dashboard: { label: "Dashboard", tone: "neutral" },
 };
 
+// Prefer the per-chat custom label (firstName + lastName / nickname /
+// chatTitle) over the raw Telegram-supplied sender_name. Only meaningful
+// for DMs — in groups the sender is the individual user, not the chat.
+function displaySender(m: {
+  chatType: string;
+  chatTitle: string | null;
+  senderName: string;
+  chatFirstName: string | null;
+  chatLastName: string | null;
+  chatNickname: string | null;
+}): string {
+  if (m.chatType === "private") {
+    const full = [m.chatFirstName, m.chatLastName]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    if (full) return full;
+    if (m.chatNickname) return m.chatNickname;
+  }
+  return m.chatTitle ?? m.senderName;
+}
+
 type Message = {
   id: number;
   createdAt: string;
@@ -47,6 +71,9 @@ type Message = {
   chatType: string;
   chatTitle: string | null;
   senderName: string;
+  chatFirstName: string | null;
+  chatLastName: string | null;
+  chatNickname: string | null;
   messageText: string;
   importance: number;
   urgent: boolean;
@@ -258,7 +285,7 @@ export default function MessagesPage() {
                   >
                     <div className="text-[10px] text-[var(--color-text-dim)] flex items-center gap-1.5 flex-wrap">
                       <span>
-                        {m.fromOwner ? "you" : m.senderName} ·{" "}
+                        {m.fromOwner ? "you" : displaySender(m)} ·{" "}
                         {relTime(m.createdAt)}
                       </span>
                       {m.mediaKind && (
@@ -282,7 +309,15 @@ export default function MessagesPage() {
                     </div>
                     <div
                       dir="auto"
-                      style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+                      style={{
+                        overflowWrap: "anywhere",
+                        wordBreak: "break-word",
+                        // plaintext makes each line auto-detect its
+                        // own direction so mixed Persian/English text
+                        // renders each line on the correct side.
+                        unicodeBidi: "plaintext",
+                        textAlign: "start",
+                      }}
                       className={`px-2.5 py-1.5 rounded-2xl text-xs whitespace-pre-wrap max-w-full ${
                         m.deletedAt
                           ? "bg-red-900/20 border border-red-900/40 text-[var(--color-text-dim)] line-through rounded-md"
@@ -311,7 +346,7 @@ export default function MessagesPage() {
               <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
                 <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
                   Reply to last message from{" "}
-                  {target.fromOwner ? "you" : target.senderName}
+                  {target.fromOwner ? "you" : displaySender(target)}
                 </div>
                 <MessageActions
                   message={{
@@ -356,7 +391,7 @@ export default function MessagesPage() {
                     href={`/chats/${m.chatId}`}
                     className="hover:underline font-medium text-[var(--color-text)]"
                   >
-                    {m.senderName}
+                    {displaySender(m)}
                   </Link>
                   {m.fromOwner && <Badge tone="info">you</Badge>}
                   <span>·</span>
@@ -387,6 +422,7 @@ export default function MessagesPage() {
               </div>
               <div
                 dir="auto"
+                style={{ unicodeBidi: "plaintext", textAlign: "start" }}
                 className="mt-2 text-sm break-words whitespace-pre-wrap"
               >
                 {m.messageText}
@@ -398,6 +434,7 @@ export default function MessagesPage() {
                   </div>
                   <div
                     dir="auto"
+                    style={{ unicodeBidi: "plaintext", textAlign: "start" }}
                     className="whitespace-pre-wrap break-words"
                   >
                     {m.transcript}

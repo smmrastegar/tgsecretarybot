@@ -1135,6 +1135,13 @@ export type MessageRow = {
   fromOwner: boolean;
   source: string | null;
   chatMode: ChatMode;
+  // Per-chat custom labels from chat_rules — when present, the UI
+  // should prefer these over senderName (which is the raw Telegram-
+  // supplied first name). Only filled for DMs / chats where the
+  // operator has labelled the chat.
+  chatFirstName: string | null;
+  chatLastName: string | null;
+  chatNickname: string | null;
 };
 
 function rowToMessage(r: Record<string, unknown>): MessageRow {
@@ -1175,6 +1182,9 @@ function rowToMessage(r: Record<string, unknown>): MessageRow {
       (CHAT_MODES.includes((r.chat_mode as ChatMode) ?? "secretary")
         ? (r.chat_mode as ChatMode)
         : "secretary"),
+    chatFirstName: (r.chat_rule_first_name as string) ?? null,
+    chatLastName: (r.chat_rule_last_name as string) ?? null,
+    chatNickname: (r.chat_rule_nickname as string) ?? null,
   };
 }
 
@@ -1191,8 +1201,16 @@ export async function listMessages(opts: {
   const offset = Math.max(opts.offset ?? 0, 0);
   const q = sql();
   const search = opts.search ? `%${opts.search}%` : null;
+  // Pull chat_rules.first_name / last_name / nickname too — the list
+  // UI uses these to label the sender (DM chats only). The bare
+  // sender_name from messages_log is the Telegram-supplied first
+  // name; the operator may have set a fuller name on /chats/[id]
+  // that should win.
   const rows = await q`
     SELECT m.*, COALESCE(r.mode, 'secretary') AS chat_mode,
+           r.first_name AS chat_rule_first_name,
+           r.last_name  AS chat_rule_last_name,
+           r.nickname   AS chat_rule_nickname,
            (SELECT COUNT(*)::int FROM message_edits e WHERE e.message_log_id = m.id) AS edit_count
     FROM messages_log m
     LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
