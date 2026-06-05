@@ -80,10 +80,17 @@ export async function POST(
     }),
   );
   try {
+    // Compose a hint with whatever raw Telegram-supplied names we
+    // have so the AI can transliterate them to Persian. The
+    // Telegram first/last names usually live on the messages_log
+    // rows (sender_name) for the non-owner messages; we surface
+    // the first one as a clue + the per-chat title.
+    const senderNameHint =
+      messages.find((m) => !m.fromOwner)?.senderName ?? null;
     const suggestion = await suggestChatSettings({
       chatId,
       chatType: rule?.chatType ?? "private",
-      chatTitle: rule?.chatTitle ?? null,
+      chatTitle: rule?.chatTitle ?? senderNameHint,
       ownerName: settings.ownerName ?? "owner",
       // oldest first so the AI sees the conversation in order
       messages: messages
