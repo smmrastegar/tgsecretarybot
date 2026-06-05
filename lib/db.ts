@@ -2484,7 +2484,10 @@ export async function getChatMode(
   };
 }
 
-export async function listChats(): Promise<
+export async function listChats(opts: {
+  limit?: number;
+  offset?: number;
+} = {}): Promise<
   Array<{
     chatId: number;
     chatType: string;
@@ -2536,7 +2539,8 @@ export async function listChats(): Promise<
     LEFT JOIN ai_usage  u ON u.chat_id = m.chat_id
     GROUP BY m.chat_id
     ORDER BY last_seen DESC NULLS LAST
-    LIMIT 200`;
+    LIMIT ${Math.min(Math.max(opts.limit ?? 200, 1), 500)}
+    OFFSET ${Math.max(opts.offset ?? 0, 0)}`;
   return rows.map((r) => {
     const mode = (r.mode as string) ?? "off";
     const rel = (r.relationship as string) ?? null;

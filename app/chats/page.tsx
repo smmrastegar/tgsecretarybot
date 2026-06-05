@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge, TableWrap } from "@/components/Card";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
@@ -141,14 +141,43 @@ export default function ChatsPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulking, setBulking] = useState(false);
 
+  const PAGE = 30;
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await fetch("/api/chats");
+    const r = await fetch(`/api/chats?limit=${PAGE}&offset=0`);
     const j = (await r.json()) as { chats: Chat[] };
     setChats(j.chats);
+    setHasMore(j.chats.length === PAGE);
     setSelected(new Set());
     setLoading(false);
   }, []);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    const r = await fetch(`/api/chats?limit=${PAGE}&offset=${chats.length}`);
+    const j = (await r.json()) as { chats: Chat[] };
+    setChats((prev) => [...prev, ...j.chats]);
+    setHasMore(j.chats.length === PAGE);
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, chats.length]);
+
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMore();
+      },
+      { rootMargin: "300px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loadMore]);
 
   function toggleSelect(id: number) {
     setSelected((prev) => {
@@ -766,6 +795,19 @@ export default function ChatsPage() {
               </div>
             </Card>
           ))}
+          {hasMore && (
+            <div
+              ref={sentinelRef}
+              className="text-center text-[11px] text-[var(--color-text-dim)] py-4"
+            >
+              {loadingMore ? "بارگذاری بیشتر…" : "اسکرول کن"}
+            </div>
+          )}
+          {!hasMore && chats.length > 0 && (
+            <div className="text-center text-[10px] text-[var(--color-text-dim)] py-3">
+              · {chats.length} چت بارگذاری شد ·
+            </div>
+          )}
         </div>
 
         {/* Desktop: table */}

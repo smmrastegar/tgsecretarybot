@@ -223,7 +223,7 @@ export default function MessageActions({
         </div>
       )}
 
-      <div className="mt-2 flex gap-1.5 flex-wrap items-center">
+      <div className="mt-2 flex gap-1.5 flex-wrap items-center justify-center">
         {m.chatMode && (
           <Badge tone={MODE_LABEL[m.chatMode].tone}>
             mode: {MODE_LABEL[m.chatMode].label}

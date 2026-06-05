@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import RouteProgress from "./RouteProgress";
+import DebugTimings from "./DebugTimings";
 import {
   AlertOctagon,
   Bell,
@@ -94,6 +96,10 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
+      <Suspense fallback={null}>
+        <RouteProgress />
+      </Suspense>
+      <DebugTimings />
       <aside className="hidden md:flex w-60 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex-col">
         <div className="px-2 pb-4 mb-4 border-b border-[var(--color-border)]">
           <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">

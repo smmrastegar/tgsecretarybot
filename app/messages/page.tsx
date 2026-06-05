@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import MessageActions from "@/components/MessageActions";
@@ -165,23 +165,59 @@ export default function MessagesPage() {
       .catch(() => {});
   }, []);
 
+  const PAGE = 15;
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
-    params.set("limit", "100");
+    params.set("limit", String(PAGE));
+    params.set("offset", "0");
     if (urgentOnly) params.set("urgent", "1");
     if (search) params.set("q", search);
     const r = await fetch(`/api/messages?${params}`);
     const j = (await r.json()) as { messages: Message[] };
     setMessages(j.messages);
+    setHasMore(j.messages.length === PAGE);
     setLoading(false);
   }, [search, urgentOnly]);
 
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    const params = new URLSearchParams();
+    params.set("limit", String(PAGE));
+    params.set("offset", String(messages.length));
+    if (urgentOnly) params.set("urgent", "1");
+    if (search) params.set("q", search);
+    const r = await fetch(`/api/messages?${params}`);
+    const j = (await r.json()) as { messages: Message[] };
+    setMessages((prev) => [...prev, ...j.messages]);
+    setHasMore(j.messages.length === PAGE);
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, messages.length, urgentOnly, search]);
 
   useEffect(() => {
     const id = setTimeout(load, 300);
     return () => clearTimeout(id);
   }, [load]);
+
+  // Infinite scroll — observe a sentinel near the bottom and fire
+  // loadMore() when it scrolls into view.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMore();
+      },
+      { rootMargin: "300px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loadMore]);
 
   return (
     <Shell>
@@ -329,7 +365,9 @@ export default function MessagesPage() {
                       {truncate(visibleText, 200)}
                     </div>
                     {m.mediaKind && !m.deletedAt && (
-                      <MediaView messageId={m.id} kind={m.mediaKind} />
+                      <div className="flex justify-center">
+                        <MediaView messageId={m.id} kind={m.mediaKind} />
+                      </div>
                     )}
                   </div>
                   );
@@ -442,7 +480,7 @@ export default function MessagesPage() {
                 </div>
               )}
               {m.mediaKind && !m.deletedAt && (
-                <div className="mt-2">
+                <div className="mt-2 flex justify-center">
                   <MediaView messageId={m.id} kind={m.mediaKind} />
                 </div>
               )}
@@ -475,6 +513,19 @@ export default function MessagesPage() {
             </Card>
             );
           })}
+          {hasMore && (
+            <div
+              ref={sentinelRef}
+              className="text-center text-[11px] text-[var(--color-text-dim)] py-4"
+            >
+              {loadingMore ? "در حال بارگذاری بیشتر…" : "اسکرول کن تا بقیه بیاد"}
+            </div>
+          )}
+          {!hasMore && messages.length > 0 && (
+            <div className="text-center text-[10px] text-[var(--color-text-dim)] py-4">
+              · پایان لیست ({messages.length} پیام) ·
+            </div>
+          )}
         </div>
       )}
     </Shell>
