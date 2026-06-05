@@ -23,7 +23,8 @@ export async function POST(
   const existing = await getChatRule(chatId).catch(() => null);
   await skipChatGrace({
     chatId,
-    chatType: existing?.chatType ?? "private",
+    chatType:
+      existing?.chatType ?? (chatId < 0 ? "supergroup" : "private"),
   });
   await audit({
     actorId: session.userId,

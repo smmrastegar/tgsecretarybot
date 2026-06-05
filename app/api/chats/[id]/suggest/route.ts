@@ -45,7 +45,7 @@ export async function POST(
            relationship_notes, talk_style_notes
     FROM chat_rules
     WHERE chat_id <> ${chatId}
-      AND chat_type = ${rule?.chatType ?? "private"}
+      AND chat_type = ${rule?.chatType ?? (chatId < 0 ? "supergroup" : "private")}
       AND relationship IS NOT NULL
       AND (first_name IS NOT NULL OR nickname IS NOT NULL)
     ORDER BY updated_at DESC
@@ -89,7 +89,8 @@ export async function POST(
       messages.find((m) => !m.fromOwner)?.senderName ?? null;
     const suggestion = await suggestChatSettings({
       chatId,
-      chatType: rule?.chatType ?? "private",
+      chatType:
+        rule?.chatType ?? (chatId < 0 ? "supergroup" : "private"),
       chatTitle: rule?.chatTitle ?? senderNameHint,
       ownerName: settings.ownerName ?? "owner",
       // oldest first so the AI sees the conversation in order

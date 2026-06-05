@@ -159,7 +159,10 @@ export async function PUT(
       : Boolean(body.aiProcessGifs);
   await upsertChatRule({
     chatId,
-    chatType: body.chatType ?? existing?.chatType ?? "private",
+    chatType:
+      body.chatType ??
+      existing?.chatType ??
+      (chatId < 0 ? "supergroup" : "private"),
     chatTitle: body.chatTitle ?? existing?.chatTitle ?? null,
     vip: body.vip ?? existing?.vip ?? false,
     muted: body.muted ?? existing?.muted ?? false,

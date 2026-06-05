@@ -309,6 +309,45 @@ export async function ensureSchema(): Promise<void> {
                 ON CONFLICT (key) DO NOTHING`;
       }
     }
+    // v2: broader correction. v1 only fixed "negative chat_id stamped
+    // as private". Several setters (setAutoSummarize, setChatBot, the
+    // /api/chats/[id] PUT) silently passed 'private' or 'channel' as a
+    // fallback when bootstrapping a row from no history, and could
+    // also flip a positive-id chat to a group/channel type via stale
+    // form data. Re-sync chat_rules.chat_type from messages_log
+    // whenever there's a recorded mismatch.
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.chat_type_correction.v2'`;
+      if ((flag as unknown[]).length === 0) {
+        await q`
+          UPDATE chat_rules r
+          SET chat_type = src.chat_type
+          FROM (
+            SELECT chat_id, MAX(chat_type) AS chat_type
+            FROM messages_log
+            GROUP BY chat_id
+          ) src
+          WHERE src.chat_id = r.chat_id
+            AND src.chat_type IS NOT NULL
+            AND src.chat_type <> r.chat_type
+            AND src.chat_type IN ('private', 'group', 'supergroup', 'channel')`;
+        // Belt-and-braces: any row with no messages_log history at all
+        // gets its chat_type aligned with the chat_id sign — positive
+        // is always a DM, negative is always a group/channel.
+        await q`
+          UPDATE chat_rules r
+          SET chat_type = CASE
+                            WHEN r.chat_id < 0 AND r.chat_type = 'private' THEN 'supergroup'
+                            WHEN r.chat_id > 0 AND r.chat_type IN ('group', 'supergroup', 'channel') THEN 'private'
+                            ELSE r.chat_type
+                          END
+          WHERE NOT EXISTS (
+            SELECT 1 FROM messages_log m WHERE m.chat_id = r.chat_id
+          )`;
+        await q`INSERT INTO settings (key, value) VALUES ('migration.chat_type_correction.v2', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
     // Per-chat notes — addresses, locations, contacts, key points.
     // kind is one of: address|location|contact|note|date|phone|url.
     // source_message_id links back to the original message in
@@ -1744,7 +1783,12 @@ export async function upsertChatRule(rule: {
       ${functionRole}, ${functionConfigJson}::jsonb, NOW()
     )
     ON CONFLICT (chat_id) DO UPDATE SET
-      chat_type = EXCLUDED.chat_type,
+      -- chat_type is authoritative from messages_log (written on every
+      -- msg ingest). Don't let an API edit clobber it with a stale or
+      -- guessed value — only adopt EXCLUDED.chat_type when the existing
+      -- row has none (shouldn't happen since the column is NOT NULL,
+      -- but kept defensive).
+      chat_type = COALESCE(chat_rules.chat_type, EXCLUDED.chat_type),
       chat_title = COALESCE(EXCLUDED.chat_title, chat_rules.chat_title),
       vip = EXCLUDED.vip,
       muted = EXCLUDED.muted,
@@ -1785,7 +1829,7 @@ export async function setChatIsBot(
       ${chatId},
       COALESCE(
         (SELECT MAX(chat_type) FROM messages_log WHERE chat_id = ${chatId}),
-        'private'
+        CASE WHEN ${chatId}::bigint < 0 THEN 'supergroup' ELSE 'private' END
       ),
       (SELECT MAX(chat_title) FROM messages_log WHERE chat_id = ${chatId}),
       ${isBot},
@@ -1809,15 +1853,15 @@ export async function setChatFunction(
   // Fresh channels/groups may not have a chat_rules row yet, so a
   // plain UPDATE would silently noop and the role would never stick.
   // Derive chat_type/title from messages_log if any rows exist, else
-  // default to "channel" since that's the only common case where the
-  // owner tags a chat with no prior messages logged.
+  // guess from the chat_id sign (positive = private, negative = group/
+  // channel). Telegram channel/supergroup IDs are < 0 so this is reliable.
   await sql()`
     INSERT INTO chat_rules (chat_id, chat_type, chat_title, function_role, function_config, updated_at)
     VALUES (
       ${chatId},
       COALESCE(
         (SELECT MAX(chat_type) FROM messages_log WHERE chat_id = ${chatId}),
-        'channel'
+        CASE WHEN ${chatId}::bigint < 0 THEN 'supergroup' ELSE 'private' END
       ),
       (SELECT MAX(chat_title) FROM messages_log WHERE chat_id = ${chatId}),
       ${normalisedRole},
@@ -1965,7 +2009,7 @@ export async function setAutoSummarize(
       ${chatId},
       COALESCE(
         (SELECT MAX(chat_type) FROM messages_log WHERE chat_id = ${chatId}),
-        'private'
+        CASE WHEN ${chatId}::bigint < 0 THEN 'supergroup' ELSE 'private' END
       ),
       (SELECT MAX(chat_title) FROM messages_log WHERE chat_id = ${chatId}),
       ${enabled},
