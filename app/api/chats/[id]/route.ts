@@ -102,6 +102,7 @@ export async function PUT(
     aiProcessVoice?: boolean;
     aiProcessStickers?: boolean;
     aiProcessGifs?: boolean;
+    aiProcessPhotos?: boolean;
   };
   const existing = await getChatRule(chatId);
   const mode: ChatMode =
@@ -157,6 +158,10 @@ export async function PUT(
     body.aiProcessGifs === undefined
       ? existing?.aiProcessGifs ?? false
       : Boolean(body.aiProcessGifs);
+  const aiProcessPhotos =
+    body.aiProcessPhotos === undefined
+      ? existing?.aiProcessPhotos ?? false
+      : Boolean(body.aiProcessPhotos);
   await upsertChatRule({
     chatId,
     chatType:
@@ -179,6 +184,7 @@ export async function PUT(
     aiProcessVoice,
     aiProcessStickers,
     aiProcessGifs,
+    aiProcessPhotos,
   });
   await audit({
     actorId: session.userId,

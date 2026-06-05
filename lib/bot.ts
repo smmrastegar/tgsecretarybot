@@ -2171,6 +2171,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         aiProcessVoice: rule?.aiProcessVoice ?? false,
         aiProcessStickers: rule?.aiProcessStickers ?? false,
         aiProcessGifs: rule?.aiProcessGifs ?? false,
+        aiProcessPhotos: rule?.aiProcessPhotos ?? false,
         bot,
       });
     }
@@ -3355,6 +3356,7 @@ async function sendAiConversation(args: {
   aiProcessVoice: boolean;
   aiProcessStickers: boolean;
   aiProcessGifs: boolean;
+  aiProcessPhotos: boolean;
   bot: Bot;
 }): Promise<boolean> {
   const {
@@ -3372,6 +3374,7 @@ async function sendAiConversation(args: {
     aiProcessVoice,
     aiProcessStickers,
     aiProcessGifs,
+    aiProcessPhotos,
     bot,
   } = args;
   if (msg.chat.type !== "private") return false;
@@ -3394,6 +3397,10 @@ async function sendAiConversation(args: {
       msg.voice?.file_id ?? msg.audio?.file_id ?? msg.video_note?.file_id ?? null;
     const stickerId = msg.sticker?.file_id ?? null;
     const animationId = msg.animation?.file_id ?? null;
+    const photoId =
+      msg.photo && msg.photo.length > 0
+        ? msg.photo[msg.photo.length - 1]?.file_id ?? null
+        : null;
     if (voiceId && aiProcessVoice && sttConfigured()) {
       try {
         const tr = await transcribeAudio({
@@ -3444,6 +3451,21 @@ async function sendAiConversation(args: {
         userText = `[GIF] ${text}`;
         processedMediaDescription = text;
         processedMediaKind = "animation";
+      }
+    } else if (photoId && aiProcessPhotos) {
+      const desc = await describeMedia({
+        fileId: photoId,
+        kind: "photo",
+        chatId: msg.chat.id,
+        businessConnectionId: bcId,
+      }).catch(() => null);
+      const text = desc
+        ? [desc.description, desc.textInImage].filter(Boolean).join("\n")
+        : "";
+      if (text) {
+        userText = `[photo] ${text}`;
+        processedMediaDescription = text;
+        processedMediaKind = "photo";
       }
     }
   }

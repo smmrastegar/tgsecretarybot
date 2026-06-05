@@ -50,6 +50,7 @@ type Settings = {
   chatDefaultAiProcessVoice: string;
   chatDefaultAiProcessStickers: string;
   chatDefaultAiProcessGifs: string;
+  chatDefaultAiProcessPhotos: string;
 };
 
 type FieldConfig = {
@@ -290,6 +291,11 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
       {
         key: "chatDefaultAiProcessGifs",
         label: "🎞 AI process GIF (پیش‌فرض)",
+        type: "toggle",
+      },
+      {
+        key: "chatDefaultAiProcessPhotos",
+        label: "📷 AI process photo (پیش‌فرض)",
         type: "toggle",
       },
     ],
