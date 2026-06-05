@@ -380,12 +380,40 @@ export type AdminUser = {
   addedBy: number | null;
 };
 
+// Hot path: every page mount calls /api/admin/me (Shell + DebugModeToggle).
+// We avoid ensureSchema() here — it runs 150+ DDLs and dominates cold-start
+// (~14s observed). If the table doesn't exist yet, just return false; the
+// next write path will run the schema. Cache results in-memory for 60s so
+// repeated probes within the same instance don't round-trip.
+const adminCache = new Map<number, { admin: boolean; expiresAt: number }>();
+const adminInflight = new Map<number, Promise<boolean>>();
+const ADMIN_TTL_MS = 60_000;
+
 export async function isAdmin(userId: number): Promise<boolean> {
   if (!hasDb()) return false;
-  await ensureSchema();
-  const rows = await sql()`
-    SELECT 1 FROM admin_users WHERE user_id = ${userId} LIMIT 1`;
-  return rows.length > 0;
+  const now = Date.now();
+  const cached = adminCache.get(userId);
+  if (cached && cached.expiresAt > now) return cached.admin;
+  const existing = adminInflight.get(userId);
+  if (existing) return existing;
+  const p = (async () => {
+    let admin = false;
+    try {
+      const rows = await sql()`
+        SELECT 1 FROM admin_users WHERE user_id = ${userId} LIMIT 1`;
+      admin = rows.length > 0;
+    } catch {
+      admin = false;
+    }
+    adminCache.set(userId, { admin, expiresAt: Date.now() + ADMIN_TTL_MS });
+    return admin;
+  })();
+  adminInflight.set(userId, p);
+  try {
+    return await p;
+  } finally {
+    adminInflight.delete(userId);
+  }
 }
 
 export async function listAdmins(): Promise<AdminUser[]> {
