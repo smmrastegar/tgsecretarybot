@@ -90,47 +90,37 @@ export default function CostsPage() {
     } catch {}
   }, []);
 
-  const approveNext = useCallback(async () => {
-    setApproving(true);
-    try {
-      const r = await fetch("/api/openrouter/budget/approve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (r.ok) {
-        const j = (await r.json()) as { state: BudgetState };
-        setBudget(j.state);
+  const approveNext = useCallback(
+    async (opts?: {
+      absolute?: number;
+      budgetUsd?: number;
+      stepUsd?: number;
+      extendBudget?: boolean;
+    }) => {
+      setApproving(true);
+      try {
+        const body: Record<string, unknown> = {};
+        if (opts?.absolute != null) body.approvedUsd = opts.absolute;
+        if (opts?.budgetUsd != null) body.budgetUsd = opts.budgetUsd;
+        if (opts?.stepUsd != null) body.stepUsd = opts.stepUsd;
+        if (opts?.extendBudget) body.extendBudget = true;
+        const r = await fetch("/api/openrouter/budget/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (r.ok) {
+          const j = (await r.json()) as { state: BudgetState };
+          setBudget(j.state);
+        }
+      } finally {
+        setApproving(false);
       }
-    } finally {
-      setApproving(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
-  const extendBudget = useCallback(async () => {
-    if (!budget) return;
-    const next = window.prompt(
-      "سقف جدید OpenRouter (USD):",
-      String(Math.max(budget.budgetUsd + 10, budget.spentUsd + 10).toFixed(2)),
-    );
-    if (!next) return;
-    const v = Number(next);
-    if (!Number.isFinite(v) || v <= 0) return;
-    setApproving(true);
-    try {
-      const r = await fetch("/api/openrouter/budget/approve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ budgetUsd: v, extendBudget: true }),
-      });
-      if (r.ok) {
-        const j = (await r.json()) as { state: BudgetState };
-        setBudget(j.state);
-      }
-    } finally {
-      setApproving(false);
-    }
-  }, [budget]);
+  const [budgetDialog, setBudgetDialog] = useState(false);
 
   useEffect(() => {
     load();
@@ -203,130 +193,198 @@ export default function CostsPage() {
       )}
 
       {budget && (
-        <Card className="mb-4">
+        <Card
+          className={`mb-4 !p-3 ${
+            budget.budgetExceeded
+              ? "!border-red-700 !bg-red-900/20"
+              : budget.needsApproval
+                ? "!border-amber-600 !bg-amber-900/20"
+                : ""
+          }`}
+        >
           <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-            <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
-              💳 OpenRouter — اعتبار و بودجه
+            <div className="text-sm font-medium">
+              {budget.budgetExceeded
+                ? "🛑 سقف بودجه OpenRouter تمام شد"
+                : budget.needsApproval
+                  ? "⏸ نیاز به تایید برای ادامه‌ی هزینه"
+                  : "💳 بودجه OpenRouter"}
             </div>
-            {budget.tenantName && (
-              <span className="text-[10px] text-[var(--color-text-dim)]">
-                tenant: {budget.tenantName}
+            <div className="flex items-center gap-2">
+              {budget.tenantName && (
+                <span className="text-[10px] text-[var(--color-text-dim)]">
+                  tenant: {budget.tenantName}
+                </span>
+              )}
+              <button
+                onClick={() => setBudgetDialog(true)}
+                className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+              >
+                ⚙️ تنظیمات
+              </button>
+              <button
+                onClick={loadBudget}
+                className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+              >
+                🔄
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap text-[11px] mb-2">
+            <span>
+              <span className="text-[var(--color-text-dim)]">خرج‌شده:</span>{" "}
+              <strong>${budget.spentUsd.toFixed(4)}</strong>
+            </span>
+            <span>
+              <span className="text-[var(--color-text-dim)]">مجاز تا:</span>{" "}
+              <strong>${budget.approvedUsd.toFixed(2)}</strong>
+            </span>
+            <span>
+              <span className="text-[var(--color-text-dim)]">سقف کلی:</span>{" "}
+              <strong>${budget.budgetUsd.toFixed(2)}</strong>
+            </span>
+            <span className="text-[var(--color-text-dim)]">
+              · step ${budget.stepUsd.toFixed(2)}
+            </span>
+            {credits && (
+              <span className="text-[var(--color-text-dim)]">
+                · موجودی واقعی OpenRouter:{" "}
+                <strong className="text-emerald-300">
+                  ${credits.remaining.toFixed(2)}
+                </strong>
+              </span>
+            )}
+            {creditsError && !credits && (
+              <span className="text-red-300 text-[10px]">
+                ({creditsError.slice(0, 40)})
               </span>
             )}
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-            <div>
-              <div className="text-[10px] text-[var(--color-text-dim)]">
-                موجودی واقعی OpenRouter
-              </div>
-              <div className="text-base tabular-nums">
-                {credits
-                  ? `$${credits.remaining.toFixed(2)}`
-                  : creditsError
-                    ? <span className="text-red-300 text-xs">{creditsError.slice(0, 40)}</span>
-                    : "—"}
-              </div>
-              {credits && (
-                <div className="text-[9px] text-[var(--color-text-dim)] mt-0.5">
-                  از ${credits.totalCredits.toFixed(2)} خرید · ${credits.totalUsage.toFixed(2)} مصرف
-                </div>
-              )}
-            </div>
-            <div>
-              <div className="text-[10px] text-[var(--color-text-dim)]">
-                خرج‌شده‌ی tenant
-              </div>
-              <div className="text-base tabular-nums">
-                ${budget.spentUsd.toFixed(2)}
-              </div>
-            </div>
-            <div>
-              <div className="text-[10px] text-[var(--color-text-dim)]">
-                approved
-              </div>
-              <div className="text-base tabular-nums">
-                ${budget.approvedUsd.toFixed(2)}
-              </div>
-            </div>
-            <div>
-              <div className="text-[10px] text-[var(--color-text-dim)]">
-                سقف بودجه
-              </div>
-              <div className="text-base tabular-nums">
-                ${budget.budgetUsd.toFixed(2)}
-              </div>
-            </div>
-          </div>
-          <div className="h-2 bg-[var(--color-surface-2)] rounded overflow-hidden mb-3">
+          {/* Two-tier progress bar: approved layer (green) + spent layer
+              (accent/amber/red depending on state). */}
+          <div className="h-2 bg-[var(--color-surface-2)] rounded-full overflow-hidden relative mb-2">
             <div
-              className={
+              className="absolute inset-y-0 left-0 bg-emerald-600/60"
+              style={{
+                width: `${Math.min(
+                  100,
+                  (budget.approvedUsd / Math.max(budget.budgetUsd, 0.01)) * 100,
+                )}%`,
+              }}
+              title={`مجاز: $${budget.approvedUsd.toFixed(2)}`}
+            />
+            <div
+              className={`absolute inset-y-0 left-0 ${
                 budget.budgetExceeded
-                  ? "h-full bg-red-500"
+                  ? "bg-red-500"
                   : budget.needsApproval
-                    ? "h-full bg-amber-500"
-                    : "h-full bg-emerald-500"
-              }
+                    ? "bg-amber-500"
+                    : "bg-[var(--color-accent)]"
+              }`}
               style={{
                 width: `${Math.min(
                   100,
                   (budget.spentUsd / Math.max(budget.budgetUsd, 0.01)) * 100,
-                ).toFixed(1)}%`,
+                )}%`,
               }}
+              title={`خرج: $${budget.spentUsd.toFixed(2)}`}
             />
           </div>
-          {budget.budgetExceeded ? (
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge tone="danger">
-                🛑 سقف رد شد — تمام call‌های OpenRouter بلاک شدن
-              </Badge>
-              <button
-                onClick={extendBudget}
-                disabled={approving}
-                className="text-xs px-3 py-1.5 rounded-md border border-amber-700 bg-amber-900/30 text-amber-200 hover:bg-amber-900/50 disabled:opacity-50"
-              >
-                ⬆ بالا بردن سقف
-              </button>
-            </div>
-          ) : budget.needsApproval ? (
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge tone="warn">
-                ⚠ approval لازمه — بعدی $
-                {budget.nextThresholdUsd.toFixed(2)}
-              </Badge>
-              <button
-                onClick={approveNext}
-                disabled={approving}
-                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] disabled:opacity-50"
-              >
-                ✓ تایید +${budget.stepUsd.toFixed(2)}
-              </button>
-              <button
-                onClick={extendBudget}
-                disabled={approving}
-                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-              >
-                سقف رو دستی ست کن
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-dim)]">
-              <span>
-                step بعدی: $
-                {Math.min(
-                  budget.approvedUsd + budget.stepUsd,
-                  budget.budgetUsd,
-                ).toFixed(2)}
-              </span>
-              <button
-                onClick={extendBudget}
-                disabled={approving}
-                className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-              >
-                ست سقف
-              </button>
+          {(budget.needsApproval || budget.budgetExceeded) && (
+            <div className="text-[11px] text-amber-200 mb-2">
+              {budget.budgetExceeded
+                ? `سقف کل $${budget.budgetUsd.toFixed(2)} پر شد. AI call‌ها قفلن — با دکمه «🔓 +$${budget.stepUsd.toFixed(2)} + سقف» یه slice دیگه باز کن.`
+                : `خرج رسید به سقف مجاز $${budget.approvedUsd.toFixed(2)}. تا تخصیص ندی، call‌ها bunda می‌شن.`}
             </div>
           )}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] text-[var(--color-text-dim)]">
+              ⚡ تخصیص:
+            </span>
+            {/* Always-available +step button. */}
+            <button
+              onClick={() => approveNext()}
+              disabled={
+                approving ||
+                budget.approvedUsd + 0.0001 >= budget.budgetUsd
+              }
+              className="text-[11px] px-2.5 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-40"
+              title={`الان مجاز تا $${budget.approvedUsd.toFixed(2)} — بزن می‌ره +$${budget.stepUsd.toFixed(2)}`}
+            >
+              + ${budget.stepUsd.toFixed(2)} تخصیص
+            </button>
+            {/* Multi-step jumps up to cap. */}
+            {(() => {
+              const jumps: number[] = [];
+              for (
+                let n = 2;
+                n <= 5 &&
+                budget.approvedUsd + budget.stepUsd * n <= budget.budgetUsd + 0.0001;
+                n++
+              ) {
+                jumps.push(n);
+              }
+              return jumps.map((n) => (
+                <button
+                  key={n}
+                  onClick={() =>
+                    approveNext({
+                      absolute: Math.min(
+                        budget.budgetUsd,
+                        budget.approvedUsd + budget.stepUsd * n,
+                      ),
+                    })
+                  }
+                  disabled={approving}
+                  className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
+                  title={`بپر تا $${(budget.approvedUsd + budget.stepUsd * n).toFixed(2)}`}
+                >
+                  +{n}×
+                </button>
+              ));
+            })()}
+            {/* Jump straight to cap. */}
+            {budget.approvedUsd + 0.0001 < budget.budgetUsd && (
+              <button
+                onClick={() => approveNext({ absolute: budget.budgetUsd })}
+                disabled={approving}
+                className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
+                title={`تا سقف کل $${budget.budgetUsd.toFixed(2)}`}
+              >
+                ⬆ سقف
+              </button>
+            )}
+            {/* Extend cap by step + approve to there. */}
+            <button
+              onClick={() =>
+                approveNext({
+                  extendBudget: true,
+                  absolute: budget.budgetUsd + budget.stepUsd,
+                })
+              }
+              disabled={approving}
+              className="text-[11px] px-2.5 py-1 rounded-md border border-amber-600 bg-amber-500/15 text-amber-200 hover:bg-amber-500/30"
+              title={`سقف رو $${budget.stepUsd.toFixed(2)} بالا ببر + تخصیص رو هم تا اونجا ببر`}
+            >
+              🔓 +${budget.stepUsd.toFixed(2)} + سقف
+            </button>
+          </div>
         </Card>
+      )}
+
+      {budgetDialog && budget && (
+        <OpenrouterBudgetDialog
+          budget={budget}
+          onClose={() => setBudgetDialog(false)}
+          onSave={async (cap, step) => {
+            await approveNext({
+              budgetUsd: cap,
+              stepUsd: step,
+              absolute: budget.approvedUsd,
+            });
+            setBudgetDialog(false);
+          }}
+        />
       )}
 
       {loading && <Card className="mb-4">Loading…</Card>}
@@ -453,5 +511,105 @@ export default function CostsPage() {
         )}
       </Card>
     </Shell>
+  );
+}
+
+// Modal for editing the budget cap + approval step. Mirrors the
+// Instagram budget dialog — two inputs and a single save button that
+// PUTs through the approve endpoint with the current approvedUsd
+// unchanged (so we don't accidentally bump allocation).
+function OpenrouterBudgetDialog({
+  budget,
+  onClose,
+  onSave,
+}: {
+  budget: BudgetState;
+  onClose: () => void;
+  onSave: (cap: number, step: number) => Promise<void>;
+}) {
+  const [cap, setCap] = useState(String(budget.budgetUsd));
+  const [step, setStep] = useState(String(budget.stepUsd));
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    const capN = Number(cap);
+    const stepN = Number(step);
+    if (!Number.isFinite(capN) || capN <= 0) return;
+    if (!Number.isFinite(stepN) || stepN <= 0) return;
+    setSaving(true);
+    try {
+      await onSave(capN, stepN);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4 max-w-md w-full"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold">⚙️ تنظیمات بودجه OpenRouter</h3>
+          <button
+            onClick={onClose}
+            className="text-[var(--color-text-dim)] hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="text-[11px] text-[var(--color-text-dim)] block mb-1">
+              💰 سقف کلی بودجه (USD) — حداکثری که اجازه می‌دی خرج بشه
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={cap}
+              onChange={(e) => setCap(e.target.value)}
+              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 tabular-nums"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] text-[var(--color-text-dim)] block mb-1">
+              ⚡ مقدار هر تخصیص (USD) — هر بار «تایید» می‌زنی این‌قدر اضافه می‌شه
+            </label>
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={step}
+              onChange={(e) => setStep(e.target.value)}
+              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 tabular-nums"
+            />
+          </div>
+          <div className="text-[10px] text-[var(--color-text-dim)] pt-1">
+            خرج فعلی: ${budget.spentUsd.toFixed(4)} · مجاز فعلی: $
+            {budget.approvedUsd.toFixed(2)}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button
+            onClick={onClose}
+            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+          >
+            انصراف
+          </button>
+          <button
+            onClick={save}
+            disabled={saving}
+            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? "ذخیره…" : "ذخیره"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

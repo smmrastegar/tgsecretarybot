@@ -312,11 +312,6 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         label: "🖼 AI generate photo of owner (پیش‌فرض)",
         type: "toggle",
       },
-      {
-        key: "ownerPhotoUrl",
-        label: "🖼 Owner photo URL — لینک عکس مرجعِ تو (برای تولید عکس)",
-        type: "text",
-      },
     ],
   },
 ];
