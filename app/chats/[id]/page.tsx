@@ -109,6 +109,7 @@ type Rule = {
   aiProcessGifs: boolean;
   aiProcessPhotos: boolean;
   aiProcessVideoNotes: boolean;
+  aiGeneratePhoto: boolean;
   functionRole:
     | "downloader"
     | "sms_inbox"
@@ -1359,6 +1360,7 @@ export default function ChatDetailPage() {
                         ["aiProcessGifs", "🎞 گیف", rule.aiProcessGifs],
                         ["aiProcessPhotos", "📷 عکس", rule.aiProcessPhotos],
                         ["aiProcessVideoNotes", "📹 ویدیو نوت", rule.aiProcessVideoNotes],
+                        ["aiGeneratePhoto", "🖼 تولید عکس من (نیاز به Owner photo URL تو Settings)", rule.aiGeneratePhoto],
                       ] as const
                     ).map(([key, label, value]) => (
                       <label

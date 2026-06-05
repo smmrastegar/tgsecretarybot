@@ -52,6 +52,8 @@ type Settings = {
   chatDefaultAiProcessGifs: string;
   chatDefaultAiProcessPhotos: string;
   chatDefaultAiProcessVideoNotes: string;
+  chatDefaultAiGeneratePhoto: string;
+  ownerPhotoUrl: string;
 };
 
 type FieldConfig = {
@@ -303,6 +305,16 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         key: "chatDefaultAiProcessVideoNotes",
         label: "📹 AI process video note (پیش‌فرض)",
         type: "toggle",
+      },
+      {
+        key: "chatDefaultAiGeneratePhoto",
+        label: "🖼 AI generate photo of owner (پیش‌فرض)",
+        type: "toggle",
+      },
+      {
+        key: "ownerPhotoUrl",
+        label: "🖼 Owner photo URL — لینک عکس مرجعِ تو (برای تولید عکس)",
+        type: "text",
       },
     ],
   },

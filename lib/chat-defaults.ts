@@ -31,6 +31,7 @@ export type ChatDefaults = {
   aiProcessGifs: boolean;
   aiProcessPhotos: boolean;
   aiProcessVideoNotes: boolean;
+  aiGeneratePhoto: boolean;
 };
 
 function asBool(v: string | undefined, fallback: boolean): boolean {
@@ -66,6 +67,7 @@ export async function getChatDefaults(): Promise<ChatDefaults> {
     aiProcessGifs: asBool(s.chatDefaultAiProcessGifs, false),
     aiProcessPhotos: asBool(s.chatDefaultAiProcessPhotos, false),
     aiProcessVideoNotes: asBool(s.chatDefaultAiProcessVideoNotes, false),
+    aiGeneratePhoto: asBool(s.chatDefaultAiGeneratePhoto, false),
   };
 }
 
@@ -92,7 +94,7 @@ export async function ensureChatRuleWithDefaults(args: {
       auto_summarize_enabled, auto_summarize_gap_minutes,
       auto_summarize_smart_timing,
       ai_process_voice, ai_process_stickers, ai_process_gifs, ai_process_photos,
-      ai_process_video_notes,
+      ai_process_video_notes, ai_generate_photo,
       updated_at
     )
     VALUES (
@@ -104,7 +106,7 @@ export async function ensureChatRuleWithDefaults(args: {
       ${d.autoSummarizeEnabled}, ${d.autoSummarizeGapMinutes},
       ${d.autoSummarizeSmartTiming},
       ${d.aiProcessVoice}, ${d.aiProcessStickers}, ${d.aiProcessGifs}, ${d.aiProcessPhotos},
-      ${d.aiProcessVideoNotes},
+      ${d.aiProcessVideoNotes}, ${d.aiGeneratePhoto},
       NOW()
     )
     ON CONFLICT (chat_id) DO NOTHING`;

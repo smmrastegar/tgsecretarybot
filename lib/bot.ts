@@ -1,4 +1,4 @@
-import { Bot, type Context, GrammyError, HttpError, InlineKeyboard } from "grammy";
+import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "./config";
 import {
@@ -10,6 +10,7 @@ import {
   summarizeGroup,
 } from "./classifier";
 import { sttConfigured, transcribeAudio } from "./stt";
+import { generatePersonalPhoto, looksLikePhotoRequest } from "./image-gen";
 import {
   getRoutedMessage,
   markTranscribed,
@@ -2190,6 +2191,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         aiProcessGifs: rule?.aiProcessGifs ?? false,
         aiProcessPhotos: rule?.aiProcessPhotos ?? false,
         aiProcessVideoNotes: rule?.aiProcessVideoNotes ?? false,
+        aiGeneratePhoto: rule?.aiGeneratePhoto ?? false,
         bot,
       });
     }
@@ -3376,6 +3378,7 @@ async function sendAiConversation(args: {
   aiProcessGifs: boolean;
   aiProcessPhotos: boolean;
   aiProcessVideoNotes: boolean;
+  aiGeneratePhoto: boolean;
   bot: Bot;
 }): Promise<boolean> {
   const {
@@ -3395,6 +3398,7 @@ async function sendAiConversation(args: {
     aiProcessGifs,
     aiProcessPhotos,
     aiProcessVideoNotes,
+    aiGeneratePhoto,
     bot,
   } = args;
   if (msg.chat.type !== "private") return false;
@@ -3537,6 +3541,58 @@ async function sendAiConversation(args: {
   }
 
   if (!userText) return false;
+
+  // Photo generation — if the operator enabled "🖼 تولید عکس من" for
+  // this chat AND set their reference photo URL in settings AND the
+  // user's message looks like a photo request ("عکست", "یه سلفی",
+  // "send me a photo of you"), generate one with Gemini's image model
+  // using the reference as the visual anchor and send it INSTEAD of a
+  // text reply. Falls through to the normal text path on any failure
+  // (model down, no reference URL, etc.) so the user still gets an
+  // answer.
+  if (aiGeneratePhoto && looksLikePhotoRequest(userText)) {
+    const refUrl = (settings.ownerPhotoUrl ?? "").trim();
+    if (refUrl) {
+      try {
+        const img = await generatePersonalPhoto({
+          referenceUrl: refUrl,
+          userRequest: userText,
+          chatId: msg.chat.id,
+          businessConnectionId: bcId,
+        });
+        const sent = await bot.api.sendPhoto(
+          msg.chat.id,
+          new InputFile(img.data, "selfie.jpg"),
+          {
+            business_connection_id: bcId,
+            reply_parameters: { message_id: msg.message_id },
+          },
+        );
+        await logOwnerSent({
+          bcId,
+          chatId: msg.chat.id,
+          chatType: msg.chat.type,
+          chatTitle: chatTitleOf(msg),
+          ownerUserId: null,
+          sentMessageId: sent.message_id,
+          text: "[generated photo]",
+          source: "ai_chat",
+          ownerLabel: settings.ownerName ?? "owner",
+          mediaKind: "photo",
+        });
+        return true;
+      } catch (err) {
+        console.warn(
+          "[ai_chat] photo generation failed, falling back to text:",
+          err,
+        );
+      }
+    } else {
+      console.warn(
+        "[ai_chat] aiGeneratePhoto is on but ownerPhotoUrl is empty — falling back to text",
+      );
+    }
+  }
 
   // Persist the transcript/description on the original message row so
   // future calls to recentConversation (and the dashboard) see the

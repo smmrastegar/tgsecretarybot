@@ -208,6 +208,11 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_gifs BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_photos BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_video_notes BOOLEAN NOT NULL DEFAULT FALSE`;
+    // When the user asks "send me a photo of you", the AI uses the
+    // operator's reference photo (settings.ownerPhotoUrl) as visual
+    // anchor and calls an image-gen model. Off by default — costs ~$0.04
+    // per generation and we don't want surprise charges.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_generate_photo BOOLEAN NOT NULL DEFAULT FALSE`;
     // Per-chat "function": some chats aren't ordinary conversations,
     // they're tools (e.g. a downloader bot, an SMS-forwarding channel,
     // a news source). Labelling them lets the bot adjust classifier
@@ -1618,6 +1623,7 @@ export type ChatRule = {
   aiProcessGifs: boolean;
   aiProcessPhotos: boolean;
   aiProcessVideoNotes: boolean;
+  aiGeneratePhoto: boolean;
   functionRole: FunctionRole | null;
   functionConfig: Record<string, unknown> | null;
   autoSummarizeEnabled: boolean;
@@ -1668,6 +1674,7 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
     aiProcessGifs: Boolean(r.ai_process_gifs),
     aiProcessPhotos: Boolean(r.ai_process_photos),
     aiProcessVideoNotes: Boolean(r.ai_process_video_notes),
+    aiGeneratePhoto: Boolean(r.ai_generate_photo),
     functionRole:
       typeof r.function_role === "string" &&
       (FUNCTION_ROLES as readonly string[]).includes(r.function_role)
@@ -1709,7 +1716,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            tone_profile, tone_profile_at,
            flood_cooldown_until, flood_deflected_at,
            ai_process_voice, ai_process_stickers, ai_process_gifs, ai_process_photos,
-           ai_process_video_notes,
+           ai_process_video_notes, ai_generate_photo,
            function_role, function_config,
            auto_summarize_enabled, auto_summarize_gap_minutes,
            auto_summarize_smart_timing,
@@ -1744,6 +1751,7 @@ export async function upsertChatRule(rule: {
   aiProcessGifs?: boolean;
   aiProcessPhotos?: boolean;
   aiProcessVideoNotes?: boolean;
+  aiGeneratePhoto?: boolean;
   functionRole?: FunctionRole | null;
   functionConfig?: Record<string, unknown> | null;
 }): Promise<void> {
@@ -1765,6 +1773,7 @@ export async function upsertChatRule(rule: {
   const aiProcessGifs = rule.aiProcessGifs ?? false;
   const aiProcessPhotos = rule.aiProcessPhotos ?? false;
   const aiProcessVideoNotes = rule.aiProcessVideoNotes ?? false;
+  const aiGeneratePhoto = rule.aiGeneratePhoto ?? false;
   const functionRole =
     rule.functionRole &&
     (FUNCTION_ROLES as readonly string[]).includes(rule.functionRole)
@@ -1783,7 +1792,7 @@ export async function upsertChatRule(rule: {
       first_name, last_name, nickname, relationship,
       relationship_notes, talk_style_notes,
       ai_process_voice, ai_process_stickers, ai_process_gifs, ai_process_photos,
-      ai_process_video_notes,
+      ai_process_video_notes, ai_generate_photo,
       function_role, function_config, updated_at
     )
     VALUES (
@@ -1792,7 +1801,7 @@ export async function upsertChatRule(rule: {
       ${firstName}, ${lastName}, ${nickname}, ${relationship},
       ${relationshipNotes}, ${talkStyleNotes},
       ${aiProcessVoice}, ${aiProcessStickers}, ${aiProcessGifs}, ${aiProcessPhotos},
-      ${aiProcessVideoNotes},
+      ${aiProcessVideoNotes}, ${aiGeneratePhoto},
       ${functionRole}, ${functionConfigJson}::jsonb, NOW()
     )
     ON CONFLICT (chat_id) DO UPDATE SET
@@ -1822,6 +1831,7 @@ export async function upsertChatRule(rule: {
       ai_process_gifs = EXCLUDED.ai_process_gifs,
       ai_process_photos = EXCLUDED.ai_process_photos,
       ai_process_video_notes = EXCLUDED.ai_process_video_notes,
+      ai_generate_photo = EXCLUDED.ai_generate_photo,
       function_role = COALESCE(EXCLUDED.function_role, chat_rules.function_role),
       function_config = COALESCE(EXCLUDED.function_config, chat_rules.function_config),
       updated_at = NOW()`;
@@ -2376,7 +2386,7 @@ export async function listChatsByFunction(
            r.tone_profile, r.tone_profile_at,
            r.flood_cooldown_until, r.flood_deflected_at,
            r.ai_process_voice, r.ai_process_stickers, r.ai_process_gifs, r.ai_process_photos,
-           r.ai_process_video_notes,
+           r.ai_process_video_notes, r.ai_generate_photo,
            r.function_role, r.function_config,
            r.auto_summarize_enabled, r.auto_summarize_gap_minutes,
            r.auto_summarize_smart_timing,

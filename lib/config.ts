@@ -115,6 +115,12 @@ export const DEFAULT_SETTINGS = {
   chatDefaultAiProcessGifs: "false",
   chatDefaultAiProcessPhotos: "false",
   chatDefaultAiProcessVideoNotes: "false",
+  chatDefaultAiGeneratePhoto: "false",
+  // URL of the operator's reference photo. When ai_generate_photo is
+  // on for a chat and the user asks for a photo, we feed this URL to
+  // an image-gen model as the visual anchor. Anywhere public-readable
+  // works — Telegram file URLs, imgur, vercel blob, etc.
+  ownerPhotoUrl: "",
   // HikerAPI logical budget — we don't know the actual remaining
   // dollars from HikerAPI's API, so we track every call locally and
   // gate spending against a total (default $50 = the user's pre-pay)
@@ -192,6 +198,8 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   chatDefaultAiProcessGifs: optional("CHAT_DEFAULT_AI_PROCESS_GIFS"),
   chatDefaultAiProcessPhotos: optional("CHAT_DEFAULT_AI_PROCESS_PHOTOS"),
   chatDefaultAiProcessVideoNotes: optional("CHAT_DEFAULT_AI_PROCESS_VIDEO_NOTES"),
+  chatDefaultAiGeneratePhoto: optional("CHAT_DEFAULT_AI_GENERATE_PHOTO"),
+  ownerPhotoUrl: optional("OWNER_PHOTO_URL"),
   hikerBudgetUsd: optional("HIKER_BUDGET_USD"),
   hikerApprovalStepUsd: optional("HIKER_APPROVAL_STEP_USD"),
   hikerApprovedUsd: optional("HIKER_APPROVED_USD"),
