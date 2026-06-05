@@ -5,11 +5,19 @@ import { markUpdateProcessed } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+// STT (download + transcribe) + AI generation can take 15-25s on slow
+// providers; was 30s with grammy timeoutMilliseconds=25s which left no
+// margin and Vercel was killing voice processing mid-flight. Pro tier
+// allows up to 300s; 60s is plenty.
+export const maxDuration = 60;
 
 const handler = webhookCallback(getBot(), "std/http", {
   secretToken: config.webhookSecretToken,
-  timeoutMilliseconds: 25_000,
+  // grammy's timeoutMilliseconds only controls when the 200 OK is
+  // returned to Telegram — the handler keeps running in the
+  // background. Bumping it gives Telegram a longer wait before it
+  // assumes the webhook is stuck and starts retrying.
+  timeoutMilliseconds: 55_000,
 });
 
 // Subset of Telegram Update fields we care about for diagnostics —

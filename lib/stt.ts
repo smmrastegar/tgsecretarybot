@@ -7,6 +7,31 @@ const GROQ_TRANSCRIBE_URL =
   "https://api.groq.com/openai/v1/audio/transcriptions";
 const GROQ_MODEL = "whisper-large-v3-turbo";
 
+// Per-fetch timeouts. Without these the upstream can stall the whole
+// serverless invocation (we've seen voices "freeze mid-processing" when
+// either Telegram's file CDN or the STT provider gets slow).
+const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 15_000;
+const STT_API_TIMEOUT_MS = 25_000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (err) {
+    if ((err as { name?: string })?.name === "AbortError") {
+      throw new Error(`timeout after ${timeoutMs}ms: ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export function sttConfigured(): boolean {
   return Boolean(config.openrouterApiKey || config.groqApiKey);
 }
@@ -27,8 +52,10 @@ export async function downloadTelegramFile(
   botToken: string,
   fileId: string,
 ): Promise<{ data: Uint8Array; mime: string; name: string }> {
-  const infoRes = await fetch(
+  const infoRes = await fetchWithTimeout(
     `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(fileId)}`,
+    {},
+    TELEGRAM_DOWNLOAD_TIMEOUT_MS,
   );
   if (!infoRes.ok) {
     throw new Error(`getFile ${infoRes.status}: ${await infoRes.text()}`);
@@ -42,8 +69,10 @@ export async function downloadTelegramFile(
   if (!info.ok || !filePath) {
     throw new Error(`getFile failed: ${info.description ?? "no file_path"}`);
   }
-  const fileRes = await fetch(
+  const fileRes = await fetchWithTimeout(
     `https://api.telegram.org/file/bot${botToken}/${filePath}`,
+    {},
+    TELEGRAM_DOWNLOAD_TIMEOUT_MS,
   );
   if (!fileRes.ok) {
     throw new Error(`download ${fileRes.status}`);
@@ -121,15 +150,19 @@ async function transcribeViaOpenRouter(
     max_tokens: 4000,
   };
 
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.openrouterApiKey}`,
-      "Content-Type": "application/json",
-      "X-Title": config.openrouterAppName,
+  const res = await fetchWithTimeout(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.openrouterApiKey}`,
+        "Content-Type": "application/json",
+        "X-Title": config.openrouterAppName,
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
+    STT_API_TIMEOUT_MS,
+  );
 
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
@@ -183,11 +216,15 @@ async function transcribeViaGroq(
   form.append("response_format", "verbose_json");
   if (args.language) form.append("language", args.language);
 
-  const res = await fetch(GROQ_TRANSCRIBE_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${config.groqApiKey}` },
-    body: form,
-  });
+  const res = await fetchWithTimeout(
+    GROQ_TRANSCRIBE_URL,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${config.groqApiKey}` },
+      body: form,
+    },
+    STT_API_TIMEOUT_MS,
+  );
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`${res.status}: ${body.slice(0, 400)}`);
