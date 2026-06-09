@@ -1407,11 +1407,13 @@ function buildBot(): Bot {
           ? m.caption
           : "";
     if (incomingText && m.chat.type === "private") {
-      void maybeReleaseGatedRules({
+      await maybeReleaseGatedRules({
         senderChatId: m.chat.id,
         messageText: incomingText,
         bot,
-      });
+      }).catch((err) =>
+        console.warn("[rules] direct-DM release failed:", err),
+      );
     }
   });
 
@@ -2249,7 +2251,12 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         msg,
         bot,
       });
-      void maybeApplyMessageRules({
+      // AWAITED, not void: on Vercel a void-dispatched promise can be
+      // killed when the request handler returns and the function gets
+      // reclaimed. We were losing ~5 of every 7 incoming matches that
+      // way. The rule path is bounded by per-LLM-call timeouts so the
+      // overall handler stays well under maxDuration.
+      await maybeApplyMessageRules({
         logId,
         chatId: msg.chat.id,
         chatTitle,
@@ -2258,15 +2265,19 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         businessConnectionId: bcId,
         fromOwner: false,
         bot,
-      });
+      }).catch((err) =>
+        console.warn("[rules] apply failed:", err),
+      );
       // If this message is itself from a rule-recipient and looks like a
       // trigger ("send me the code"), release any held matches for them
       // that fell inside the rule's window.
-      void maybeReleaseGatedRules({
+      await maybeReleaseGatedRules({
         senderChatId: msg.chat.id,
         messageText: text,
         bot,
-      });
+      }).catch((err) =>
+        console.warn("[rules] release failed:", err),
+      );
       // media-router was already fired at the top of this function
       // (early-call right after we resolved the rule), so we don't
       // double-route here.
@@ -2296,6 +2307,9 @@ async function maybeApplyMessageRules(args: {
     } = await import("./db");
     const { matchRules, formatMessageForRule } = await import("./rules");
     const rules = await listMessageRules({ enabledOnly: true });
+    console.log(
+      `[rules] eval chat=${args.chatId} log=${args.logId} enabledRules=${rules.length} text="${args.messageText.slice(0, 80).replace(/\n/g, " ")}"`,
+    );
     if (rules.length === 0) return;
     const matched = await matchRules(
       {
