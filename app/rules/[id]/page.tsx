@@ -500,23 +500,19 @@ export default function RuleDetailPage() {
             <div className="text-[11px] text-[var(--color-text-dim)] mb-2">
               {testResults.filter((r) => r.matched).length} از{" "}
               {testResults.length} پیام match شد.
+              {testResults.filter((r) => r.matched).length === 0 &&
+                " — هیچی match نشد، rule رو ویرایش کن یا نمونه‌ی بیشتر اضافه کن."}
             </div>
             <div className="flex flex-col gap-1">
-              {testResults.map((r) => (
+              {testResults
+                .filter((r) => r.matched)
+                .map((r) => (
                 <div
                   key={r.messageLogId}
-                  className={`p-2 rounded-md text-xs border ${
-                    r.matched
-                      ? "border-emerald-700 bg-emerald-900/20"
-                      : "border-[var(--color-border)] bg-[var(--color-surface-2)] opacity-60"
-                  }`}
+                  className="p-2 rounded-md text-xs border border-emerald-700 bg-emerald-900/20"
                 >
                   <div className="flex items-center gap-2 text-[10px] text-[var(--color-text-dim)] mb-1">
-                    {r.matched ? (
-                      <Badge tone="success">match</Badge>
-                    ) : (
-                      <Badge tone="neutral">skip</Badge>
-                    )}
+                    <Badge tone="success">match</Badge>
                     <span>
                       {r.senderName} ·{" "}
                       {r.chatTitle ?? `chat ${r.chatId}`} ·{" "}
@@ -530,7 +526,7 @@ export default function RuleDetailPage() {
                   >
                     {truncate(r.originalText, 300)}
                   </div>
-                  {r.matched && r.formattedText && (
+                  {r.formattedText && (
                     <div className="mt-2 pt-2 border-t border-emerald-700/40">
                       <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
                         خروجی format شده:

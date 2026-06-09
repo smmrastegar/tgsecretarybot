@@ -160,43 +160,6 @@ export default function RulesPage() {
         </Card>
       )}
 
-      {recent.length > 0 && (
-        <Card className="mb-4">
-          <div className="text-xs font-medium mb-2">
-            🏷 پیام‌های فوروارد شده اخیر ({recent.length})
-          </div>
-          <div className="flex flex-col gap-1">
-            {recent.map((m) => (
-              <Link
-                key={m.id}
-                href={`/rules/${m.ruleId}`}
-                className="block p-2 rounded-md bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] text-xs"
-              >
-                <div className="flex items-center gap-2 text-[10px] text-[var(--color-text-dim)] mb-1 flex-wrap">
-                  <Badge tone="info">{m.ruleName}</Badge>
-                  <span>{m.senderName}</span>
-                  <span>·</span>
-                  <span>{relTime(m.matchedAt)}</span>
-                  <span>·</span>
-                  <span>
-                    {m.forwardedTo.length > 0
-                      ? `→ ${m.forwardedTo.length} گیرنده`
-                      : "بدون گیرنده"}
-                  </span>
-                </div>
-                <div
-                  dir="auto"
-                  style={{ unicodeBidi: "plaintext" }}
-                  className="whitespace-pre-wrap break-words"
-                >
-                  {truncate(m.formattedText ?? m.messageText, 180)}
-                </div>
-              </Link>
-            ))}
-          </div>
-        </Card>
-      )}
-
       {loading ? (
         <Card>Loading…</Card>
       ) : rules.length === 0 ? (
@@ -206,7 +169,7 @@ export default function RulesPage() {
           </p>
         </Card>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 mb-4">
           {rules.map((r) => (
             <Card key={r.id} className="!p-3">
               <div className="flex items-start justify-between gap-2 flex-wrap">
@@ -249,6 +212,43 @@ export default function RulesPage() {
             </Card>
           ))}
         </div>
+      )}
+
+      {recent.length > 0 && (
+        <Card className="mb-4">
+          <div className="text-xs font-medium mb-2">
+            🏷 پیام‌های match شده اخیر ({recent.length})
+          </div>
+          <div className="flex flex-col gap-1">
+            {recent.map((m) => (
+              <Link
+                key={m.id}
+                href={`/rules/${m.ruleId}`}
+                className="block p-2 rounded-md bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] text-xs"
+              >
+                <div className="flex items-center gap-2 text-[10px] text-[var(--color-text-dim)] mb-1 flex-wrap">
+                  <Badge tone="info">{m.ruleName}</Badge>
+                  <span>{m.senderName}</span>
+                  <span>·</span>
+                  <span>{relTime(m.matchedAt)}</span>
+                  <span>·</span>
+                  <span>
+                    {m.forwardedTo.length > 0
+                      ? `→ ${m.forwardedTo.length} گیرنده`
+                      : "نگه‌ داشته شده (gate)"}
+                  </span>
+                </div>
+                <div
+                  dir="auto"
+                  style={{ unicodeBidi: "plaintext" }}
+                  className="whitespace-pre-wrap break-words"
+                >
+                  {truncate(m.formattedText ?? m.messageText, 180)}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </Card>
       )}
     </Shell>
   );

@@ -1396,6 +1396,23 @@ function buildBot(): Bot {
     await handleSecretaryReply(m, bot).catch((err) =>
       console.error("[secretary] handler error:", err),
     );
+    // Gate-release path for rule recipients DM'ing the bot directly.
+    // The owner's business chats already fire this from inside
+    // handleBusinessMessage; this branch covers people who only know
+    // the bot via /start (rule recipients).
+    const incomingText =
+      typeof m.text === "string"
+        ? m.text
+        : typeof m.caption === "string"
+          ? m.caption
+          : "";
+    if (incomingText && m.chat.type === "private") {
+      void maybeReleaseGatedRules({
+        senderChatId: m.chat.id,
+        messageText: incomingText,
+        bot,
+      });
+    }
   });
 
   // Channels deliver posts via channel_post, NOT message. First we
