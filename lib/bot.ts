@@ -2299,6 +2299,18 @@ async function maybeApplyMessageRules(args: {
 }): Promise<void> {
   if (args.fromOwner) return;
   if (!args.messageText || !args.messageText.trim()) return;
+  // Self-forward guard: when the recipient is itself a business-
+  // connected account, our bot.api.sendMessage(...) reflects back
+  // through *their* business connection as a fresh business_message.
+  // Without this gate that message would re-match the rule and we'd
+  // loop. Our forward prefix is "🏷 [rule:" — no real customer
+  // message starts with that, so it's a safe sentinel.
+  if (/^🏷 \[rule:/.test(args.messageText.trim())) {
+    console.log(
+      `[rules] skipping rule-prefixed forward echo chat=${args.chatId} log=${args.logId}`,
+    );
+    return;
+  }
   try {
     const {
       listMessageRules,
@@ -2358,17 +2370,25 @@ async function maybeApplyMessageRules(args: {
         rule.requestWindowSeconds > 0;
 
       const delivered: number[] = [];
+      const failures: Array<{ chatId: number; reason: string }> = [];
       if (!gated) {
         for (const r of recipients) {
           try {
             await args.bot.api.sendMessage(r.recipientChatId, outText);
             delivered.push(r.recipientChatId);
           } catch (err) {
+            const reason =
+              err instanceof Error ? err.message : String(err);
+            failures.push({ chatId: r.recipientChatId, reason });
             console.warn(
-              `[rules] forward to ${r.recipientChatId} failed:`,
-              err,
+              `[rules] forward to ${r.recipientChatId} failed: ${reason}`,
             );
           }
+        }
+        if (failures.length > 0) {
+          console.warn(
+            `[rules] partial forward rule=${ruleId} delivered=${delivered.length}/${recipients.length} failures=${JSON.stringify(failures)}`,
+          );
         }
       } else {
         // Held — recipient must request first. Just record the match
@@ -2400,6 +2420,9 @@ async function maybeReleaseGatedRules(args: {
   bot: Bot;
 }): Promise<void> {
   if (!args.messageText || !args.messageText.trim()) return;
+  // Same self-forward guard as maybeApplyMessageRules: our own
+  // rule-tagged forward bouncing back must not look like a trigger.
+  if (/^🏷 \[rule:/.test(args.messageText.trim())) return;
   try {
     const {
       listRulesForRecipient,
