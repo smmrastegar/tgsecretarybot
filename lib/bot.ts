@@ -2232,12 +2232,108 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         msg,
         bot,
       });
+      void maybeApplyMessageRules({
+        logId,
+        chatId: msg.chat.id,
+        chatTitle,
+        senderName,
+        messageText: text,
+        businessConnectionId: bcId,
+        fromOwner: false,
+        bot,
+      });
       // media-router was already fired at the top of this function
       // (early-call right after we resolved the rule), so we don't
       // double-route here.
     } catch (err) {
       console.error("[db] log failed:", err);
     }
+  }
+}
+
+async function maybeApplyMessageRules(args: {
+  logId: number;
+  chatId: number;
+  chatTitle: string | null;
+  senderName: string;
+  messageText: string;
+  businessConnectionId: string | null;
+  fromOwner: boolean;
+  bot: Bot;
+}): Promise<void> {
+  if (args.fromOwner) return;
+  if (!args.messageText || !args.messageText.trim()) return;
+  try {
+    const {
+      listMessageRules,
+      listRuleRecipients,
+      recordRuleMatch,
+    } = await import("./db");
+    const { matchRules, formatMessageForRule } = await import("./rules");
+    const rules = await listMessageRules({ enabledOnly: true });
+    if (rules.length === 0) return;
+    const matched = await matchRules(
+      {
+        chatId: args.chatId,
+        chatTitle: args.chatTitle,
+        senderName: args.senderName,
+        messageText: args.messageText,
+        businessConnectionId: args.businessConnectionId,
+      },
+      rules,
+    );
+    if (matched.length === 0) return;
+    for (const ruleId of matched) {
+      const rule = rules.find((r) => r.id === ruleId);
+      if (!rule) continue;
+      const recipients = await listRuleRecipients(ruleId);
+      if (recipients.length === 0) {
+        // No-one to forward to, but still record the match so the
+        // dashboard can show what's matching.
+        await recordRuleMatch({
+          ruleId,
+          messageLogId: args.logId,
+          formattedText: null,
+          forwardedTo: [],
+        }).catch(() => {});
+        continue;
+      }
+      const formatted = await formatMessageForRule(rule, {
+        chatId: args.chatId,
+        chatTitle: args.chatTitle,
+        senderName: args.senderName,
+        messageText: args.messageText,
+        businessConnectionId: args.businessConnectionId,
+      });
+      const body =
+        formatted && formatted.trim().length > 0
+          ? formatted
+          : args.messageText;
+      // Tag the forwarded message so the recipient instantly sees it's
+      // a rule-driven forward (not a manual message from the operator).
+      // The "🏷" + brackets format makes it visually distinct in chat.
+      const outText = `🏷 [rule: ${rule.name}] · از ${args.senderName}\n\n${body}`;
+      const delivered: number[] = [];
+      for (const r of recipients) {
+        try {
+          await args.bot.api.sendMessage(r.recipientChatId, outText);
+          delivered.push(r.recipientChatId);
+        } catch (err) {
+          console.warn(
+            `[rules] forward to ${r.recipientChatId} failed:`,
+            err,
+          );
+        }
+      }
+      await recordRuleMatch({
+        ruleId,
+        messageLogId: args.logId,
+        formattedText: formatted,
+        forwardedTo: delivered,
+      }).catch(() => {});
+    }
+  } catch (err) {
+    console.warn("[rules] application failed:", err);
   }
 }
 

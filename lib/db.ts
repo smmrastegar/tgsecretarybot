@@ -704,6 +704,64 @@ export async function ensureSchema(): Promise<void> {
         updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await q`CREATE UNIQUE INDEX IF NOT EXISTS owner_assets_kind_tenant_uniq ON owner_assets (kind, COALESCE(tenant_id, 0))`;
+    // Natural-language "rules" for tagging + forwarding incoming
+    // messages. The operator writes a prompt ("messages containing an
+    // OTP / verification code"); on each new message the LLM decides
+    // which rules match and we forward to the recipients set per rule.
+    // forward_format (optional) is a second prompt used to reformat
+    // the message before forwarding — e.g. extract just the code.
+    await q`
+      CREATE TABLE IF NOT EXISTS message_rules (
+        id              BIGSERIAL PRIMARY KEY,
+        tenant_id       BIGINT,
+        name            TEXT NOT NULL,
+        description     TEXT NOT NULL,
+        forward_format  TEXT,
+        enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by      BIGINT,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS message_rules_tenant_idx ON message_rules (tenant_id) WHERE tenant_id IS NOT NULL`;
+    await q`CREATE INDEX IF NOT EXISTS message_rules_enabled_idx ON message_rules (enabled) WHERE enabled = TRUE`;
+    // Recipients per rule. recipient_chat_id can be a user id (DM with
+    // the bot — they must have /start'd) or a group/channel id the bot
+    // is a member of. PK keeps duplicates out.
+    await q`
+      CREATE TABLE IF NOT EXISTS message_rule_recipients (
+        rule_id          BIGINT NOT NULL,
+        recipient_chat_id BIGINT NOT NULL,
+        recipient_label  TEXT,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (rule_id, recipient_chat_id)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS message_rule_recipients_chat_idx ON message_rule_recipients (recipient_chat_id)`;
+    // Match history. One row per (rule, message_log) so the rule detail
+    // page can show what's been matching it and what was forwarded.
+    await q`
+      CREATE TABLE IF NOT EXISTS message_rule_matches (
+        id              BIGSERIAL PRIMARY KEY,
+        rule_id         BIGINT NOT NULL,
+        message_log_id  BIGINT NOT NULL,
+        formatted_text  TEXT,
+        forwarded_to    BIGINT[],
+        matched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS message_rule_matches_rule_idx ON message_rule_matches (rule_id, matched_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS message_rule_matches_message_idx ON message_rule_matches (message_log_id)`;
+    // Additional example texts per rule. The operator can grow a rule
+    // by feeding it more real message bodies; matching is a disjunction
+    // of the description + all examples ("does the incoming msg fit
+    // ANY of these?").
+    await q`
+      CREATE TABLE IF NOT EXISTS message_rule_examples (
+        id          BIGSERIAL PRIMARY KEY,
+        rule_id     BIGINT NOT NULL,
+        text        TEXT NOT NULL,
+        label       TEXT,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS message_rule_examples_rule_idx ON message_rule_examples (rule_id)`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
     // recent push so the admin can see drift.
@@ -4656,3 +4714,359 @@ export async function recentUpdateCounts(
     })),
   };
 }
+
+// --- Natural-language message rules ---
+
+export type MessageRule = {
+  id: number;
+  tenantId: number | null;
+  name: string;
+  description: string;
+  forwardFormat: string | null;
+  enabled: boolean;
+  createdBy: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type RuleRecipient = {
+  ruleId: number;
+  recipientChatId: number;
+  recipientLabel: string | null;
+  createdAt: Date;
+};
+
+export type RuleMatch = {
+  id: number;
+  ruleId: number;
+  messageLogId: number;
+  formattedText: string | null;
+  forwardedTo: number[];
+  matchedAt: Date;
+};
+
+function rowToRule(r: Record<string, unknown>): MessageRule {
+  return {
+    id: Number(r.id),
+    tenantId: r.tenant_id != null ? Number(r.tenant_id) : null,
+    name: r.name as string,
+    description: r.description as string,
+    forwardFormat: (r.forward_format as string) ?? null,
+    enabled: Boolean(r.enabled),
+    createdBy: r.created_by != null ? Number(r.created_by) : null,
+    createdAt: r.created_at as Date,
+    updatedAt: r.updated_at as Date,
+  };
+}
+
+export async function listMessageRules(args?: {
+  enabledOnly?: boolean;
+  tenantId?: number | null;
+}): Promise<MessageRule[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const enabledOnly = args?.enabledOnly ?? false;
+  const tenantId = args?.tenantId ?? null;
+  const rows = await sql()`
+    SELECT id, tenant_id, name, description, forward_format, enabled,
+           created_by, created_at, updated_at
+    FROM message_rules
+    WHERE (${enabledOnly}::boolean = FALSE OR enabled = TRUE)
+      AND (${tenantId}::bigint IS NULL OR tenant_id IS NULL OR tenant_id = ${tenantId}::bigint)
+    ORDER BY created_at DESC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToRule);
+}
+
+export async function getMessageRule(id: number): Promise<MessageRule | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, tenant_id, name, description, forward_format, enabled,
+           created_by, created_at, updated_at
+    FROM message_rules WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToRule(r) : null;
+}
+
+export async function createMessageRule(args: {
+  name: string;
+  description: string;
+  forwardFormat?: string | null;
+  enabled?: boolean;
+  createdBy?: number | null;
+  tenantId?: number | null;
+}): Promise<MessageRule> {
+  if (!hasDb()) throw new Error("DATABASE_URL not set");
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO message_rules (tenant_id, name, description, forward_format, enabled, created_by)
+    VALUES (
+      ${args.tenantId ?? null},
+      ${args.name},
+      ${args.description},
+      ${args.forwardFormat ?? null},
+      ${args.enabled ?? true},
+      ${args.createdBy ?? null}
+    )
+    RETURNING id, tenant_id, name, description, forward_format, enabled, created_by, created_at, updated_at`;
+  return rowToRule(rows[0] as Record<string, unknown>);
+}
+
+export async function updateMessageRule(
+  id: number,
+  patch: Partial<{
+    name: string;
+    description: string;
+    forwardFormat: string | null;
+    enabled: boolean;
+  }>,
+): Promise<MessageRule | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  // forward_format is nullable — patch.forwardFormat === undefined
+  // means "leave as-is", null means "clear", string means "set".
+  // We pass a sentinel JSON object so the SQL CASE branch can tell.
+  const ffMarker = patch.forwardFormat === undefined ? 0 : 1;
+  const ffValue = patch.forwardFormat ?? null;
+  const rows = await sql()`
+    UPDATE message_rules SET
+      name = COALESCE(${patch.name ?? null}, name),
+      description = COALESCE(${patch.description ?? null}, description),
+      forward_format = CASE WHEN ${ffMarker}::int = 1 THEN ${ffValue} ELSE forward_format END,
+      enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
+      updated_at = NOW()
+    WHERE id = ${id}
+    RETURNING id, tenant_id, name, description, forward_format, enabled, created_by, created_at, updated_at`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToRule(r) : null;
+}
+
+export async function deleteMessageRule(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`DELETE FROM message_rule_matches WHERE rule_id = ${id}`;
+  await sql()`DELETE FROM message_rule_recipients WHERE rule_id = ${id}`;
+  await sql()`DELETE FROM message_rules WHERE id = ${id}`;
+}
+
+export async function listRuleRecipients(
+  ruleId: number,
+): Promise<RuleRecipient[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT rule_id, recipient_chat_id, recipient_label, created_at
+    FROM message_rule_recipients
+    WHERE rule_id = ${ruleId}
+    ORDER BY created_at ASC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    ruleId: Number(r.rule_id),
+    recipientChatId: Number(r.recipient_chat_id),
+    recipientLabel: (r.recipient_label as string) ?? null,
+    createdAt: r.created_at as Date,
+  }));
+}
+
+export async function addRuleRecipient(args: {
+  ruleId: number;
+  recipientChatId: number;
+  recipientLabel?: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO message_rule_recipients (rule_id, recipient_chat_id, recipient_label)
+    VALUES (${args.ruleId}, ${args.recipientChatId}, ${args.recipientLabel ?? null})
+    ON CONFLICT (rule_id, recipient_chat_id) DO UPDATE SET
+      recipient_label = COALESCE(EXCLUDED.recipient_label, message_rule_recipients.recipient_label)`;
+}
+
+export async function removeRuleRecipient(args: {
+  ruleId: number;
+  recipientChatId: number;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    DELETE FROM message_rule_recipients
+    WHERE rule_id = ${args.ruleId}
+      AND recipient_chat_id = ${args.recipientChatId}`;
+}
+
+export async function recordRuleMatch(args: {
+  ruleId: number;
+  messageLogId: number;
+  formattedText?: string | null;
+  forwardedTo: number[];
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO message_rule_matches (rule_id, message_log_id, formatted_text, forwarded_to)
+    VALUES (
+      ${args.ruleId},
+      ${args.messageLogId},
+      ${args.formattedText ?? null},
+      ${args.forwardedTo}::bigint[]
+    )`;
+}
+
+export async function listRuleMatches(args: {
+  ruleId: number;
+  limit?: number;
+}): Promise<
+  Array<RuleMatch & { messageText: string; senderName: string; chatId: number }>
+> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const limit = Math.min(Math.max(args.limit ?? 30, 1), 100);
+  const rows = await sql()`
+    SELECT m.id, m.rule_id, m.message_log_id, m.formatted_text, m.forwarded_to,
+           m.matched_at,
+           l.message_text, l.sender_name, l.chat_id
+    FROM message_rule_matches m
+    LEFT JOIN messages_log l ON l.id = m.message_log_id
+    WHERE m.rule_id = ${args.ruleId}
+    ORDER BY m.matched_at DESC
+    LIMIT ${limit}`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    ruleId: Number(r.rule_id),
+    messageLogId: Number(r.message_log_id),
+    formattedText: (r.formatted_text as string) ?? null,
+    forwardedTo: ((r.forwarded_to as unknown[]) ?? []).map((n) => Number(n)),
+    matchedAt: r.matched_at as Date,
+    messageText: (r.message_text as string) ?? "",
+    senderName: (r.sender_name as string) ?? "?",
+    chatId: r.chat_id != null ? Number(r.chat_id) : 0,
+  }));
+}
+
+export type RuleExample = {
+  id: number;
+  ruleId: number;
+  text: string;
+  label: string | null;
+  createdAt: Date;
+};
+
+export async function listRuleExamples(ruleId: number): Promise<RuleExample[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, rule_id, text, label, created_at
+    FROM message_rule_examples
+    WHERE rule_id = ${ruleId}
+    ORDER BY created_at ASC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    ruleId: Number(r.rule_id),
+    text: r.text as string,
+    label: (r.label as string) ?? null,
+    createdAt: r.created_at as Date,
+  }));
+}
+
+export async function addRuleExample(args: {
+  ruleId: number;
+  text: string;
+  label?: string | null;
+}): Promise<RuleExample> {
+  if (!hasDb()) throw new Error("DATABASE_URL not set");
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO message_rule_examples (rule_id, text, label)
+    VALUES (${args.ruleId}, ${args.text}, ${args.label ?? null})
+    RETURNING id, rule_id, text, label, created_at`;
+  const r = rows[0] as Record<string, unknown>;
+  return {
+    id: Number(r.id),
+    ruleId: Number(r.rule_id),
+    text: r.text as string,
+    label: (r.label as string) ?? null,
+    createdAt: r.created_at as Date,
+  };
+}
+
+export async function deleteRuleExample(exampleId: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`DELETE FROM message_rule_examples WHERE id = ${exampleId}`;
+}
+
+// Cross-rule recent forwarded-match feed for /rules.
+export async function listRecentRuleMatches(
+  limit: number,
+): Promise<
+  Array<{
+    id: number;
+    ruleId: number;
+    ruleName: string;
+    messageLogId: number;
+    formattedText: string | null;
+    forwardedTo: number[];
+    matchedAt: Date;
+    messageText: string;
+    senderName: string;
+    chatId: number;
+  }>
+> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const n = Math.min(Math.max(limit, 1), 200);
+  const rows = await sql()`
+    SELECT m.id, m.rule_id, r.name AS rule_name,
+           m.message_log_id, m.formatted_text, m.forwarded_to, m.matched_at,
+           l.message_text, l.sender_name, l.chat_id
+    FROM message_rule_matches m
+    LEFT JOIN message_rules r ON r.id = m.rule_id
+    LEFT JOIN messages_log l ON l.id = m.message_log_id
+    ORDER BY m.matched_at DESC
+    LIMIT ${n}`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    ruleId: Number(r.rule_id),
+    ruleName: (r.rule_name as string) ?? "?",
+    messageLogId: Number(r.message_log_id),
+    formattedText: (r.formatted_text as string) ?? null,
+    forwardedTo: ((r.forwarded_to as unknown[]) ?? []).map((n) => Number(n)),
+    matchedAt: r.matched_at as Date,
+    messageText: (r.message_text as string) ?? "",
+    senderName: (r.sender_name as string) ?? "?",
+    chatId: r.chat_id != null ? Number(r.chat_id) : 0,
+  }));
+}
+
+// Fetch recent messages for the "test this rule on history" action.
+export async function listRecentMessagesForTest(
+  limit: number,
+): Promise<
+  Array<{
+    id: number;
+    chatId: number;
+    chatTitle: string | null;
+    senderName: string;
+    messageText: string;
+    createdAt: Date;
+  }>
+> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const n = Math.min(Math.max(limit, 1), 200);
+  const rows = await sql()`
+    SELECT id, chat_id, chat_title, sender_name, message_text, created_at
+    FROM messages_log
+    WHERE from_owner = FALSE
+      AND COALESCE(message_text, '') <> ''
+    ORDER BY created_at DESC
+    LIMIT ${n}`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    chatId: Number(r.chat_id),
+    chatTitle: (r.chat_title as string) ?? null,
+    senderName: (r.sender_name as string) ?? "?",
+    messageText: (r.message_text as string) ?? "",
+    createdAt: r.created_at as Date,
+  }));
+}
+

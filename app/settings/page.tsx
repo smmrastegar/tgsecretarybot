@@ -23,6 +23,12 @@ const TILES: Array<{
     desc: "همه‌ی تنظیمات (owner، AI models، auto-reply، grace، debug، حداقل importance، ...)",
   },
   {
+    href: "/rules",
+    emoji: "📐",
+    label: "Rules",
+    desc: "قانون‌های تشخیص پیام (مثلاً OTP) + فوروارد خودکار با format دلخواه",
+  },
+  {
     href: "/ask",
     emoji: "🔎",
     label: "Ask",

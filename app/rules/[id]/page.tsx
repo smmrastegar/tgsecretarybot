@@ -1,0 +1,552 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import Shell from "@/components/Shell";
+import { Card, PageTitle, Badge } from "@/components/Card";
+import { relTime, truncate } from "@/lib/format";
+
+type Rule = {
+  id: number;
+  name: string;
+  description: string;
+  forwardFormat: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+type Recipient = {
+  ruleId: number;
+  recipientChatId: number;
+  recipientLabel: string | null;
+  createdAt: string;
+};
+type Example = {
+  id: number;
+  text: string;
+  label: string | null;
+  createdAt: string;
+};
+type Match = {
+  id: number;
+  ruleId: number;
+  messageLogId: number;
+  formattedText: string | null;
+  forwardedTo: number[];
+  matchedAt: string;
+  messageText: string;
+  senderName: string;
+  chatId: number;
+};
+type TestResult = {
+  messageLogId: number;
+  chatId: number;
+  chatTitle: string | null;
+  senderName: string;
+  originalText: string;
+  matched: boolean;
+  formattedText: string | null;
+  createdAt: string;
+};
+
+export default function RuleDetailPage() {
+  const params = useParams<{ id: string }>();
+  const id = Number(params?.id);
+  const [rule, setRule] = useState<Rule | null>(null);
+  const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [examples, setExamples] = useState<Example[]>([]);
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // edit form
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [format, setFormat] = useState("");
+
+  // recipient form
+  const [newChat, setNewChat] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+
+  // example form
+  const [newExampleText, setNewExampleText] = useState("");
+  const [newExampleLabel, setNewExampleLabel] = useState("");
+
+  // test
+  const [testLimit, setTestLimit] = useState(30);
+  const [testing, setTesting] = useState(false);
+  const [testResults, setTestResults] = useState<TestResult[] | null>(null);
+
+  const load = useCallback(async () => {
+    if (!Number.isFinite(id)) return;
+    setLoading(true);
+    try {
+      const [r1, r2, r3] = await Promise.all([
+        fetch(`/api/rules/${id}`),
+        fetch(`/api/rules/${id}/matches?limit=30`),
+        fetch(`/api/rules/${id}/examples`),
+      ]);
+      if (r1.ok) {
+        const j = (await r1.json()) as { rule: Rule; recipients: Recipient[] };
+        setRule(j.rule);
+        setRecipients(j.recipients ?? []);
+        setName(j.rule.name);
+        setDesc(j.rule.description);
+        setFormat(j.rule.forwardFormat ?? "");
+      }
+      if (r2.ok) {
+        const j = (await r2.json()) as { matches: Match[] };
+        setMatches(j.matches ?? []);
+      }
+      if (r3.ok) {
+        const j = (await r3.json()) as { examples: Example[] };
+        setExamples(j.examples ?? []);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    try {
+      await fetch(`/api/rules/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          description: desc,
+          forwardFormat: format || null,
+        }),
+      });
+      load();
+    } finally {
+      setSaving(false);
+    }
+  }, [id, name, desc, format, load]);
+
+  const remove = useCallback(async () => {
+    if (!confirm("این rule پاک بشه؟")) return;
+    await fetch(`/api/rules/${id}`, { method: "DELETE" });
+    window.location.href = "/rules";
+  }, [id]);
+
+  const addRecipient = useCallback(async () => {
+    const chatId = Number(newChat);
+    if (!Number.isFinite(chatId) || chatId === 0) return;
+    await fetch(`/api/rules/${id}/recipients`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipientChatId: chatId,
+        recipientLabel: newLabel || undefined,
+      }),
+    });
+    setNewChat("");
+    setNewLabel("");
+    load();
+  }, [id, newChat, newLabel, load]);
+
+  const removeRecipient = useCallback(
+    async (chatId: number) => {
+      await fetch(
+        `/api/rules/${id}/recipients?recipientChatId=${chatId}`,
+        { method: "DELETE" },
+      );
+      load();
+    },
+    [id, load],
+  );
+
+  const addExample = useCallback(async () => {
+    if (!newExampleText.trim()) return;
+    await fetch(`/api/rules/${id}/examples`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: newExampleText,
+        label: newExampleLabel || undefined,
+      }),
+    });
+    setNewExampleText("");
+    setNewExampleLabel("");
+    load();
+  }, [id, newExampleText, newExampleLabel, load]);
+
+  const removeExample = useCallback(
+    async (exampleId: number) => {
+      await fetch(`/api/rules/${id}/examples?exampleId=${exampleId}`, {
+        method: "DELETE",
+      });
+      load();
+    },
+    [id, load],
+  );
+
+  const runTest = useCallback(async () => {
+    setTesting(true);
+    setTestResults(null);
+    try {
+      const r = await fetch(`/api/rules/${id}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: testLimit }),
+      });
+      if (r.ok) {
+        const j = (await r.json()) as { results: TestResult[] };
+        setTestResults(j.results ?? []);
+      }
+    } finally {
+      setTesting(false);
+    }
+  }, [id, testLimit]);
+
+  if (loading) {
+    return (
+      <Shell>
+        <Card>Loading…</Card>
+      </Shell>
+    );
+  }
+  if (!rule) {
+    return (
+      <Shell>
+        <Card>
+          <p>Rule پیدا نشد.</p>
+          <Link href="/rules" className="text-xs underline">
+            برگشت
+          </Link>
+        </Card>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell>
+      <PageTitle
+        title={`📐 ${rule.name}`}
+        subtitle={`ساخته شده ${relTime(rule.createdAt)} · last update ${relTime(rule.updatedAt)}`}
+        actions={
+          <Link href="/rules" className="text-xs underline-offset-2 underline">
+            ← rules
+          </Link>
+        }
+      />
+
+      <Card className="mb-4">
+        <div className="text-xs font-medium mb-2">تعریف rule</div>
+        <div className="flex flex-col gap-2">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="اسم rule"
+            className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+          />
+          <textarea
+            value={desc}
+            onChange={(e) => setDesc(e.target.value)}
+            placeholder="توصیف اصلی: چه پیام‌هایی باید match بشن؟"
+            rows={3}
+            className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+          />
+          <textarea
+            value={format}
+            onChange={(e) => setFormat(e.target.value)}
+            placeholder="(اختیاری) format فوروارد — مثلاً «فقط عدد کد رو با emoji 🔑 بفرست» — خالی = پیام اصلی"
+            rows={2}
+            className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={remove}
+              className="text-xs px-3 py-1.5 rounded-md border border-red-700 text-red-300 hover:bg-red-900/30"
+            >
+              🗑 پاک کن
+            </button>
+            <button
+              onClick={save}
+              disabled={saving}
+              className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+            >
+              {saving ? "ذخیره…" : "ذخیره"}
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-medium">
+            📋 نمونه‌های اضافی ({examples.length}) — match وقتی اتفاق می‌افته
+            که پیام به <i>هر کدوم</i> از این‌ها (یا توصیف اصلی بالا) بخوره
+          </div>
+        </div>
+        {examples.length === 0 ? (
+          <p className="text-xs text-[var(--color-text-dim)] mb-2">
+            هنوز نمونه‌ای اضافه نشده. می‌تونی متن یه پیام واقعی رو پیست کنی
+            تا rule بفهمه «این مدل پیام‌ها رو هم بگیر».
+          </p>
+        ) : (
+          <div className="flex flex-col gap-1 mb-3">
+            {examples.map((e) => (
+              <div
+                key={e.id}
+                className="flex items-start gap-2 p-2 rounded-md bg-[var(--color-surface-2)] text-xs"
+              >
+                <div className="flex-1 min-w-0">
+                  {e.label && (
+                    <div className="text-[10px] text-[var(--color-text-dim)] mb-0.5">
+                      {e.label}
+                    </div>
+                  )}
+                  <div
+                    dir="auto"
+                    style={{ unicodeBidi: "plaintext" }}
+                    className="whitespace-pre-wrap break-words"
+                  >
+                    {truncate(e.text, 400)}
+                  </div>
+                </div>
+                <button
+                  onClick={() => removeExample(e.id)}
+                  className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-col gap-2">
+          <textarea
+            value={newExampleText}
+            onChange={(e) => setNewExampleText(e.target.value)}
+            placeholder="متن یه نمونه پیام (مثلاً پیام OTP واقعی رو پیست کن)"
+            rows={2}
+            className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+          />
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newExampleLabel}
+              onChange={(e) => setNewExampleLabel(e.target.value)}
+              placeholder="label (اختیاری)"
+              className="flex-1 text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5"
+            />
+            <button
+              onClick={addExample}
+              disabled={!newExampleText.trim()}
+              className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+            >
+              + اضافه کن
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="mb-4">
+        <div className="text-xs font-medium mb-2">
+          📬 گیرنده‌های فوروارد ({recipients.length})
+        </div>
+        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+          chat_id کاربر (مثبت) یا گروه/کانال (منفی). گیرنده باید قبلاً به بات
+          /start زده باشه یا بات تو گروه/کانال عضو باشه.
+        </p>
+        {recipients.length === 0 ? (
+          <p className="text-xs text-[var(--color-text-dim)] mb-3">
+            هیچ گیرنده‌ای ست نشده — پیام‌های match‌شده فقط لاگ می‌شن.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-1 mb-3">
+            {recipients.map((r) => (
+              <div
+                key={r.recipientChatId}
+                className="flex items-center gap-2 p-2 rounded-md bg-[var(--color-surface-2)] text-xs"
+              >
+                <span className="flex-1 tabular-nums">
+                  {r.recipientLabel ? (
+                    <>
+                      <strong>{r.recipientLabel}</strong>{" "}
+                      <span className="text-[var(--color-text-dim)]">
+                        ({r.recipientChatId})
+                      </span>
+                    </>
+                  ) : (
+                    r.recipientChatId
+                  )}
+                </span>
+                <button
+                  onClick={() => removeRecipient(r.recipientChatId)}
+                  className="text-[10px] text-red-300 hover:text-red-200"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2 flex-wrap">
+          <input
+            type="number"
+            value={newChat}
+            onChange={(e) => setNewChat(e.target.value)}
+            placeholder="chat_id"
+            className="flex-1 min-w-[140px] text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5"
+          />
+          <input
+            type="text"
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            placeholder="label (اختیاری)"
+            className="flex-1 min-w-[140px] text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5"
+          />
+          <button
+            onClick={addRecipient}
+            disabled={!newChat}
+            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+          >
+            + اضافه
+          </button>
+        </div>
+      </Card>
+
+      <Card className="mb-4">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <div className="text-xs font-medium">🧪 تست روی پیام‌های قبلی</div>
+          <div className="flex items-center gap-2">
+            <select
+              value={testLimit}
+              onChange={(e) => setTestLimit(Number(e.target.value))}
+              className="text-xs px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)]"
+            >
+              <option value={10}>۱۰ پیام</option>
+              <option value={30}>۳۰ پیام</option>
+              <option value={50}>۵۰ پیام</option>
+              <option value={100}>۱۰۰ پیام</option>
+            </select>
+            <button
+              onClick={runTest}
+              disabled={testing}
+              className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            >
+              {testing ? "تست…" : "▶ run"}
+            </button>
+          </div>
+        </div>
+        {testResults && (
+          <>
+            <div className="text-[11px] text-[var(--color-text-dim)] mb-2">
+              {testResults.filter((r) => r.matched).length} از{" "}
+              {testResults.length} پیام match شد.
+            </div>
+            <div className="flex flex-col gap-1">
+              {testResults.map((r) => (
+                <div
+                  key={r.messageLogId}
+                  className={`p-2 rounded-md text-xs border ${
+                    r.matched
+                      ? "border-emerald-700 bg-emerald-900/20"
+                      : "border-[var(--color-border)] bg-[var(--color-surface-2)] opacity-60"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 text-[10px] text-[var(--color-text-dim)] mb-1">
+                    {r.matched ? (
+                      <Badge tone="success">match</Badge>
+                    ) : (
+                      <Badge tone="neutral">skip</Badge>
+                    )}
+                    <span>
+                      {r.senderName} ·{" "}
+                      {r.chatTitle ?? `chat ${r.chatId}`} ·{" "}
+                      {relTime(r.createdAt)}
+                    </span>
+                  </div>
+                  <div
+                    dir="auto"
+                    style={{ unicodeBidi: "plaintext" }}
+                    className="whitespace-pre-wrap break-words"
+                  >
+                    {truncate(r.originalText, 300)}
+                  </div>
+                  {r.matched && r.formattedText && (
+                    <div className="mt-2 pt-2 border-t border-emerald-700/40">
+                      <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
+                        خروجی format شده:
+                      </div>
+                      <div
+                        dir="auto"
+                        style={{ unicodeBidi: "plaintext" }}
+                        className="whitespace-pre-wrap break-words"
+                      >
+                        {r.formattedText}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </Card>
+
+      <Card>
+        <div className="text-xs font-medium mb-2">
+          🕐 تاریخچه match ({matches.length})
+        </div>
+        {matches.length === 0 ? (
+          <p className="text-xs text-[var(--color-text-dim)]">
+            هنوز هیچ پیامی به این rule نخورده.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {matches.map((m) => (
+              <div
+                key={m.id}
+                className="p-2 rounded-md bg-[var(--color-surface-2)] text-xs"
+              >
+                <div className="flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-dim)] mb-1">
+                  <span>{m.senderName}</span>
+                  <span>·</span>
+                  <span>{relTime(m.matchedAt)}</span>
+                  <span>·</span>
+                  <span>
+                    {m.forwardedTo.length > 0
+                      ? `→ ${m.forwardedTo.length} گیرنده`
+                      : "لاگ شد ولی فوروارد نشد"}
+                  </span>
+                </div>
+                <div
+                  dir="auto"
+                  style={{ unicodeBidi: "plaintext" }}
+                  className="whitespace-pre-wrap break-words"
+                >
+                  {truncate(m.messageText, 200)}
+                </div>
+                {m.formattedText && (
+                  <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+                    <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
+                      خروجی format شده که فوروارد شد:
+                    </div>
+                    <div
+                      dir="auto"
+                      style={{ unicodeBidi: "plaintext" }}
+                      className="whitespace-pre-wrap break-words"
+                    >
+                      {m.formattedText}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </Shell>
+  );
+}

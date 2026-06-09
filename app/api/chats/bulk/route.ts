@@ -30,13 +30,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       | "muted"
       | "function"
       | "auto_summarize"
-      | "automation";
+      | "automation"
+      | "rule_recipient";
     chatIds?: number[];
     mode?: ChatMode;
     value?: boolean;
     role?: FunctionRole | null;
     gapMinutes?: number;
     smartTiming?: boolean;
+    ruleId?: number;
     automation?: {
       autoForwardVoice?: boolean;
       autoForwardVideo?: boolean;
@@ -100,6 +102,25 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
     affected = await bulkSetChatAutomation(chatIds, body.automation);
+  } else if (op === "rule_recipient") {
+    // Bulk-add the selected chats as recipients for a given rule. Each
+    // chat_id becomes a row in message_rule_recipients. Used from the
+    // /chats bulk action panel ("→ make these chats receive rule X").
+    const ruleId = Number(body.ruleId);
+    if (!Number.isFinite(ruleId)) {
+      return NextResponse.json(
+        { error: "ruleId required" },
+        { status: 400 },
+      );
+    }
+    const { addRuleRecipient } = await import("@/lib/db");
+    for (const chatId of chatIds) {
+      await addRuleRecipient({
+        ruleId,
+        recipientChatId: chatId,
+      });
+    }
+    affected = chatIds.length;
   } else {
     return NextResponse.json({ error: "unknown op" }, { status: 400 });
   }

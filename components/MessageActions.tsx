@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import AddToRuleButton from "./AddToRuleButton";
 import { Badge } from "@/components/Card";
 
 type Secretary = { userId: number; name: string };
@@ -306,6 +307,7 @@ export default function MessageActions({
           </button>
         )}
         {m.handledAt && <Badge tone="success">handled</Badge>}
+        <AddToRuleButton messageLogId={m.id} />
       </div>
 
       {draft !== null && (
