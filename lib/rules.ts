@@ -17,10 +17,22 @@ import {
 } from "./db";
 import { config } from "./config";
 
-const MATCH_MODEL = "google/gemini-2.0-flash-001";
-const FORMAT_MODEL = "google/gemini-2.0-flash-001";
-const MATCH_TIMEOUT_MS = 15_000;
-const FORMAT_TIMEOUT_MS = 15_000;
+// Try multiple model slugs — OpenRouter has been renaming the Gemini
+// preview chain frequently and the old hardcoded "gemini-2.0-flash-001"
+// was returning empty objects on the suggest path. We pick the first
+// one that comes back with usable content.
+const MATCH_MODELS = [
+  process.env.OPENROUTER_RULE_MODEL,
+  config.openrouterModel,
+  "google/gemini-2.5-flash",
+  "google/gemini-2.0-flash-001",
+  "google/gemini-flash-1.5",
+].filter(
+  (m, i, arr): m is string =>
+    typeof m === "string" && m.length > 0 && arr.indexOf(m) === i,
+);
+const MATCH_TIMEOUT_MS = 20_000;
+const FORMAT_TIMEOUT_MS = 20_000;
 const COST_PER_MATCH_USD = 0.00005;
 const COST_PER_FORMAT_USD = 0.00005;
 
@@ -44,7 +56,7 @@ async function fetchWithTimeout(
 }
 
 async function callLlm(args: {
-  model: string;
+  models: string[];
   systemPrompt: string;
   userPrompt: string;
   jsonObject: boolean;
@@ -53,7 +65,7 @@ async function callLlm(args: {
   businessConnectionId: string | null;
   costUsd: number;
   timeoutMs: number;
-}): Promise<string> {
+}): Promise<{ text: string; model: string }> {
   if (!config.openrouterApiKey) {
     throw new Error("OPENROUTER_API_KEY not set");
   }
@@ -63,42 +75,67 @@ async function callLlm(args: {
     "X-Title": config.openrouterAppName,
   };
   if (config.openrouterAppUrl) headers["HTTP-Referer"] = config.openrouterAppUrl;
-  const body: Record<string, unknown> = {
-    model: args.model,
-    temperature: 0,
-    max_tokens: 600,
-    messages: [
-      { role: "system", content: args.systemPrompt },
-      { role: "user", content: args.userPrompt },
-    ],
-  };
-  if (args.jsonObject) body.response_format = { type: "json_object" };
-  const res = await fetchWithTimeout(
-    "https://openrouter.ai/api/v1/chat/completions",
-    { method: "POST", headers, body: JSON.stringify(body) },
-    args.timeoutMs,
-  );
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`rule LLM ${res.status}: ${txt.slice(0, 200)}`);
+  const errors: string[] = [];
+  for (const model of args.models) {
+    const body: Record<string, unknown> = {
+      model,
+      temperature: 0,
+      max_tokens: 600,
+      messages: [
+        { role: "system", content: args.systemPrompt },
+        { role: "user", content: args.userPrompt },
+      ],
+    };
+    if (args.jsonObject) body.response_format = { type: "json_object" };
+    let res: Response;
+    try {
+      res = await fetchWithTimeout(
+        "https://openrouter.ai/api/v1/chat/completions",
+        { method: "POST", headers, body: JSON.stringify(body) },
+        args.timeoutMs,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[rules] ${model} network: ${msg}`);
+      errors.push(`${model}: ${msg}`);
+      continue;
+    }
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      console.warn(`[rules] ${model} HTTP ${res.status}: ${txt.slice(0, 200)}`);
+      errors.push(`${model}: ${res.status}`);
+      continue;
+    }
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      error?: { message?: string };
+    };
+    if (json.error) {
+      console.warn(`[rules] ${model} error: ${json.error.message}`);
+      errors.push(`${model}: ${json.error.message ?? "error"}`);
+      continue;
+    }
+    const text = (json.choices?.[0]?.message?.content ?? "").trim();
+    if (!text) {
+      console.warn(`[rules] ${model} returned empty content`);
+      errors.push(`${model}: empty content`);
+      continue;
+    }
+    await recordAiUsage({
+      chatId: args.chatId,
+      businessConnectionId: args.businessConnectionId,
+      model,
+      purpose: args.purpose,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      costUsd: args.costUsd,
+    }).catch(() => {});
+    return { text, model };
   }
-  const json = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    error?: { message?: string };
-  };
-  if (json.error) throw new Error(json.error.message ?? "rule LLM error");
-  const text = (json.choices?.[0]?.message?.content ?? "").trim();
-  await recordAiUsage({
-    chatId: args.chatId,
-    businessConnectionId: args.businessConnectionId,
-    model: args.model,
-    purpose: args.purpose,
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    costUsd: args.costUsd,
-  }).catch(() => {});
-  return text;
+  throw new Error(
+    `all rule models failed: ${errors.join(" | ").slice(0, 500)}`,
+  );
 }
 
 function extractJson(s: string): string {
@@ -106,6 +143,28 @@ function extractJson(s: string): string {
   if (trimmed.startsWith("{")) return trimmed;
   const m = trimmed.match(/\{[\s\S]*\}/);
   return m ? m[0] : trimmed;
+}
+
+// Pluck NAME: <...> / DESCRIPTION: <...> from a model reply that's
+// plain text instead of JSON. The suggest path uses this because
+// asking Gemini for JSON kept returning empty objects on this purpose.
+function parseSuggestLines(s: string): {
+  name: string;
+  description: string;
+} | null {
+  const text = s.trim();
+  if (!text) return null;
+  const nameMatch = text.match(
+    /^\s*(?:NAME|name|اسم|نام)\s*[:：]\s*(.+)$/im,
+  );
+  const descMatch = text.match(
+    /^\s*(?:DESCRIPTION|DESC|description|توصیف|شرح|توضیح)\s*[:：]\s*([\s\S]+?)(?:\n\s*\n|\n[A-Za-z]+\s*:|$)/im,
+  );
+  const name = nameMatch?.[1]?.trim().replace(/^["'«»]|["'«»]$/g, "") ?? "";
+  const description =
+    descMatch?.[1]?.trim().replace(/^["'«»]|["'«»]$/g, "") ?? "";
+  if (!name && !description) return null;
+  return { name: name.slice(0, 80), description: description.slice(0, 600) };
 }
 
 export type MatchContext = {
@@ -135,7 +194,6 @@ export async function matchRules(
       examplesMap[r.id] = await listRuleExamples(r.id).catch(() => []);
     }
   }
-  const model = MATCH_MODEL;
   const systemPrompt = [
     "You are a routing classifier. The operator has defined a list of rules.",
     "Each rule has an id, a name, a primary description, and zero or more",
@@ -168,8 +226,8 @@ export async function matchRules(
 
   let raw: string;
   try {
-    raw = await callLlm({
-      model,
+    const out = await callLlm({
+      models: MATCH_MODELS,
       systemPrompt,
       userPrompt,
       jsonObject: true,
@@ -179,6 +237,7 @@ export async function matchRules(
       costUsd: COST_PER_MATCH_USD,
       timeoutMs: MATCH_TIMEOUT_MS,
     });
+    raw = out.text;
   } catch (err) {
     console.warn("[rules] match call failed:", err);
     return [];
@@ -202,37 +261,25 @@ export async function suggestRuleFromMessage(
   text: string,
 ): Promise<{ name: string; description: string } | null> {
   if (!text || !text.trim()) return null;
-  // NOTE: prompt is a newline string, not array-joined-with-spaces.
-  // The earlier space-joined version collapsed the JSON schema onto
-  // one line and Gemini kept replying with empty strings.
-  const systemPrompt = `You generate routing-rule labels from a single message body.
+  // Plain-text prompt — JSON mode kept coming back empty on Gemini.
+  // The model now writes two labelled lines which we pull out with
+  // parseSuggestLines.
+  const systemPrompt = `You are labelling messages for an automatic forwarding rule. The operator gave you ONE real example message. Suggest a short name + a generalised description so similar future messages will match.
 
-The operator forwards messages around their bot. They've handed you ONE
-example message. Reply with strict JSON only (no prose, no markdown fences,
-no \`\`\`json\`\`\`, no extra fields):
+Reply in EXACTLY this format on two lines, no preamble, no markdown, no quotes:
 
-{ "name": "...", "description": "..." }
+NAME: <3-6 words. Persian if the message text looks Persian, otherwise English>
+DESCRIPTION: <one sentence describing the KIND of messages — mention the trigger like "OTP / verification code", "news link", "delivery update". Same language as NAME>
 
-Rules:
-- name: 3-6 words. Persian if the message looks Persian, otherwise English.
-  No quotes inside, no trailing punctuation.
-- description: ONE sentence describing the KIND of messages this represents
-  (not just this specific one). Mention the trigger (OTP code, news link,
-  appointment confirmation, …) so future similar messages will match.
-- Same language as "name".
-
-If the message is too short or has no real content, still produce reasonable
-labels — never return empty strings.`;
+Never leave either field blank. Never explain. Never wrap in code fences.`;
   const userPrompt = `Message body:\n${text.slice(0, 2000)}`;
   let raw: string;
+  let usedModel = "";
   try {
-    raw = await callLlm({
-      model: MATCH_MODEL,
+    const out = await callLlm({
+      models: MATCH_MODELS,
       systemPrompt,
       userPrompt,
-      // Don't ask for JSON-mode — OpenRouter's response_format support
-      // for Gemini Flash is spotty and was returning blank objects.
-      // We parse the JSON object out of the raw text instead.
       jsonObject: false,
       purpose: "rule_suggest",
       chatId: null,
@@ -240,16 +287,22 @@ labels — never return empty strings.`;
       costUsd: COST_PER_MATCH_USD,
       timeoutMs: MATCH_TIMEOUT_MS,
     });
+    raw = out.text;
+    usedModel = out.model;
   } catch (err) {
     console.warn("[rules] suggest call failed:", err);
-    return null;
+    return heuristicSuggest(text);
   }
-  // Strip markdown fences before extractJson hunts for the object.
+  // Strip any stray code fences just in case.
   const cleaned = raw
     .trim()
-    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/^```(?:json|text)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
+  // Try the labelled-line parser first (matches our prompt).
+  const lines = parseSuggestLines(cleaned);
+  if (lines) return lines;
+  // Fallback: maybe the model went rogue and returned JSON anyway.
   try {
     const parsed = JSON.parse(extractJson(cleaned)) as {
       name?: string;
@@ -257,23 +310,51 @@ labels — never return empty strings.`;
     };
     const name = (parsed.name ?? "").trim().slice(0, 80);
     const description = (parsed.description ?? "").trim().slice(0, 600);
-    if (!name && !description) {
-      console.warn(
-        "[rules] suggest returned empty fields. raw:",
-        raw.slice(0, 300),
-      );
-      return null;
-    }
-    return { name, description };
-  } catch (err) {
-    console.warn(
-      "[rules] suggest parse failed:",
-      err,
-      "raw:",
-      raw.slice(0, 300),
-    );
-    return null;
+    if (name || description) return { name, description };
+  } catch {}
+  console.warn(
+    `[rules] suggest unusable from ${usedModel}. raw: ${raw.slice(0, 300)}`,
+  );
+  return heuristicSuggest(text);
+}
+
+// Last-resort name/description guesser — runs when the LLM call fails
+// or returns junk. Keyword based; not perfect but better than handing
+// the operator empty fields after they clicked the button.
+function heuristicSuggest(
+  text: string,
+): { name: string; description: string } | null {
+  const t = text.toLowerCase();
+  if (
+    /\b(otp|verification|verify|code|verification code)\b/i.test(text) ||
+    /\b(?:کد|رمز)\s*(?:تایید|ورود|یکبار|otp)\b/u.test(text) ||
+    /\b\d{4,8}\b.*(?:code|verification|otp|تایید|رمز)/iu.test(text) ||
+    /(?:verification|otp).*\b\d{4,8}\b/i.test(text)
+  ) {
+    return {
+      name: "کدهای OTP",
+      description:
+        "پیام‌هایی که حاوی یک کد تایید/OTP/verification هستن، معمولاً ۴ تا ۸ رقمی، از سرویس‌های آنلاین.",
+    };
   }
+  if (/https?:\/\/|t\.me\//i.test(text)) {
+    return {
+      name: "لینک‌ها",
+      description: "پیام‌هایی که یک لینک HTTP یا تلگرامی توشون هست.",
+    };
+  }
+  if (
+    /\b(invoice|receipt|payment|paid|amount|تومان|ریال|پرداخت|فاکتور)\b/iu.test(
+      text,
+    )
+  ) {
+    return {
+      name: "پرداخت‌ها و فاکتورها",
+      description:
+        "پیام‌هایی که مربوط به پرداخت، فاکتور یا تراکنش مالی هستن.",
+    };
+  }
+  return null;
 }
 
 // Reformats the message text according to the rule's forward_format
@@ -282,7 +363,6 @@ export async function formatMessageForRule(
   ctx: MatchContext,
 ): Promise<string | null> {
   if (!rule.forwardFormat || !rule.forwardFormat.trim()) return null;
-  const model = FORMAT_MODEL;
   const systemPrompt = [
     "You reformat incoming messages for a forwarding pipeline.",
     "The operator gives you a format spec; you produce the output text",
@@ -301,7 +381,7 @@ export async function formatMessageForRule(
   ].join("\n");
   try {
     const out = await callLlm({
-      model,
+      models: MATCH_MODELS,
       systemPrompt,
       userPrompt,
       jsonObject: false,
@@ -311,7 +391,7 @@ export async function formatMessageForRule(
       costUsd: COST_PER_FORMAT_USD,
       timeoutMs: FORMAT_TIMEOUT_MS,
     });
-    return out.trim() || null;
+    return out.text.trim() || null;
   } catch (err) {
     console.warn("[rules] format call failed:", err);
     return null;
