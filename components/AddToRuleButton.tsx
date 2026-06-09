@@ -17,6 +17,8 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
   const [pickedRule, setPickedRule] = useState<number | "">("");
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [suggested, setSuggested] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -27,6 +29,33 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
       })
       .catch(() => {});
   }, [open]);
+
+  // First time the operator opens the panel in "create" mode, fetch
+  // an AI-suggested name + description for this message. The fields
+  // stay editable; the suggestion only fills the blanks (we don't
+  // overwrite anything the user already typed).
+  useEffect(() => {
+    if (!open || mode !== "create" || suggested) return;
+    setSuggesting(true);
+    fetch("/api/rules/suggest-from-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messageLogId }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          j: { name?: string; description?: string } | null,
+        ) => {
+          if (!j) return;
+          setName((n) => (n.trim() ? n : j.name ?? ""));
+          setDesc((d) => (d.trim() ? d : j.description ?? ""));
+          setSuggested(true);
+        },
+      )
+      .catch(() => {})
+      .finally(() => setSuggesting(false));
+  }, [open, mode, messageLogId, suggested]);
 
   const submit = useCallback(async () => {
     setBusy(true);
@@ -112,17 +141,41 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
       </div>
       {mode === "create" ? (
         <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between text-[10px] text-[var(--color-text-dim)]">
+            <span>
+              {suggesting
+                ? "⏳ پیشنهاد AI…"
+                : suggested
+                  ? "✨ AI پیشنهاد داد — اگه خواستی ویرایش کن"
+                  : ""}
+            </span>
+            {suggested && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSuggested(false);
+                  setName("");
+                  setDesc("");
+                }}
+                className="text-[10px] underline-offset-2 hover:underline"
+              >
+                دوباره پیشنهاد بده
+              </button>
+            )}
+          </div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="اسم rule"
+            placeholder={suggesting ? "…" : "اسم rule"}
             className="text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-2 py-1"
           />
           <textarea
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
-            placeholder="توصیف: چه مدل پیام‌هایی match کنن؟"
+            placeholder={
+              suggesting ? "…" : "توصیف: چه مدل پیام‌هایی match کنن؟"
+            }
             rows={2}
             className="text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-2 py-1"
           />

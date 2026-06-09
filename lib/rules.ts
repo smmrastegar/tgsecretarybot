@@ -195,9 +195,61 @@ export async function matchRules(
   }
 }
 
+// Suggest a short rule name + description from a single message body.
+// Used by the "📐 to rule" button so the operator doesn't have to type
+// from scratch — they can edit the suggestion before saving.
+export async function suggestRuleFromMessage(
+  text: string,
+): Promise<{ name: string; description: string } | null> {
+  if (!text || !text.trim()) return null;
+  const systemPrompt = [
+    "You generate routing-rule labels from a single message body.",
+    "Output strict JSON:",
+    '{ "name": "<3-6 words, Persian or English, no quotes>",',
+    '  "description": "<one-sentence rule that captures what KIND of',
+    '  messages this is (not just this specific one). Persian when the',
+    '  source is Persian, otherwise English. No quotes.>" }',
+    "No prose, no markdown, no extra fields.",
+  ].join(" ");
+  const userPrompt = `Message body:\n${text.slice(0, 2000)}`;
+  let raw: string;
+  try {
+    raw = await callLlm({
+      model: MATCH_MODEL,
+      systemPrompt,
+      userPrompt,
+      jsonObject: true,
+      purpose: "rule_suggest",
+      chatId: null,
+      businessConnectionId: null,
+      costUsd: COST_PER_MATCH_USD,
+      timeoutMs: MATCH_TIMEOUT_MS,
+    });
+  } catch (err) {
+    console.warn("[rules] suggest call failed:", err);
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(extractJson(raw)) as {
+      name?: string;
+      description?: string;
+    };
+    const name = (parsed.name ?? "").trim().slice(0, 80);
+    const description = (parsed.description ?? "").trim().slice(0, 600);
+    if (!name || !description) return null;
+    return { name, description };
+  } catch (err) {
+    console.warn(
+      "[rules] suggest parse failed:",
+      err,
+      "raw:",
+      raw.slice(0, 200),
+    );
+    return null;
+  }
+}
+
 // Reformats the message text according to the rule's forward_format
-// prompt. Returns null when no format is set (caller forwards the
-// original text) or when the LLM call fails.
 export async function formatMessageForRule(
   rule: MessageRule,
   ctx: MatchContext,
