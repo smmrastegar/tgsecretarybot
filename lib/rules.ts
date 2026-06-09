@@ -249,20 +249,27 @@ Never explain. Never wrap in code fences.`;
     return [];
   }
   const validIds = new Set(rules.map((r) => r.id));
-  const m = raw.match(/MATCHED\s*:\s*([^\n]+)/i);
-  if (!m) {
-    console.warn(
-      `[rules] match output didn't include "MATCHED:" — raw: ${raw.slice(0, 200)}`,
-    );
+  // Find the MATCHED: line if present; otherwise fall back to plucking
+  // numbers out of the whole reply. Models sometimes return things like
+  // "MATCHED: [12, 14]", "MATCHED: rule 12", or just "12" — extracting
+  // every \d+ run handles all of them.
+  const matchedLine = raw.match(/MATCHED\s*:\s*([^\n]+)/i);
+  const searchSpace = matchedLine?.[1] ?? raw;
+  if (/\bnone\b/i.test(searchSpace) || /MATCHED:\s*$/i.test(raw)) {
     return [];
   }
-  const list = m[1] ?? "";
-  if (/\bnone\b/i.test(list)) return [];
-  const ids = list
-    .split(/[,\s]+/)
+  const ids = (searchSpace.match(/\d+/g) ?? [])
     .map((t) => Number(t))
     .filter((n) => Number.isFinite(n) && validIds.has(n));
-  return Array.from(new Set(ids));
+  const unique = Array.from(new Set(ids));
+  if (unique.length === 0 && !matchedLine) {
+    console.warn(
+      `[rules] match output had no MATCHED line + no parseable ids — raw: ${raw.slice(0, 300)}`,
+    );
+  } else if (unique.length > 0) {
+    console.log(`[rules] match ids=[${unique.join(",")}] for chat=${ctx.chatId}`);
+  }
+  return unique;
 }
 
 // Batch test: classify whether each of `messages` matches `rule`. One
@@ -321,18 +328,19 @@ Indexes are 1-based and refer to the "MESSAGES" list below. Never explain, never
     console.warn("[rules] batch test call failed:", err);
     return out;
   }
-  const m = raw.match(/MATCHED\s*:\s*([^\n]+)/i);
-  if (!m) {
-    console.warn(
-      `[rules] batch test output didn't include MATCHED: — raw: ${raw.slice(0, 300)}`,
-    );
+  const matchedLine = raw.match(/MATCHED\s*:\s*([^\n]+)/i);
+  const searchSpace = matchedLine?.[1] ?? raw;
+  if (/\bnone\b/i.test(searchSpace) || /MATCHED:\s*$/i.test(raw)) {
     return out;
   }
-  const list = m[1] ?? "";
-  if (/\bnone\b/i.test(list)) return out;
-  for (const tok of list.split(/[,\s]+/)) {
+  for (const tok of searchSpace.match(/\d+/g) ?? []) {
     const n = Number(tok);
     if (Number.isFinite(n) && n >= 1 && n <= out.length) out[n - 1] = true;
+  }
+  if (!matchedLine && !out.some(Boolean)) {
+    console.warn(
+      `[rules] batch test had no MATCHED line + no parseable ids — raw: ${raw.slice(0, 300)}`,
+    );
   }
   return out;
 }
