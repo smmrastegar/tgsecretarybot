@@ -6,6 +6,8 @@ import { useParams, useRouter } from "next/navigation";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import MediaView from "@/components/MediaView";
+import ChatRulesPanel from "@/components/ChatRulesPanel";
+import CopyableChatId from "@/components/CopyableChatId";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
 type ChatMode =
@@ -641,7 +643,7 @@ export default function ChatDetailPage() {
                 </div>
                 <div className="text-xs text-[var(--color-text-dim)] mt-1 flex flex-wrap items-center gap-2">
                   {personHandle && <span>@{personHandle}</span>}
-                  <span>id {personId}</span>
+                  <CopyableChatId chatId={chatId} />
                   <span>
                     ·{" "}
                     {chatTypeLabel(
@@ -1450,6 +1452,7 @@ export default function ChatDetailPage() {
             {rule && (
               <MediaRoutingLog chatId={chatId} />
             )}
+            <ChatRulesPanel chatId={chatId} />
           </Card>
 
           <PageTitle

@@ -318,6 +318,44 @@ Never leave either field blank. Never explain. Never wrap in code fences.`;
   return heuristicSuggest(text);
 }
 
+// Returns true iff `text` looks like it's asking for whatever
+// `requestTrigger` describes. Used by the request-gate path: when a
+// rule has request_trigger set, we only forward matched messages to
+// the recipient after they've sent something matching this trigger.
+export async function checkRequestTriggerMatch(
+  text: string,
+  requestTrigger: string,
+): Promise<boolean> {
+  if (!text.trim() || !requestTrigger.trim()) return false;
+  const systemPrompt = `You decide whether a single incoming message is a REQUEST that fits the operator's description.
+
+Reply with EXACTLY one word on one line: YES or NO. No explanation, no punctuation, no markdown.
+
+Be conservative — only answer YES when the message clearly asks for what the description describes.`;
+  const userPrompt = `Request description from operator:
+${requestTrigger.slice(0, 400)}
+
+Incoming message:
+${text.slice(0, 1500)}`;
+  try {
+    const out = await callLlm({
+      models: MATCH_MODELS,
+      systemPrompt,
+      userPrompt,
+      jsonObject: false,
+      purpose: "rule_request_check",
+      chatId: null,
+      businessConnectionId: null,
+      costUsd: COST_PER_MATCH_USD,
+      timeoutMs: MATCH_TIMEOUT_MS,
+    });
+    return /^\s*yes\b/i.test(out.text);
+  } catch (err) {
+    console.warn("[rules] request-trigger check failed:", err);
+    return false;
+  }
+}
+
 // Last-resort name/description guesser — runs when the LLM call fails
 // or returns junk. Keyword based; not perfect but better than handing
 // the operator empty fields after they clicked the button.

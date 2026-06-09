@@ -2242,6 +2242,14 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         fromOwner: false,
         bot,
       });
+      // If this message is itself from a rule-recipient and looks like a
+      // trigger ("send me the code"), release any held matches for them
+      // that fell inside the rule's window.
+      void maybeReleaseGatedRules({
+        senderChatId: msg.chat.id,
+        messageText: text,
+        bot,
+      });
       // media-router was already fired at the top of this function
       // (early-call right after we resolved the rule), so we don't
       // double-route here.
@@ -2288,8 +2296,6 @@ async function maybeApplyMessageRules(args: {
       if (!rule) continue;
       const recipients = await listRuleRecipients(ruleId);
       if (recipients.length === 0) {
-        // No-one to forward to, but still record the match so the
-        // dashboard can show what's matching.
         await recordRuleMatch({
           ruleId,
           messageLogId: args.logId,
@@ -2309,21 +2315,37 @@ async function maybeApplyMessageRules(args: {
         formatted && formatted.trim().length > 0
           ? formatted
           : args.messageText;
-      // Tag the forwarded message so the recipient instantly sees it's
-      // a rule-driven forward (not a manual message from the operator).
-      // The "🏷" + brackets format makes it visually distinct in chat.
       const outText = `🏷 [rule: ${rule.name}] · از ${args.senderName}\n\n${body}`;
+
+      // Request-gate: if the rule has request_trigger + a finite window,
+      // hold the forward for each recipient until they've sent a
+      // trigger-matching message within the window.
+      const gated =
+        !!rule.requestTrigger &&
+        rule.requestTrigger.trim().length > 0 &&
+        rule.requestWindowSeconds != null &&
+        rule.requestWindowSeconds > 0;
+
       const delivered: number[] = [];
-      for (const r of recipients) {
-        try {
-          await args.bot.api.sendMessage(r.recipientChatId, outText);
-          delivered.push(r.recipientChatId);
-        } catch (err) {
-          console.warn(
-            `[rules] forward to ${r.recipientChatId} failed:`,
-            err,
-          );
+      if (!gated) {
+        for (const r of recipients) {
+          try {
+            await args.bot.api.sendMessage(r.recipientChatId, outText);
+            delivered.push(r.recipientChatId);
+          } catch (err) {
+            console.warn(
+              `[rules] forward to ${r.recipientChatId} failed:`,
+              err,
+            );
+          }
         }
+      } else {
+        // Held — recipient must request first. Just record the match
+        // with no recipients delivered yet; the trigger-detect path
+        // releases it later.
+        console.log(
+          `[rules] match held by gate (rule=${ruleId} recipients=${recipients.length} window=${rule.requestWindowSeconds}s)`,
+        );
       }
       await recordRuleMatch({
         ruleId,
@@ -2334,6 +2356,73 @@ async function maybeApplyMessageRules(args: {
     }
   } catch (err) {
     console.warn("[rules] application failed:", err);
+  }
+}
+
+// Called for every logged incoming message. If the sender's chat is a
+// recipient of any rule that has a request_trigger, check whether the
+// text counts as a trigger — if it does, release the matching messages
+// that were held within the window.
+async function maybeReleaseGatedRules(args: {
+  senderChatId: number;
+  messageText: string;
+  bot: Bot;
+}): Promise<void> {
+  if (!args.messageText || !args.messageText.trim()) return;
+  try {
+    const {
+      listRulesForRecipient,
+      findPendingMatchesForRecipient,
+      markMatchForwardedTo,
+    } = await import("./db");
+    const { checkRequestTriggerMatch } = await import("./rules");
+    const rules = await listRulesForRecipient(args.senderChatId);
+    const gated = rules.filter(
+      (r) =>
+        r.enabled &&
+        r.requestTrigger &&
+        r.requestTrigger.trim() &&
+        r.requestWindowSeconds != null &&
+        r.requestWindowSeconds > 0,
+    );
+    if (gated.length === 0) return;
+    for (const rule of gated) {
+      const isTrigger = await checkRequestTriggerMatch(
+        args.messageText,
+        rule.requestTrigger ?? "",
+      );
+      if (!isTrigger) continue;
+      const pending = await findPendingMatchesForRecipient({
+        ruleId: rule.id,
+        recipientChatId: args.senderChatId,
+        withinSeconds: rule.requestWindowSeconds ?? 0,
+      });
+      if (pending.length === 0) continue;
+      for (const p of pending) {
+        const body =
+          p.formattedText && p.formattedText.trim().length > 0
+            ? p.formattedText
+            : p.messageText;
+        const outText = `🏷 [rule: ${rule.name}] · از ${p.senderName}\n\n${body}`;
+        try {
+          await args.bot.api.sendMessage(args.senderChatId, outText);
+          await markMatchForwardedTo({
+            matchId: p.matchId,
+            recipientChatId: args.senderChatId,
+          });
+          console.log(
+            `[rules] released held match=${p.matchId} → ${args.senderChatId} (rule=${rule.id})`,
+          );
+        } catch (err) {
+          console.warn(
+            `[rules] release-forward to ${args.senderChatId} failed:`,
+            err,
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[rules] release-gated failed:", err);
   }
 }
 

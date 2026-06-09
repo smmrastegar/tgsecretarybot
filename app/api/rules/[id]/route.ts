@@ -52,6 +52,8 @@ export async function PUT(
     name?: string;
     description?: string;
     forwardFormat?: string | null;
+    requestTrigger?: string | null;
+    requestWindowSeconds?: number | null;
     enabled?: boolean;
   };
   const patch: Parameters<typeof updateMessageRule>[1] = {};
@@ -62,6 +64,17 @@ export async function PUT(
       typeof body.forwardFormat === "string" && body.forwardFormat.trim()
         ? body.forwardFormat.trim()
         : null;
+  }
+  if (body.requestTrigger !== undefined) {
+    patch.requestTrigger =
+      typeof body.requestTrigger === "string" && body.requestTrigger.trim()
+        ? body.requestTrigger.trim()
+        : null;
+  }
+  if (body.requestWindowSeconds !== undefined) {
+    const n = Number(body.requestWindowSeconds);
+    patch.requestWindowSeconds =
+      Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
   }
   if (body.enabled != null) patch.enabled = Boolean(body.enabled);
   const rule = await updateMessageRule(ruleId, patch);

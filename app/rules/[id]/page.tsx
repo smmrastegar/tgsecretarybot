@@ -12,10 +12,20 @@ type Rule = {
   name: string;
   description: string;
   forwardFormat: string | null;
+  requestTrigger: string | null;
+  requestWindowSeconds: number | null;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
 };
+
+const WINDOW_OPTIONS: { value: number | null; label: string }[] = [
+  { value: null, label: "همیشه (بدون gate)" },
+  { value: 60, label: "۱ دقیقه" },
+  { value: 120, label: "۲ دقیقه" },
+  { value: 300, label: "۵ دقیقه" },
+  { value: 3600, label: "۱ ساعت" },
+];
 type Recipient = {
   ruleId: number;
   recipientChatId: number;
@@ -64,6 +74,8 @@ export default function RuleDetailPage() {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [format, setFormat] = useState("");
+  const [requestTrigger, setRequestTrigger] = useState("");
+  const [requestWindow, setRequestWindow] = useState<number | null>(null);
 
   // recipient form
   const [newChat, setNewChat] = useState("");
@@ -94,6 +106,8 @@ export default function RuleDetailPage() {
         setName(j.rule.name);
         setDesc(j.rule.description);
         setFormat(j.rule.forwardFormat ?? "");
+        setRequestTrigger(j.rule.requestTrigger ?? "");
+        setRequestWindow(j.rule.requestWindowSeconds);
       }
       if (r2.ok) {
         const j = (await r2.json()) as { matches: Match[] };
@@ -122,13 +136,15 @@ export default function RuleDetailPage() {
           name,
           description: desc,
           forwardFormat: format || null,
+          requestTrigger: requestTrigger || null,
+          requestWindowSeconds: requestWindow,
         }),
       });
       load();
     } finally {
       setSaving(false);
     }
-  }, [id, name, desc, format, load]);
+  }, [id, name, desc, format, requestTrigger, requestWindow, load]);
 
   const remove = useCallback(async () => {
     if (!confirm("این rule پاک بشه؟")) return;
@@ -262,6 +278,46 @@ export default function RuleDetailPage() {
             rows={2}
             className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
           />
+          <div className="pt-2 border-t border-[var(--color-border)] mt-1">
+            <div className="text-[11px] font-medium mb-1">
+              ⏸ Gate درخواست (اختیاری)
+            </div>
+            <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+              اگه ست شد، پیام‌های منطبق <i>فقط</i> وقتی فوروارد می‌شن که
+              گیرنده تو پنجره‌ی زمانی پایین یه پیامی بفرسته که با این توصیف
+              جور دربیاد (مثلاً «میشه کد رو بخونی؟»). پیام‌های match‌شده تو
+              همون پنجره قبل از درخواست هم بعد از درخواست ارسال می‌شن
+              (با تلرانس زمانی).
+            </p>
+            <textarea
+              value={requestTrigger}
+              onChange={(e) => setRequestTrigger(e.target.value)}
+              placeholder="توصیف درخواست — مثلاً «پیامی که می‌پرسه کد رو برام بفرست یا میخواد کد تایید رو بدونه»"
+              rows={2}
+              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 mb-2"
+            />
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className="text-[var(--color-text-dim)]">پنجره:</span>
+              <select
+                value={requestWindow ?? ""}
+                onChange={(e) =>
+                  setRequestWindow(
+                    e.target.value === "" ? null : Number(e.target.value),
+                  )
+                }
+                className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+              >
+                {WINDOW_OPTIONS.map((o) => (
+                  <option
+                    key={o.value ?? "always"}
+                    value={o.value ?? ""}
+                  >
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div className="flex justify-end gap-2">
             <button
               onClick={remove}

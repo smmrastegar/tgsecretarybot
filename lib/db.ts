@@ -762,6 +762,11 @@ export async function ensureSchema(): Promise<void> {
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await q`CREATE INDEX IF NOT EXISTS message_rule_examples_rule_idx ON message_rule_examples (rule_id)`;
+    // Request-gate: optionally hold forwarding until the recipient
+    // sends a message matching `request_trigger` within the last
+    // `request_window_seconds` seconds. NULL window = "always" (no gate).
+    await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS request_trigger TEXT`;
+    await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS request_window_seconds INT`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
     // recent push so the admin can see drift.
@@ -4723,6 +4728,8 @@ export type MessageRule = {
   name: string;
   description: string;
   forwardFormat: string | null;
+  requestTrigger: string | null;
+  requestWindowSeconds: number | null;
   enabled: boolean;
   createdBy: number | null;
   createdAt: Date;
@@ -4752,6 +4759,11 @@ function rowToRule(r: Record<string, unknown>): MessageRule {
     name: r.name as string,
     description: r.description as string,
     forwardFormat: (r.forward_format as string) ?? null,
+    requestTrigger: (r.request_trigger as string) ?? null,
+    requestWindowSeconds:
+      r.request_window_seconds != null
+        ? Number(r.request_window_seconds)
+        : null,
     enabled: Boolean(r.enabled),
     createdBy: r.created_by != null ? Number(r.created_by) : null,
     createdAt: r.created_at as Date,
@@ -4768,7 +4780,8 @@ export async function listMessageRules(args?: {
   const enabledOnly = args?.enabledOnly ?? false;
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
-    SELECT id, tenant_id, name, description, forward_format, enabled,
+    SELECT id, tenant_id, name, description, forward_format,
+           request_trigger, request_window_seconds, enabled,
            created_by, created_at, updated_at
     FROM message_rules
     WHERE (${enabledOnly}::boolean = FALSE OR enabled = TRUE)
@@ -4781,7 +4794,8 @@ export async function getMessageRule(id: number): Promise<MessageRule | null> {
   if (!hasDb()) return null;
   await ensureSchema();
   const rows = await sql()`
-    SELECT id, tenant_id, name, description, forward_format, enabled,
+    SELECT id, tenant_id, name, description, forward_format,
+           request_trigger, request_window_seconds, enabled,
            created_by, created_at, updated_at
     FROM message_rules WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -4808,7 +4822,9 @@ export async function createMessageRule(args: {
       ${args.enabled ?? true},
       ${args.createdBy ?? null}
     )
-    RETURNING id, tenant_id, name, description, forward_format, enabled, created_by, created_at, updated_at`;
+    RETURNING id, tenant_id, name, description, forward_format,
+              request_trigger, request_window_seconds,
+              enabled, created_by, created_at, updated_at`;
   return rowToRule(rows[0] as Record<string, unknown>);
 }
 
@@ -4818,25 +4834,34 @@ export async function updateMessageRule(
     name: string;
     description: string;
     forwardFormat: string | null;
+    requestTrigger: string | null;
+    requestWindowSeconds: number | null;
     enabled: boolean;
   }>,
 ): Promise<MessageRule | null> {
   if (!hasDb()) return null;
   await ensureSchema();
-  // forward_format is nullable — patch.forwardFormat === undefined
-  // means "leave as-is", null means "clear", string means "set".
-  // We pass a sentinel JSON object so the SQL CASE branch can tell.
+  // Nullable fields use a marker+value pair so we can tell "leave alone"
+  // (undefined) from "set to NULL" (null).
   const ffMarker = patch.forwardFormat === undefined ? 0 : 1;
   const ffValue = patch.forwardFormat ?? null;
+  const rtMarker = patch.requestTrigger === undefined ? 0 : 1;
+  const rtValue = patch.requestTrigger ?? null;
+  const rwMarker = patch.requestWindowSeconds === undefined ? 0 : 1;
+  const rwValue = patch.requestWindowSeconds ?? null;
   const rows = await sql()`
     UPDATE message_rules SET
       name = COALESCE(${patch.name ?? null}, name),
       description = COALESCE(${patch.description ?? null}, description),
       forward_format = CASE WHEN ${ffMarker}::int = 1 THEN ${ffValue} ELSE forward_format END,
+      request_trigger = CASE WHEN ${rtMarker}::int = 1 THEN ${rtValue} ELSE request_trigger END,
+      request_window_seconds = CASE WHEN ${rwMarker}::int = 1 THEN ${rwValue}::int ELSE request_window_seconds END,
       enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
       updated_at = NOW()
     WHERE id = ${id}
-    RETURNING id, tenant_id, name, description, forward_format, enabled, created_by, created_at, updated_at`;
+    RETURNING id, tenant_id, name, description, forward_format,
+              request_trigger, request_window_seconds,
+              enabled, created_by, created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToRule(r) : null;
 }
@@ -5035,6 +5060,84 @@ export async function listRecentRuleMatches(
     senderName: (r.sender_name as string) ?? "?",
     chatId: r.chat_id != null ? Number(r.chat_id) : 0,
   }));
+}
+
+// Rules where the given chat_id is a recipient. Used by /chats/[id]
+// to show "this chat receives the following rules" and by the request-
+// trigger lookback path in bot.ts.
+export async function listRulesForRecipient(
+  recipientChatId: number,
+): Promise<MessageRule[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT r.id, r.tenant_id, r.name, r.description, r.forward_format,
+           r.request_trigger, r.request_window_seconds, r.enabled,
+           r.created_by, r.created_at, r.updated_at
+    FROM message_rules r
+    JOIN message_rule_recipients rr ON rr.rule_id = r.id
+    WHERE rr.recipient_chat_id = ${recipientChatId}
+    ORDER BY r.name ASC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToRule);
+}
+
+// Find rule-matches for a given recipient that haven't been forwarded
+// to them yet AND fell within the request_window_seconds of now. Used
+// when the recipient sends a "send me the code" trigger and we want to
+// release the pending matches.
+export async function findPendingMatchesForRecipient(args: {
+  ruleId: number;
+  recipientChatId: number;
+  withinSeconds: number;
+}): Promise<
+  Array<{
+    matchId: number;
+    messageLogId: number;
+    formattedText: string | null;
+    messageText: string;
+    senderName: string;
+    chatId: number;
+    matchedAt: Date;
+  }>
+> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT m.id AS match_id, m.message_log_id, m.formatted_text,
+           m.matched_at, l.message_text, l.sender_name, l.chat_id
+    FROM message_rule_matches m
+    LEFT JOIN messages_log l ON l.id = m.message_log_id
+    WHERE m.rule_id = ${args.ruleId}
+      AND m.matched_at > NOW() - (${args.withinSeconds}::int || ' seconds')::interval
+      AND NOT (${args.recipientChatId}::bigint = ANY(COALESCE(m.forwarded_to, ARRAY[]::bigint[])))
+    ORDER BY m.matched_at ASC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    matchId: Number(r.match_id),
+    messageLogId: Number(r.message_log_id),
+    formattedText: (r.formatted_text as string) ?? null,
+    messageText: (r.message_text as string) ?? "",
+    senderName: (r.sender_name as string) ?? "?",
+    chatId: r.chat_id != null ? Number(r.chat_id) : 0,
+    matchedAt: r.matched_at as Date,
+  }));
+}
+
+// Append a recipient chat_id to a match's forwarded_to array — used
+// both on first forward and when releasing a held match later.
+export async function markMatchForwardedTo(args: {
+  matchId: number;
+  recipientChatId: number;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE message_rule_matches
+    SET forwarded_to = ARRAY(
+      SELECT DISTINCT unnest(
+        COALESCE(forwarded_to, ARRAY[]::bigint[]) || ARRAY[${args.recipientChatId}::bigint]
+      )
+    )
+    WHERE id = ${args.matchId}`;
 }
 
 // Fetch recent messages for the "test this rule on history" action.

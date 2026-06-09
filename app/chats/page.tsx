@@ -140,6 +140,17 @@ export default function ChatsPage() {
   const [flagFilter, setFlagFilter] = useState<"all" | "vip" | "muted">("all");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulking, setBulking] = useState(false);
+  const [bulkRules, setBulkRules] = useState<{ id: number; name: string }[]>(
+    [],
+  );
+  useEffect(() => {
+    fetch("/api/rules")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { rules?: { id: number; name: string }[] } | null) => {
+        if (j?.rules) setBulkRules(j.rules);
+      })
+      .catch(() => {});
+  }, []);
 
   const PAGE = 30;
   const [hasMore, setHasMore] = useState(true);
@@ -247,12 +258,14 @@ export default function ChatsPage() {
       | "muted"
       | "function"
       | "auto_summarize"
-      | "automation",
+      | "automation"
+      | "rule_recipient",
     extra: {
       mode?: ChatMode;
       value?: boolean;
       role?: string | null;
       gapMinutes?: number;
+      ruleId?: number;
       automation?: {
         autoForwardVoice?: boolean;
         autoForwardVideo?: boolean;
@@ -658,6 +671,25 @@ export default function ChatsPage() {
                   <option value="autoExtractNotes:off">
                     📒 extract notes → off
                   </option>
+                </select>
+                <select
+                  disabled={bulking}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    void runBulk("rule_recipient", { ruleId: Number(v) });
+                    e.currentTarget.value = "";
+                  }}
+                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
+                  title="چت‌های انتخاب‌شده رو به‌عنوان گیرنده‌ی این rule اضافه کن"
+                >
+                  <option value="">📐 Add to rule…</option>
+                  {bulkRules.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      → {r.name}
+                    </option>
+                  ))}
                 </select>
               </div>
             )}
