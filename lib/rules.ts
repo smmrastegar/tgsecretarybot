@@ -185,25 +185,31 @@ export async function matchRules(
 ): Promise<number[]> {
   if (rules.length === 0) return [];
   if (!ctx.messageText.trim()) return [];
-  // Load examples per rule if the caller didn't pass them in. Each rule
-  // is treated as a disjunction over (description, example1, example2,
-  // ...) — match ANY → rule fires.
   const examplesMap: Record<number, RuleExample[]> = examplesByRule ?? {};
   if (!examplesByRule) {
     for (const r of rules) {
       examplesMap[r.id] = await listRuleExamples(r.id).catch(() => []);
     }
   }
-  const systemPrompt = [
-    "You are a routing classifier. The operator has defined a list of rules.",
-    "Each rule has an id, a name, a primary description, and zero or more",
-    "example messages. A rule MATCHES the incoming message if it satisfies",
-    "the description OR resembles ANY of the examples — it's a disjunction.",
-    "Be conservative — include a rule only when the match is clear.",
-    "Output strict JSON:",
-    '{ "matched": [<id>, <id>, ...] }',
-    'If nothing matches, return { "matched": [] }. No prose, no markdown.',
-  ].join(" ");
+  // Plain-text reply (JSON mode kept coming back as "{}" on Gemini —
+  // every message would silently look like "no rules matched"). We ask
+  // for a single MATCHED: <comma list> line and parse with regex.
+  const systemPrompt = `You are a routing classifier. The operator has a list of rules. Each rule has an id, a name, a primary description, and zero or more example messages. A rule MATCHES the incoming message when the message satisfies the description OR resembles ANY example — a disjunction. Be conservative; include a rule only when the match is clear.
+
+Reply with EXACTLY one line, no preamble, no markdown:
+
+MATCHED: <comma-separated ids>
+
+If nothing matches, reply exactly:
+
+MATCHED: none
+
+Examples:
+  MATCHED: 12
+  MATCHED: 7, 19
+  MATCHED: none
+
+Never explain. Never wrap in code fences.`;
   const rulesBlock = rules
     .map((r) => {
       const exs = (examplesMap[r.id] ?? [])
@@ -230,7 +236,7 @@ export async function matchRules(
       models: MATCH_MODELS,
       systemPrompt,
       userPrompt,
-      jsonObject: true,
+      jsonObject: false,
       purpose: "rule_match",
       chatId: ctx.chatId,
       businessConnectionId: ctx.businessConnectionId ?? null,
@@ -242,16 +248,93 @@ export async function matchRules(
     console.warn("[rules] match call failed:", err);
     return [];
   }
-  try {
-    const parsed = JSON.parse(extractJson(raw)) as { matched?: unknown };
-    if (!Array.isArray(parsed.matched)) return [];
-    return parsed.matched
-      .map((n) => Number(n))
-      .filter((n) => Number.isFinite(n) && rules.some((r) => r.id === n));
-  } catch (err) {
-    console.warn("[rules] match parse failed:", err, "raw:", raw.slice(0, 200));
+  const validIds = new Set(rules.map((r) => r.id));
+  const m = raw.match(/MATCHED\s*:\s*([^\n]+)/i);
+  if (!m) {
+    console.warn(
+      `[rules] match output didn't include "MATCHED:" — raw: ${raw.slice(0, 200)}`,
+    );
     return [];
   }
+  const list = m[1] ?? "";
+  if (/\bnone\b/i.test(list)) return [];
+  const ids = list
+    .split(/[,\s]+/)
+    .map((t) => Number(t))
+    .filter((n) => Number.isFinite(n) && validIds.has(n));
+  return Array.from(new Set(ids));
+}
+
+// Batch test: classify whether each of `messages` matches `rule`. One
+// LLM call covers the whole batch — way cheaper and more reliable than
+// 30 single-message calls. Returns an array of booleans aligned with
+// the input order.
+export async function batchTestRule(args: {
+  rule: MessageRule;
+  examples: RuleExample[];
+  messages: { id: number; text: string; sender: string }[];
+}): Promise<boolean[]> {
+  const out = new Array<boolean>(args.messages.length).fill(false);
+  if (args.messages.length === 0) return out;
+  const exs = args.examples
+    .slice(0, 6)
+    .map((e, i) => `  example${i + 1}: "${e.text.slice(0, 200)}"`)
+    .join("\n");
+  const systemPrompt = `You are testing a single routing rule against multiple historical messages. The rule MATCHES a message when the message satisfies the description OR resembles ANY example (disjunction). Be conservative; only mark YES when the match is clear.
+
+Reply with EXACTLY one MATCHED line listing the indexes that matched:
+
+MATCHED: <comma-separated indexes>
+
+If nothing matched, reply:
+
+MATCHED: none
+
+Indexes are 1-based and refer to the "MESSAGES" list below. Never explain, never wrap in code fences.`;
+  const userPrompt = [
+    "RULE:",
+    `  name: "${args.rule.name}"`,
+    `  description: "${args.rule.description}"`,
+    exs ? `  examples:\n${exs}` : "  (no extra examples)",
+    "",
+    "MESSAGES:",
+    ...args.messages.map(
+      (m, i) =>
+        `[${i + 1}] from ${m.sender}: ${m.text.slice(0, 600).replace(/\n+/g, " ")}`,
+    ),
+  ].join("\n");
+  let raw: string;
+  try {
+    const out2 = await callLlm({
+      models: MATCH_MODELS,
+      systemPrompt,
+      userPrompt,
+      jsonObject: false,
+      purpose: "rule_test_batch",
+      chatId: null,
+      businessConnectionId: null,
+      costUsd: COST_PER_MATCH_USD,
+      timeoutMs: 40_000,
+    });
+    raw = out2.text;
+  } catch (err) {
+    console.warn("[rules] batch test call failed:", err);
+    return out;
+  }
+  const m = raw.match(/MATCHED\s*:\s*([^\n]+)/i);
+  if (!m) {
+    console.warn(
+      `[rules] batch test output didn't include MATCHED: — raw: ${raw.slice(0, 300)}`,
+    );
+    return out;
+  }
+  const list = m[1] ?? "";
+  if (/\bnone\b/i.test(list)) return out;
+  for (const tok of list.split(/[,\s]+/)) {
+    const n = Number(tok);
+    if (Number.isFinite(n) && n >= 1 && n <= out.length) out[n - 1] = true;
+  }
+  return out;
 }
 
 // Suggest a short rule name + description from a single message body.

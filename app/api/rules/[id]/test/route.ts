@@ -3,17 +3,19 @@ import { requireSession } from "@/lib/auth";
 import {
   getMessageRule,
   listRecentMessagesForTest,
+  listRuleExamples,
 } from "@/lib/db";
-import { formatMessageForRule, matchRules } from "@/lib/rules";
+import { batchTestRule, formatMessageForRule } from "@/lib/rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // POST {limit?: number} → runs the rule against the most recent N
-// messages (non-owner, with text) and returns which ones matched + the
-// reformatted text the rule would have produced. We cap the LLM calls
-// at one per candidate message to keep test runs fast and cheap.
+// non-owner messages with text content. ONE batched LLM call classifies
+// the whole list (was N calls, which both burned tokens and silently
+// failed when the model returned blanks). The formatted-text preview
+// only fires for the matches.
 export async function POST(
   request: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -32,13 +34,27 @@ export async function POST(
   if (!rule) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
-  const body = (await request.json().catch(() => ({}))) as {
-    limit?: number;
-  };
+  const body = (await request.json().catch(() => ({}))) as { limit?: number };
   const limit = Math.min(Math.max(Number(body.limit) || 30, 1), 100);
-  const messages = await listRecentMessagesForTest(limit);
+  const [messages, examples] = await Promise.all([
+    listRecentMessagesForTest(limit),
+    listRuleExamples(ruleId),
+  ]);
 
-  type ResultRow = {
+  const flags = await batchTestRule({
+    rule,
+    examples,
+    messages: messages.map((m) => ({
+      id: m.id,
+      text: m.messageText,
+      sender: m.senderName,
+    })),
+  });
+
+  // Only call the formatter for the rows that actually matched — and
+  // only when the rule has a format prompt set. Sequential so a
+  // misbehaving model can't fan out.
+  const results: Array<{
     messageLogId: number;
     chatId: number;
     chatTitle: string | null;
@@ -47,24 +63,12 @@ export async function POST(
     matched: boolean;
     formattedText: string | null;
     createdAt: string;
-  };
-  const results: ResultRow[] = [];
-
-  // Iterate sequentially so the JSON return order matches the input
-  // order. matchRules makes one LLM call per message — fine at limit=30.
-  for (const m of messages) {
-    const ids = await matchRules(
-      {
-        chatId: m.chatId,
-        chatTitle: m.chatTitle,
-        senderName: m.senderName,
-        messageText: m.messageText,
-      },
-      [rule],
-    );
-    const matched = ids.includes(ruleId);
+  }> = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]!;
+    const matched = flags[i] ?? false;
     let formatted: string | null = null;
-    if (matched && rule.forwardFormat) {
+    if (matched && rule.forwardFormat && rule.forwardFormat.trim()) {
       formatted = await formatMessageForRule(rule, {
         chatId: m.chatId,
         chatTitle: m.chatTitle,
@@ -83,11 +87,10 @@ export async function POST(
       createdAt: m.createdAt.toISOString(),
     });
   }
-  const matchedCount = results.filter((r) => r.matched).length;
   return NextResponse.json({
     ok: true,
     tested: results.length,
-    matchedCount,
+    matchedCount: results.filter((r) => r.matched).length,
     results,
   });
 }
