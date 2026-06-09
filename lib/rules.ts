@@ -202,15 +202,27 @@ export async function suggestRuleFromMessage(
   text: string,
 ): Promise<{ name: string; description: string } | null> {
   if (!text || !text.trim()) return null;
-  const systemPrompt = [
-    "You generate routing-rule labels from a single message body.",
-    "Output strict JSON:",
-    '{ "name": "<3-6 words, Persian or English, no quotes>",',
-    '  "description": "<one-sentence rule that captures what KIND of',
-    '  messages this is (not just this specific one). Persian when the',
-    '  source is Persian, otherwise English. No quotes.>" }',
-    "No prose, no markdown, no extra fields.",
-  ].join(" ");
+  // NOTE: prompt is a newline string, not array-joined-with-spaces.
+  // The earlier space-joined version collapsed the JSON schema onto
+  // one line and Gemini kept replying with empty strings.
+  const systemPrompt = `You generate routing-rule labels from a single message body.
+
+The operator forwards messages around their bot. They've handed you ONE
+example message. Reply with strict JSON only (no prose, no markdown fences,
+no \`\`\`json\`\`\`, no extra fields):
+
+{ "name": "...", "description": "..." }
+
+Rules:
+- name: 3-6 words. Persian if the message looks Persian, otherwise English.
+  No quotes inside, no trailing punctuation.
+- description: ONE sentence describing the KIND of messages this represents
+  (not just this specific one). Mention the trigger (OTP code, news link,
+  appointment confirmation, …) so future similar messages will match.
+- Same language as "name".
+
+If the message is too short or has no real content, still produce reasonable
+labels — never return empty strings.`;
   const userPrompt = `Message body:\n${text.slice(0, 2000)}`;
   let raw: string;
   try {
@@ -218,7 +230,10 @@ export async function suggestRuleFromMessage(
       model: MATCH_MODEL,
       systemPrompt,
       userPrompt,
-      jsonObject: true,
+      // Don't ask for JSON-mode — OpenRouter's response_format support
+      // for Gemini Flash is spotty and was returning blank objects.
+      // We parse the JSON object out of the raw text instead.
+      jsonObject: false,
       purpose: "rule_suggest",
       chatId: null,
       businessConnectionId: null,
@@ -229,21 +244,33 @@ export async function suggestRuleFromMessage(
     console.warn("[rules] suggest call failed:", err);
     return null;
   }
+  // Strip markdown fences before extractJson hunts for the object.
+  const cleaned = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
   try {
-    const parsed = JSON.parse(extractJson(raw)) as {
+    const parsed = JSON.parse(extractJson(cleaned)) as {
       name?: string;
       description?: string;
     };
     const name = (parsed.name ?? "").trim().slice(0, 80);
     const description = (parsed.description ?? "").trim().slice(0, 600);
-    if (!name || !description) return null;
+    if (!name && !description) {
+      console.warn(
+        "[rules] suggest returned empty fields. raw:",
+        raw.slice(0, 300),
+      );
+      return null;
+    }
     return { name, description };
   } catch (err) {
     console.warn(
       "[rules] suggest parse failed:",
       err,
       "raw:",
-      raw.slice(0, 200),
+      raw.slice(0, 300),
     );
     return null;
   }

@@ -17,7 +17,7 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
   const [pickedRule, setPickedRule] = useState<number | "">("");
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
-  const [suggested, setSuggested] = useState(false);
+  const [suggested, setSuggested] = useState<"none" | "ok" | "fail">("none");
   const [suggesting, setSuggesting] = useState(false);
 
   useEffect(() => {
@@ -35,7 +35,7 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
   // stay editable; the suggestion only fills the blanks (we don't
   // overwrite anything the user already typed).
   useEffect(() => {
-    if (!open || mode !== "create" || suggested) return;
+    if (!open || mode !== "create" || suggested !== "none") return;
     setSuggesting(true);
     fetch("/api/rules/suggest-from-message", {
       method: "POST",
@@ -45,15 +45,23 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
       .then((r) => (r.ok ? r.json() : null))
       .then(
         (
-          j: { name?: string; description?: string } | null,
+          j: {
+            ok?: boolean;
+            name?: string;
+            description?: string;
+            error?: string | null;
+          } | null,
         ) => {
-          if (!j) return;
+          if (!j || !j.ok || (!j.name?.trim() && !j.description?.trim())) {
+            setSuggested("fail");
+            return;
+          }
           setName((n) => (n.trim() ? n : j.name ?? ""));
           setDesc((d) => (d.trim() ? d : j.description ?? ""));
-          setSuggested(true);
+          setSuggested("ok");
         },
       )
-      .catch(() => {})
+      .catch(() => setSuggested("fail"))
       .finally(() => setSuggesting(false));
   }, [open, mode, messageLogId, suggested]);
 
@@ -145,15 +153,17 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
             <span>
               {suggesting
                 ? "⏳ پیشنهاد AI…"
-                : suggested
+                : suggested === "ok"
                   ? "✨ AI پیشنهاد داد — اگه خواستی ویرایش کن"
-                  : ""}
+                  : suggested === "fail"
+                    ? "⚠ AI نتونست پیشنهاد بده — دستی تایپ کن"
+                    : ""}
             </span>
-            {suggested && (
+            {suggested !== "none" && (
               <button
                 type="button"
                 onClick={() => {
-                  setSuggested(false);
+                  setSuggested("none");
                   setName("");
                   setDesc("");
                 }}

@@ -59,8 +59,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const suggestion = await suggestRuleFromMessage(text);
   return NextResponse.json({
-    ok: true,
+    ok: suggestion != null,
     name: suggestion?.name ?? "",
     description: suggestion?.description ?? "",
+    error: suggestion == null ? "LLM returned no usable suggestion" : null,
   });
 }
