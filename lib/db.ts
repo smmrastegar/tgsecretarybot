@@ -771,6 +771,11 @@ export async function ensureSchema(): Promise<void> {
     // `request_window_seconds` seconds. NULL window = "always" (no gate).
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS request_trigger TEXT`;
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS request_window_seconds INT`;
+    // Per (rule, recipient) timestamp of the last request_trigger
+    // match. The gate window is BIDIRECTIONAL: a code arriving WITHIN
+    // last_request_at + window also forwards immediately. Without
+    // this column we'd only support lookback.
+    await q`ALTER TABLE message_rule_recipients ADD COLUMN IF NOT EXISTS last_request_at TIMESTAMPTZ`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
     // recent push so the admin can see drift.
@@ -5154,6 +5159,41 @@ export async function findPendingMatchesForRecipient(args: {
     chatId: r.chat_id != null ? Number(r.chat_id) : 0,
     matchedAt: r.matched_at as Date,
   }));
+}
+
+// Mark "the recipient just asked for the code" so later matches
+// arriving inside the window can skip the gate.
+export async function markRecipientRequestedNow(args: {
+  ruleId: number;
+  recipientChatId: number;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE message_rule_recipients
+    SET last_request_at = NOW()
+    WHERE rule_id = ${args.ruleId}
+      AND recipient_chat_id = ${args.recipientChatId}`;
+}
+
+// True when the recipient sent a trigger within the last
+// windowSeconds. Used by the FORWARD path to decide whether to skip
+// the gate for this recipient on a freshly-arrived match.
+export async function recipientRequestedRecently(args: {
+  ruleId: number;
+  recipientChatId: number;
+  windowSeconds: number;
+}): Promise<boolean> {
+  if (!hasDb()) return false;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT 1 FROM message_rule_recipients
+    WHERE rule_id = ${args.ruleId}
+      AND recipient_chat_id = ${args.recipientChatId}
+      AND last_request_at IS NOT NULL
+      AND last_request_at > NOW() - (${args.windowSeconds}::int || ' seconds')::interval
+    LIMIT 1`;
+  return rows.length > 0;
 }
 
 // Append a recipient chat_id to a match's forwarded_to array — used

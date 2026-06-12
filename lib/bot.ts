@@ -2370,41 +2370,50 @@ async function maybeApplyMessageRules(args: {
         rule.requestWindowSeconds > 0;
 
       const { sendRuleForward } = await import("./rule-delivery");
+      const { recipientRequestedRecently } = await import("./db");
       const delivered: number[] = [];
       const failures: Array<{ chatId: number; reason: string }> = [];
-      if (!gated) {
-        for (const r of recipients) {
-          const out = await sendRuleForward({
-            bot: args.bot,
-            chatId: r.recipientChatId,
-            text: outText,
+      for (const r of recipients) {
+        let shouldForward = !gated;
+        if (gated) {
+          // Bidirectional gate: forward NOW if this recipient sent a
+          // trigger within the last window seconds. Otherwise leave
+          // the match held for the trigger-detect path to release.
+          shouldForward = await recipientRequestedRecently({
+            ruleId,
+            recipientChatId: r.recipientChatId,
+            windowSeconds: rule.requestWindowSeconds ?? 0,
           });
-          if (out.ok) {
-            delivered.push(r.recipientChatId);
-            console.log(
-              `[rules] forward sent rule=${ruleId} → chat=${r.recipientChatId} mode=${out.mode} msg_id=${out.sentMessageId} bcId=${out.businessConnectionId ?? "—"}`,
-            );
-          } else {
-            failures.push({
-              chatId: r.recipientChatId,
-              reason: out.error,
-            });
-            console.warn(
-              `[rules] forward to ${r.recipientChatId} failed (both modes): ${out.error}`,
-            );
-          }
         }
-        if (failures.length > 0) {
+        if (!shouldForward) continue;
+        const out = await sendRuleForward({
+          bot: args.bot,
+          chatId: r.recipientChatId,
+          text: outText,
+        });
+        if (out.ok) {
+          delivered.push(r.recipientChatId);
+          console.log(
+            `[rules] forward sent rule=${ruleId} → chat=${r.recipientChatId} mode=${out.mode} msg_id=${out.sentMessageId} bcId=${out.businessConnectionId ?? "—"}${gated ? " (gate: recipient requested recently)" : ""}`,
+          );
+        } else {
+          failures.push({
+            chatId: r.recipientChatId,
+            reason: out.error,
+          });
           console.warn(
-            `[rules] partial forward rule=${ruleId} delivered=${delivered.length}/${recipients.length} failures=${JSON.stringify(failures)}`,
+            `[rules] forward to ${r.recipientChatId} failed (both modes): ${out.error}`,
           );
         }
-      } else {
-        // Held — recipient must request first. Just record the match
-        // with no recipients delivered yet; the trigger-detect path
-        // releases it later.
+      }
+      if (failures.length > 0) {
+        console.warn(
+          `[rules] partial forward rule=${ruleId} delivered=${delivered.length}/${recipients.length} failures=${JSON.stringify(failures)}`,
+        );
+      }
+      if (gated && delivered.length < recipients.length) {
         console.log(
-          `[rules] match held by gate (rule=${ruleId} recipients=${recipients.length} window=${rule.requestWindowSeconds}s)`,
+          `[rules] gate-held ${recipients.length - delivered.length}/${recipients.length} (rule=${ruleId} window=${rule.requestWindowSeconds}s)`,
         );
       }
       const errMap: Record<string, string> = {};
@@ -2440,6 +2449,7 @@ async function maybeReleaseGatedRules(args: {
       listRulesForRecipient,
       findPendingMatchesForRecipient,
       markMatchForwardedTo,
+      markRecipientRequestedNow,
     } = await import("./db");
     const { checkRequestTriggerMatch } = await import("./rules");
     const rules = await listRulesForRecipient(args.senderChatId);
@@ -2458,6 +2468,12 @@ async function maybeReleaseGatedRules(args: {
         rule.requestTrigger ?? "",
       );
       if (!isTrigger) continue;
+      // Stamp the trigger so any FUTURE match within the window
+      // forwards immediately (bidirectional gate).
+      await markRecipientRequestedNow({
+        ruleId: rule.id,
+        recipientChatId: args.senderChatId,
+      }).catch(() => {});
       const pending = await findPendingMatchesForRecipient({
         ruleId: rule.id,
         recipientChatId: args.senderChatId,
