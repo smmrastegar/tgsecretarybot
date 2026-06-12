@@ -92,6 +92,38 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>]/g, (c) => HTML_ESC[c] ?? c);
 }
 
+// Pick the verification code out of an OTP-style message body. The
+// naive /\b\d{4,8}\b/ kept grabbing the year "2026" from the SMS
+// header date instead of the actual code "977487". We walk through a
+// priority list of OTP shapes before falling back to any 6-8 digit
+// run, with years explicitly skipped.
+export function extractOtpCode(text: string): string | null {
+  if (!text) return null;
+  const patterns: RegExp[] = [
+    // "977487 is your Call.com verification code" / "… is the OTP"
+    /(?<!\d)(\d{4,10})(?!\d)\s+is\s+(?:your|the)\b[\s\S]{0,80}?\b(?:code|otp|verification|verify|pin)\b/i,
+    // "verification code 977487", "your OTP: 977487", "PIN = 977487"
+    /\b(?:verification\s+code|verification|otp|verify|pin|code|کد|تایید|رمز(?:\s+ورود)?)\b[^\d\n]{0,40}(?<!\d)(\d{4,10})(?!\d)/i,
+    // hash style "#977487" (often appended for auto-fill on iOS/Android)
+    /#(\d{4,10})\b/,
+    // 6-8 digit standalone run (most common SMS OTP length)
+    /(?<!\d)(\d{6,8})(?!\d)/,
+  ];
+  for (const rx of patterns) {
+    const m = text.match(rx);
+    if (m?.[1]) return m[1];
+  }
+  // Last resort: 4-5 digit standalone runs, but reject years (1900-2099)
+  // and zero-leading sequences that look like phone fragments.
+  const fours = text.match(/(?<!\d)(\d{4,5})(?!\d)/g) ?? [];
+  for (const cand of fours) {
+    const n = Number(cand);
+    if (n >= 1900 && n <= 2099) continue;
+    return cand;
+  }
+  return null;
+}
+
 // Build the text of a rule-forwarded message according to the rule's
 // formatting flags. Returns the text + a parse_mode hint so the caller
 // uses HTML rendering when we've inlined a tap-to-copy code block.
@@ -103,11 +135,10 @@ export function buildRuleForwardText(args: {
   formatAsOtp: boolean;
 }): { text: string; parseMode?: "HTML" } {
   if (args.formatAsOtp) {
-    // Extract a likely OTP — first 4-8 digit run in the body. Falls
-    // back to the full body when nothing matches so the operator still
-    // sees the original code text.
-    const m = args.body.match(/\b(\d{4,8})\b/);
-    const code = m?.[1] ?? null;
+    // extractOtpCode prefers digits that follow OTP keywords ("code",
+    // "verification", "#"…) so we don't accidentally tap-to-copy the
+    // year out of the SMS header.
+    const code = extractOtpCode(args.body);
     const lines: string[] = [];
     if (args.showRulePrefix) {
       lines.push(
