@@ -1513,12 +1513,19 @@ async function resolveOwner(bcId: string, bot: Bot): Promise<OwnerCacheEntry | n
 
 // Lightweight gate before paying for an LLM call: most messages
 // don't carry an OTP, so we skip extraction unless the body has at
-// least one 4+ digit run AND looks plausibly like an SMS / system
-// notification (not a 20+ digit phone-number-only payload).
+// least one 4+ digit run. We normalise Persian / Arabic digits first
+// so codes like "۱۴۵۵۵۵۵" still register — JS \d only matches Latin
+// digits.
 function looksLikePossibleOtp(text: string): boolean {
   if (!text || text.length < 4) return false;
-  if (!/\b\d{4,}\b/.test(text)) return false;
-  return true;
+  // We can't import lib/rules at module-eval (circular) so inline a
+  // tiny normaliser. Same semantics as normaliseDigits over there.
+  const FA = "۰۱۲۳۴۵۶۷۸۹";
+  const AR = "٠١٢٣٤٥٦٧٨٩";
+  const ascii = text
+    .replace(/[۰-۹]/g, (d) => String(FA.indexOf(d)))
+    .replace(/[٠-٩]/g, (d) => String(AR.indexOf(d)));
+  return /\b\d{4,}\b/.test(ascii);
 }
 
 async function maybeExtractOtp(args: {

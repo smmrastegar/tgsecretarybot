@@ -414,10 +414,27 @@ Never leave either field blank. Never explain. Never wrap in code fences.`;
 // years / phone fragments / hash IDs and the operator asked to do
 // extraction via AI instead. Returns the bare code or null when the
 // model says there isn't one.
+// Normalise Persian (۰-۹) and Arabic-Indic (٠-٩) digits to ASCII 0-9
+// before we run them through pre-filters / the LLM. JavaScript's
+// default \d class only matches Latin digits so a Persian-only OTP
+// like "۱۴۵۵۵۵۵" would otherwise slip past every regex we have.
+const PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
+const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
+export function normaliseDigits(s: string): string {
+  return s
+    .replace(/[۰-۹]/g, (d) => String(PERSIAN_DIGITS.indexOf(d)))
+    .replace(/[٠-٩]/g, (d) => String(ARABIC_DIGITS.indexOf(d)));
+}
+
 export async function extractOtpCodeAi(
   text: string,
 ): Promise<string | null> {
   if (!text || !text.trim()) return null;
+  // Normalise digits first so Gemini sees ASCII numbers regardless of
+  // source script. This also means the returned code is always in
+  // English digits, which is what the dashboard chip + Telegram
+  // tap-to-copy want.
+  const body = normaliseDigits(text);
   const systemPrompt = `You extract the verification / OTP code from one message.
 
 Reply on EXACTLY one line, nothing else, no preamble, no markdown, no quotes:
@@ -445,7 +462,7 @@ output: CODE: none
 
 input: "Source Address: 447480022838\\nDate: Fri, 12 Jun 2026 15:18:17 GMT\\nText: 431459 is your Call.com verification code."
 output: CODE: 431459`;
-  const userPrompt = `Message:\n${text.slice(0, 1500)}`;
+  const userPrompt = `Message:\n${body.slice(0, 1500)}`;
   let raw: string;
   try {
     const out = await callLlm({

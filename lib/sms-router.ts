@@ -242,10 +242,30 @@ export async function routeSmsForward(args: {
   );
 
   const owner = await findOwnerOfPhone(sms.phone).catch(() => null);
-  const header = owner?.name
+  const headerPlain = owner?.name
     ? `☎️ ${sms.phone} — ${owner.name}`
     : `☎️ ${sms.phone}`;
-  const outText = sms.body ? `${header}\n\n${sms.body}` : header;
+
+  // Try to pull the OTP code out so we can inline it inside
+  // <code>…</code> — Telegram renders that as tap-to-copy.
+  let otp: string | null = null;
+  if (sms.body) {
+    try {
+      const { extractOtpCodeAi } = await import("./rules");
+      otp = await extractOtpCodeAi(sms.body);
+    } catch {}
+  }
+
+  // HTML so we can attach the code block. Escape everything we
+  // didn't construct ourselves.
+  const esc = (s: string) =>
+    s.replace(/[&<>]/g, (c) =>
+      c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;",
+    );
+  const parts: string[] = [esc(headerPlain)];
+  if (otp) parts.push("", `🔑 <code>${esc(otp)}</code>`);
+  if (sms.body) parts.push("", esc(sms.body));
+  const outText = parts.join("\n");
 
   const { sendRuleForward } = await import("./rule-delivery");
   let delivered = 0;
@@ -254,6 +274,7 @@ export async function routeSmsForward(args: {
       bot: args.bot,
       chatId: inbox.chatId,
       text: outText,
+      parseMode: "HTML",
     });
     if (out.ok) {
       delivered++;
