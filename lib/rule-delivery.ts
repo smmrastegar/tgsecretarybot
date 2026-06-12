@@ -46,11 +46,14 @@ export async function sendRuleForward(args: {
   bot: Bot;
   chatId: number;
   text: string;
+  parseMode?: "HTML" | "MarkdownV2";
 }): Promise<ForwardResult> {
   const bcId = await pickActiveBusinessConnectionId();
+  const opts = args.parseMode ? { parse_mode: args.parseMode } : undefined;
   if (bcId) {
     try {
       const sent = await args.bot.api.sendMessage(args.chatId, args.text, {
+        ...(opts ?? {}),
         business_connection_id: bcId,
       });
       return {
@@ -67,7 +70,7 @@ export async function sendRuleForward(args: {
     }
   }
   try {
-    const sent = await args.bot.api.sendMessage(args.chatId, args.text);
+    const sent = await args.bot.api.sendMessage(args.chatId, args.text, opts);
     return {
       ok: true,
       mode: "direct",
@@ -78,4 +81,56 @@ export async function sendRuleForward(args: {
     const reason = dErr instanceof Error ? dErr.message : String(dErr);
     return { ok: false, error: reason, lastAttempt: "direct" };
   }
+}
+
+const HTML_ESC: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+};
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>]/g, (c) => HTML_ESC[c] ?? c);
+}
+
+// Build the text of a rule-forwarded message according to the rule's
+// formatting flags. Returns the text + a parse_mode hint so the caller
+// uses HTML rendering when we've inlined a tap-to-copy code block.
+export function buildRuleForwardText(args: {
+  ruleName: string;
+  senderName: string;
+  body: string;
+  showRulePrefix: boolean;
+  formatAsOtp: boolean;
+}): { text: string; parseMode?: "HTML" } {
+  if (args.formatAsOtp) {
+    // Extract a likely OTP — first 4-8 digit run in the body. Falls
+    // back to the full body when nothing matches so the operator still
+    // sees the original code text.
+    const m = args.body.match(/\b(\d{4,8})\b/);
+    const code = m?.[1] ?? null;
+    const lines: string[] = [];
+    if (args.showRulePrefix) {
+      lines.push(
+        `🏷 <b>${escapeHtml(args.ruleName)}</b> · از ${escapeHtml(args.senderName)}`,
+      );
+      lines.push("");
+    }
+    if (code) {
+      // Telegram renders <code>…</code> as monospace; tapping copies
+      // the content. This is the canonical "OTP" UX.
+      lines.push(`🔑 <code>${escapeHtml(code)}</code>`);
+    } else {
+      // No digits found — show the raw body in a <code> block so it
+      // still copies on tap.
+      lines.push(`🔑 <code>${escapeHtml(args.body.slice(0, 200))}</code>`);
+    }
+    return { text: lines.join("\n"), parseMode: "HTML" };
+  }
+  // Default: plain text. Prefix optional.
+  if (args.showRulePrefix) {
+    return {
+      text: `🏷 [rule: ${args.ruleName}] · از ${args.senderName}\n\n${args.body}`,
+    };
+  }
+  return { text: args.body };
 }

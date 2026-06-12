@@ -10,7 +10,7 @@ import {
   sql,
 } from "@/lib/db";
 import { getBot } from "@/lib/bot";
-import { sendRuleForward } from "@/lib/rule-delivery";
+import { buildRuleForwardText, sendRuleForward } from "@/lib/rule-delivery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -94,13 +94,25 @@ export async function POST(
     m.formatted_text && m.formatted_text.trim().length > 0
       ? m.formatted_text
       : m.message_text ?? "";
-  const outText = `🏷 [rule: ${rule.name}] · از ${m.sender_name ?? "?"}\n\n${body_text}`;
+  const built = buildRuleForwardText({
+    ruleName: rule.name,
+    senderName: m.sender_name ?? "?",
+    body: body_text,
+    showRulePrefix: rule.showRulePrefix,
+    formatAsOtp: rule.formatAsOtp,
+  });
+  const outText = built.text;
 
   const bot = getBot();
   let delivered = 0;
   const failures: Record<string, string> = {};
   for (const chatId of targets) {
-    const out = await sendRuleForward({ bot, chatId, text: outText });
+    const out = await sendRuleForward({
+      bot,
+      chatId,
+      text: outText,
+      parseMode: built.parseMode,
+    });
     if (out.ok) {
       await markMatchForwardedTo({
         matchId: matchIdN,

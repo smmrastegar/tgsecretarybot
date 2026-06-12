@@ -771,6 +771,14 @@ export async function ensureSchema(): Promise<void> {
     // `request_window_seconds` seconds. NULL window = "always" (no gate).
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS request_trigger TEXT`;
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS request_window_seconds INT`;
+    // Optional "🏷 [rule: …]" prefix on the forwarded message.
+    // Default TRUE for backward compat with existing rules.
+    await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS show_rule_prefix BOOLEAN NOT NULL DEFAULT TRUE`;
+    // OTP rendering: when ON, the bot extracts the digit code from
+    // the matched body and wraps it in <code>...</code> so Telegram
+    // renders it as a tap-to-copy block. The custom forward_format
+    // prompt is ignored in this mode.
+    await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS format_as_otp BOOLEAN NOT NULL DEFAULT FALSE`;
     // Per (rule, recipient) timestamp of the last request_trigger
     // match. The gate window is BIDIRECTIONAL: a code arriving WITHIN
     // last_request_at + window also forwards immediately. Without
@@ -4739,6 +4747,8 @@ export type MessageRule = {
   forwardFormat: string | null;
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
+  showRulePrefix: boolean;
+  formatAsOtp: boolean;
   enabled: boolean;
   createdBy: number | null;
   createdAt: Date;
@@ -4773,6 +4783,9 @@ function rowToRule(r: Record<string, unknown>): MessageRule {
       r.request_window_seconds != null
         ? Number(r.request_window_seconds)
         : null,
+    showRulePrefix:
+      r.show_rule_prefix == null ? true : Boolean(r.show_rule_prefix),
+    formatAsOtp: Boolean(r.format_as_otp),
     enabled: Boolean(r.enabled),
     createdBy: r.created_by != null ? Number(r.created_by) : null,
     createdAt: r.created_at as Date,
@@ -4790,7 +4803,8 @@ export async function listMessageRules(args?: {
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
     SELECT id, tenant_id, name, description, forward_format,
-           request_trigger, request_window_seconds, enabled,
+           request_trigger, request_window_seconds,
+           show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
     FROM message_rules
     WHERE (${enabledOnly}::boolean = FALSE OR enabled = TRUE)
@@ -4804,7 +4818,8 @@ export async function getMessageRule(id: number): Promise<MessageRule | null> {
   await ensureSchema();
   const rows = await sql()`
     SELECT id, tenant_id, name, description, forward_format,
-           request_trigger, request_window_seconds, enabled,
+           request_trigger, request_window_seconds,
+           show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
     FROM message_rules WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -4833,6 +4848,7 @@ export async function createMessageRule(args: {
     )
     RETURNING id, tenant_id, name, description, forward_format,
               request_trigger, request_window_seconds,
+              show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
   return rowToRule(rows[0] as Record<string, unknown>);
 }
@@ -4845,6 +4861,8 @@ export async function updateMessageRule(
     forwardFormat: string | null;
     requestTrigger: string | null;
     requestWindowSeconds: number | null;
+    showRulePrefix: boolean;
+    formatAsOtp: boolean;
     enabled: boolean;
   }>,
 ): Promise<MessageRule | null> {
@@ -4865,11 +4883,14 @@ export async function updateMessageRule(
       forward_format = CASE WHEN ${ffMarker}::int = 1 THEN ${ffValue} ELSE forward_format END,
       request_trigger = CASE WHEN ${rtMarker}::int = 1 THEN ${rtValue} ELSE request_trigger END,
       request_window_seconds = CASE WHEN ${rwMarker}::int = 1 THEN ${rwValue}::int ELSE request_window_seconds END,
+      show_rule_prefix = COALESCE(${patch.showRulePrefix ?? null}::boolean, show_rule_prefix),
+      format_as_otp = COALESCE(${patch.formatAsOtp ?? null}::boolean, format_as_otp),
       enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id, tenant_id, name, description, forward_format,
               request_trigger, request_window_seconds,
+              show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToRule(r) : null;
@@ -5111,7 +5132,8 @@ export async function listRulesForRecipient(
   await ensureSchema();
   const rows = await sql()`
     SELECT r.id, r.tenant_id, r.name, r.description, r.forward_format,
-           r.request_trigger, r.request_window_seconds, r.enabled,
+           r.request_trigger, r.request_window_seconds,
+           r.show_rule_prefix, r.format_as_otp, r.enabled,
            r.created_by, r.created_at, r.updated_at
     FROM message_rules r
     JOIN message_rule_recipients rr ON rr.rule_id = r.id

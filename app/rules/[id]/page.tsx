@@ -14,6 +14,8 @@ type Rule = {
   forwardFormat: string | null;
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
+  showRulePrefix: boolean;
+  formatAsOtp: boolean;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -77,6 +79,8 @@ export default function RuleDetailPage() {
   const [format, setFormat] = useState("");
   const [requestTrigger, setRequestTrigger] = useState("");
   const [requestWindow, setRequestWindow] = useState<number | null>(null);
+  const [showRulePrefix, setShowRulePrefix] = useState(true);
+  const [formatAsOtp, setFormatAsOtp] = useState(false);
 
   // recipient form
   const [newChat, setNewChat] = useState("");
@@ -113,6 +117,8 @@ export default function RuleDetailPage() {
         setFormat(j.rule.forwardFormat ?? "");
         setRequestTrigger(j.rule.requestTrigger ?? "");
         setRequestWindow(j.rule.requestWindowSeconds);
+        setShowRulePrefix(j.rule.showRulePrefix !== false);
+        setFormatAsOtp(!!j.rule.formatAsOtp);
       }
       if (r2.ok) {
         const j = (await r2.json()) as { matches: Match[] };
@@ -190,13 +196,25 @@ export default function RuleDetailPage() {
           forwardFormat: format || null,
           requestTrigger: requestTrigger || null,
           requestWindowSeconds: requestWindow,
+          showRulePrefix,
+          formatAsOtp,
         }),
       });
       load();
     } finally {
       setSaving(false);
     }
-  }, [id, name, desc, format, requestTrigger, requestWindow, load]);
+  }, [
+    id,
+    name,
+    desc,
+    format,
+    requestTrigger,
+    requestWindow,
+    showRulePrefix,
+    formatAsOtp,
+    load,
+  ]);
 
   const remove = useCallback(async () => {
     if (!confirm("این rule پاک بشه؟")) return;
@@ -391,8 +409,36 @@ export default function RuleDetailPage() {
             onChange={(e) => setFormat(e.target.value)}
             placeholder="(اختیاری) format فوروارد — مثلاً «فقط عدد کد رو با emoji 🔑 بفرست» — خالی = پیام اصلی"
             rows={2}
-            className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+            disabled={formatAsOtp}
+            className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 disabled:opacity-50"
           />
+          <div className="flex flex-col gap-1.5 pt-1">
+            <label className="flex items-center gap-2 text-[11px] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showRulePrefix}
+                onChange={(e) => setShowRulePrefix(e.target.checked)}
+              />
+              <span>
+                🏷 prefix اول پیام بیاد («[rule: …] · از …»). خاموش
+                کنی، فقط بدنه فوروارد می‌شه.
+              </span>
+            </label>
+            <label className="flex items-center gap-2 text-[11px] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formatAsOtp}
+                onChange={(e) => setFormatAsOtp(e.target.checked)}
+              />
+              <span>
+                🔑 <b>OTP mode</b> — کد رو از متن استخراج کن و به‌صورت
+                <code className="mx-1 px-1 bg-[var(--color-surface-2)] rounded">
+                  tap-to-copy
+                </code>
+                بفرست. وقتی روشن باشه، format بالا نادیده گرفته می‌شه.
+              </span>
+            </label>
+          </div>
           <div className="pt-2 border-t border-[var(--color-border)] mt-1">
             <div className="text-[11px] font-medium mb-1">
               ⏸ Gate درخواست (اختیاری)

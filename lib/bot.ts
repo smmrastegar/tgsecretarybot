@@ -2347,18 +2347,32 @@ async function maybeApplyMessageRules(args: {
         }).catch(() => {});
         continue;
       }
-      const formatted = await formatMessageForRule(rule, {
-        chatId: args.chatId,
-        chatTitle: args.chatTitle,
-        senderName: args.senderName,
-        messageText: args.messageText,
-        businessConnectionId: args.businessConnectionId,
-      });
+      // OTP mode short-circuits the LLM formatter — we just extract
+      // the digits ourselves. Saves a model call AND avoids the model
+      // helpfully "tidying up" the code.
+      const formatted = rule.formatAsOtp
+        ? null
+        : await formatMessageForRule(rule, {
+            chatId: args.chatId,
+            chatTitle: args.chatTitle,
+            senderName: args.senderName,
+            messageText: args.messageText,
+            businessConnectionId: args.businessConnectionId,
+          });
       const body =
         formatted && formatted.trim().length > 0
           ? formatted
           : args.messageText;
-      const outText = `🏷 [rule: ${rule.name}] · از ${args.senderName}\n\n${body}`;
+      const { buildRuleForwardText } = await import("./rule-delivery");
+      const built = buildRuleForwardText({
+        ruleName: rule.name,
+        senderName: args.senderName,
+        body,
+        showRulePrefix: rule.showRulePrefix,
+        formatAsOtp: rule.formatAsOtp,
+      });
+      const outText = built.text;
+      const outParseMode = built.parseMode;
 
       // Request-gate: if the rule has request_trigger + a finite window,
       // hold the forward for each recipient until they've sent a
@@ -2390,6 +2404,7 @@ async function maybeApplyMessageRules(args: {
           bot: args.bot,
           chatId: r.recipientChatId,
           text: outText,
+          parseMode: outParseMode,
         });
         if (out.ok) {
           delivered.push(r.recipientChatId);
@@ -2480,17 +2495,30 @@ async function maybeReleaseGatedRules(args: {
         withinSeconds: rule.requestWindowSeconds ?? 0,
       });
       if (pending.length === 0) continue;
-      const { sendRuleForward } = await import("./rule-delivery");
+      const { sendRuleForward, buildRuleForwardText } = await import(
+        "./rule-delivery"
+      );
       for (const p of pending) {
+        // Same rule-flag-aware build as the forward path. OTP mode
+        // re-extracts the code from formatted_text (or messageText)
+        // — we don't trust whatever was held to be already OTP-shaped.
         const body =
           p.formattedText && p.formattedText.trim().length > 0
             ? p.formattedText
             : p.messageText;
-        const outText = `🏷 [rule: ${rule.name}] · از ${p.senderName}\n\n${body}`;
+        const built = buildRuleForwardText({
+          ruleName: rule.name,
+          senderName: p.senderName,
+          body,
+          showRulePrefix: rule.showRulePrefix,
+          formatAsOtp: rule.formatAsOtp,
+        });
+        const outText = built.text;
         const out = await sendRuleForward({
           bot: args.bot,
           chatId: args.senderChatId,
           text: outText,
+          parseMode: built.parseMode,
         });
         if (out.ok) {
           await markMatchForwardedTo({
