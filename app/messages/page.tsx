@@ -308,7 +308,16 @@ export default function MessagesPage() {
                 </div>
               )}
               <div className="flex flex-col gap-1 min-w-0">
-                {group.messages.slice(0, 5).map((m) => {
+                {/* Show the newest 5 BUT in chronological order — oldest
+                    near the top, newest near the bottom (right above
+                    "REPLY TO LAST MESSAGE"), like a real Telegram
+                    conversation. The underlying array is newest-first
+                    so we slice then reverse. */}
+                {group.messages
+                  .slice(0, 5)
+                  .slice()
+                  .reverse()
+                  .map((m) => {
                   // For audio kinds (voice / video_note) the transcript
                   // IS the meaningful content so we use it as the bubble
                   // body. For visual kinds the bubble keeps the original

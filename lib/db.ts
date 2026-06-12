@@ -213,6 +213,12 @@ export async function ensureSchema(): Promise<void> {
     // log, no rule eval, no SMS route, no auto-reply. For chats the
     // operator never wants the system to touch.
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Operator-entered phone number for this chat. Used by SMS
+    // routing (findOwnerOfPhone) so we can resolve incoming SMS to
+    // the right contact even when we've never seen them share a
+    // contact card. Stored as the operator typed it; matching uses
+    // the last-8-digit tail.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS phone_number TEXT`;
     // AI-extracted OTP / verification code surfaced inline on every
     // message that carried one. Populated by maybeExtractOtp in
     // bot.ts (background, fire-and-forget). Dashboard renders a
@@ -1770,6 +1776,7 @@ export type ChatRule = {
   autoExtractNotes: boolean;
   isBot: boolean;
   ignored: boolean;
+  phoneNumber: string | null;
   graceSkippedAt: Date | null;
   updatedAt: Date;
 };
@@ -1835,6 +1842,7 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
     autoExtractNotes: Boolean(r.auto_extract_notes),
     isBot: Boolean(r.is_bot),
     ignored: Boolean(r.ignored),
+    phoneNumber: (r.phone_number as string) ?? null,
     graceSkippedAt: (r.grace_skipped_at as Date) ?? null,
     updatedAt: r.updated_at as Date,
   };
@@ -1858,7 +1866,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            last_auto_summary_at,
            auto_forward_voice, auto_forward_video, auto_forward_photo,
            auto_forward_location, auto_extract_notes,
-           is_bot, ignored,
+           is_bot, ignored, phone_number,
            grace_skipped_at, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -2608,7 +2616,25 @@ export async function findOwnerOfPhone(phone: string): Promise<{
   // distinctive but tolerant of country code variations.
   const tail = digits.slice(-8);
   await ensureSchema();
-  // Strategy 0: phone_contacts table populated from harvested
+  // Strategy 0a: operator-entered chat_rules.phone_number — most
+  // authoritative because the operator typed it specifically to
+  // bind this person ↔ this number. We match on the same 8-digit
+  // tail used elsewhere.
+  const phoneRows = await sql()`
+    SELECT chat_id, first_name, last_name, nickname
+    FROM chat_rules
+    WHERE phone_number IS NOT NULL
+      AND regexp_replace(phone_number, '\\D', '', 'g') LIKE ${`%${tail}`}
+    LIMIT 1`;
+  if ((phoneRows as unknown[]).length > 0) {
+    const r = phoneRows[0] as Record<string, unknown>;
+    const name =
+      [r.first_name, r.last_name].filter(Boolean).join(" ").trim() ||
+      (r.nickname as string) ||
+      null;
+    return { name: name || null, chatId: Number(r.chat_id) };
+  }
+  // Strategy 0b: phone_contacts table populated from harvested
   // contact shares — most reliable identity source we have because
   // it carries an actual telegram_user_id when available.
   const phoneHit = await lookupPhoneContact(phone).catch(() => null);
@@ -2655,6 +2681,30 @@ export async function findOwnerOfPhone(phone: string): Promise<{
     return { name: name || null, chatId: Number(r.chat_id) };
   }
   return null;
+}
+
+export async function setChatPhoneNumber(
+  chatId: number,
+  phoneNumber: string | null,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  const trimmed = phoneNumber?.trim() ?? null;
+  await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title, phone_number, updated_at)
+    VALUES (
+      ${chatId},
+      COALESCE(
+        (SELECT MAX(chat_type) FROM messages_log WHERE chat_id = ${chatId}),
+        CASE WHEN ${chatId}::bigint < 0 THEN 'supergroup' ELSE 'private' END
+      ),
+      (SELECT MAX(chat_title) FROM messages_log WHERE chat_id = ${chatId}),
+      ${trimmed},
+      NOW()
+    )
+    ON CONFLICT (chat_id) DO UPDATE SET
+      phone_number = ${trimmed},
+      updated_at = NOW()`;
 }
 
 export async function setChatIgnored(
@@ -2739,7 +2789,7 @@ export async function listChatsByFunction(
            r.last_auto_summary_at,
            r.auto_forward_voice, r.auto_forward_video, r.auto_forward_photo,
            r.auto_forward_location, r.auto_extract_notes,
-           r.is_bot, r.ignored,
+           r.is_bot, r.ignored, r.phone_number,
            r.grace_skipped_at, r.updated_at
     FROM chat_rules r
     WHERE (

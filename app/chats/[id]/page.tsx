@@ -9,6 +9,7 @@ import MediaView from "@/components/MediaView";
 import ChatRulesPanel from "@/components/ChatRulesPanel";
 import CopyableChatId from "@/components/CopyableChatId";
 import OtpChip from "@/components/OtpChip";
+import PhoneInput from "@/components/PhoneInput";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
 type ChatMode =
@@ -138,6 +139,7 @@ type Rule = {
   autoExtractNotes: boolean;
   isBot: boolean;
   ignored: boolean;
+  phoneNumber: string | null;
   graceSkippedAt: string | null;
   updatedAt: string;
 };
@@ -1458,6 +1460,19 @@ export default function ChatDetailPage() {
               <MediaRoutingLog chatId={chatId} />
             )}
             <ChatRulesPanel chatId={chatId} />
+            <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+              <div className="text-xs font-medium mb-1.5">📱 شماره تلفن</div>
+              <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+                این شماره برای route کردن SMSهای ورودی و هر فیچر دیگه‌ای که
+                شماره می‌خواد استفاده می‌شه. با + و کد کشور بنویس (مثلاً
+                +989123456789).
+              </p>
+              <PhoneInput
+                chatId={chatId}
+                initial={rule?.phoneNumber ?? null}
+                onSaved={load}
+              />
+            </div>
             <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
               <div className="text-xs font-medium mb-1.5">🚫 نادیده گرفتن کامل</div>
               <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
