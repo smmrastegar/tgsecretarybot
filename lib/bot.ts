@@ -68,6 +68,7 @@ import {
   type ChatMode,
   type SecretarySession,
   isChatIgnored,
+  recordPhoneContact,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -1397,6 +1398,9 @@ function buildBot(): Bot {
     await handleSecretaryReply(m, bot).catch((err) =>
       console.error("[secretary] handler error:", err),
     );
+    // Harvest any contact share into phone_contacts so the SMS
+    // router can identify this number on a later inbound SMS.
+    harvestContactShare(m);
     // Gate-release path for rule recipients DM'ing the bot directly.
     // The owner's business chats already fire this from inside
     // handleBusinessMessage; this branch covers people who only know
@@ -1507,6 +1511,23 @@ async function resolveOwner(bcId: string, bot: Bot): Promise<OwnerCacheEntry | n
   }
 }
 
+// Telegram delivers shared contacts as a regular message with
+// msg.contact set; the payload optionally includes user_id when the
+// contact is a Telegram user. We harvest these into phone_contacts
+// so findOwnerOfPhone can resolve the SMS sender on later lookups.
+function harvestContactShare(msg: Message): void {
+  const c = msg.contact;
+  if (!c || !c.phone_number) return;
+  void recordPhoneContact({
+    phoneFull: c.phone_number,
+    telegramUserId: c.user_id ?? null,
+    firstName: c.first_name ?? null,
+    lastName: c.last_name ?? null,
+    username: null,
+    source: "contact_share",
+  }).catch((err) => console.warn("[phone_contacts] save failed:", err));
+}
+
 async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   // Hard ignore: operator marked this chat as "do not process". Bail
   // before any classifier / log / route / rule work. Cached briefly
@@ -1516,6 +1537,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     console.log(`[ignore] dropping business_message in chat=${msg.chat.id} (ignored=true)`);
     return;
   }
+  harvestContactShare(msg);
   // Diagnostic — every media payload that reaches this handler gets a
   // "received_business" row in media_routing_log so we can tell apart
   // "the bot never saw it" (no received row) from "the bot saw it but
@@ -3102,6 +3124,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
     console.log(`[ignore] dropping channel/group post in chat=${msg.chat.id} (ignored=true)`);
     return;
   }
+  harvestContactShare(msg);
   // Diagnostic mirror of handleBusinessMessage's "received" entry.
   // Used to tell apart "bot never saw the message" from "bot saw it
   // but bailed early".

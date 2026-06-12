@@ -213,6 +213,25 @@ export async function ensureSchema(): Promise<void> {
     // log, no rule eval, no SMS route, no auto-reply. For chats the
     // operator never wants the system to touch.
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Phone → Telegram identity harvested from "contact" messages
+    // (customer taps Share Contact, or anyone forwards a vCard). We
+    // store the last 9-10 digits as the lookup key because incoming
+    // SMS messages from gateways may or may not carry the country
+    // code; the tail still uniquely identifies the line.
+    await q`
+      CREATE TABLE IF NOT EXISTS phone_contacts (
+        id                BIGSERIAL PRIMARY KEY,
+        phone_full        TEXT NOT NULL,
+        phone_tail        TEXT NOT NULL,
+        telegram_user_id  BIGINT,
+        first_name        TEXT,
+        last_name         TEXT,
+        username          TEXT,
+        source            TEXT NOT NULL DEFAULT 'contact_share',
+        observed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS phone_contacts_tail_idx ON phone_contacts (phone_tail)`;
+    await q`CREATE INDEX IF NOT EXISTS phone_contacts_user_idx ON phone_contacts (telegram_user_id) WHERE telegram_user_id IS NOT NULL`;
     // When the user asks "send me a photo of you", the AI uses the
     // operator's reference photo (settings.ownerPhotoUrl) as visual
     // anchor and calls an image-gen model. Off by default — costs ~$0.04
@@ -2469,6 +2488,87 @@ export async function markAutoSummaryDelivered(chatId: number): Promise<void> {
     WHERE chat_id = ${chatId}`;
 }
 
+// Save a phone → identity mapping observed from a Telegram contact
+// share. Idempotent on (phone_tail, telegram_user_id) — repeated
+// shares only refresh observed_at + names.
+export async function recordPhoneContact(args: {
+  phoneFull: string;
+  telegramUserId?: number | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  username?: string | null;
+  source?: string;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  const digits = args.phoneFull.replace(/\D/g, "");
+  if (digits.length < 6) return;
+  const tail = digits.slice(-9);
+  // Existing row with same tail + user_id (or both with null user)?
+  const existing = await sql()`
+    SELECT id FROM phone_contacts
+    WHERE phone_tail = ${tail}
+      AND COALESCE(telegram_user_id, 0) = COALESCE(${args.telegramUserId ?? null}, 0)
+    LIMIT 1`;
+  if ((existing as unknown[]).length > 0) {
+    await sql()`
+      UPDATE phone_contacts
+      SET observed_at = NOW(),
+          first_name = COALESCE(${args.firstName ?? null}, first_name),
+          last_name  = COALESCE(${args.lastName ?? null}, last_name),
+          username   = COALESCE(${args.username ?? null}, username),
+          phone_full = ${args.phoneFull}
+      WHERE id = ${Number((existing[0] as { id: string }).id)}`;
+    return;
+  }
+  await sql()`
+    INSERT INTO phone_contacts (
+      phone_full, phone_tail, telegram_user_id, first_name, last_name, username, source
+    ) VALUES (
+      ${args.phoneFull}, ${tail}, ${args.telegramUserId ?? null},
+      ${args.firstName ?? null}, ${args.lastName ?? null}, ${args.username ?? null},
+      ${args.source ?? "contact_share"}
+    )`;
+}
+
+// Lookup a phone tail → best-known identity. Prefers entries with a
+// telegram_user_id (we actually know the user) over name-only ones.
+export async function lookupPhoneContact(phone: string): Promise<{
+  name: string | null;
+  telegramUserId: number | null;
+  username: string | null;
+} | null> {
+  if (!hasDb() || !phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length < 6) return null;
+  const tail = digits.slice(-9);
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT first_name, last_name, username, telegram_user_id
+    FROM phone_contacts
+    WHERE phone_tail = ${tail}
+    ORDER BY (telegram_user_id IS NOT NULL) DESC, observed_at DESC
+    LIMIT 1`;
+  const r = rows[0] as
+    | {
+        first_name: string | null;
+        last_name: string | null;
+        username: string | null;
+        telegram_user_id: string | number | null;
+      }
+    | undefined;
+  if (!r) return null;
+  const name =
+    [r.first_name, r.last_name].filter(Boolean).join(" ").trim() ||
+    r.username ||
+    null;
+  return {
+    name,
+    telegramUserId: r.telegram_user_id == null ? null : Number(r.telegram_user_id),
+    username: r.username,
+  };
+}
+
 // Best-guess identity for a phone number, based on past messages
 // the bot has logged. Tries a few strategies in priority order:
 //   1. chat_rules row whose notes/relationship_notes mention the
@@ -2489,6 +2589,13 @@ export async function findOwnerOfPhone(phone: string): Promise<{
   // distinctive but tolerant of country code variations.
   const tail = digits.slice(-8);
   await ensureSchema();
+  // Strategy 0: phone_contacts table populated from harvested
+  // contact shares — most reliable identity source we have because
+  // it carries an actual telegram_user_id when available.
+  const phoneHit = await lookupPhoneContact(phone).catch(() => null);
+  if (phoneHit?.name) {
+    return { name: phoneHit.name, chatId: phoneHit.telegramUserId };
+  }
   // Strategy 1: explicit chat_rules.notes / relationship_notes.
   const ruleRows = await sql()`
     SELECT chat_id, first_name, last_name, nickname
