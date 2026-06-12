@@ -10,6 +10,7 @@ import {
   sql,
 } from "@/lib/db";
 import { getBot } from "@/lib/bot";
+import { sendRuleForward } from "@/lib/rule-delivery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -99,16 +100,15 @@ export async function POST(
   let delivered = 0;
   const failures: Record<string, string> = {};
   for (const chatId of targets) {
-    try {
-      await bot.api.sendMessage(chatId, outText);
+    const out = await sendRuleForward({ bot, chatId, text: outText });
+    if (out.ok) {
       await markMatchForwardedTo({
         matchId: matchIdN,
         recipientChatId: chatId,
       });
       delivered++;
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      failures[String(chatId)] = reason;
+    } else {
+      failures[String(chatId)] = out.error;
     }
   }
   if (Object.keys(failures).length > 0) {

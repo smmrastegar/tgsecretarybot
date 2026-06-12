@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { audit } from "@/lib/db";
 import { getBot } from "@/lib/bot";
+import { sendRuleForward } from "@/lib/rule-delivery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,18 +53,20 @@ export async function POST(
         title: ("title" in c ? c.title : null) ?? null,
       };
     } catch {}
-    const sent = await bot.api.sendMessage(
+    const out = await sendRuleForward({
+      bot,
       chatId,
-      `🧪 تست از rule (#${ruleId})\nاگه این پیام رو دریافت کردی، chat_id ${chatId} قابل دسترسی هست از طریق bot @${me.username}.`,
-    );
-    // Heuristics so the operator can tell whether the chat_id matches
-    // the place they ACTUALLY wanted the message to land.
-    const destChatId = sent.chat.id;
-    const destChatType = sent.chat.type;
-    const destChatTitle =
-      "title" in sent.chat
-        ? (sent.chat.title as string | undefined) ?? null
-        : null;
+      text: `🧪 تست از rule (#${ruleId})\nاگه این پیام رو دریافت کردی، chat_id ${chatId} قابل دسترسی هست از طریق bot @${me.username}.`,
+    });
+    if (!out.ok) {
+      throw new Error(out.error);
+    }
+    const usedMode = out.mode;
+    const destChatId = chatId;
+    const destChatType = (destInfo.title ? "group" : "private") as
+      | "group"
+      | "private";
+    const destChatTitle = destInfo.title ?? null;
     const isSelfSend = me.id === destChatId;
     let warning: string | null = null;
     if (isSelfSend) {
@@ -82,14 +85,16 @@ export async function POST(
         chatId,
         destChatId,
         destChatType,
-        sentMessageId: sent.message_id,
+        sentMessageId: out.sentMessageId,
+        mode: usedMode,
         botUsername: me.username,
         botId: me.id,
       },
     });
     return NextResponse.json({
       ok: true,
-      sentMessageId: sent.message_id,
+      sentMessageId: out.sentMessageId,
+      mode: usedMode,
       botUsername: me.username,
       botId: me.id,
       destChatId,

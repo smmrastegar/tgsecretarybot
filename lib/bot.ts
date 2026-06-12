@@ -2369,25 +2369,28 @@ async function maybeApplyMessageRules(args: {
         rule.requestWindowSeconds != null &&
         rule.requestWindowSeconds > 0;
 
+      const { sendRuleForward } = await import("./rule-delivery");
       const delivered: number[] = [];
       const failures: Array<{ chatId: number; reason: string }> = [];
       if (!gated) {
         for (const r of recipients) {
-          try {
-            const sent = await args.bot.api.sendMessage(
-              r.recipientChatId,
-              outText,
-            );
+          const out = await sendRuleForward({
+            bot: args.bot,
+            chatId: r.recipientChatId,
+            text: outText,
+          });
+          if (out.ok) {
             delivered.push(r.recipientChatId);
             console.log(
-              `[rules] forward sent rule=${ruleId} → chat=${r.recipientChatId} (api returned msg_id=${sent.message_id}, chat_type=${sent.chat.type})`,
+              `[rules] forward sent rule=${ruleId} → chat=${r.recipientChatId} mode=${out.mode} msg_id=${out.sentMessageId} bcId=${out.businessConnectionId ?? "—"}`,
             );
-          } catch (err) {
-            const reason =
-              err instanceof Error ? err.message : String(err);
-            failures.push({ chatId: r.recipientChatId, reason });
+          } else {
+            failures.push({
+              chatId: r.recipientChatId,
+              reason: out.error,
+            });
             console.warn(
-              `[rules] forward to ${r.recipientChatId} failed: ${reason}`,
+              `[rules] forward to ${r.recipientChatId} failed (both modes): ${out.error}`,
             );
           }
         }
@@ -2461,25 +2464,29 @@ async function maybeReleaseGatedRules(args: {
         withinSeconds: rule.requestWindowSeconds ?? 0,
       });
       if (pending.length === 0) continue;
+      const { sendRuleForward } = await import("./rule-delivery");
       for (const p of pending) {
         const body =
           p.formattedText && p.formattedText.trim().length > 0
             ? p.formattedText
             : p.messageText;
         const outText = `🏷 [rule: ${rule.name}] · از ${p.senderName}\n\n${body}`;
-        try {
-          await args.bot.api.sendMessage(args.senderChatId, outText);
+        const out = await sendRuleForward({
+          bot: args.bot,
+          chatId: args.senderChatId,
+          text: outText,
+        });
+        if (out.ok) {
           await markMatchForwardedTo({
             matchId: p.matchId,
             recipientChatId: args.senderChatId,
           });
           console.log(
-            `[rules] released held match=${p.matchId} → ${args.senderChatId} (rule=${rule.id})`,
+            `[rules] released held match=${p.matchId} → ${args.senderChatId} mode=${out.mode} (rule=${rule.id})`,
           );
-        } catch (err) {
+        } else {
           console.warn(
-            `[rules] release-forward to ${args.senderChatId} failed:`,
-            err,
+            `[rules] release-forward to ${args.senderChatId} failed: ${out.error}`,
           );
         }
       }
