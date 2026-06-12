@@ -1,12 +1,181 @@
 // SMS routing: when an incoming business_message starts with "☎️
 // +PHONE …" it's treated as an SMS forwarded by the operator's
-// SMS-to-Telegram gateway. We try to identify the phone number's
-// owner from existing chat history, then forward the body to every
-// chat tagged with the sms_inbox function role, prepended with
-// "☎️ +PHONE — Name" (or just "☎️ +PHONE" when the lookup fails).
+// SMS-to-Telegram gateway. Before forwarding we ask the LLM to gate
+// it — operator only wants personal / transactional SMS in the
+// inbox, NOT promotional / marketing / mass blasts. We try to
+// identify the phone number's owner from existing chat history,
+// then forward the body to every chat tagged with the sms_inbox
+// function role, prepended with "☎️ +PHONE — Name" (or just
+// "☎️ +PHONE" when the lookup fails).
 
 import type { Bot } from "grammy";
-import { findOwnerOfPhone, listChatsByFunction } from "./db";
+import { findOwnerOfPhone, listChatsByFunction, recordAiUsage } from "./db";
+import { config } from "./config";
+import { getSettings } from "./settings";
+
+const GATE_MODELS = [
+  process.env.OPENROUTER_RULE_MODEL,
+  "google/gemini-2.5-flash",
+  "google/gemini-2.0-flash-001",
+  "google/gemini-flash-1.5",
+].filter(
+  (m, i, arr): m is string =>
+    typeof m === "string" && m.length > 0 && arr.indexOf(m) === i,
+);
+const GATE_TIMEOUT_MS = 15_000;
+const GATE_COST_USD = 0.00005;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (err) {
+    if ((err as { name?: string })?.name === "AbortError") {
+      throw new Error(`sms-gate timeout after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+type GateDecision = {
+  forward: boolean;
+  reason: string;
+  category: string;
+};
+
+// LLM gate: decide whether the SMS is personal/transactional AND
+// addressed to the operator. Skip-on-failure (returns forward=true)
+// because losing a real OTP because the model timed out is worse
+// than letting one ad through.
+async function classifySmsForForwarding(args: {
+  phone: string;
+  body: string;
+}): Promise<GateDecision> {
+  if (!args.body.trim()) {
+    return {
+      forward: true,
+      reason: "empty body — let it through",
+      category: "unknown",
+    };
+  }
+  if (!config.openrouterApiKey) {
+    return {
+      forward: true,
+      reason: "no openrouter key — skipping gate",
+      category: "unknown",
+    };
+  }
+  const settings = await getSettings();
+  const ownerName = settings.ownerName || "the recipient";
+
+  const systemPrompt = `You decide whether an incoming SMS should be forwarded to the operator's curated inbox or filtered out.
+
+FORWARD (DECISION: YES) when the SMS is personal / transactional and addressed to the recipient (${ownerName}). Examples:
+- One-time codes / OTP / verification / login PINs.
+- Bank, payment, or delivery notifications.
+- Appointment reminders, account warnings, balance alerts.
+- A real person texting them.
+- Service-account messages where they personally took an action.
+
+FILTER (DECISION: NO) when the SMS is marketing / promotional / mass blast. Examples:
+- "Black Friday 50% off …"
+- "Vote for X" / political campaign.
+- Generic discount codes meant for many recipients.
+- Newsletter / promo / advertising pitch.
+- Spam / scam.
+
+Reply on EXACTLY two lines, no preamble, no markdown:
+
+DECISION: YES
+CATEGORY: <one short label like "otp" / "bank" / "appointment" / "promo" / "spam" / "person">
+
+or
+
+DECISION: NO
+CATEGORY: <same labels>
+
+Never explain, never wrap in code fences.`;
+  const userPrompt = `From phone: ${args.phone}
+Body:
+${args.body.slice(0, 1500)}`;
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${config.openrouterApiKey}`,
+    "Content-Type": "application/json",
+    "X-Title": config.openrouterAppName,
+  };
+  if (config.openrouterAppUrl) headers["HTTP-Referer"] = config.openrouterAppUrl;
+
+  let raw = "";
+  let usedModel = "";
+  for (const model of GATE_MODELS) {
+    try {
+      const res = await fetchWithTimeout(
+        "https://openrouter.ai/api/v1/chat/completions",
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model,
+            temperature: 0,
+            max_tokens: 60,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+          }),
+        },
+        GATE_TIMEOUT_MS,
+      );
+      if (!res.ok) continue;
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+        error?: { message?: string };
+      };
+      if (json.error) continue;
+      const text = (json.choices?.[0]?.message?.content ?? "").trim();
+      if (!text) continue;
+      raw = text;
+      usedModel = model;
+      break;
+    } catch (err) {
+      console.warn(`[sms] gate ${model} failed:`, err);
+    }
+  }
+  if (!raw) {
+    return {
+      forward: true,
+      reason: "all gate models failed — fail-open to avoid dropping real SMS",
+      category: "unknown",
+    };
+  }
+  await recordAiUsage({
+    chatId: null,
+    businessConnectionId: null,
+    model: usedModel,
+    purpose: "sms_gate",
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    costUsd: GATE_COST_USD,
+  }).catch(() => {});
+  const decisionMatch = raw.match(/DECISION\s*:\s*(YES|NO)\b/i);
+  const categoryMatch = raw.match(/CATEGORY\s*:\s*([^\n]+)/i);
+  const decision = decisionMatch?.[1]?.toUpperCase() ?? "YES";
+  const category = (categoryMatch?.[1] ?? "unknown").trim().slice(0, 40);
+  return {
+    forward: decision !== "NO",
+    reason: `model=${usedModel} category=${category}`,
+    category,
+  };
+}
 
 // Matches: leading ☎️ (with or without variation selector), 📞, or ☎.
 // Followed by optional whitespace, then a phone-looking run
@@ -52,6 +221,25 @@ export async function routeSmsForward(args: {
   if (inboxes.some((c) => c.chatId === args.sourceChatId)) {
     return { delivered: 0, skipped: "source chat is the sms_inbox" };
   }
+
+  // LLM gate: only forward personal / transactional SMS. Promotional
+  // / mass blasts are filtered out so the inbox stays clean.
+  const decision = await classifySmsForForwarding({
+    phone: sms.phone,
+    body: sms.body,
+  });
+  if (!decision.forward) {
+    console.log(
+      `[sms] gate=NO phone=${sms.phone} category=${decision.category} — skipping forward (${decision.reason})`,
+    );
+    return {
+      delivered: 0,
+      skipped: `gate filtered (${decision.category})`,
+    };
+  }
+  console.log(
+    `[sms] gate=YES phone=${sms.phone} category=${decision.category} (${decision.reason})`,
+  );
 
   const owner = await findOwnerOfPhone(sms.phone).catch(() => null);
   const header = owner?.name
