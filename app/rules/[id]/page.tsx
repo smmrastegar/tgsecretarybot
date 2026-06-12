@@ -220,6 +220,48 @@ export default function RuleDetailPage() {
     load();
   }, [id, newChat, newLabel, load]);
 
+  const [testStatus, setTestStatus] = useState<Record<number, string>>({});
+  const testRecipient = useCallback(
+    async (chatId: number) => {
+      setTestStatus((s) => ({ ...s, [chatId]: "⏳ در حال تست…" }));
+      try {
+        const r = await fetch(`/api/rules/${id}/recipients/test-send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId }),
+        });
+        const j = (await r.json()) as {
+          ok?: boolean;
+          sentMessageId?: number;
+          botUsername?: string;
+          chatType?: string;
+          chatTitle?: string | null;
+          error?: string;
+        };
+        if (j.ok) {
+          setTestStatus((s) => ({
+            ...s,
+            [chatId]:
+              `✓ ارسال شد به @${j.botUsername} (msg=${j.sentMessageId}, ${j.chatType ?? "?"}${
+                j.chatTitle ? ` · ${j.chatTitle}` : ""
+              })`,
+          }));
+        } else {
+          setTestStatus((s) => ({
+            ...s,
+            [chatId]: `✗ ${j.error ?? "خطای نامشخص"}`,
+          }));
+        }
+      } catch (e) {
+        setTestStatus((s) => ({
+          ...s,
+          [chatId]: `✗ ${e instanceof Error ? e.message : String(e)}`,
+        }));
+      }
+    },
+    [id],
+  );
+
   const removeRecipient = useCallback(
     async (chatId: number) => {
       await fetch(
@@ -488,7 +530,25 @@ export default function RuleDetailPage() {
                   ) : (
                     r.recipientChatId
                   )}
+                  {testStatus[r.recipientChatId] && (
+                    <span
+                      className={`ml-2 text-[10px] ${
+                        testStatus[r.recipientChatId]?.startsWith("✓")
+                          ? "text-emerald-300"
+                          : "text-red-300"
+                      }`}
+                    >
+                      {testStatus[r.recipientChatId]}
+                    </span>
+                  )}
                 </span>
+                <button
+                  onClick={() => testRecipient(r.recipientChatId)}
+                  className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+                  title="یه پیام تست از bot بفرست — اگه واقعاً برسه، در دسترس بودن chat تایید می‌شه"
+                >
+                  🧪 تست
+                </button>
                 <button
                   onClick={() => removeRecipient(r.recipientChatId)}
                   className="text-[10px] text-red-300 hover:text-red-200"

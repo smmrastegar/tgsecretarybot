@@ -2374,8 +2374,14 @@ async function maybeApplyMessageRules(args: {
       if (!gated) {
         for (const r of recipients) {
           try {
-            await args.bot.api.sendMessage(r.recipientChatId, outText);
+            const sent = await args.bot.api.sendMessage(
+              r.recipientChatId,
+              outText,
+            );
             delivered.push(r.recipientChatId);
+            console.log(
+              `[rules] forward sent rule=${ruleId} → chat=${r.recipientChatId} (api returned msg_id=${sent.message_id}, chat_type=${sent.chat.type})`,
+            );
           } catch (err) {
             const reason =
               err instanceof Error ? err.message : String(err);
