@@ -2364,12 +2364,18 @@ async function maybeApplyMessageRules(args: {
           ? formatted
           : args.messageText;
       const { buildRuleForwardText } = await import("./rule-delivery");
+      let otpCode: string | null = null;
+      if (rule.formatAsOtp) {
+        const { extractOtpCodeAi } = await import("./rules");
+        otpCode = await extractOtpCodeAi(body).catch(() => null);
+      }
       const built = buildRuleForwardText({
         ruleName: rule.name,
         senderName: args.senderName,
         body,
         showRulePrefix: rule.showRulePrefix,
         formatAsOtp: rule.formatAsOtp,
+        otpCode,
       });
       const outText = built.text;
       const outParseMode = built.parseMode;
@@ -2498,6 +2504,7 @@ async function maybeReleaseGatedRules(args: {
       const { sendRuleForward, buildRuleForwardText } = await import(
         "./rule-delivery"
       );
+      const { extractOtpCodeAi } = await import("./rules");
       for (const p of pending) {
         // Same rule-flag-aware build as the forward path. OTP mode
         // re-extracts the code from formatted_text (or messageText)
@@ -2506,12 +2513,16 @@ async function maybeReleaseGatedRules(args: {
           p.formattedText && p.formattedText.trim().length > 0
             ? p.formattedText
             : p.messageText;
+        const otpCode = rule.formatAsOtp
+          ? await extractOtpCodeAi(body).catch(() => null)
+          : null;
         const built = buildRuleForwardText({
           ruleName: rule.name,
           senderName: p.senderName,
           body,
           showRulePrefix: rule.showRulePrefix,
           formatAsOtp: rule.formatAsOtp,
+          otpCode,
         });
         const outText = built.text;
         const out = await sendRuleForward({

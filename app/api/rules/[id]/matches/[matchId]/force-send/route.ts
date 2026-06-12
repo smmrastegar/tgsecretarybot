@@ -11,6 +11,7 @@ import {
 } from "@/lib/db";
 import { getBot } from "@/lib/bot";
 import { buildRuleForwardText, sendRuleForward } from "@/lib/rule-delivery";
+import { extractOtpCodeAi } from "@/lib/rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -94,12 +95,16 @@ export async function POST(
     m.formatted_text && m.formatted_text.trim().length > 0
       ? m.formatted_text
       : m.message_text ?? "";
+  const otpCode = rule.formatAsOtp
+    ? await extractOtpCodeAi(body_text).catch(() => null)
+    : null;
   const built = buildRuleForwardText({
     ruleName: rule.name,
     senderName: m.sender_name ?? "?",
     body: body_text,
     showRulePrefix: rule.showRulePrefix,
     formatAsOtp: rule.formatAsOtp,
+    otpCode,
   });
   const outText = built.text;
 

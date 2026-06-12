@@ -409,10 +409,71 @@ Never leave either field blank. Never explain. Never wrap in code fences.`;
   return heuristicSuggest(text);
 }
 
+// Ask the LLM to pull the verification code out of a message body.
+// Used by OTP-format mode in lieu of regex — regex kept misfiring on
+// years / phone fragments / hash IDs and the operator asked to do
+// extraction via AI instead. Returns the bare code or null when the
+// model says there isn't one.
+export async function extractOtpCodeAi(
+  text: string,
+): Promise<string | null> {
+  if (!text || !text.trim()) return null;
+  const systemPrompt = `You extract the verification / OTP code from one message.
+
+Reply on EXACTLY one line, nothing else, no preamble, no markdown, no quotes:
+
+  CODE: <the code>
+
+If there is NO verification code in the message reply with:
+
+  CODE: none
+
+The "code" is whatever the message identifies as a one-time login / verification / OTP / PIN value, even when it's surrounded by greeting text or service branding. Do NOT return phone numbers, dates, years, message ids, or fragments of URLs. Persian, Arabic, English — all fine.
+
+Examples:
+input: "977487 is your Call.com verification code."
+output: CODE: 977487
+
+input: "Your code is 123456. Don't share with anyone."
+output: CODE: 123456
+
+input: "کد تایید شما: 9876"
+output: CODE: 9876
+
+input: "Hello, how are you?"
+output: CODE: none
+
+input: "Source Address: 447480022838\\nDate: Fri, 12 Jun 2026 15:18:17 GMT\\nText: 431459 is your Call.com verification code."
+output: CODE: 431459`;
+  const userPrompt = `Message:\n${text.slice(0, 1500)}`;
+  let raw: string;
+  try {
+    const out = await callLlm({
+      models: MATCH_MODELS,
+      systemPrompt,
+      userPrompt,
+      jsonObject: false,
+      purpose: "rule_otp_extract",
+      chatId: null,
+      businessConnectionId: null,
+      costUsd: COST_PER_MATCH_USD,
+      timeoutMs: MATCH_TIMEOUT_MS,
+    });
+    raw = out.text;
+  } catch (err) {
+    console.warn("[rules] OTP extract call failed:", err);
+    return null;
+  }
+  const m = raw.match(/CODE\s*[:：]\s*([^\s\n]+)/i);
+  const code = (m?.[1] ?? "").trim().replace(/^["'«»]|["'«»]$/g, "");
+  if (!code || /^none$/i.test(code)) return null;
+  // Sanity: codes are short, no whitespace, not absurdly long URLs.
+  if (code.length < 3 || code.length > 24) return null;
+  if (/\s/.test(code)) return null;
+  return code;
+}
+
 // Returns true iff `text` looks like it's asking for whatever
-// `requestTrigger` describes. Used by the request-gate path: when a
-// rule has request_trigger set, we only forward matched messages to
-// the recipient after they've sent something matching this trigger.
 export async function checkRequestTriggerMatch(
   text: string,
   requestTrigger: string,
