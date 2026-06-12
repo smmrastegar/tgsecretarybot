@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 
@@ -40,12 +40,18 @@ export default function RulesPage() {
   const [desc, setDesc] = useState("");
   const [format, setFormat] = useState("");
 
+  const RECENT_PAGE = 10;
+  const [hasMoreRecent, setHasMoreRecent] = useState(true);
+  const [loadingMoreRecent, setLoadingMoreRecent] = useState(false);
+  const [recentError, setRecentError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
+    setRecentError(null);
     try {
       const [r1, r2] = await Promise.all([
         fetch("/api/rules"),
-        fetch("/api/rules/recent-matches?limit=20"),
+        fetch(`/api/rules/recent-matches?limit=${RECENT_PAGE}&offset=0`),
       ]);
       if (r1.ok) {
         const j = (await r1.json()) as { rules: Rule[] };
@@ -54,11 +60,52 @@ export default function RulesPage() {
       if (r2.ok) {
         const j = (await r2.json()) as { matches: RecentMatch[] };
         setRecent(j.matches ?? []);
+        setHasMoreRecent((j.matches ?? []).length === RECENT_PAGE);
+      } else {
+        setRecentError("لود لیست شکست خورد — برای retry دکمه رو بزن");
       }
+    } catch (e) {
+      setRecentError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const loadMoreRecent = useCallback(async () => {
+    if (loadingMoreRecent || !hasMoreRecent) return;
+    setLoadingMoreRecent(true);
+    setRecentError(null);
+    try {
+      const r = await fetch(
+        `/api/rules/recent-matches?limit=${RECENT_PAGE}&offset=${recent.length}`,
+      );
+      if (!r.ok) {
+        setRecentError(`خطا ${r.status} — برای retry دکمه رو بزن`);
+        return;
+      }
+      const j = (await r.json()) as { matches: RecentMatch[] };
+      setRecent((prev) => [...prev, ...(j.matches ?? [])]);
+      setHasMoreRecent((j.matches ?? []).length === RECENT_PAGE);
+    } catch (e) {
+      setRecentError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingMoreRecent(false);
+    }
+  }, [recent.length, hasMoreRecent, loadingMoreRecent]);
+
+  const recentSentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = recentSentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMoreRecent();
+      },
+      { rootMargin: "200px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [loadMoreRecent]);
 
   useEffect(() => {
     load();
@@ -248,6 +295,32 @@ export default function RulesPage() {
               </Link>
             ))}
           </div>
+          {recentError ? (
+            <div className="mt-3 p-2 rounded-md bg-red-900/30 border border-red-800 text-[11px] text-red-200 flex items-center justify-between gap-2 flex-wrap">
+              <span>⚠ {recentError}</span>
+              <button
+                onClick={loadMoreRecent}
+                className="text-[11px] px-2 py-1 rounded-md bg-red-700 hover:bg-red-600"
+              >
+                🔄 دوباره امتحان کن
+              </button>
+            </div>
+          ) : hasMoreRecent ? (
+            <div
+              ref={recentSentinelRef}
+              className="text-center text-[11px] text-[var(--color-text-dim)] py-3"
+            >
+              {loadingMoreRecent
+                ? "⏳ در حال بارگذاری بیشتر…"
+                : "اسکرول کن تا بقیه بیاد"}
+            </div>
+          ) : (
+            recent.length > RECENT_PAGE && (
+              <div className="text-center text-[10px] text-[var(--color-text-dim)] py-3">
+                · پایان لیست ({recent.length} match) ·
+              </div>
+            )
+          )}
         </Card>
       )}
     </Shell>

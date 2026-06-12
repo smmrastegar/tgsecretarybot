@@ -5080,9 +5080,10 @@ export async function deleteRuleExample(exampleId: number): Promise<void> {
 }
 
 // Cross-rule recent forwarded-match feed for /rules.
-export async function listRecentRuleMatches(
-  limit: number,
-): Promise<
+export async function listRecentRuleMatches(args: {
+  limit: number;
+  offset?: number;
+}): Promise<
   Array<{
     id: number;
     ruleId: number;
@@ -5098,7 +5099,8 @@ export async function listRecentRuleMatches(
 > {
   if (!hasDb()) return [];
   await ensureSchema();
-  const n = Math.min(Math.max(limit, 1), 200);
+  const n = Math.min(Math.max(args.limit, 1), 200);
+  const offset = Math.max(args.offset ?? 0, 0);
   const rows = await sql()`
     SELECT m.id, m.rule_id, r.name AS rule_name,
            m.message_log_id, m.formatted_text, m.forwarded_to, m.matched_at,
@@ -5107,7 +5109,7 @@ export async function listRecentRuleMatches(
     LEFT JOIN message_rules r ON r.id = m.rule_id
     LEFT JOIN messages_log l ON l.id = m.message_log_id
     ORDER BY m.matched_at DESC
-    LIMIT ${n}`;
+    LIMIT ${n} OFFSET ${offset}`;
   return (rows as Array<Record<string, unknown>>).map((r) => ({
     id: Number(r.id),
     ruleId: Number(r.rule_id),

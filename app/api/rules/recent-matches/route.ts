@@ -12,9 +12,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const url = new URL(request.url);
-  const limit = Number(url.searchParams.get("limit") ?? 50);
-  const matches = await listRecentRuleMatches(
-    Number.isFinite(limit) ? limit : 50,
-  );
+  const limit = Number(url.searchParams.get("limit") ?? 10);
+  const offset = Number(url.searchParams.get("offset") ?? 0);
+  const matches = await listRecentRuleMatches({
+    limit: Number.isFinite(limit) ? limit : 10,
+    offset: Number.isFinite(offset) ? offset : 0,
+  });
   return NextResponse.json({ matches });
 }

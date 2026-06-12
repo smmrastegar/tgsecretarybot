@@ -98,6 +98,7 @@ export default function RuleDetailPage() {
   const MATCH_PAGE = 10;
   const [hasMoreMatches, setHasMoreMatches] = useState(true);
   const [loadingMoreMatches, setLoadingMoreMatches] = useState(false);
+  const [matchesError, setMatchesError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(id)) return;
@@ -137,15 +138,20 @@ export default function RuleDetailPage() {
   const loadMoreMatches = useCallback(async () => {
     if (loadingMoreMatches || !hasMoreMatches) return;
     setLoadingMoreMatches(true);
+    setMatchesError(null);
     try {
       const r = await fetch(
         `/api/rules/${id}/matches?limit=${MATCH_PAGE}&offset=${matches.length}`,
       );
-      if (r.ok) {
-        const j = (await r.json()) as { matches: Match[] };
-        setMatches((prev) => [...prev, ...(j.matches ?? [])]);
-        setHasMoreMatches((j.matches ?? []).length === MATCH_PAGE);
+      if (!r.ok) {
+        setMatchesError(`خطا ${r.status} — برای retry دکمه رو بزن`);
+        return;
       }
+      const j = (await r.json()) as { matches: Match[] };
+      setMatches((prev) => [...prev, ...(j.matches ?? [])]);
+      setHasMoreMatches((j.matches ?? []).length === MATCH_PAGE);
+    } catch (e) {
+      setMatchesError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoadingMoreMatches(false);
     }
@@ -839,20 +845,31 @@ export default function RuleDetailPage() {
                 );
               })}
             </div>
-            {hasMoreMatches && (
+            {matchesError ? (
+              <div className="mt-3 p-2 rounded-md bg-red-900/30 border border-red-800 text-[11px] text-red-200 flex items-center justify-between gap-2 flex-wrap">
+                <span>⚠ {matchesError}</span>
+                <button
+                  onClick={loadMoreMatches}
+                  className="text-[11px] px-2 py-1 rounded-md bg-red-700 hover:bg-red-600"
+                >
+                  🔄 دوباره امتحان کن
+                </button>
+              </div>
+            ) : hasMoreMatches ? (
               <div
                 ref={matchSentinelRef}
                 className="text-center text-[11px] text-[var(--color-text-dim)] py-3"
               >
                 {loadingMoreMatches
-                  ? "در حال بارگذاری بیشتر…"
+                  ? "⏳ در حال بارگذاری بیشتر…"
                   : "اسکرول کن تا بقیه بیاد"}
               </div>
-            )}
-            {!hasMoreMatches && matches.length > MATCH_PAGE && (
-              <div className="text-center text-[10px] text-[var(--color-text-dim)] py-3">
-                · پایان لیست ({matches.length} match) ·
-              </div>
+            ) : (
+              matches.length > MATCH_PAGE && (
+                <div className="text-center text-[10px] text-[var(--color-text-dim)] py-3">
+                  · پایان لیست ({matches.length} match) ·
+                </div>
+              )
             )}
           </>
         )}
