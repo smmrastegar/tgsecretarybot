@@ -208,6 +208,11 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_gifs BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_photos BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ai_process_video_notes BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Hard-ignore: when TRUE the bot drops every incoming message in
+    // this chat at the very top of the pipeline — no classify, no
+    // log, no rule eval, no SMS route, no auto-reply. For chats the
+    // operator never wants the system to touch.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE`;
     // When the user asks "send me a photo of you", the AI uses the
     // operator's reference photo (settings.ownerPhotoUrl) as visual
     // anchor and calls an image-gen model. Off by default — costs ~$0.04
@@ -1738,6 +1743,7 @@ export type ChatRule = {
   autoForwardLocation: boolean;
   autoExtractNotes: boolean;
   isBot: boolean;
+  ignored: boolean;
   graceSkippedAt: Date | null;
   updatedAt: Date;
 };
@@ -1802,6 +1808,7 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
     autoForwardLocation: Boolean(r.auto_forward_location),
     autoExtractNotes: Boolean(r.auto_extract_notes),
     isBot: Boolean(r.is_bot),
+    ignored: Boolean(r.ignored),
     graceSkippedAt: (r.grace_skipped_at as Date) ?? null,
     updatedAt: r.updated_at as Date,
   };
@@ -1825,7 +1832,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            last_auto_summary_at,
            auto_forward_voice, auto_forward_video, auto_forward_photo,
            auto_forward_location, auto_extract_notes,
-           is_bot,
+           is_bot, ignored,
            grace_skipped_at, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -2524,6 +2531,55 @@ export async function findOwnerOfPhone(phone: string): Promise<{
   return null;
 }
 
+export async function setChatIgnored(
+  chatId: number,
+  ignored: boolean,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  // Same upsert dance as setAutoSummarize so chats without a
+  // chat_rules row yet still get one when the flag is toggled.
+  await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, chat_title, ignored, updated_at)
+    VALUES (
+      ${chatId},
+      COALESCE(
+        (SELECT MAX(chat_type) FROM messages_log WHERE chat_id = ${chatId}),
+        CASE WHEN ${chatId}::bigint < 0 THEN 'supergroup' ELSE 'private' END
+      ),
+      (SELECT MAX(chat_title) FROM messages_log WHERE chat_id = ${chatId}),
+      ${ignored},
+      NOW()
+    )
+    ON CONFLICT (chat_id) DO UPDATE SET
+      ignored = ${ignored},
+      updated_at = NOW()`;
+}
+
+// Lightweight "should we even touch this chat?" check used at the top
+// of handleBusinessMessage / handleAnyChatPost so the rest of the
+// pipeline never sees ignored chats. Cached in-memory briefly so a
+// burst of messages doesn't query for every one.
+const ignoredCache = new Map<number, { v: boolean; expiresAt: number }>();
+const IGNORED_TTL_MS = 10_000;
+
+export async function isChatIgnored(chatId: number): Promise<boolean> {
+  if (!hasDb()) return false;
+  const cached = ignoredCache.get(chatId);
+  if (cached && cached.expiresAt > Date.now()) return cached.v;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT ignored FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
+  const v = Boolean((rows[0] as { ignored?: boolean } | undefined)?.ignored);
+  ignoredCache.set(chatId, { v, expiresAt: Date.now() + IGNORED_TTL_MS });
+  return v;
+}
+
+export function invalidateIgnoredCache(chatId?: number): void {
+  if (chatId == null) ignoredCache.clear();
+  else ignoredCache.delete(chatId);
+}
+
 // First chat tagged as the summary_inbox. The caller decides whether
 // to fan out to multiple if more than one is tagged; for now we use
 // the most recently updated one.
@@ -2557,7 +2613,7 @@ export async function listChatsByFunction(
            r.last_auto_summary_at,
            r.auto_forward_voice, r.auto_forward_video, r.auto_forward_photo,
            r.auto_forward_location, r.auto_extract_notes,
-           r.is_bot,
+           r.is_bot, r.ignored,
            r.grace_skipped_at, r.updated_at
     FROM chat_rules r
     WHERE (

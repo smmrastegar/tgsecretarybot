@@ -135,6 +135,7 @@ type Rule = {
   autoForwardLocation: boolean;
   autoExtractNotes: boolean;
   isBot: boolean;
+  ignored: boolean;
   graceSkippedAt: string | null;
   updatedAt: string;
 };
@@ -656,6 +657,7 @@ export default function ChatDetailPage() {
                   </span>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-1 items-center">
+                  {rule?.ignored && <Badge tone="danger">🚫 ignored</Badge>}
                   {rule?.vip && <Badge tone="warn">⭐ VIP</Badge>}
                   {rule?.muted && <Badge tone="neutral">🔕 muted</Badge>}
                   {rule?.customReply && (
@@ -1453,6 +1455,30 @@ export default function ChatDetailPage() {
               <MediaRoutingLog chatId={chatId} />
             )}
             <ChatRulesPanel chatId={chatId} />
+            <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+              <div className="text-xs font-medium mb-1.5">🚫 نادیده گرفتن کامل</div>
+              <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+                وقتی تیک می‌خوره، bot به‌صورت کامل این چت رو نادیده می‌گیره
+                — هیچ classify، هیچ log، هیچ rule eval، هیچ SMS route، هیچ
+                auto-reply. مثل اینه که این چت اصلاً وجود نداره برای سیستم.
+              </p>
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!rule?.ignored}
+                  disabled={saving}
+                  onChange={async (e) => {
+                    await fetch(`/api/chats/${chatId}/ignored`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ ignored: e.target.checked }),
+                    });
+                    load();
+                  }}
+                />
+                این چت کلاً ignore بشه
+              </label>
+            </div>
           </Card>
 
           <PageTitle

@@ -67,6 +67,7 @@ import {
   logMediaRouting,
   type ChatMode,
   type SecretarySession,
+  isChatIgnored,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -1507,6 +1508,14 @@ async function resolveOwner(bcId: string, bot: Bot): Promise<OwnerCacheEntry | n
 }
 
 async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
+  // Hard ignore: operator marked this chat as "do not process". Bail
+  // before any classifier / log / route / rule work. Cached briefly
+  // in lib/db so a burst of messages from the same chat doesn't
+  // round-trip per message.
+  if (await isChatIgnored(msg.chat.id).catch(() => false)) {
+    console.log(`[ignore] dropping business_message in chat=${msg.chat.id} (ignored=true)`);
+    return;
+  }
   // Diagnostic — every media payload that reaches this handler gets a
   // "received_business" row in media_routing_log so we can tell apart
   // "the bot never saw it" (no received row) from "the bot saw it but
@@ -3089,6 +3098,10 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
 }
 
 async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
+  if (await isChatIgnored(msg.chat.id).catch(() => false)) {
+    console.log(`[ignore] dropping channel/group post in chat=${msg.chat.id} (ignored=true)`);
+    return;
+  }
   // Diagnostic mirror of handleBusinessMessage's "received" entry.
   // Used to tell apart "bot never saw the message" from "bot saw it
   // but bailed early".
@@ -3303,6 +3316,20 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         msg,
         bot,
       });
+      // SMS routing for channel/group messages too — the operator's
+      // SMS-to-Telegram gateway usually delivers into a Channel like
+      // "Mahdi SMS1", not the personal business chat.
+      try {
+        const { routeSmsForward } = await import("./sms-router");
+        await routeSmsForward({
+          bot,
+          sourceChatId: msg.chat.id,
+          sourceMessageId: msg.message_id,
+          text,
+        });
+      } catch (err) {
+        console.warn("[sms] route failed (channel/group):", err);
+      }
       // Same media-router fan-out the business-message path has, so
       // voice/video/photo arriving in a group OR channel gets routed
       // to the configured *_storage chats. We skip routing when the
