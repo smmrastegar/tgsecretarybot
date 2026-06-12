@@ -234,17 +234,38 @@ export default function RuleDetailPage() {
           ok?: boolean;
           sentMessageId?: number;
           botUsername?: string;
-          chatType?: string;
-          chatTitle?: string | null;
+          botId?: number;
+          destChatId?: number;
+          destChatType?: string;
+          destChatTitle?: string | null;
+          destFirstName?: string | null;
+          destLastName?: string | null;
+          destUsername?: string | null;
+          isSelfSend?: boolean;
+          warning?: string | null;
           error?: string;
         };
         if (j.ok) {
+          // The label MUST show "to chat_id" not "to @bot" — the bot is
+          // the SENDER. Earlier UI confusingly read "ارسال شد به @bot".
+          // Surface the destination person/group identity so the
+          // operator can spot wrong-id mistakes (e.g. accidentally
+          // forwarding to themselves).
+          const fullName = [j.destFirstName, j.destLastName]
+            .filter(Boolean)
+            .join(" ")
+            .trim();
+          const destName =
+            j.destChatTitle ||
+            fullName ||
+            j.destUsername ||
+            `chat ${j.destChatId ?? chatId}`;
+          const handle = j.destUsername ? ` (@${j.destUsername})` : "";
+          const meta = `${j.destChatType ?? "?"} · msg=${j.sentMessageId}`;
+          const warn = j.warning ? `\n⚠ ${j.warning}` : "";
           setTestStatus((s) => ({
             ...s,
-            [chatId]:
-              `✓ ارسال شد به @${j.botUsername} (msg=${j.sentMessageId}, ${j.chatType ?? "?"}${
-                j.chatTitle ? ` · ${j.chatTitle}` : ""
-              })`,
+            [chatId]: `✓ از @${j.botUsername} → ${destName}${handle} (${meta})${warn}`,
           }));
         } else {
           setTestStatus((s) => ({

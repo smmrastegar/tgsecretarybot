@@ -33,10 +33,46 @@ export async function POST(
   const bot = getBot();
   try {
     const me = await bot.api.getMe();
+    // Fetch the chat info FIRST so we can show first/last name even
+    // if sendMessage fails afterwards (e.g. blocked). For DMs the
+    // first/last name reveal whether the operator is sending to
+    // themselves, the wrong person, or the intended recipient.
+    let destInfo: {
+      firstName?: string | null;
+      lastName?: string | null;
+      username?: string | null;
+      title?: string | null;
+    } = {};
+    try {
+      const c = await bot.api.getChat(chatId);
+      destInfo = {
+        firstName: ("first_name" in c ? c.first_name : null) ?? null,
+        lastName: ("last_name" in c ? c.last_name : null) ?? null,
+        username: ("username" in c ? c.username : null) ?? null,
+        title: ("title" in c ? c.title : null) ?? null,
+      };
+    } catch {}
     const sent = await bot.api.sendMessage(
       chatId,
-      `🧪 تست از rule (#${ruleId})\nاگه این پیام رو دریافت کردی، چت‌اِی‌دی ${chatId} قابل دسترسی هست برای bot @${me.username}.`,
+      `🧪 تست از rule (#${ruleId})\nاگه این پیام رو دریافت کردی، chat_id ${chatId} قابل دسترسی هست از طریق bot @${me.username}.`,
     );
+    // Heuristics so the operator can tell whether the chat_id matches
+    // the place they ACTUALLY wanted the message to land.
+    const destChatId = sent.chat.id;
+    const destChatType = sent.chat.type;
+    const destChatTitle =
+      "title" in sent.chat
+        ? (sent.chat.title as string | undefined) ?? null
+        : null;
+    const isSelfSend = me.id === destChatId;
+    let warning: string | null = null;
+    if (isSelfSend) {
+      warning =
+        "chat_id برابر id خود bot هست — این یعنی پیام به جای دیگری نمی‌ره.";
+    } else if (destChatType === "private" && destChatTitle == null) {
+      warning =
+        "این یه DM خصوصی هست. اگه فکر می‌کنی به یه فرد دیگه می‌ره ولی خودِت پیام تست رو می‌بینی، یعنی chat_id خودِ توئه نه گیرنده مدنظرت.";
+    }
     await audit({
       actorId: session.userId,
       actorName: session.username ?? null,
@@ -44,8 +80,11 @@ export async function POST(
       target: String(ruleId),
       details: {
         chatId,
+        destChatId,
+        destChatType,
         sentMessageId: sent.message_id,
         botUsername: me.username,
+        botId: me.id,
       },
     });
     return NextResponse.json({
@@ -53,10 +92,14 @@ export async function POST(
       sentMessageId: sent.message_id,
       botUsername: me.username,
       botId: me.id,
-      chatId: sent.chat.id,
-      chatType: sent.chat.type,
-      chatTitle:
-        "title" in sent.chat ? (sent.chat.title as string | undefined) : null,
+      destChatId,
+      destChatType,
+      destChatTitle,
+      destFirstName: destInfo.firstName ?? null,
+      destLastName: destInfo.lastName ?? null,
+      destUsername: destInfo.username ?? null,
+      isSelfSend,
+      warning,
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
