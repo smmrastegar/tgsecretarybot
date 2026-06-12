@@ -2278,6 +2278,22 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       }).catch((err) =>
         console.warn("[rules] release failed:", err),
       );
+      // SMS routing: when the message starts with "☎️ +PHONE …" we
+      // treat it as an SMS forward (from the operator's SMS-to-
+      // Telegram gateway) and route the body to every chat tagged
+      // sms_inbox, prepended with the resolved owner name when we
+      // can find one in past chats.
+      try {
+        const { routeSmsForward } = await import("./sms-router");
+        await routeSmsForward({
+          bot,
+          sourceChatId: msg.chat.id,
+          sourceMessageId: msg.message_id,
+          text,
+        });
+      } catch (err) {
+        console.warn("[sms] route failed:", err);
+      }
       // media-router was already fired at the top of this function
       // (early-call right after we resolved the rule), so we don't
       // double-route here.

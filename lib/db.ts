@@ -2462,6 +2462,68 @@ export async function markAutoSummaryDelivered(chatId: number): Promise<void> {
     WHERE chat_id = ${chatId}`;
 }
 
+// Best-guess identity for a phone number, based on past messages
+// the bot has logged. Tries a few strategies in priority order:
+//   1. chat_rules row whose notes/relationship_notes mention the
+//      number tail (operator manually labelled them).
+//   2. messages_log row mentioning the number tail — most-mentioning
+//      chat wins; uses the chat's first_name/last_name/nickname.
+// Returns null when nothing matches; the SMS forwarder then falls
+// back to "☎️ +PHONE" with no name.
+export async function findOwnerOfPhone(phone: string): Promise<{
+  name: string | null;
+  chatId: number | null;
+} | null> {
+  if (!phone || !hasDb()) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length < 6) return null;
+  // Use the LAST 8 digits so "+989121234567" and "09121234567" both
+  // match "121234567" (Iran mobile mid-section). Long enough to be
+  // distinctive but tolerant of country code variations.
+  const tail = digits.slice(-8);
+  await ensureSchema();
+  // Strategy 1: explicit chat_rules.notes / relationship_notes.
+  const ruleRows = await sql()`
+    SELECT chat_id, first_name, last_name, nickname
+    FROM chat_rules
+    WHERE notes ILIKE ${`%${tail}%`}
+       OR relationship_notes ILIKE ${`%${tail}%`}
+    LIMIT 1`;
+  if (ruleRows.length > 0) {
+    const r = ruleRows[0] as Record<string, unknown>;
+    const name =
+      [r.first_name, r.last_name].filter(Boolean).join(" ").trim() ||
+      (r.nickname as string) ||
+      null;
+    return { name: name || null, chatId: Number(r.chat_id) };
+  }
+  // Strategy 2: messages_log text mentioning the number.
+  const msgRows = await sql()`
+    SELECT m.chat_id,
+           COUNT(*)::int AS hits,
+           MAX(r.first_name) AS first_name,
+           MAX(r.last_name)  AS last_name,
+           MAX(r.nickname)   AS nickname,
+           MAX(m.sender_name) AS sender_name
+    FROM messages_log m
+    LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
+    WHERE m.message_text ILIKE ${`%${tail}%`}
+       OR COALESCE(m.transcript, '') ILIKE ${`%${tail}%`}
+    GROUP BY m.chat_id
+    ORDER BY hits DESC
+    LIMIT 1`;
+  if (msgRows.length > 0) {
+    const r = msgRows[0] as Record<string, unknown>;
+    const name =
+      [r.first_name, r.last_name].filter(Boolean).join(" ").trim() ||
+      (r.nickname as string) ||
+      (r.sender_name as string) ||
+      null;
+    return { name: name || null, chatId: Number(r.chat_id) };
+  }
+  return null;
+}
+
 // First chat tagged as the summary_inbox. The caller decides whether
 // to fan out to multiple if more than one is tagged; for now we use
 // the most recently updated one.
