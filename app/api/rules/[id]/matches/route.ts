@@ -21,9 +21,11 @@ export async function GET(
   }
   const url = new URL(request.url);
   const limit = Number(url.searchParams.get("limit") ?? 30);
+  const offset = Number(url.searchParams.get("offset") ?? 0);
   const matches = await listRuleMatches({
     ruleId,
     limit: Number.isFinite(limit) ? limit : 30,
+    offset: Number.isFinite(offset) ? offset : 0,
   });
   return NextResponse.json({ matches });
 }

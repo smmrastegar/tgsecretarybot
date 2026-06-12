@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
@@ -44,6 +44,7 @@ type Match = {
   messageLogId: number;
   formattedText: string | null;
   forwardedTo: number[];
+  forwardErrors: Record<string, string> | null;
   matchedAt: string;
   messageText: string;
   senderName: string;
@@ -90,13 +91,17 @@ export default function RuleDetailPage() {
   const [testing, setTesting] = useState(false);
   const [testResults, setTestResults] = useState<TestResult[] | null>(null);
 
+  const MATCH_PAGE = 10;
+  const [hasMoreMatches, setHasMoreMatches] = useState(true);
+  const [loadingMoreMatches, setLoadingMoreMatches] = useState(false);
+
   const load = useCallback(async () => {
     if (!Number.isFinite(id)) return;
     setLoading(true);
     try {
       const [r1, r2, r3] = await Promise.all([
         fetch(`/api/rules/${id}`),
-        fetch(`/api/rules/${id}/matches?limit=30`),
+        fetch(`/api/rules/${id}/matches?limit=${MATCH_PAGE}&offset=0`),
         fetch(`/api/rules/${id}/examples`),
       ]);
       if (r1.ok) {
@@ -112,6 +117,7 @@ export default function RuleDetailPage() {
       if (r2.ok) {
         const j = (await r2.json()) as { matches: Match[] };
         setMatches(j.matches ?? []);
+        setHasMoreMatches((j.matches ?? []).length === MATCH_PAGE);
       }
       if (r3.ok) {
         const j = (await r3.json()) as { examples: Example[] };
@@ -121,6 +127,52 @@ export default function RuleDetailPage() {
       setLoading(false);
     }
   }, [id]);
+
+  const loadMoreMatches = useCallback(async () => {
+    if (loadingMoreMatches || !hasMoreMatches) return;
+    setLoadingMoreMatches(true);
+    try {
+      const r = await fetch(
+        `/api/rules/${id}/matches?limit=${MATCH_PAGE}&offset=${matches.length}`,
+      );
+      if (r.ok) {
+        const j = (await r.json()) as { matches: Match[] };
+        setMatches((prev) => [...prev, ...(j.matches ?? [])]);
+        setHasMoreMatches((j.matches ?? []).length === MATCH_PAGE);
+      }
+    } finally {
+      setLoadingMoreMatches(false);
+    }
+  }, [id, matches.length, hasMoreMatches, loadingMoreMatches]);
+
+  const matchSentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = matchSentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMoreMatches();
+      },
+      { rootMargin: "200px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [loadMoreMatches]);
+
+  const forceSend = useCallback(
+    async (matchId: number) => {
+      const r = await fetch(
+        `/api/rules/${id}/matches/${matchId}/force-send`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        },
+      );
+      if (r.ok) load();
+    },
+    [id, load],
+  );
 
   useEffect(() => {
     load();
@@ -556,47 +608,126 @@ export default function RuleDetailPage() {
             هنوز هیچ پیامی به این rule نخورده.
           </p>
         ) : (
-          <div className="flex flex-col gap-1">
-            {matches.map((m) => (
-              <div
-                key={m.id}
-                className="p-2 rounded-md bg-[var(--color-surface-2)] text-xs"
-              >
-                <div className="flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-dim)] mb-1">
-                  <span>{m.senderName}</span>
-                  <span>·</span>
-                  <span>{relTime(m.matchedAt)}</span>
-                  <span>·</span>
-                  <span>
-                    {m.forwardedTo.length > 0
-                      ? `→ ${m.forwardedTo.length} گیرنده`
-                      : "لاگ شد ولی فوروارد نشد"}
-                  </span>
-                </div>
-                <div
-                  dir="auto"
-                  style={{ unicodeBidi: "plaintext" }}
-                  className="whitespace-pre-wrap break-words"
-                >
-                  {truncate(m.messageText, 200)}
-                </div>
-                {m.formattedText && (
-                  <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
-                    <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
-                      خروجی format شده که فوروارد شد:
+          <>
+            <div className="flex flex-col gap-1">
+              {matches.map((m) => {
+                const deliveredSet = new Set(m.forwardedTo);
+                const rowsByRecipient = recipients.map((r) => {
+                  const got = deliveredSet.has(r.recipientChatId);
+                  const err =
+                    m.forwardErrors?.[String(r.recipientChatId)] ?? null;
+                  return {
+                    recipientChatId: r.recipientChatId,
+                    label: r.recipientLabel,
+                    got,
+                    err,
+                  };
+                });
+                const allDelivered = rowsByRecipient.every((r) => r.got);
+                const noneDelivered = rowsByRecipient.every((r) => !r.got);
+                const someFailed = rowsByRecipient.some(
+                  (r) => !r.got && r.err,
+                );
+                return (
+                  <div
+                    key={m.id}
+                    className="p-2 rounded-md bg-[var(--color-surface-2)] text-xs"
+                  >
+                    <div className="flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-dim)] mb-1">
+                      <span>{m.senderName}</span>
+                      <span>·</span>
+                      <span>{relTime(m.matchedAt)}</span>
+                      <span>·</span>
+                      {allDelivered ? (
+                        <Badge tone="success">
+                          ✓ همه گرفتن ({m.forwardedTo.length}/
+                          {recipients.length})
+                        </Badge>
+                      ) : noneDelivered && !someFailed ? (
+                        <Badge tone="warn">⏸ نگه‌داشته (gate)</Badge>
+                      ) : someFailed ? (
+                        <Badge tone="danger">
+                          ✗ ناقص ({m.forwardedTo.length}/{recipients.length})
+                        </Badge>
+                      ) : (
+                        <Badge tone="info">
+                          ↗ {m.forwardedTo.length}/{recipients.length}
+                        </Badge>
+                      )}
                     </div>
+                    {rowsByRecipient.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-1">
+                        {rowsByRecipient.map((r) => (
+                          <span
+                            key={r.recipientChatId}
+                            title={r.err ?? undefined}
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] ${
+                              r.got
+                                ? "bg-emerald-900/40 text-emerald-200"
+                                : r.err
+                                  ? "bg-red-900/40 text-red-200"
+                                  : "bg-[var(--color-surface)] text-[var(--color-text-dim)]"
+                            }`}
+                          >
+                            {r.got ? "✓" : r.err ? "✗" : "⏸"}{" "}
+                            {r.label
+                              ? `${r.label}`
+                              : String(r.recipientChatId)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <div
                       dir="auto"
                       style={{ unicodeBidi: "plaintext" }}
                       className="whitespace-pre-wrap break-words"
                     >
-                      {m.formattedText}
+                      {truncate(m.messageText, 200)}
                     </div>
+                    {m.formattedText && (
+                      <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+                        <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
+                          خروجی format شده:
+                        </div>
+                        <div
+                          dir="auto"
+                          style={{ unicodeBidi: "plaintext" }}
+                          className="whitespace-pre-wrap break-words"
+                        >
+                          {m.formattedText}
+                        </div>
+                      </div>
+                    )}
+                    {!allDelivered && (
+                      <div className="mt-2">
+                        <button
+                          onClick={() => forceSend(m.id)}
+                          className="text-[10px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+                        >
+                          🚀 ارسال اجباری به نگرفته‌ها
+                        </button>
+                      </div>
+                    )}
                   </div>
-                )}
+                );
+              })}
+            </div>
+            {hasMoreMatches && (
+              <div
+                ref={matchSentinelRef}
+                className="text-center text-[11px] text-[var(--color-text-dim)] py-3"
+              >
+                {loadingMoreMatches
+                  ? "در حال بارگذاری بیشتر…"
+                  : "اسکرول کن تا بقیه بیاد"}
               </div>
-            ))}
-          </div>
+            )}
+            {!hasMoreMatches && matches.length > MATCH_PAGE && (
+              <div className="text-center text-[10px] text-[var(--color-text-dim)] py-3">
+                · پایان لیست ({matches.length} match) ·
+              </div>
+            )}
+          </>
         )}
       </Card>
     </Shell>

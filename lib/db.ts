@@ -749,6 +749,10 @@ export async function ensureSchema(): Promise<void> {
       )`;
     await q`CREATE INDEX IF NOT EXISTS message_rule_matches_rule_idx ON message_rule_matches (rule_id, matched_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS message_rule_matches_message_idx ON message_rule_matches (message_log_id)`;
+    // Per-recipient failure reasons so the dashboard can show why a
+    // forward to a specific chat_id didn't land (blocked the bot,
+    // /start not run, rate-limited, etc.). Shape: { "<chat_id>": "<reason>" }.
+    await q`ALTER TABLE message_rule_matches ADD COLUMN IF NOT EXISTS forward_errors JSONB`;
     // Additional example texts per rule. The operator can grow a rule
     // by feeding it more real message bodies; matching is a disjunction
     // of the description + all examples ("does the incoming msg fit
@@ -4923,37 +4927,65 @@ export async function recordRuleMatch(args: {
   messageLogId: number;
   formattedText?: string | null;
   forwardedTo: number[];
-}): Promise<void> {
-  if (!hasDb()) return;
+  forwardErrors?: Record<string, string>;
+}): Promise<number> {
+  if (!hasDb()) return 0;
   await ensureSchema();
-  await sql()`
-    INSERT INTO message_rule_matches (rule_id, message_log_id, formatted_text, forwarded_to)
+  const errs = args.forwardErrors ?? {};
+  const errsJson = Object.keys(errs).length > 0 ? JSON.stringify(errs) : null;
+  const rows = await sql()`
+    INSERT INTO message_rule_matches (rule_id, message_log_id, formatted_text, forwarded_to, forward_errors)
     VALUES (
       ${args.ruleId},
       ${args.messageLogId},
       ${args.formattedText ?? null},
-      ${args.forwardedTo}::bigint[]
-    )`;
+      ${args.forwardedTo}::bigint[],
+      ${errsJson}::jsonb
+    )
+    RETURNING id`;
+  return Number((rows[0] as { id: string }).id);
+}
+
+export async function appendForwardErrors(args: {
+  matchId: number;
+  errors: Record<string, string>;
+}): Promise<void> {
+  if (!hasDb()) return;
+  if (Object.keys(args.errors).length === 0) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE message_rule_matches
+    SET forward_errors = COALESCE(forward_errors, '{}'::jsonb) || ${JSON.stringify(args.errors)}::jsonb
+    WHERE id = ${args.matchId}`;
 }
 
 export async function listRuleMatches(args: {
   ruleId: number;
   limit?: number;
+  offset?: number;
 }): Promise<
-  Array<RuleMatch & { messageText: string; senderName: string; chatId: number }>
+  Array<
+    RuleMatch & {
+      messageText: string;
+      senderName: string;
+      chatId: number;
+      forwardErrors: Record<string, string> | null;
+    }
+  >
 > {
   if (!hasDb()) return [];
   await ensureSchema();
   const limit = Math.min(Math.max(args.limit ?? 30, 1), 100);
+  const offset = Math.max(args.offset ?? 0, 0);
   const rows = await sql()`
     SELECT m.id, m.rule_id, m.message_log_id, m.formatted_text, m.forwarded_to,
-           m.matched_at,
+           m.forward_errors, m.matched_at,
            l.message_text, l.sender_name, l.chat_id
     FROM message_rule_matches m
     LEFT JOIN messages_log l ON l.id = m.message_log_id
     WHERE m.rule_id = ${args.ruleId}
     ORDER BY m.matched_at DESC
-    LIMIT ${limit}`;
+    LIMIT ${limit} OFFSET ${offset}`;
   return (rows as Array<Record<string, unknown>>).map((r) => ({
     id: Number(r.id),
     ruleId: Number(r.rule_id),
@@ -4964,6 +4996,8 @@ export async function listRuleMatches(args: {
     messageText: (r.message_text as string) ?? "",
     senderName: (r.sender_name as string) ?? "?",
     chatId: r.chat_id != null ? Number(r.chat_id) : 0,
+    forwardErrors:
+      (r.forward_errors as Record<string, string> | null) ?? null,
   }));
 }
 

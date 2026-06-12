@@ -2398,11 +2398,14 @@ async function maybeApplyMessageRules(args: {
           `[rules] match held by gate (rule=${ruleId} recipients=${recipients.length} window=${rule.requestWindowSeconds}s)`,
         );
       }
+      const errMap: Record<string, string> = {};
+      for (const f of failures) errMap[String(f.chatId)] = f.reason;
       await recordRuleMatch({
         ruleId,
         messageLogId: args.logId,
         formattedText: formatted,
         forwardedTo: delivered,
+        forwardErrors: errMap,
       }).catch(() => {});
     }
   } catch (err) {
