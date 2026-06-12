@@ -6,6 +6,7 @@ import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import MessageActions from "@/components/MessageActions";
 import MediaView from "@/components/MediaView";
+import OtpChip from "@/components/OtpChip";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
 function groupByChat(messages: Message[]): Array<{
@@ -87,6 +88,7 @@ type Message = {
   transcript: string | null;
   transcriptAt: string | null;
   mediaDescription: string | null;
+  otpCode: string | null;
   deletedAt: string | null;
   editedAt: string | null;
   editCount: number;
@@ -364,6 +366,11 @@ export default function MessagesPage() {
                             : "bg-[var(--color-surface-2)] rounded-bl-md"
                       }`}
                     >
+                      {m.otpCode && (
+                        <div className="mb-1.5">
+                          <OtpChip code={m.otpCode} />
+                        </div>
+                      )}
                       {truncate(visibleText, 200)}
                     </div>
                     {m.mediaKind && !m.deletedAt && (
@@ -472,6 +479,11 @@ export default function MessagesPage() {
                   )}
                 </div>
               </div>
+              {m.otpCode && (
+                <div className="mt-2">
+                  <OtpChip code={m.otpCode} />
+                </div>
+              )}
               <div
                 dir="auto"
                 style={{ unicodeBidi: "plaintext", textAlign: "start" }}

@@ -8,6 +8,7 @@ import { Card, PageTitle, Badge } from "@/components/Card";
 import MediaView from "@/components/MediaView";
 import ChatRulesPanel from "@/components/ChatRulesPanel";
 import CopyableChatId from "@/components/CopyableChatId";
+import OtpChip from "@/components/OtpChip";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
 type ChatMode =
@@ -79,6 +80,7 @@ type Message = {
   mediaKind: string | null;
   transcript: string | null;
   mediaDescription: string | null;
+  otpCode: string | null;
   deletedAt: string | null;
   editedAt: string | null;
   editCount: number;
@@ -176,6 +178,7 @@ type ThreadMsg = {
   messageText: string;
   transcript: string | null;
   mediaDescription: string | null;
+  otpCode: string | null;
   mediaKind: string | null;
   mediaFileId: string | null;
   importance: number;
@@ -1747,6 +1750,11 @@ export default function ChatDetailPage() {
                             : "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-bl-md"
                       }`}
                     >
+                      {m.otpCode && (
+                        <div className="mb-2">
+                          <OtpChip code={m.otpCode} />
+                        </div>
+                      )}
                       {m.messageText}
                       {m.transcript && (
                         <div

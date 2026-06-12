@@ -213,6 +213,11 @@ export async function ensureSchema(): Promise<void> {
     // log, no rule eval, no SMS route, no auto-reply. For chats the
     // operator never wants the system to touch.
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE`;
+    // AI-extracted OTP / verification code surfaced inline on every
+    // message that carried one. Populated by maybeExtractOtp in
+    // bot.ts (background, fire-and-forget). Dashboard renders a
+    // tap-to-copy chip when set.
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS otp_code TEXT`;
     // Phone → Telegram identity harvested from "contact" messages
     // (customer taps Share Contact, or anyone forwards a vCard). We
     // store the last 9-10 digits as the lookup key because incoming
@@ -1307,6 +1312,7 @@ export type MessageRow = {
   transcriptAt: Date | null;
   mediaDescription: string | null;
   mediaDescriptionAt: Date | null;
+  otpCode: string | null;
   deletedAt: Date | null;
   editedAt: Date | null;
   editCount: number;
@@ -1350,6 +1356,7 @@ function rowToMessage(r: Record<string, unknown>): MessageRow {
     transcriptAt: (r.transcript_at as Date) ?? null,
     mediaDescription: (r.media_description as string) ?? null,
     mediaDescriptionAt: (r.media_description_at as Date) ?? null,
+    otpCode: (r.otp_code as string) ?? null,
     deletedAt: (r.deleted_at as Date) ?? null,
     editedAt: (r.edited_at as Date) ?? null,
     editCount:
@@ -2486,6 +2493,18 @@ export async function markAutoSummaryDelivered(chatId: number): Promise<void> {
     UPDATE chat_rules
     SET last_auto_summary_at = NOW(), updated_at = NOW()
     WHERE chat_id = ${chatId}`;
+}
+
+export async function saveOtpCode(
+  messageLogId: number,
+  code: string,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE messages_log
+    SET otp_code = ${code}
+    WHERE id = ${messageLogId}`;
 }
 
 // Save a phone → identity mapping observed from a Telegram contact

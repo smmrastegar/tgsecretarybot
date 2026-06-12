@@ -1511,6 +1511,34 @@ async function resolveOwner(bcId: string, bot: Bot): Promise<OwnerCacheEntry | n
   }
 }
 
+// Lightweight gate before paying for an LLM call: most messages
+// don't carry an OTP, so we skip extraction unless the body has at
+// least one 4+ digit run AND looks plausibly like an SMS / system
+// notification (not a 20+ digit phone-number-only payload).
+function looksLikePossibleOtp(text: string): boolean {
+  if (!text || text.length < 4) return false;
+  if (!/\b\d{4,}\b/.test(text)) return false;
+  return true;
+}
+
+async function maybeExtractOtp(args: {
+  logId: number;
+  text: string;
+}): Promise<void> {
+  if (!looksLikePossibleOtp(args.text)) return;
+  try {
+    const { extractOtpCodeAi } = await import("./rules");
+    const { saveOtpCode } = await import("./db");
+    const code = await extractOtpCodeAi(args.text);
+    if (code) {
+      await saveOtpCode(args.logId, code);
+      console.log(`[otp] saved code=${code} for log=${args.logId}`);
+    }
+  } catch (err) {
+    console.warn(`[otp] extract failed for log=${args.logId}:`, err);
+  }
+}
+
 // Telegram delivers shared contacts as a regular message with
 // msg.contact set; the payload optionally includes user_id when the
 // contact is a Telegram user. We harvest these into phone_contacts
@@ -2269,6 +2297,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         mediaFileId,
         mediaKind,
       });
+      void maybeExtractOtp({ logId, text });
       void maybeDescribeMedia({
         mode,
         logId,
@@ -3326,6 +3355,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         mediaFileId,
         mediaKind,
       });
+      void maybeExtractOtp({ logId, text });
       void maybeDescribeMedia({
         mode,
         logId,
