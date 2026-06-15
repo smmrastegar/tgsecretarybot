@@ -29,6 +29,12 @@ const TILES: Array<{
     desc: "قانون‌های تشخیص پیام (مثلاً OTP) + فوروارد خودکار با format دلخواه",
   },
   {
+    href: "/webhooks",
+    emoji: "📡",
+    label: "Webhooks",
+    desc: "ورودی‌های مستقل SMS — هر کدوم اسم و URL خودش رو داره (برای SMS-Forwarder اندروید)",
+  },
+  {
     href: "/ask",
     emoji: "🔎",
     label: "Ask",

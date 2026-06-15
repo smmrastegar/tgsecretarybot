@@ -1,47 +1,44 @@
 import { NextResponse } from "next/server";
 import { getBot } from "@/lib/bot";
-import { hasDb, logMessage } from "@/lib/db";
+import {
+  findSmsWebhookBySecret,
+  hasDb,
+  logMessage,
+  touchSmsWebhook,
+} from "@/lib/db";
 import { detectSmsForward, routeSmsForward } from "@/lib/sms-router";
-import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-// Drop-in webhook for the SMS-Forwarder Android app. The operator
-// only changes the "Webhook URL" field in the app — chat_id / text /
-// payload template / headers all stay as-is. We accept their JSON,
-// extract the SMS body (which already starts with "☎️+PHONE\n…"
-// thanks to their template), log it into messages_log so it shows
-// up in /messages, and run the same routing pipeline used for
-// channel-post SMS — LLM gate + owner lookup + forward to every
-// chat tagged sms_inbox.
+// Drop-in webhook for the SMS-Forwarder Android app — multi-source
+// edition. Each row in sms_webhooks owns its own secret token and
+// display name; the URL the operator pastes into the app's "Webhook
+// URL" field embeds the token. The webhook's `name` becomes the
+// chat_title on every logged message so /messages shows them as a
+// coherent per-source stream ("📱 Mahdi's SIM 1" / "📱 Office line"
+// / etc.).
 //
-// Auth: ?token=<smsWebhookSecret> (set in /settings/edit). If the
-// secret isn't configured we refuse — never run as an open relay.
+// We refuse 401 when the token doesn't resolve to an enabled
+// webhook — never run as an open relay.
 async function handle(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
-  const settings = await getSettings();
-  const secret = (settings.smsWebhookSecret ?? "").trim();
-  if (!secret) {
-    return NextResponse.json(
-      {
-        error:
-          "smsWebhookSecret not configured — set it in /settings/edit first",
-      },
-      { status: 503 },
-    );
-  }
-  const provided =
+  const token =
     url.searchParams.get("token") ??
     request.headers.get("x-sms-token") ??
     "";
-  if (provided !== secret) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!token) {
+    return NextResponse.json({ error: "missing ?token" }, { status: 401 });
+  }
+  const webhook = await findSmsWebhookBySecret(token);
+  if (!webhook) {
+    return NextResponse.json(
+      { error: "unknown or disabled token" },
+      { status: 401 },
+    );
   }
 
-  // Read the payload as JSON. Fall back to form-encoded or raw text
-  // because not every SMS-forwarder build sends JSON cleanly.
   let body: Record<string, unknown> = {};
   const ctype = request.headers.get("content-type") ?? "";
   try {
@@ -76,11 +73,6 @@ async function handle(request: Request): Promise<NextResponse> {
       { status: 400 },
     );
   }
-  // chat_id from the payload (or anything we can coerce to a number)
-  // is used as the synthetic source chat_id so /messages and /chats
-  // can show these forwards as a coherent stream. The app's default
-  // is the operator's own user id, which works fine — it just means
-  // the forwards show up "in" Mahdi's own DM in the dashboard.
   const payloadChatId =
     typeof body.chat_id === "string"
       ? Number(body.chat_id)
@@ -88,12 +80,8 @@ async function handle(request: Request): Promise<NextResponse> {
         ? body.chat_id
         : NaN;
   const chatId = Number.isFinite(payloadChatId) ? payloadChatId : 0;
-  const chatTitle =
-    settings.smsWebhookChatTitle?.trim() || "📱 SMS Forwarder";
+  const chatTitle = webhook.name;
 
-  // Pre-parse the SMS so we can stamp the sender name with the
-  // resolved phone — improves the /messages listing UX even before
-  // routing fires.
   const parsed = detectSmsForward(text);
   const senderName = parsed ? parsed.phone : "SMS";
 
@@ -109,16 +97,12 @@ async function handle(request: Request): Promise<NextResponse> {
         senderId: null,
         senderUsername: null,
         senderName,
-        // We don't get a stable per-SMS id from the forwarder — use
-        // the current millisecond as a monotonic placeholder. The
-        // (chatId, messageId) pair on messages_log only dedupes
-        // within the same request anyway.
         messageId: Date.now() & 0x7fffffff,
         messageText: text,
         importance: 0,
         urgent: false,
         concernsOwner: false,
-        reason: "sms webhook",
+        reason: `sms_webhook:${webhook.id}`,
         alerted: false,
         autoReplied: false,
         fromOwner: false,
@@ -128,10 +112,8 @@ async function handle(request: Request): Promise<NextResponse> {
       console.error("[sms-webhook] log failed:", err);
     }
   }
+  await touchSmsWebhook(webhook.id).catch(() => {});
 
-  // Run the same downstream as channel/group SMS — gate via LLM,
-  // resolve owner, forward to sms_inbox, extract OTP for tap-to-copy
-  // chip, evaluate rules.
   const bot = getBot();
   try {
     await routeSmsForward({
@@ -154,7 +136,12 @@ async function handle(request: Request): Promise<NextResponse> {
     }
   }
 
-  return NextResponse.json({ ok: true, logId, parsed });
+  return NextResponse.json({
+    ok: true,
+    logId,
+    parsed,
+    webhook: { id: webhook.id, name: webhook.name },
+  });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {

@@ -219,6 +219,21 @@ export async function ensureSchema(): Promise<void> {
     // contact card. Stored as the operator typed it; matching uses
     // the last-8-digit tail.
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS phone_number TEXT`;
+    // SMS webhooks: each row is an independent inbound channel for
+    // the Android SMS-Forwarder app (or any HTTP client). secret is
+    // the per-webhook token in the URL; name is the chat_title that
+    // gets stamped on messages flowing through it so /messages
+    // shows them as a coherent stream per source.
+    await q`
+      CREATE TABLE IF NOT EXISTS sms_webhooks (
+        id            BIGSERIAL PRIMARY KEY,
+        name          TEXT NOT NULL,
+        secret        TEXT NOT NULL UNIQUE,
+        enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+        last_used_at  TIMESTAMPTZ,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS sms_webhooks_secret_idx ON sms_webhooks (secret)`;
     // AI-extracted OTP / verification code surfaced inline on every
     // message that carried one. Populated by maybeExtractOtp in
     // bot.ts (background, fire-and-forget). Dashboard renders a
@@ -2685,6 +2700,91 @@ export async function findOwnerOfPhone(phone: string): Promise<{
     return { name: name || null, chatId: Number(r.chat_id) };
   }
   return null;
+}
+
+export type SmsWebhook = {
+  id: number;
+  name: string;
+  secret: string;
+  enabled: boolean;
+  lastUsedAt: Date | null;
+  createdAt: Date;
+};
+
+function rowToSmsWebhook(r: Record<string, unknown>): SmsWebhook {
+  return {
+    id: Number(r.id),
+    name: r.name as string,
+    secret: r.secret as string,
+    enabled: Boolean(r.enabled),
+    lastUsedAt: (r.last_used_at as Date) ?? null,
+    createdAt: r.created_at as Date,
+  };
+}
+
+export async function listSmsWebhooks(): Promise<SmsWebhook[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, name, secret, enabled, last_used_at, created_at
+    FROM sms_webhooks
+    ORDER BY created_at DESC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToSmsWebhook);
+}
+
+export async function createSmsWebhook(args: {
+  name: string;
+  secret: string;
+}): Promise<SmsWebhook> {
+  if (!hasDb()) throw new Error("DATABASE_URL not set");
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO sms_webhooks (name, secret)
+    VALUES (${args.name}, ${args.secret})
+    RETURNING id, name, secret, enabled, last_used_at, created_at`;
+  return rowToSmsWebhook(rows[0] as Record<string, unknown>);
+}
+
+export async function updateSmsWebhook(
+  id: number,
+  patch: Partial<{ name: string; enabled: boolean }>,
+): Promise<SmsWebhook | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    UPDATE sms_webhooks SET
+      name = COALESCE(${patch.name ?? null}, name),
+      enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled)
+    WHERE id = ${id}
+    RETURNING id, name, secret, enabled, last_used_at, created_at`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToSmsWebhook(r) : null;
+}
+
+export async function deleteSmsWebhook(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`DELETE FROM sms_webhooks WHERE id = ${id}`;
+}
+
+export async function findSmsWebhookBySecret(
+  secret: string,
+): Promise<SmsWebhook | null> {
+  if (!hasDb() || !secret) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, name, secret, enabled, last_used_at, created_at
+    FROM sms_webhooks
+    WHERE secret = ${secret} AND enabled = TRUE
+    LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToSmsWebhook(r) : null;
+}
+
+export async function touchSmsWebhook(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`UPDATE sms_webhooks SET last_used_at = NOW() WHERE id = ${id}`;
 }
 
 export async function setChatPhoneNumber(
