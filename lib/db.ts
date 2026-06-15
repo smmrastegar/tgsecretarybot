@@ -2682,22 +2682,29 @@ export async function findOwnerOfPhone(phone: string): Promise<{
     return { name: name || null, chatId: Number(r.chat_id) };
   }
   // Strategy 2: messages_log text mentioning the number — last
-  // resort. Same service-role exclusion so the SMS-aggregator chat
-  // itself (which carries every SMS body and therefore every phone)
-  // can't get picked as "the owner" via positive feedback. Same
-  // story for chats the operator marked ignored.
+  // resort. Aggressively narrowed to dodge positive feedback:
+  //
+  //   * chat_type = 'private' — phone owners are real people, never
+  //     channels (which is how "Mahdi SMS1" was sneaking through).
+  //   * Require a real identity on chat_rules (first_name / last_name
+  //     / nickname). Bare sender_name (which is the channel title
+  //     for channel posts) is no longer accepted as an owner name.
+  //   * Skip function_role / chat_function_roles entries, ignored
+  //     chats, and rows our own webhook wrote.
   const msgRows = await sql()`
     SELECT m.chat_id,
            COUNT(*)::int AS hits,
            MAX(r.first_name) AS first_name,
            MAX(r.last_name)  AS last_name,
-           MAX(r.nickname)   AS nickname,
-           MAX(m.sender_name) AS sender_name
+           MAX(r.nickname)   AS nickname
     FROM messages_log m
-    LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
+    JOIN chat_rules r ON r.chat_id = m.chat_id
     WHERE (m.message_text ILIKE ${`%${tail}%`}
            OR COALESCE(m.transcript, '') ILIKE ${`%${tail}%`})
       AND m.source IS DISTINCT FROM 'sms_webhook'
+      AND m.chat_type = 'private'
+      AND r.chat_type = 'private'
+      AND (r.first_name IS NOT NULL OR r.last_name IS NOT NULL OR r.nickname IS NOT NULL)
       AND COALESCE(r.function_role, '') = ''
       AND COALESCE(r.ignored, FALSE) = FALSE
       AND NOT EXISTS (
@@ -2708,12 +2715,15 @@ export async function findOwnerOfPhone(phone: string): Promise<{
     LIMIT 1`;
   if (msgRows.length > 0) {
     const r = msgRows[0] as Record<string, unknown>;
+    // Identity is guaranteed by the WHERE clause above — first_name
+    // / last_name / nickname must be set, sender_name is no longer
+    // an acceptable fallback (it was the channel title that kept
+    // sneaking through).
     const name =
       [r.first_name, r.last_name].filter(Boolean).join(" ").trim() ||
       (r.nickname as string) ||
-      (r.sender_name as string) ||
       null;
-    return { name: name || null, chatId: Number(r.chat_id) };
+    if (name) return { name, chatId: Number(r.chat_id) };
   }
   return null;
 }
