@@ -109,10 +109,29 @@ export default function MessagesPage() {
   const [search, setSearch] = useState("");
   const [urgentOnly, setUrgentOnly] = useState(false);
   const [threaded, setThreaded] = useState(false);
-  // Default filter is "deleted" per operator request — they mostly
-  // come here to audit what got deleted. "all" + "edited" are the
-  // other two options.
-  const [kind, setKind] = useState<"deleted" | "all" | "edited">("deleted");
+  // First-paint default is "deleted" (the most common audit target),
+  // but on mount we restore whatever the operator last picked from
+  // localStorage so the choice survives refresh / nav-away-and-back.
+  const [kind, setKindState] = useState<"deleted" | "all" | "edited">(
+    "deleted",
+  );
+  const setKind = useCallback((next: "deleted" | "all" | "edited") => {
+    setKindState(next);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem("messages.kindFilter", next);
+      } catch {}
+    }
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem("messages.kindFilter");
+      if (stored === "deleted" || stored === "all" || stored === "edited") {
+        setKindState(stored);
+      }
+    } catch {}
+  }, []);
   const [transcribing, setTranscribing] = useState<Set<number>>(new Set());
   const [transcribeMsg, setTranscribeMsg] = useState<Record<number, string>>({});
 
