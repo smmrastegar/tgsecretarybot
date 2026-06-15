@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { createNoteWatchItem, listNoteWatchItems } from "@/lib/db";
+import {
+  createNoteWatchItem,
+  listNoteWatchItemsWithAliases,
+} from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,7 +14,7 @@ export async function GET(): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const items = await listNoteWatchItems();
+  const items = await listNoteWatchItemsWithAliases();
   return NextResponse.json({ items });
 }
 

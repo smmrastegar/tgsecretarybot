@@ -992,7 +992,14 @@ const WATCHLIST_PROMPT = `You watch incoming messages for the operator and repor
 the operator's WATCHED CONCEPTS the current message hits.
 
 The user payload contains:
-- "items": array of watched concepts, each { "id": <number>, "concept": <short label>, "description": <longer guidance> }.
+- "items": array of watched concepts, each
+    { "id": <number>,
+      "concept": <short label, e.g. "کنسرت امیر بال">,
+      "description": <longer guidance, may be empty>,
+      "aliases": [<other ways the concept might be referenced — names,
+                   spellings, related phrases. Treat every alias as a
+                   way of pointing at the same concept.>]
+    }.
 - "message": the incoming message text (already includes any voice transcript / media description).
 - "chat_title", "sender": optional context for whose message this is.
 
@@ -1001,6 +1008,7 @@ Reply with STRICT JSON only, no prose, no code fences:
   "matches": [
     {
       "item_id": <number from items[].id>,
+      "matched_alias": "<the alias / concept label that anchored the match, or null>",
       "quote": "<short verbatim phrase from message that triggered the match, in the original language, max 200 chars>",
       "reason": "<one short Persian sentence saying WHY this concept matched>"
     }
@@ -1009,21 +1017,34 @@ Reply with STRICT JSON only, no prose, no code fences:
 
 Rules:
 - "matches" is empty when nothing in the message corresponds to any watched concept.
-- A match means the message contains a SUBSTANTIVE mention of the concept — not just a passing keyword from a different context. Use the description to judge.
+- A match means the message contains a SUBSTANTIVE mention of the concept OR ANY of its
+  aliases — not just a passing keyword from a different context. Use the description to judge.
+- Aliases are CASE-INSENSITIVE; "Amir Bal" matches "amir bal".
+- Be tolerant of typos and minor spelling variants when matching aliases.
+- Aliases can be in a different language than the message; "Amir Bal" in the alias list still
+  matches "امیر بال" in the message, and vice versa.
 - Quote must be lifted VERBATIM from the message. Never paraphrase.
+- matched_alias should echo back the closest alias (or the concept label itself) so the
+  operator can see which trigger fired.
 - Multiple concepts can match the same message; emit one entry per match.
 - Keep "reason" Persian and concise (e.g. "خبر سفارش جدید با مبلغ ۲ میلیون").
 - Never invent items not in the payload.`;
 
 export type WatchlistMatchResult = {
   itemId: number;
+  matchedAlias: string | null;
   quote: string;
   reason: string;
 };
 
 export async function scanForWatchlistConcepts(input: {
   text: string;
-  items: Array<{ id: number; concept: string; description: string | null }>;
+  items: Array<{
+    id: number;
+    concept: string;
+    description: string | null;
+    aliases?: string[];
+  }>;
   chatTitle?: string | null;
   senderName?: string | null;
   chatId?: number;
@@ -1035,6 +1056,10 @@ export async function scanForWatchlistConcepts(input: {
       id: it.id,
       concept: it.concept,
       description: it.description || undefined,
+      aliases:
+        Array.isArray(it.aliases) && it.aliases.length > 0
+          ? it.aliases.slice(0, 30)
+          : undefined,
     })),
     chat_title: input.chatTitle || undefined,
     sender: input.senderName || undefined,
@@ -1073,8 +1098,17 @@ export async function scanForWatchlistConcepts(input: {
       const itemId = Number(r.item_id);
       const quote = typeof r.quote === "string" ? r.quote.trim() : "";
       const reason = typeof r.reason === "string" ? r.reason.trim() : "";
+      const matchedAlias =
+        typeof r.matched_alias === "string" && r.matched_alias.trim()
+          ? r.matched_alias.trim().slice(0, 120)
+          : null;
       if (!validIds.has(itemId) || !quote) continue;
-      out.push({ itemId, quote: quote.slice(0, 200), reason });
+      out.push({
+        itemId,
+        matchedAlias,
+        quote: quote.slice(0, 200),
+        reason,
+      });
     }
     return out;
   } catch {

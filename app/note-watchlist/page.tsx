@@ -5,6 +5,13 @@ import Shell from "@/components/Shell";
 import { Badge, Card, PageTitle } from "@/components/Card";
 import { relTime } from "@/lib/format";
 
+type Alias = {
+  id: number;
+  itemId: number;
+  alias: string;
+  createdAt: string;
+};
+
 type Item = {
   id: number;
   concept: string;
@@ -14,6 +21,7 @@ type Item = {
   lastMatchedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  aliases: string[];
 };
 
 type Match = {
@@ -329,6 +337,7 @@ function ItemCard({
         rows={2}
         className="w-full text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 mb-1.5"
       />
+      <AliasEditor item={item} />
       <div className="flex items-center justify-between text-[10px] text-[var(--color-text-dim)]">
         <button
           onClick={onClick}
@@ -341,5 +350,130 @@ function ItemCard({
         )}
       </div>
     </Card>
+  );
+}
+
+function AliasEditor({ item }: { item: Item }) {
+  const [aliases, setAliases] = useState<Alias[]>([]);
+  const [newAlias, setNewAlias] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const r = await fetch(`/api/note-watchlist/${item.id}/aliases`);
+    if (r.ok) {
+      const j = (await r.json()) as { aliases: Alias[] };
+      setAliases(j.aliases ?? []);
+    }
+    setLoaded(true);
+  }, [item.id]);
+
+  // Seed from the parent fetch when available so the chips render
+  // immediately, then refresh from the dedicated endpoint to pick up
+  // server-assigned IDs.
+  useEffect(() => {
+    if (item.aliases?.length) {
+      setAliases(
+        item.aliases.map((alias, i) => ({
+          id: -i - 1,
+          itemId: item.id,
+          alias,
+          createdAt: "",
+        })),
+      );
+    }
+    load();
+  }, [item.id, item.aliases, load]);
+
+  const add = async () => {
+    const v = newAlias.trim();
+    if (!v) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/note-watchlist/${item.id}/aliases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alias: v }),
+      });
+      if (r.ok) {
+        setNewAlias("");
+        const j = (await r.json()) as { aliases: Alias[] };
+        setAliases(j.aliases ?? []);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (aliasId: number) => {
+    if (aliasId < 0) {
+      // Stale seed row — refresh from server to find the real id.
+      await load();
+      return;
+    }
+    setAliases((cur) => cur.filter((a) => a.id !== aliasId));
+    await fetch(`/api/note-watchlist/aliases/${aliasId}`, {
+      method: "DELETE",
+    });
+  };
+
+  return (
+    <div
+      className="mb-2 border-t border-[var(--color-border)] pt-2"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
+        راه‌های رسیدن به این مفهوم — هر چیزی که توی پیام می‌تونه این مفهوم رو
+        بهت معنی کنه (اسامی، اصطلاحات، اسم لاتین، اسم کوتاه، ...).
+      </div>
+      <div className="flex flex-wrap gap-1 mb-1.5">
+        {!loaded && aliases.length === 0 && (
+          <span className="text-[10px] text-[var(--color-text-dim)] italic">
+            ...
+          </span>
+        )}
+        {loaded && aliases.length === 0 && (
+          <span className="text-[10px] text-[var(--color-text-dim)] italic">
+            هنوز alias ای تعریف نشده — فقط روی خود «{item.concept}» match می‌شه.
+          </span>
+        )}
+        {aliases.map((a) => (
+          <span
+            key={a.id}
+            className="inline-flex items-center gap-1 text-[10px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1.5 py-0.5"
+          >
+            {a.alias}
+            <button
+              onClick={() => remove(a.id)}
+              className="text-red-300 hover:text-red-200"
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-1">
+        <input
+          type="text"
+          value={newAlias}
+          onChange={(e) => setNewAlias(e.target.value)}
+          placeholder="+ alias جدید (Enter)"
+          className="flex-1 min-w-0 text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <button
+          onClick={add}
+          disabled={busy || !newAlias.trim()}
+          className="text-[11px] px-2 py-1 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+        >
+          +
+        </button>
+      </div>
+    </div>
   );
 }

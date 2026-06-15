@@ -74,7 +74,7 @@ import {
   findSecretaryRelayLinkByRecipientMessage,
   findLatestInboundLinkForRecipient,
   recordSecretaryRelayLink,
-  listNoteWatchItems,
+  listNoteWatchItemsWithAliases,
   recordNoteWatchMatch,
   addChatNote,
   listChatsByFunction,
@@ -1579,7 +1579,9 @@ async function maybeApplyNoteWatch(args: {
 }): Promise<void> {
   if (!args.text.trim()) return;
   if (!hasDb()) return;
-  const items = await listNoteWatchItems({ enabledOnly: true }).catch(() => []);
+  const items = await listNoteWatchItemsWithAliases({
+    enabledOnly: true,
+  }).catch(() => []);
   if (items.length === 0) return;
   let matches: Awaited<ReturnType<typeof scanForWatchlistConcepts>> = [];
   try {
@@ -1589,6 +1591,7 @@ async function maybeApplyNoteWatch(args: {
         id: it.id,
         concept: it.concept,
         description: it.description,
+        aliases: it.aliases,
       })),
       chatTitle: args.chatTitle,
       senderName: args.senderName,
@@ -1613,8 +1616,12 @@ async function maybeApplyNoteWatch(args: {
     let forwardedTo: number | null = null;
     if (inbox) {
       try {
+        const aliasTag =
+          m.matchedAlias && m.matchedAlias.toLowerCase() !== item.concept.toLowerCase()
+            ? ` <i>(${esc(m.matchedAlias)})</i>`
+            : "";
         const text =
-          `📝 <b>${esc(item.concept)}</b>\n` +
+          `📝 <b>${esc(item.concept)}</b>${aliasTag}\n` +
           `از: ${esc(args.senderName)}` +
           (args.chatTitle ? ` · ${esc(args.chatTitle)}` : "") +
           `\n\n💬 «${esc(m.quote)}»` +
@@ -1639,6 +1646,7 @@ async function maybeApplyNoteWatch(args: {
       senderName: args.senderName,
       metadata: {
         watch_item_id: item.id,
+        matched_alias: m.matchedAlias,
         reason: m.reason || null,
         chat_title: args.chatTitle,
       },
@@ -1653,7 +1661,11 @@ async function maybeApplyNoteWatch(args: {
       sourceMessageId: args.messageId,
       senderName: args.senderName,
       quote: m.quote,
-      reason: m.reason || null,
+      reason: m.reason
+        ? m.matchedAlias && m.matchedAlias.toLowerCase() !== item.concept.toLowerCase()
+          ? `(${m.matchedAlias}) ${m.reason}`
+          : m.reason
+        : m.matchedAlias,
       forwardedTo,
     }).catch((err) =>
       console.warn(`[watchlist] record failed item=${item.id}:`, err),

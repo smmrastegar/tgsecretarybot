@@ -320,6 +320,20 @@ export async function ensureSchema(): Promise<void> {
       ON note_watch_matches (item_id, created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS note_watch_matches_chat_idx
       ON note_watch_matches (chat_id, created_at DESC)`;
+    // Dynamic per-concept aliases. One concept ("کنسرت امیر بال")
+    // can have many alias rows ("Amir Bal", "اجرای امیر", "کنسرت
+    // برج میلاد") — the LLM sees the full list when scanning so it
+    // can detect the concept even when phrased indirectly.
+    await q`
+      CREATE TABLE IF NOT EXISTS note_watch_aliases (
+        id          BIGSERIAL PRIMARY KEY,
+        item_id     BIGINT NOT NULL REFERENCES note_watch_items(id) ON DELETE CASCADE,
+        alias       TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (item_id, alias)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS note_watch_aliases_item_idx
+      ON note_watch_aliases (item_id)`;
     // Group analytics: cache the full task-lifecycle analysis per
     // (chat, window-days) so the public share link can serve it
     // instantly without paying for an LLM call. Also stores a
@@ -3151,6 +3165,76 @@ export async function deleteNoteWatchItem(id: number): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
   await sql()`DELETE FROM note_watch_items WHERE id = ${id}`;
+}
+
+export type NoteWatchAlias = {
+  id: number;
+  itemId: number;
+  alias: string;
+  createdAt: Date;
+};
+
+export async function listNoteWatchAliases(
+  itemId?: number,
+): Promise<NoteWatchAlias[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = itemId
+    ? await sql()`
+        SELECT id, item_id, alias, created_at
+        FROM note_watch_aliases
+        WHERE item_id = ${itemId}
+        ORDER BY created_at ASC`
+    : await sql()`
+        SELECT id, item_id, alias, created_at
+        FROM note_watch_aliases
+        ORDER BY item_id, created_at ASC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    itemId: Number(r.item_id),
+    alias: r.alias as string,
+    createdAt: r.created_at as Date,
+  }));
+}
+
+export async function addNoteWatchAlias(args: {
+  itemId: number;
+  alias: string;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO note_watch_aliases (item_id, alias)
+    VALUES (${args.itemId}, ${args.alias})
+    ON CONFLICT (item_id, alias) DO NOTHING`;
+}
+
+export async function deleteNoteWatchAlias(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`DELETE FROM note_watch_aliases WHERE id = ${id}`;
+}
+
+// One-shot fetch used by the bot scanner: every enabled concept with
+// its alias list inlined. Keeps the scanner from issuing N+1 lookups
+// per message.
+export async function listNoteWatchItemsWithAliases(args?: {
+  enabledOnly?: boolean;
+}): Promise<Array<NoteWatchItem & { aliases: string[] }>> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const items = await listNoteWatchItems({
+    enabledOnly: args?.enabledOnly ?? false,
+  });
+  if (items.length === 0) return [];
+  const allAliases = await listNoteWatchAliases();
+  const byItem = new Map<number, string[]>();
+  for (const a of allAliases) {
+    const arr = byItem.get(a.itemId) ?? [];
+    arr.push(a.alias);
+    byItem.set(a.itemId, arr);
+  }
+  return items.map((it) => ({ ...it, aliases: byItem.get(it.id) ?? [] }));
 }
 
 export async function recordNoteWatchMatch(args: {
