@@ -209,6 +209,12 @@ export async function routeSmsForward(args: {
   sourceChatId: number;
   sourceMessageId: number;
   text: string;
+  // Optional fallback identity used in the forward header when the
+  // phone-owner lookup returns nothing. The SMS webhook endpoint
+  // passes the webhook's own name here so a "📱 پیامک مرضیه" tag
+  // shows up instead of just "☎️ +PHONE" (or a wrong contact
+  // matched against the SMS-aggregator's own messages_log rows).
+  sourceLabel?: string | null;
 }): Promise<{ delivered: number; skipped?: string } | null> {
   const sms = detectSmsForward(args.text);
   if (!sms) return null;
@@ -242,9 +248,15 @@ export async function routeSmsForward(args: {
   );
 
   const owner = await findOwnerOfPhone(sms.phone).catch(() => null);
+  const fallbackLabel = args.sourceLabel?.trim() || null;
+  // Header priority: real contact owner > webhook/source label >
+  // bare phone. The owner branch wins because that's the most
+  // useful for the recipient — "+989… — Moti" is unambiguous.
   const headerPlain = owner?.name
     ? `☎️ ${sms.phone} — ${owner.name}`
-    : `☎️ ${sms.phone}`;
+    : fallbackLabel
+      ? `☎️ ${sms.phone} — ${fallbackLabel}`
+      : `☎️ ${sms.phone}`;
 
   // Try to pull the OTP code out so we can inline it inside
   // <code>…</code> — Telegram renders that as tap-to-copy.

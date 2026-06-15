@@ -149,6 +149,10 @@ async function handle(request: Request): Promise<NextResponse> {
       sourceChatId: chatId,
       sourceMessageId: logId || 0,
       text,
+      // Webhook name is the operator-chosen label for THIS source
+      // (e.g. "📱 پیامک مرضیه"). Used in the forward header when
+      // findOwnerOfPhone can't resolve the actual contact.
+      sourceLabel: webhook.name,
     });
   } catch (err) {
     console.warn("[sms-webhook] route failed:", err);

@@ -2661,11 +2661,17 @@ export async function findOwnerOfPhone(phone: string): Promise<{
     return { name: phoneHit.name, chatId: phoneHit.telegramUserId };
   }
   // Strategy 1: explicit chat_rules.notes / relationship_notes.
+  // Excluding service-role chats (sms_inbox, *_storage, *_inbox,
+  // downloader, etc) because their notes can mention many phones
+  // without "owning" any of them.
   const ruleRows = await sql()`
-    SELECT chat_id, first_name, last_name, nickname
-    FROM chat_rules
-    WHERE notes ILIKE ${`%${tail}%`}
-       OR relationship_notes ILIKE ${`%${tail}%`}
+    SELECT r.chat_id, r.first_name, r.last_name, r.nickname
+    FROM chat_rules r
+    WHERE (r.notes ILIKE ${`%${tail}%`} OR r.relationship_notes ILIKE ${`%${tail}%`})
+      AND r.function_role IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM chat_function_roles f WHERE f.chat_id = r.chat_id
+      )
     LIMIT 1`;
   if (ruleRows.length > 0) {
     const r = ruleRows[0] as Record<string, unknown>;
@@ -2675,7 +2681,11 @@ export async function findOwnerOfPhone(phone: string): Promise<{
       null;
     return { name: name || null, chatId: Number(r.chat_id) };
   }
-  // Strategy 2: messages_log text mentioning the number.
+  // Strategy 2: messages_log text mentioning the number — last
+  // resort. Same service-role exclusion so the SMS-aggregator chat
+  // itself (which carries every SMS body and therefore every phone)
+  // can't get picked as "the owner" via positive feedback. Same
+  // story for chats the operator marked ignored.
   const msgRows = await sql()`
     SELECT m.chat_id,
            COUNT(*)::int AS hits,
@@ -2685,8 +2695,14 @@ export async function findOwnerOfPhone(phone: string): Promise<{
            MAX(m.sender_name) AS sender_name
     FROM messages_log m
     LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
-    WHERE m.message_text ILIKE ${`%${tail}%`}
-       OR COALESCE(m.transcript, '') ILIKE ${`%${tail}%`}
+    WHERE (m.message_text ILIKE ${`%${tail}%`}
+           OR COALESCE(m.transcript, '') ILIKE ${`%${tail}%`})
+      AND m.source IS DISTINCT FROM 'sms_webhook'
+      AND COALESCE(r.function_role, '') = ''
+      AND COALESCE(r.ignored, FALSE) = FALSE
+      AND NOT EXISTS (
+        SELECT 1 FROM chat_function_roles f WHERE f.chat_id = m.chat_id
+      )
     GROUP BY m.chat_id
     ORDER BY hits DESC
     LIMIT 1`;
