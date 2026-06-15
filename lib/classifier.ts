@@ -871,6 +871,105 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
   };
 }
 
+// Note watchlist: scan ONE incoming message against a small set of
+// operator-defined concepts ("سفارش جدید", "تأخیر پروازی", ...) and
+// return which concept(s) the message hit, with a short quote. Returns
+// [] when nothing matched. Items beyond ~20 will be truncated to keep
+// the prompt tight.
+const WATCHLIST_PROMPT = `You watch incoming messages for the operator and report which (if any) of
+the operator's WATCHED CONCEPTS the current message hits.
+
+The user payload contains:
+- "items": array of watched concepts, each { "id": <number>, "concept": <short label>, "description": <longer guidance> }.
+- "message": the incoming message text (already includes any voice transcript / media description).
+- "chat_title", "sender": optional context for whose message this is.
+
+Reply with STRICT JSON only, no prose, no code fences:
+{
+  "matches": [
+    {
+      "item_id": <number from items[].id>,
+      "quote": "<short verbatim phrase from message that triggered the match, in the original language, max 200 chars>",
+      "reason": "<one short Persian sentence saying WHY this concept matched>"
+    }
+  ]
+}
+
+Rules:
+- "matches" is empty when nothing in the message corresponds to any watched concept.
+- A match means the message contains a SUBSTANTIVE mention of the concept — not just a passing keyword from a different context. Use the description to judge.
+- Quote must be lifted VERBATIM from the message. Never paraphrase.
+- Multiple concepts can match the same message; emit one entry per match.
+- Keep "reason" Persian and concise (e.g. "خبر سفارش جدید با مبلغ ۲ میلیون").
+- Never invent items not in the payload.`;
+
+export type WatchlistMatchResult = {
+  itemId: number;
+  quote: string;
+  reason: string;
+};
+
+export async function scanForWatchlistConcepts(input: {
+  text: string;
+  items: Array<{ id: number; concept: string; description: string | null }>;
+  chatTitle?: string | null;
+  senderName?: string | null;
+  chatId?: number;
+  businessConnectionId?: string;
+}): Promise<WatchlistMatchResult[]> {
+  if (!input.text.trim() || input.items.length === 0) return [];
+  const payload = {
+    items: input.items.slice(0, 20).map((it) => ({
+      id: it.id,
+      concept: it.concept,
+      description: it.description || undefined,
+    })),
+    chat_title: input.chatTitle || undefined,
+    sender: input.senderName || undefined,
+    message: input.text.slice(0, 2000),
+  };
+  let raw = "";
+  try {
+    raw = await callOpenRouter(
+      [
+        { role: "system", content: WATCHLIST_PROMPT },
+        { role: "user", content: JSON.stringify(payload) },
+      ],
+      {
+        maxTokens: 400,
+        jsonObject: true,
+        temperature: 0.1,
+        purpose: "watchlist_scan",
+        chatId: input.chatId ?? null,
+        businessConnectionId: input.businessConnectionId ?? null,
+      },
+    );
+  } catch (err) {
+    console.warn("[watchlist] scan failed:", err);
+    return [];
+  }
+  const json = extractJson(raw);
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json) as { matches?: unknown };
+    if (!Array.isArray(parsed.matches)) return [];
+    const validIds = new Set(input.items.map((it) => it.id));
+    const out: WatchlistMatchResult[] = [];
+    for (const m of parsed.matches) {
+      if (typeof m !== "object" || m === null) continue;
+      const r = m as Record<string, unknown>;
+      const itemId = Number(r.item_id);
+      const quote = typeof r.quote === "string" ? r.quote.trim() : "";
+      const reason = typeof r.reason === "string" ? r.reason.trim() : "";
+      if (!validIds.has(itemId) || !quote) continue;
+      out.push({ itemId, quote: quote.slice(0, 200), reason });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export async function summarizeGroup(input: {
   chatTitle: string | null;
   ownerName: string;

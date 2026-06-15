@@ -7,6 +7,7 @@ import {
   describeMedia,
   extractActions,
   friendlyAutoReply,
+  scanForWatchlistConcepts,
   summarizeGroup,
 } from "./classifier";
 import { sttConfigured, transcribeAudio } from "./stt";
@@ -73,6 +74,10 @@ import {
   findSecretaryRelayLinkByRecipientMessage,
   findLatestInboundLinkForRecipient,
   recordSecretaryRelayLink,
+  listNoteWatchItems,
+  recordNoteWatchMatch,
+  addChatNote,
+  listChatsByFunction,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -1557,6 +1562,109 @@ async function maybeExtractOtp(args: {
   }
 }
 
+// Note watchlist: scan every incoming message body against the
+// operator's configured "watched concepts". When the LLM finds a
+// match, persist a chat_notes row, log the match for the dashboard,
+// and (when notes_inbox is configured) forward the hit to that
+// channel so the operator notices in real time. Skip-on-failure —
+// nothing here can drop the original message.
+async function maybeApplyNoteWatch(args: {
+  logId: number;
+  text: string;
+  chatId: number;
+  chatTitle: string | null;
+  senderName: string;
+  messageId: number;
+  businessConnectionId: string | null;
+  bot: Bot;
+}): Promise<void> {
+  if (!args.text.trim()) return;
+  if (!hasDb()) return;
+  const items = await listNoteWatchItems({ enabledOnly: true }).catch(() => []);
+  if (items.length === 0) return;
+  let matches: Awaited<ReturnType<typeof scanForWatchlistConcepts>> = [];
+  try {
+    matches = await scanForWatchlistConcepts({
+      text: args.text,
+      items: items.map((it) => ({
+        id: it.id,
+        concept: it.concept,
+        description: it.description,
+      })),
+      chatTitle: args.chatTitle,
+      senderName: args.senderName,
+      chatId: args.chatId,
+      businessConnectionId: args.businessConnectionId ?? undefined,
+    });
+  } catch (err) {
+    console.warn("[watchlist] scan failed:", err);
+    return;
+  }
+  if (matches.length === 0) return;
+  const esc = (s: string) =>
+    s.replace(/[&<>]/g, (c) =>
+      c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;",
+    );
+  const byId = new Map(items.map((it) => [it.id, it]));
+  const inboxes = await listChatsByFunction("notes_inbox").catch(() => []);
+  const inbox = inboxes[0];
+  for (const m of matches) {
+    const item = byId.get(m.itemId);
+    if (!item) continue;
+    let forwardedTo: number | null = null;
+    if (inbox) {
+      try {
+        const text =
+          `📝 <b>${esc(item.concept)}</b>\n` +
+          `از: ${esc(args.senderName)}` +
+          (args.chatTitle ? ` · ${esc(args.chatTitle)}` : "") +
+          `\n\n💬 «${esc(m.quote)}»` +
+          (m.reason ? `\n\n🔎 ${esc(m.reason)}` : "");
+        await args.bot.api.sendMessage(inbox.chatId, text.slice(0, 4096), {
+          parse_mode: "HTML",
+        });
+        forwardedTo = inbox.chatId;
+      } catch (err) {
+        console.warn(
+          `[watchlist] notes_inbox forward failed item=${item.id} chat=${inbox.chatId}:`,
+          err,
+        );
+      }
+    }
+    await addChatNote({
+      chatId: args.chatId,
+      sourceMessageId: args.messageId,
+      kind: "watchlist",
+      title: item.concept,
+      content: m.quote,
+      senderName: args.senderName,
+      metadata: {
+        watch_item_id: item.id,
+        reason: m.reason || null,
+        chat_title: args.chatTitle,
+      },
+    }).catch((err) =>
+      console.warn(`[watchlist] addChatNote failed item=${item.id}:`, err),
+    );
+    await recordNoteWatchMatch({
+      itemId: item.id,
+      chatId: args.chatId,
+      chatTitle: args.chatTitle,
+      messageLogId: args.logId || null,
+      sourceMessageId: args.messageId,
+      senderName: args.senderName,
+      quote: m.quote,
+      reason: m.reason || null,
+      forwardedTo,
+    }).catch((err) =>
+      console.warn(`[watchlist] record failed item=${item.id}:`, err),
+    );
+    console.log(
+      `[watchlist] match item=${item.id} chat=${args.chatId} concept="${item.concept}"`,
+    );
+  }
+}
+
 // Telegram delivers shared contacts as a regular message with
 // msg.contact set; the payload optionally includes user_id when the
 // contact is a Telegram user. We harvest these into phone_contacts
@@ -2329,6 +2437,16 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         mediaKind,
       });
       void maybeExtractOtp({ logId, text });
+      void maybeApplyNoteWatch({
+        logId,
+        text,
+        chatId: msg.chat.id,
+        chatTitle,
+        senderName,
+        messageId: msg.message_id,
+        businessConnectionId: bcId,
+        bot,
+      });
       void maybeDescribeMedia({
         mode,
         logId,
@@ -3550,6 +3668,16 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         mediaKind,
       });
       void maybeExtractOtp({ logId, text });
+      void maybeApplyNoteWatch({
+        logId,
+        text,
+        chatId: msg.chat.id,
+        chatTitle,
+        senderName,
+        messageId: msg.message_id,
+        businessConnectionId: null,
+        bot,
+      });
       void maybeDescribeMedia({
         mode,
         logId,

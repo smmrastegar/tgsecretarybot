@@ -41,6 +41,12 @@ const TILES: Array<{
     desc: "هر Route یه لیست فرستنده + گیرنده داره؛ پیام DM به چند تا منشی فوروارد می‌شه و جواب اون‌ها مستقیم برمی‌گرده.",
   },
   {
+    href: "/note-watchlist",
+    emoji: "🕵️",
+    label: "Note Watchlist",
+    desc: "مفاهیمی که می‌خوای AI توی همه پیام‌ها بپایه — match ها توی Notes چت + کانال notes_inbox ذخیره می‌شن.",
+  },
+  {
     href: "/ask",
     emoji: "🔎",
     label: "Ask",

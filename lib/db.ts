@@ -285,6 +285,41 @@ export async function ensureSchema(): Promise<void> {
       )`;
     await q`CREATE INDEX IF NOT EXISTS secretary_relay_links_source_idx
       ON secretary_relay_links (source_chat_id, source_message_id)`;
+    // Note watchlist: a small list of "concepts" the operator wants
+    // LLM-watched across EVERY incoming message. When the model sees a
+    // match in a message, we surface it on /note-watchlist with the
+    // quote, save a chat_notes row, and forward to the notes_inbox
+    // channel. Concept is the short label ("سفارش جدید", "تأخیر
+    // پروازی"); description is free-form guidance for the model.
+    await q`
+      CREATE TABLE IF NOT EXISTS note_watch_items (
+        id              BIGSERIAL PRIMARY KEY,
+        concept         TEXT NOT NULL,
+        description     TEXT,
+        enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+        match_count     INT NOT NULL DEFAULT 0,
+        last_matched_at TIMESTAMPTZ,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`
+      CREATE TABLE IF NOT EXISTS note_watch_matches (
+        id              BIGSERIAL PRIMARY KEY,
+        item_id         BIGINT NOT NULL REFERENCES note_watch_items(id) ON DELETE CASCADE,
+        chat_id         BIGINT NOT NULL,
+        chat_title      TEXT,
+        message_log_id  BIGINT,
+        source_message_id BIGINT,
+        sender_name     TEXT,
+        quote           TEXT NOT NULL,
+        reason          TEXT,
+        forwarded_to    BIGINT,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS note_watch_matches_item_idx
+      ON note_watch_matches (item_id, created_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS note_watch_matches_chat_idx
+      ON note_watch_matches (chat_id, created_at DESC)`;
     // AI-extracted OTP / verification code surfaced inline on every
     // message that carried one. Populated by maybeExtractOtp in
     // bot.ts (background, fire-and-forget). Dashboard renders a
@@ -2806,6 +2841,182 @@ export async function touchSmsWebhook(id: number): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
   await sql()`UPDATE sms_webhooks SET last_used_at = NOW() WHERE id = ${id}`;
+}
+
+// --- Note watchlist ---
+
+export type NoteWatchItem = {
+  id: number;
+  concept: string;
+  description: string | null;
+  enabled: boolean;
+  matchCount: number;
+  lastMatchedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type NoteWatchMatch = {
+  id: number;
+  itemId: number;
+  chatId: number;
+  chatTitle: string | null;
+  messageLogId: number | null;
+  sourceMessageId: number | null;
+  senderName: string | null;
+  quote: string;
+  reason: string | null;
+  forwardedTo: number | null;
+  createdAt: Date;
+};
+
+function rowToNoteWatchItem(r: Record<string, unknown>): NoteWatchItem {
+  return {
+    id: Number(r.id),
+    concept: r.concept as string,
+    description: (r.description as string) ?? null,
+    enabled: Boolean(r.enabled),
+    matchCount: Number(r.match_count ?? 0),
+    lastMatchedAt: (r.last_matched_at as Date) ?? null,
+    createdAt: r.created_at as Date,
+    updatedAt: r.updated_at as Date,
+  };
+}
+
+function rowToNoteWatchMatch(r: Record<string, unknown>): NoteWatchMatch {
+  return {
+    id: Number(r.id),
+    itemId: Number(r.item_id),
+    chatId: Number(r.chat_id),
+    chatTitle: (r.chat_title as string) ?? null,
+    messageLogId: r.message_log_id != null ? Number(r.message_log_id) : null,
+    sourceMessageId:
+      r.source_message_id != null ? Number(r.source_message_id) : null,
+    senderName: (r.sender_name as string) ?? null,
+    quote: r.quote as string,
+    reason: (r.reason as string) ?? null,
+    forwardedTo: r.forwarded_to != null ? Number(r.forwarded_to) : null,
+    createdAt: r.created_at as Date,
+  };
+}
+
+export async function listNoteWatchItems(args?: {
+  enabledOnly?: boolean;
+}): Promise<NoteWatchItem[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const enabledOnly = args?.enabledOnly ?? false;
+  const rows = await sql()`
+    SELECT id, concept, description, enabled, match_count, last_matched_at, created_at, updated_at
+    FROM note_watch_items
+    WHERE (${enabledOnly}::boolean = FALSE OR enabled = TRUE)
+    ORDER BY created_at DESC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToNoteWatchItem);
+}
+
+export async function getNoteWatchItem(
+  id: number,
+): Promise<NoteWatchItem | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, concept, description, enabled, match_count, last_matched_at, created_at, updated_at
+    FROM note_watch_items WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToNoteWatchItem(r) : null;
+}
+
+export async function createNoteWatchItem(args: {
+  concept: string;
+  description?: string | null;
+  enabled?: boolean;
+}): Promise<NoteWatchItem> {
+  if (!hasDb()) throw new Error("DATABASE_URL not set");
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO note_watch_items (concept, description, enabled)
+    VALUES (${args.concept}, ${args.description ?? null}, ${args.enabled ?? true})
+    RETURNING id, concept, description, enabled, match_count, last_matched_at, created_at, updated_at`;
+  return rowToNoteWatchItem(rows[0] as Record<string, unknown>);
+}
+
+export async function updateNoteWatchItem(
+  id: number,
+  patch: Partial<{ concept: string; description: string | null; enabled: boolean }>,
+): Promise<NoteWatchItem | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  // Use marker for description so we can tell "leave alone" (undefined)
+  // from "set to NULL" (null).
+  const descMarker = patch.description === undefined ? 0 : 1;
+  const descValue = patch.description ?? null;
+  const rows = await sql()`
+    UPDATE note_watch_items SET
+      concept = COALESCE(${patch.concept ?? null}, concept),
+      description = CASE WHEN ${descMarker}::int = 1 THEN ${descValue} ELSE description END,
+      enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
+      updated_at = NOW()
+    WHERE id = ${id}
+    RETURNING id, concept, description, enabled, match_count, last_matched_at, created_at, updated_at`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToNoteWatchItem(r) : null;
+}
+
+export async function deleteNoteWatchItem(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`DELETE FROM note_watch_items WHERE id = ${id}`;
+}
+
+export async function recordNoteWatchMatch(args: {
+  itemId: number;
+  chatId: number;
+  chatTitle: string | null;
+  messageLogId: number | null;
+  sourceMessageId: number | null;
+  senderName: string | null;
+  quote: string;
+  reason: string | null;
+  forwardedTo: number | null;
+}): Promise<NoteWatchMatch | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO note_watch_matches (
+      item_id, chat_id, chat_title, message_log_id, source_message_id,
+      sender_name, quote, reason, forwarded_to
+    ) VALUES (
+      ${args.itemId}, ${args.chatId}, ${args.chatTitle},
+      ${args.messageLogId}, ${args.sourceMessageId},
+      ${args.senderName}, ${args.quote}, ${args.reason}, ${args.forwardedTo}
+    )
+    RETURNING id, item_id, chat_id, chat_title, message_log_id, source_message_id,
+              sender_name, quote, reason, forwarded_to, created_at`;
+  await sql()`
+    UPDATE note_watch_items
+    SET match_count = match_count + 1, last_matched_at = NOW()
+    WHERE id = ${args.itemId}`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToNoteWatchMatch(r) : null;
+}
+
+export async function listNoteWatchMatches(args?: {
+  itemId?: number;
+  limit?: number;
+  offset?: number;
+}): Promise<NoteWatchMatch[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const limit = Math.min(Math.max(args?.limit ?? 50, 1), 200);
+  const offset = Math.max(args?.offset ?? 0, 0);
+  const rows = await sql()`
+    SELECT id, item_id, chat_id, chat_title, message_log_id, source_message_id,
+           sender_name, quote, reason, forwarded_to, created_at
+    FROM note_watch_matches
+    WHERE (${args?.itemId ?? null}::bigint IS NULL OR item_id = ${args?.itemId ?? null}::bigint)
+    ORDER BY created_at DESC
+    LIMIT ${limit} OFFSET ${offset}`;
+  return (rows as Array<Record<string, unknown>>).map(rowToNoteWatchMatch);
 }
 
 // --- Secretary relays ---
