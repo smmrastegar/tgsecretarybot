@@ -320,6 +320,34 @@ export async function ensureSchema(): Promise<void> {
       ON note_watch_matches (item_id, created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS note_watch_matches_chat_idx
       ON note_watch_matches (chat_id, created_at DESC)`;
+    // Group analytics: cache the full task-lifecycle analysis per
+    // (chat, window-days) so the public share link can serve it
+    // instantly without paying for an LLM call. Also stores a
+    // share_token at the chat level so the operator can hand out a
+    // read-only URL.
+    await q`
+      CREATE TABLE IF NOT EXISTS group_analytics (
+        id          BIGSERIAL PRIMARY KEY,
+        chat_id     BIGINT NOT NULL,
+        chat_title  TEXT,
+        window_days INT NOT NULL,
+        since_iso   TEXT NOT NULL,
+        message_count INT NOT NULL,
+        analysis    JSONB NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (chat_id, window_days)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS group_analytics_chat_idx
+      ON group_analytics (chat_id, created_at DESC)`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS analytics_share_token TEXT`;
+    await q`CREATE UNIQUE INDEX IF NOT EXISTS chat_rules_share_token_idx
+      ON chat_rules (analytics_share_token) WHERE analytics_share_token IS NOT NULL`;
+    // Per-chat summary cadence: how many hours back the daily-summary
+    // cron looks at for THIS chat. NULL means "use the cron default
+    // (24h)". Lets the operator pick a tighter window for a high-
+    // velocity group.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS summary_interval_hours INT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS last_summary_run_at TIMESTAMPTZ`;
     // AI-extracted OTP / verification code surfaced inline on every
     // message that carried one. Populated by maybeExtractOtp in
     // bot.ts (background, fire-and-forget). Dashboard renders a
@@ -1883,6 +1911,15 @@ export type ChatRule = {
   ignored: boolean;
   phoneNumber: string | null;
   graceSkippedAt: Date | null;
+  // Per-chat cadence for the daily-summary cron. NULL = use the cron
+  // default (24h). When set, the cron also tracks lastSummaryRunAt so
+  // it can skip chats that aren't due yet.
+  summaryIntervalHours: number | null;
+  lastSummaryRunAt: Date | null;
+  // Public read-only token for the /share/groups/<token> analytics
+  // page. Operator generates/revokes via the Share button on
+  // /groups/<chatId>.
+  analyticsShareToken: string | null;
   updatedAt: Date;
 };
 
@@ -1949,6 +1986,12 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
     ignored: Boolean(r.ignored),
     phoneNumber: (r.phone_number as string) ?? null,
     graceSkippedAt: (r.grace_skipped_at as Date) ?? null,
+    summaryIntervalHours:
+      r.summary_interval_hours != null
+        ? Number(r.summary_interval_hours)
+        : null,
+    lastSummaryRunAt: (r.last_summary_run_at as Date) ?? null,
+    analyticsShareToken: (r.analytics_share_token as string) ?? null,
     updatedAt: r.updated_at as Date,
   };
 }
@@ -1972,7 +2015,9 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            auto_forward_voice, auto_forward_video, auto_forward_photo,
            auto_forward_location, auto_extract_notes,
            is_bot, ignored, phone_number,
-           grace_skipped_at, updated_at
+           grace_skipped_at,
+           summary_interval_hours, last_summary_run_at, analytics_share_token,
+           updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToChatRule(r) : null;
@@ -2841,6 +2886,146 @@ export async function touchSmsWebhook(id: number): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
   await sql()`UPDATE sms_webhooks SET last_used_at = NOW() WHERE id = ${id}`;
+}
+
+// --- Group analytics cache + share token ---
+
+export type GroupAnalyticsCache = {
+  chatId: number;
+  chatTitle: string | null;
+  windowDays: number;
+  sinceIso: string;
+  messageCount: number;
+  analysis: unknown;
+  createdAt: Date;
+};
+
+function rowToGroupAnalyticsCache(
+  r: Record<string, unknown>,
+): GroupAnalyticsCache {
+  return {
+    chatId: Number(r.chat_id),
+    chatTitle: (r.chat_title as string) ?? null,
+    windowDays: Number(r.window_days),
+    sinceIso: r.since_iso as string,
+    messageCount: Number(r.message_count),
+    analysis: r.analysis,
+    createdAt: r.created_at as Date,
+  };
+}
+
+export async function getCachedGroupAnalytics(
+  chatId: number,
+  windowDays: number,
+): Promise<GroupAnalyticsCache | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT chat_id, chat_title, window_days, since_iso, message_count, analysis, created_at
+    FROM group_analytics
+    WHERE chat_id = ${chatId} AND window_days = ${windowDays}
+    LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToGroupAnalyticsCache(r) : null;
+}
+
+export async function upsertGroupAnalytics(args: {
+  chatId: number;
+  chatTitle: string | null;
+  windowDays: number;
+  sinceIso: string;
+  messageCount: number;
+  analysis: unknown;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO group_analytics (chat_id, chat_title, window_days, since_iso, message_count, analysis)
+    VALUES (${args.chatId}, ${args.chatTitle}, ${args.windowDays}, ${args.sinceIso},
+            ${args.messageCount}, ${JSON.stringify(args.analysis)}::jsonb)
+    ON CONFLICT (chat_id, window_days) DO UPDATE SET
+      chat_title = EXCLUDED.chat_title,
+      since_iso = EXCLUDED.since_iso,
+      message_count = EXCLUDED.message_count,
+      analysis = EXCLUDED.analysis,
+      created_at = NOW()`;
+}
+
+export async function getGroupAnalyticsShareToken(
+  chatId: number,
+): Promise<string | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT analytics_share_token FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
+  const r = rows[0] as { analytics_share_token: string | null } | undefined;
+  return r?.analytics_share_token ?? null;
+}
+
+export async function setGroupAnalyticsShareToken(args: {
+  chatId: number;
+  token: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  // Make sure a chat_rules row exists for this chat so the UPDATE
+  // actually hits. The defaults match other code paths that touch
+  // chat_rules without a full rule setup.
+  await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, analytics_share_token)
+    VALUES (${args.chatId}, 'group', ${args.token})
+    ON CONFLICT (chat_id) DO UPDATE SET
+      analytics_share_token = ${args.token},
+      updated_at = NOW()`;
+}
+
+export async function findChatByAnalyticsShareToken(
+  token: string,
+): Promise<{ chatId: number; chatTitle: string | null } | null> {
+  if (!hasDb() || !token) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT chat_id, chat_title FROM chat_rules
+    WHERE analytics_share_token = ${token} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  if (!r) return null;
+  return {
+    chatId: Number(r.chat_id),
+    chatTitle: (r.chat_title as string) ?? null,
+  };
+}
+
+export async function setChatSummaryIntervalHours(args: {
+  chatId: number;
+  hours: number | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, summary_interval_hours)
+    VALUES (${args.chatId}, 'group', ${args.hours})
+    ON CONFLICT (chat_id) DO UPDATE SET
+      summary_interval_hours = ${args.hours},
+      updated_at = NOW()`;
+}
+
+export async function getChatSummaryIntervalHours(
+  chatId: number,
+): Promise<number | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT summary_interval_hours FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
+  const r = rows[0] as { summary_interval_hours: number | null } | undefined;
+  return r?.summary_interval_hours ?? null;
+}
+
+export async function markChatSummaryRun(chatId: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE chat_rules SET last_summary_run_at = NOW(), updated_at = NOW()
+    WHERE chat_id = ${chatId}`;
 }
 
 // --- Note watchlist ---

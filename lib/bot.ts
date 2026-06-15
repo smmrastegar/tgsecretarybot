@@ -1407,13 +1407,12 @@ function buildBot(): Bot {
     await handleSecretaryReply(m, bot).catch((err) =>
       console.error("[secretary] handler error:", err),
     );
-    // Multi-recipient Secretary Routes reply path. Independent of the
-    // legacy single-secretary system above — looks up
-    // secretary_relay_links instead of secretary_sessions. Returns
-    // true when a relay actually fired.
-    await handleSecretaryRelayReply(m, bot).catch((err) =>
-      console.error("[relay] handler error:", err),
-    );
+    // NOTE: the multi-recipient Secretary Routes reply path used to
+    // live here for bot-DM-style relays, but the operator wants
+    // recipients to interact with their own personal Telegram chat
+    // with the owner instead — so the reply detection moved into the
+    // business_message handler (see maybeRelayRecipientReplyBusiness
+    // call inside handleBusinessMessage).
     // Harvest any contact share into phone_contacts so the SMS
     // router can identify this number on a later inbound SMS.
     harvestContactShare(m);
@@ -2340,17 +2339,39 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   // chat goes to every recipient. Fires for DMs only (relay between
   // groups would be confusing) but for any message, urgent or not.
   let relayDelivered = 0;
-  if (isDmPrivate) {
-    const relayed = await maybeForwardViaRelays({
+  // Skip owner-typed messages: they're the owner talking to either
+  // the source or the recipient directly. Forwarding/relaying them
+  // would either loop or duplicate work the owner is already doing.
+  const isOwnerTyped =
+    !!owner && !!msg.from?.id && msg.from.id === owner.userId;
+  if (isDmPrivate && !isOwnerTyped) {
+    // Recipient-reply: if the chat is a Route recipient (i.e. the
+    // owner's chat with a designated secretary), relay the
+    // recipient's message back to the original source via the
+    // owner's business connection. Returns true when the message was
+    // a reply we routed; in that case we DON'T also forward via
+    // maybeForwardViaRelays since a recipient and a source for the
+    // same chat would be a loop.
+    const replied = await maybeRelayRecipientReplyBusiness({
       msg,
       bcId,
-      senderName,
       bot,
     }).catch((err) => {
-      console.error("[relay] forward failed:", err);
-      return { delivered: 0, relays: 0 };
+      console.error("[relay] recipient-reply failed:", err);
+      return false;
     });
-    relayDelivered = relayed.delivered;
+    if (!replied) {
+      const relayed = await maybeForwardViaRelays({
+        msg,
+        bcId,
+        senderName,
+        bot,
+      }).catch((err) => {
+        console.error("[relay] forward failed:", err);
+        return { delivered: 0, relays: 0 };
+      });
+      relayDelivered = relayed.delivered;
+    }
   }
 
   // Mode-based response path (DMs only; groups stay log-only).
@@ -3310,7 +3331,14 @@ async function maybeForwardViaRelays(args: {
       // Skip self-routes — never forward to the source chat itself.
       if (rcpt.chatId === msg.chat.id) continue;
       try {
-        const header = await bot.api.sendMessage(rcpt.chatId, headerText);
+        // CRITICAL: include business_connection_id so the recipient
+        // sees the message arriving from the owner's own Telegram
+        // account, not from the bot. This matches the operator's
+        // mental model — they're delegating their inbox to the
+        // recipient, who replies in their normal chat with the owner.
+        const header = await bot.api.sendMessage(rcpt.chatId, headerText, {
+          business_connection_id: bcId,
+        });
         await recordSecretaryRelayLink({
           relayId: relay.id,
           businessConnectionId: bcId,
@@ -3324,6 +3352,7 @@ async function maybeForwardViaRelays(args: {
           bot,
           source: msg,
           toChatId: rcpt.chatId,
+          businessConnectionId: bcId,
           replyToMessageId: header.message_id,
         });
         for (const id of ids) {
@@ -3339,13 +3368,13 @@ async function maybeForwardViaRelays(args: {
         }
         delivered++;
         console.log(
-          `[relay] forwarded source=${msg.chat.id} relay=${relay.id} → rcpt=${rcpt.chatId} parts=${ids.length}`,
+          `[relay] forwarded source=${msg.chat.id} relay=${relay.id} → rcpt=${rcpt.chatId} parts=${ids.length} (via business)`,
         );
       } catch (err) {
         const e = err as { error_code?: number; description?: string };
         if (e?.error_code === 403) {
           console.warn(
-            `[relay] recipient ${rcpt.chatId} hasn't /start'd the bot — skipping`,
+            `[relay] recipient ${rcpt.chatId} not in owner's chats — owner needs an existing chat with this person for business relay to work`,
           );
         } else {
           console.error(
@@ -3357,6 +3386,78 @@ async function maybeForwardViaRelays(args: {
     }
   }
   return { delivered, relays: relays.length };
+}
+
+// Reply path (business edition): the RECIPIENT typed in their normal
+// chat with the owner. The bot receives that as a business_message
+// where msg.chat.id = recipient's user id. We look it up against the
+// most recent inbound relay link for that recipient and relay the
+// body to the source chat via the SAME business connection so the
+// source sees it arrive from the owner.
+async function maybeRelayRecipientReplyBusiness(args: {
+  msg: Message;
+  bcId: string;
+  bot: Bot;
+}): Promise<boolean> {
+  const { msg, bcId, bot } = args;
+  if (msg.chat.type !== "private") return false;
+  if (!hasDb()) return false;
+  const replyTo = msg.reply_to_message;
+  let link = replyTo
+    ? await findSecretaryRelayLinkByRecipientMessage(
+        msg.chat.id,
+        replyTo.message_id,
+      ).catch(() => null)
+    : null;
+  if (!link) {
+    link = await findLatestInboundLinkForRecipient(msg.chat.id, 120).catch(
+      () => null,
+    );
+  }
+  if (!link) return false;
+  // Only relay when this chat is genuinely a recipient — i.e. the
+  // recipient chat id on the link matches this chat. Direction
+  // 'inbound' means the link was created by us forwarding TO this
+  // recipient earlier, so a follow-up message here is a reply.
+  if (link.recipientChatId !== msg.chat.id) return false;
+  // Use the bcId of the current message (the recipient's business
+  // connection) rather than the stored one, since the owner could
+  // have multiple business connections.
+  const sendBcId = link.businessConnectionId ?? bcId;
+  try {
+    const sentIds = await relayAnyMessage({
+      bot,
+      source: msg,
+      toChatId: link.sourceChatId,
+      businessConnectionId: sendBcId,
+    });
+    if (link.sourceMessageId) {
+      await markBusinessRead(
+        bot,
+        sendBcId,
+        link.sourceChatId,
+        link.sourceMessageId,
+      ).catch(() => {});
+    }
+    for (const id of sentIds) {
+      await recordSecretaryRelayLink({
+        relayId: link.relayId,
+        businessConnectionId: sendBcId,
+        sourceChatId: link.sourceChatId,
+        sourceMessageId: id,
+        recipientChatId: msg.chat.id,
+        recipientMessageId: msg.message_id,
+        direction: "outbound",
+      });
+    }
+    console.log(
+      `[relay] reply (business) rcpt=${msg.chat.id} → source=${link.sourceChatId} parts=${sentIds.length}`,
+    );
+    return true;
+  } catch (err) {
+    console.error("[relay] reply (business) failed:", err);
+    return false;
+  }
 }
 
 // Reply path: a recipient typed in their DM with the bot. If they

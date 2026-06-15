@@ -640,12 +640,15 @@ export async function askMessages(input: {
 // dashboard in Persian.
 const TASK_ANALYZE_PROMPT = `You analyze a Telegram group's recent message log for the
 group owner. Your job is to surface CONCRETE WORK ITEMS — tasks, deliverables,
-commitments, work-in-progress announcements — and track their lifecycle.
+commitments, work-in-progress announcements — track their lifecycle, label each
+member's role, and flag risks (overdue / stalled).
 
 The owner's questions you are answering are:
 1. What tasks were raised in this group?
-2. How many of those tasks have been done? How many are still in progress? How many never got picked up (stalled)?
-3. For each completed task: how long did it take from the moment it was announced until it was reported done?
+2. How many are done, how many in progress, how many never picked up, how many overdue/stalled?
+3. For each completed task: how long did it take from announcement until done?
+4. Who plays what role in this team (executor / reporter / supervisor / ...)?
+5. What's at risk RIGHT NOW that the owner should look at?
 
 LIFECYCLE — read carefully:
 - "announced" = someone said the task should be done / will be done / asked for it. Usually phrased as
@@ -657,6 +660,16 @@ LIFECYCLE — read carefully:
   "فرستادم", "پرداخت کردم". A completion message MUST exist in the log to qualify.
 - "stalled" = announced but no follow-up activity for many days, or the conversation moved on.
 
+PERSON ROLES — pick the BEST single match from this enum for each person, looking at their
+behaviour across the whole log:
+- "executor"   = مجری: actually does the work (codes, ships, delivers).
+- "reporter"   = گزارش‌کننده: posts updates / status / numbers, but doesn't usually deliver.
+- "supervisor" = ناظر / مدیر: assigns work, asks for status, approves, criticises.
+- "designer"   = طراح: design / UI / UX / محتوا / گرافیک.
+- "support"    = پشتیبانی: deals with users / مشتری / تیکت.
+- "stakeholder"= ذی‌نفع: requests features or gives feedback but isn't part of the team.
+- "other"      = anything that doesn't clearly fit.
+
 Reply with STRICT JSON only, no prose, no code fences. All free-text fields MUST be in Persian (فارسی):
 
 {
@@ -667,6 +680,7 @@ Reply with STRICT JSON only, no prose, no code fences. All free-text fields MUST
     "in_progress": <int>,
     "done": <int>,
     "stalled": <int>,
+    "overdue": <int>,
     "avg_completion_hours": <number or null>
   },
   "tasks": [
@@ -675,54 +689,106 @@ Reply with STRICT JSON only, no prose, no code fences. All free-text fields MUST
       "owner": "<اسم فرد مسئول یا null>",
       "announced_by": "<اسم اعلام‌کننده>",
       "announced_at": "<ISO 8601 of the announcing message>",
+      "due_at": "<ISO 8601 یا null — اگر مهلتی توی پیام‌ها مطرح شده>",
       "status": "announced" | "in_progress" | "done" | "stalled",
+      "is_overdue": <true|false>,
+      "stale_days": <number یا null>,
       "completed_at": "<ISO 8601 یا null>",
       "duration_hours": <number یا null>,
+      "completed_on_time": <true|false|null>,
+      "delay_hours": <number یا null>,
+      "blocked_reason": "<یک جمله فارسی یا null — اگر دلیل تأخیر/توقف معلومه>",
       "evidence": ["<نقل قول کوتاه از پیام مرتبط>", "..."]
     }
   ],
   "people": [
     {
       "name": "<نام دقیق همان‌طور که در sender ظاهر شده>",
-      "role": "<یک جمله کوتاه فارسی درباره نقش/سهم این فرد در گروه>",
+      "role_label": "executor" | "reporter" | "supervisor" | "designer" | "support" | "stakeholder" | "other",
+      "role_description": "<یک جمله کوتاه فارسی توضیح این که این آدم تو این گروه چی کار می‌کنه>",
       "tasks_announced": <int>,
-      "tasks_completed": <int>
+      "tasks_completed": <int>,
+      "on_time_rate": <number 0-1 یا null — نسبت کارهای to-time>
+    }
+  ],
+  "highlights": [
+    {
+      "kind": "overdue" | "stalled" | "risk" | "win",
+      "title": "<یک عبارت کوتاه فارسی>",
+      "details": "<توضیح یک‌خطی فارسی>"
     }
   ]
 }
 
 Rules:
-- IMPORTANT: announced_at and completed_at must be EXACT ISO timestamps taken FROM the message list
-  provided in the payload (the "at" field). Do not invent dates.
+- IMPORTANT: all ISO timestamps must come EXACTLY from the message list provided in the payload
+  (the "at" field). Do not invent dates.
 - duration_hours = (completed_at - announced_at) in hours, rounded to 1 decimal. null if status != "done".
-- Inside "evidence" quote a short phrase from the actual message text — don't paraphrase.
-- A task only counts as "done" if there is a clear completion message in the log. If you only see the
-  announcement, mark it "announced" (or "stalled" if the log is recent and old).
-- Tasks should be SPECIFIC and CONCRETE. Skip casual chatter, jokes, generic encouragement.
-  Merge near-duplicates (same task announced multiple times) into one entry.
-- The "people" list should focus on the MOST ACTIVE members and ONLY count tasks they ANNOUNCED
-  (announced_by == their name) and tasks they COMPLETED (owner == their name AND status == "done").
-- stats.avg_completion_hours = average of duration_hours across all "done" tasks, null if no done tasks.
-- Sort tasks by announced_at DESCENDING (newest first).
-- Sort people by tasks_announced DESCENDING.
-- Be generous about what counts as a task — anything an operator would track on a kanban / todo list.`;
+- stale_days = (now - last_relevant_message_at) in days. Set high (>3) for stalled tasks.
+- is_overdue = true when status != "done" AND due_at is in the past, OR when stale_days >= 5 with no
+  due date.
+- completed_on_time = true when status="done" AND (no due_at OR completed_at <= due_at). null when
+  not done.
+- delay_hours = positive number when completed_at > due_at, else 0 or null.
+- The "highlights" section is the operator's emergency-room view: surface anything overdue, stalled,
+  blocked, or notable wins. Max 6 entries, sort by importance.
+- Sort tasks by status priority (overdue first, then in_progress, announced, done last) and within
+  each status by announced_at DESCENDING.
+- on_time_rate = (tasks where completed_on_time=true) / (tasks where status="done" and owner=this
+  person). null when person has no done tasks.
+- Be generous about what counts as a task — anything an operator would track on a kanban / todo list.
+- Skip casual chatter, jokes, generic encouragement. Merge near-duplicates (same task announced
+  multiple times) into one entry.`;
+
+export type PersonRoleLabel =
+  | "executor"
+  | "reporter"
+  | "supervisor"
+  | "designer"
+  | "support"
+  | "stakeholder"
+  | "other";
+
+export const PERSON_ROLE_LABELS: PersonRoleLabel[] = [
+  "executor",
+  "reporter",
+  "supervisor",
+  "designer",
+  "support",
+  "stakeholder",
+  "other",
+];
 
 export type GroupTaskRecord = {
   title: string;
   owner: string | null;
   announcedBy: string;
   announcedAt: string;
+  dueAt: string | null;
   status: "announced" | "in_progress" | "done" | "stalled";
+  isOverdue: boolean;
+  staleDays: number | null;
   completedAt: string | null;
   durationHours: number | null;
+  completedOnTime: boolean | null;
+  delayHours: number | null;
+  blockedReason: string | null;
   evidence: string[];
 };
 
 export type GroupPersonRecord = {
   name: string;
-  role: string;
+  roleLabel: PersonRoleLabel;
+  roleDescription: string;
   tasksAnnounced: number;
   tasksCompleted: number;
+  onTimeRate: number | null;
+};
+
+export type GroupHighlight = {
+  kind: "overdue" | "stalled" | "risk" | "win";
+  title: string;
+  details: string;
 };
 
 export type GroupTaskAnalysis = {
@@ -733,10 +799,12 @@ export type GroupTaskAnalysis = {
     inProgress: number;
     done: number;
     stalled: number;
+    overdue: number;
     avgCompletionHours: number | null;
   };
   tasks: GroupTaskRecord[];
   people: GroupPersonRecord[];
+  highlights: GroupHighlight[];
 };
 
 export async function analyzeGroupTasks(input: {
@@ -784,10 +852,12 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
       inProgress: 0,
       done: 0,
       stalled: 0,
+      overdue: 0,
       avgCompletionHours: null,
     },
     tasks: [],
     people: [],
+    highlights: [],
   };
   if (!json) return empty;
   let parsed: Record<string, unknown> = {};
@@ -807,12 +877,19 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
     const n = Number(v);
     return Number.isFinite(n) ? Math.round(n) : 0;
   };
+  const asBoolOrNull = (v: unknown): boolean | null => {
+    if (v === true) return true;
+    if (v === false) return false;
+    return null;
+  };
   const validStatuses = new Set([
     "announced",
     "in_progress",
     "done",
     "stalled",
   ]);
+  const validRoles = new Set<string>(PERSON_ROLE_LABELS);
+  const validHighlights = new Set(["overdue", "stalled", "risk", "win"]);
   const tasksRaw = Array.isArray(parsed.tasks) ? parsed.tasks : [];
   const tasks: GroupTaskRecord[] = tasksRaw
     .map((t): GroupTaskRecord | null => {
@@ -830,11 +907,19 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
         owner: r.owner ? asStr(r.owner).trim() || null : null,
         announcedBy: asStr(r.announced_by).trim(),
         announcedAt: asStr(r.announced_at).trim(),
+        dueAt: r.due_at ? asStr(r.due_at).trim() || null : null,
         status: status as GroupTaskRecord["status"],
+        isOverdue: r.is_overdue === true,
+        staleDays: asNumOrNull(r.stale_days),
         completedAt: r.completed_at
           ? asStr(r.completed_at).trim() || null
           : null,
         durationHours: asNumOrNull(r.duration_hours),
+        completedOnTime: asBoolOrNull(r.completed_on_time),
+        delayHours: asNumOrNull(r.delay_hours),
+        blockedReason: r.blocked_reason
+          ? asStr(r.blocked_reason).trim() || null
+          : null,
         evidence,
       };
     })
@@ -844,14 +929,39 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
     .map((p): GroupPersonRecord | null => {
       if (typeof p !== "object" || p === null) return null;
       const r = p as Record<string, unknown>;
+      const rawRole = asStr(r.role_label).toLowerCase().trim();
+      const roleLabel: PersonRoleLabel = validRoles.has(rawRole)
+        ? (rawRole as PersonRoleLabel)
+        : "other";
       return {
         name: asStr(r.name).trim(),
-        role: asStr(r.role).trim(),
+        roleLabel,
+        roleDescription:
+          asStr(r.role_description).trim() || asStr(r.role).trim(),
         tasksAnnounced: asInt(r.tasks_announced),
         tasksCompleted: asInt(r.tasks_completed),
+        onTimeRate: asNumOrNull(r.on_time_rate),
       };
     })
     .filter((x): x is GroupPersonRecord => x !== null && Boolean(x.name));
+  const highlightsRaw = Array.isArray(parsed.highlights)
+    ? parsed.highlights
+    : [];
+  const highlights: GroupHighlight[] = highlightsRaw
+    .map((h): GroupHighlight | null => {
+      if (typeof h !== "object" || h === null) return null;
+      const r = h as Record<string, unknown>;
+      const kind = asStr(r.kind).toLowerCase().trim();
+      if (!validHighlights.has(kind)) return null;
+      const title = asStr(r.title).trim();
+      if (!title) return null;
+      return {
+        kind: kind as GroupHighlight["kind"],
+        title,
+        details: asStr(r.details).trim(),
+      };
+    })
+    .filter((x): x is GroupHighlight => x !== null);
   const statsRaw =
     typeof parsed.stats === "object" && parsed.stats
       ? (parsed.stats as Record<string, unknown>)
@@ -864,10 +974,12 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
       inProgress: asInt(statsRaw.in_progress),
       done: asInt(statsRaw.done),
       stalled: asInt(statsRaw.stalled),
+      overdue: asInt(statsRaw.overdue),
       avgCompletionHours: asNumOrNull(statsRaw.avg_completion_hours),
     },
     tasks,
     people,
+    highlights,
   };
 }
 

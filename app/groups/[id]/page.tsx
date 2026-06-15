@@ -3,50 +3,19 @@
 import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import Shell from "@/components/Shell";
-import { Badge, Card, PageTitle, StatCard } from "@/components/Card";
-import { relTime } from "@/lib/format";
-
-type TaskStatus = "announced" | "in_progress" | "done" | "stalled";
-
-type Task = {
-  title: string;
-  owner: string | null;
-  announcedBy: string;
-  announcedAt: string;
-  status: TaskStatus;
-  completedAt: string | null;
-  durationHours: number | null;
-  evidence: string[];
-};
-
-type Person = {
-  name: string;
-  role: string;
-  tasksAnnounced: number;
-  tasksCompleted: number;
-};
-
-type Analysis = {
-  overview: string;
-  stats: {
-    totalTasks: number;
-    announced: number;
-    inProgress: number;
-    done: number;
-    stalled: number;
-    avgCompletionHours: number | null;
-  };
-  tasks: Task[];
-  people: Person[];
-};
+import { Card, PageTitle } from "@/components/Card";
+import GroupAnalyticsView, { type Analysis } from "@/components/GroupAnalyticsView";
 
 type AnalyticsResponse = {
   ok: boolean;
   empty?: boolean;
+  cached?: boolean;
   chatTitle: string | null;
-  sinceIso: string;
+  sinceIso: string | null;
   messageCount: number;
   analysis: Analysis | null;
+  cachedAt?: string;
+  shareToken?: string | null;
   error?: string;
 };
 
@@ -57,37 +26,14 @@ const WINDOWS: Array<{ label: string; days: number }> = [
   { label: "۳۰ روز", days: 30 },
 ];
 
-const STATUS_LABELS: Record<TaskStatus, string> = {
-  announced: "اعلام‌شده",
-  in_progress: "در حال انجام",
-  done: "تموم",
-  stalled: "متوقف",
-};
-
-const STATUS_TONES: Record<TaskStatus, "neutral" | "info" | "success" | "warn"> = {
-  announced: "info",
-  in_progress: "warn",
-  done: "success",
-  stalled: "neutral",
-};
-
-function formatDuration(hours: number | null): string {
-  if (hours === null || !Number.isFinite(hours)) return "—";
-  if (hours < 1) {
-    const mins = Math.round(hours * 60);
-    return `${mins} دقیقه`;
-  }
-  if (hours < 48) return `${hours.toFixed(1)} ساعت`;
-  const days = hours / 24;
-  return `${days.toFixed(1)} روز`;
-}
-
-function formatTime(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return "—";
-  return d.toLocaleString();
-}
+const INTERVAL_OPTIONS: Array<{ label: string; hours: number | null }> = [
+  { label: "هر ۱ ساعت", hours: 1 },
+  { label: "هر ۳ ساعت", hours: 3 },
+  { label: "هر ۶ ساعت", hours: 6 },
+  { label: "هر ۱۲ ساعت", hours: 12 },
+  { label: "هر ۲۴ ساعت (پیش‌فرض)", hours: 24 },
+  { label: "هر ۴۸ ساعت", hours: 48 },
+];
 
 export default function GroupAnalyticsPage({
   params,
@@ -99,20 +45,30 @@ export default function GroupAnalyticsPage({
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [days, setDays] = useState(14);
+  const [days, setDays] = useState(7);
+  const [intervalHours, setIntervalHours] = useState<number | null>(null);
+  const [shareToken, setShareToken] = useState<string | null>(null);
+  const [origin, setOrigin] = useState("");
+  const [copied, setCopied] = useState(false);
 
-  const run = useCallback(
-    async (windowDays: number) => {
+  useEffect(() => {
+    if (typeof window !== "undefined") setOrigin(window.location.origin);
+  }, []);
+
+  const load = useCallback(
+    async (windowDays: number, force = false) => {
       setRunning(true);
       setErr(null);
       try {
+        const method = force ? "POST" : "GET";
         const r = await fetch(
-          `/api/groups/${chatId}/analytics?days=${windowDays}`,
-          { method: "POST" },
+          `/api/groups/${chatId}/analytics?days=${windowDays}${force ? "&force=1" : ""}`,
+          { method },
         );
         const j = (await r.json()) as AnalyticsResponse;
         if (!r.ok) throw new Error(j.error ?? "failed");
         setData(j);
+        if (j.shareToken !== undefined) setShareToken(j.shareToken);
       } catch (e) {
         setErr(e instanceof Error ? e.message : String(e));
       } finally {
@@ -122,221 +78,202 @@ export default function GroupAnalyticsPage({
     [chatId],
   );
 
-  useEffect(() => {
-    if (Number.isFinite(chatId)) run(days);
-  }, [chatId, days, run]);
+  const loadInterval = useCallback(async () => {
+    const r = await fetch(`/api/groups/${chatId}/interval`);
+    if (r.ok) {
+      const j = (await r.json()) as { hours: number | null };
+      setIntervalHours(j.hours);
+    }
+  }, [chatId]);
 
-  const analysis = data?.analysis ?? null;
-  const tasks = analysis?.tasks ?? [];
-  const people = analysis?.people ?? [];
+  const saveInterval = useCallback(
+    async (hours: number | null) => {
+      const r = await fetch(`/api/groups/${chatId}/interval`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hours }),
+      });
+      if (r.ok) setIntervalHours(hours);
+    },
+    [chatId],
+  );
+
+  const generateShare = useCallback(async () => {
+    const r = await fetch(`/api/groups/${chatId}/share`, { method: "POST" });
+    if (r.ok) {
+      const j = (await r.json()) as { token: string };
+      setShareToken(j.token);
+    }
+  }, [chatId]);
+
+  const revokeShare = useCallback(async () => {
+    if (!confirm("لینک عمومی فعلی پاک می‌شه و دسترسی کسی که لینک رو داشته قطع می‌شه. ادامه؟"))
+      return;
+    const r = await fetch(`/api/groups/${chatId}/share`, { method: "DELETE" });
+    if (r.ok) setShareToken(null);
+  }, [chatId]);
+
+  useEffect(() => {
+    if (Number.isFinite(chatId)) {
+      load(days);
+      loadInterval();
+    }
+  }, [chatId, days, load, loadInterval]);
+
+  const shareUrl = shareToken
+    ? `${origin}/share/groups/${shareToken}?days=${days}`
+    : "";
+
+  const copy = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
 
   return (
     <Shell>
-      <PageTitle
-        title={
-          data?.chatTitle
-            ? `📊 ${data.chatTitle}`
-            : `📊 گروه ${chatId}`
-        }
-        subtitle="تحلیل کارهای مطرح شده، در حال انجام و تموم‌شده در بازه‌ی انتخاب‌شده."
-        actions={
-          <div className="flex gap-2 flex-wrap">
-            {WINDOWS.map((w) => (
+      <div dir="rtl">
+        <PageTitle
+          title={
+            data?.chatTitle
+              ? `📊 ${data.chatTitle}`
+              : `📊 گروه ${chatId}`
+          }
+          subtitle="تحلیل کارها، نقش‌ها، و موارد معوق در بازه‌ی انتخاب‌شده."
+          actions={
+            <div className="flex gap-2 flex-wrap">
+              {WINDOWS.map((w) => (
+                <button
+                  key={w.days}
+                  onClick={() => setDays(w.days)}
+                  disabled={running}
+                  className={`text-xs px-3 py-1.5 rounded-md border ${
+                    days === w.days
+                      ? "bg-[var(--color-accent)] text-white border-transparent"
+                      : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                  } disabled:opacity-50`}
+                >
+                  {w.label}
+                </button>
+              ))}
               <button
-                key={w.days}
-                onClick={() => setDays(w.days)}
+                onClick={() => load(days, true)}
                 disabled={running}
-                className={`text-xs px-3 py-1.5 rounded-md border ${
-                  days === w.days
-                    ? "bg-[var(--color-accent)] text-white border-transparent"
-                    : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                } disabled:opacity-50`}
+                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
               >
-                {w.label}
+                {running ? "در حال پردازش…" : "↻ پردازش مجدد"}
               </button>
-            ))}
-            <button
-              onClick={() => run(days)}
-              disabled={running}
-              className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-            >
-              {running ? "در حال پردازش…" : "↻ به‌روزرسانی"}
-            </button>
-            <Link
-              href="/groups"
-              className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-            >
-              ← خلاصه‌ها
-            </Link>
-          </div>
-        }
-      />
+              <Link
+                href="/groups"
+                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+              >
+                ← خلاصه‌ها
+              </Link>
+            </div>
+          }
+        />
 
-      {err && (
-        <Card className="mb-4 border-red-800">
-          <p className="text-sm text-red-300">{err}</p>
-        </Card>
-      )}
-
-      {running && !data && (
-        <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">
-            در حال پردازش پیام‌های گروه… (بسته به حجم پیام‌ها چند ثانیه طول می‌کشه)
-          </p>
-        </Card>
-      )}
-
-      {data?.empty && (
-        <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">
-            هیچ پیامی در این بازه پیدا نشد.
-          </p>
-        </Card>
-      )}
-
-      {analysis && (
-        <>
-          {analysis.overview && (
-            <Card className="mb-4">
-              <div className="text-xs text-[var(--color-text-dim)] mb-2">
-                خلاصه‌ی وضعیت
-              </div>
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                {analysis.overview}
+        <Card className="mb-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium mb-1">⏱ فرکانس خلاصه‌سازی این گروه</div>
+              <p className="text-[11px] text-[var(--color-text-dim)] mb-2">
+                cron هر ساعت اجرا می‌شه و فقط گروه‌هایی که زمان جدید رسیده پردازش می‌کنه.
               </p>
-              <div className="text-[11px] text-[var(--color-text-dim)] mt-3">
-                {data?.messageCount ?? 0} پیام · از{" "}
-                {data?.sinceIso
-                  ? new Date(data.sinceIso).toLocaleDateString()
-                  : "—"}{" "}
-                تا الان
-              </div>
-            </Card>
-          )}
-
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-            <StatCard
-              label="کل کارها"
-              value={analysis.stats.totalTasks}
-            />
-            <StatCard
-              label="تموم"
-              value={analysis.stats.done}
-              hint={
-                analysis.stats.totalTasks > 0
-                  ? `${Math.round((analysis.stats.done / analysis.stats.totalTasks) * 100)}%`
-                  : undefined
-              }
-            />
-            <StatCard
-              label="در حال انجام"
-              value={analysis.stats.inProgress}
-            />
-            <StatCard
-              label="اعلام‌شده"
-              value={analysis.stats.announced}
-            />
-            <StatCard
-              label="میانگین زمان انجام"
-              value={formatDuration(analysis.stats.avgCompletionHours)}
-              hint="از زمان اعلام تا تموم"
-            />
-          </div>
-
-          {tasks.length > 0 && (
-            <Card className="mb-4">
-              <div className="text-sm font-medium mb-3">کارها</div>
-              <div className="flex flex-col gap-3">
-                {tasks.map((t, i) => (
-                  <TaskRow key={`${t.title}-${i}`} task={t} />
-                ))}
-              </div>
-            </Card>
-          )}
-
-          {people.length > 0 && (
-            <Card>
-              <div className="text-sm font-medium mb-3">افراد فعال</div>
-              <div className="flex flex-col gap-3">
-                {people.map((p, i) => (
-                  <div
-                    key={`${p.name}-${i}`}
-                    className="border-b border-[var(--color-border)] last:border-0 pb-3 last:pb-0"
+              <div className="flex gap-2 flex-wrap">
+                {INTERVAL_OPTIONS.map((opt) => (
+                  <button
+                    key={String(opt.hours)}
+                    onClick={() => saveInterval(opt.hours)}
+                    className={`text-[11px] px-2.5 py-1 rounded-md border ${
+                      (intervalHours ?? 24) === opt.hours
+                        ? "bg-[var(--color-accent)] text-white border-transparent"
+                        : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                    }`}
                   >
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="font-medium">{p.name}</div>
-                      <div className="flex gap-1.5">
-                        <Badge tone="info">
-                          {p.tasksAnnounced} اعلام
-                        </Badge>
-                        <Badge tone="success">
-                          {p.tasksCompleted} تموم‌شده
-                        </Badge>
-                      </div>
-                    </div>
-                    {p.role && (
-                      <p className="text-xs text-[var(--color-text-dim)] mt-1">
-                        {p.role}
-                      </p>
-                    )}
-                  </div>
+                    {opt.label}
+                  </button>
                 ))}
               </div>
-            </Card>
-          )}
-
-          {tasks.length === 0 && (
-            <Card>
-              <p className="text-sm text-[var(--color-text-dim)]">
-                کار مشخصی در این بازه پیدا نشد.
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-medium mb-1">🔗 لینک اشتراک‌گذاری عمومی</div>
+              <p className="text-[11px] text-[var(--color-text-dim)] mb-2">
+                هر کسی این لینک رو داشته باشه فقط می‌تونه گزارش رو ببینه (read-only).
               </p>
-            </Card>
-          )}
-        </>
-      )}
+              {shareToken ? (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <code
+                    dir="ltr"
+                    className="flex-1 min-w-0 text-[10px] tabular-nums break-all bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+                  >
+                    {shareUrl}
+                  </code>
+                  <button
+                    onClick={copy}
+                    className="text-[11px] px-2 py-1 rounded-md bg-[var(--color-accent)] text-white"
+                  >
+                    {copied ? "✓ کپی شد" : "📋 کپی"}
+                  </button>
+                  <button
+                    onClick={revokeShare}
+                    className="text-[11px] px-2 py-1 rounded-md border border-red-900/40 text-red-300 hover:bg-red-900/30"
+                  >
+                    🗑 لغو
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={generateShare}
+                  className="text-[11px] px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white"
+                >
+                  + ساخت لینک
+                </button>
+              )}
+            </div>
+          </div>
+        </Card>
+
+        {err && (
+          <Card className="mb-4 border-red-800">
+            <p className="text-sm text-red-300">{err}</p>
+          </Card>
+        )}
+
+        {running && !data && (
+          <Card>
+            <p className="text-sm text-[var(--color-text-dim)]">
+              در حال پردازش پیام‌های گروه…
+            </p>
+          </Card>
+        )}
+
+        {data?.empty && (
+          <Card>
+            <p className="text-sm text-[var(--color-text-dim)]">
+              هیچ پیامی در این بازه پیدا نشد.
+            </p>
+          </Card>
+        )}
+
+        {data?.analysis && (
+          <>
+            {data.cached && data.cachedAt && (
+              <div className="text-[11px] text-[var(--color-text-dim)] mb-2">
+                💾 از کش: {new Date(data.cachedAt).toLocaleString()} (برای داده‌ی تازه‌تر «پردازش مجدد» رو بزن)
+              </div>
+            )}
+            <GroupAnalyticsView
+              analysis={data.analysis}
+              messageCount={data.messageCount}
+              sinceIso={data.sinceIso}
+            />
+          </>
+        )}
+      </div>
     </Shell>
-  );
-}
-
-function TaskRow({ task }: { task: Task }) {
-  return (
-    <div className="border-b border-[var(--color-border)] last:border-0 pb-3 last:pb-0">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="font-medium flex-1 min-w-0">{task.title}</div>
-        <Badge tone={STATUS_TONES[task.status]}>
-          {STATUS_LABELS[task.status]}
-        </Badge>
-      </div>
-
-      <div className="text-xs text-[var(--color-text-dim)] mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
-        <span>
-          اعلام: <span className="text-white">{task.announcedBy}</span> ·{" "}
-          {relTime(task.announcedAt)}
-        </span>
-        {task.owner && task.owner !== task.announcedBy && (
-          <span>
-            مسئول: <span className="text-white">{task.owner}</span>
-          </span>
-        )}
-        {task.status === "done" && (
-          <span>
-            انجام: {formatTime(task.completedAt)} ·{" "}
-            <span className="text-emerald-300">
-              {formatDuration(task.durationHours)}
-            </span>
-          </span>
-        )}
-      </div>
-
-      {task.evidence.length > 0 && (
-        <ul className="mt-2 text-xs text-[var(--color-text-dim)] list-disc pr-5 space-y-0.5">
-          {task.evidence.slice(0, 4).map((e, i) => (
-            <li key={i} className="break-words">
-              «{e}»
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
   );
 }

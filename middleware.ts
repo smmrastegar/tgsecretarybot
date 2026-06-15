@@ -12,6 +12,11 @@ const PUBLIC_PREFIXES = [
   // Android SMS-Forwarder app (which sees the middleware's
   // {"error":"unauthorized"} response and retries forever).
   "/api/sms-webhook",
+  // Public share links — the URL token itself is the auth. Anyone
+  // holding /share/groups/<token> can view the cached analytics for
+  // that chat but cannot trigger a recompute or modify anything.
+  "/api/public",
+  "/share",
   "/_next",
   "/favicon",
 ];
