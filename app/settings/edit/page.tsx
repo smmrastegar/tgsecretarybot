@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
 import OwnerPhotoUploader from "@/components/OwnerPhotoUploader";
+import SmsWebhookUrl from "@/components/SmsWebhookUrl";
 
 type Settings = {
   ownerName: string;
@@ -36,6 +37,8 @@ type Settings = {
   aiChatModelsCsv: string;
   sttLanguage: string;
   markMessagesAsRead: string;
+  smsWebhookSecret: string;
+  smsWebhookChatTitle: string;
   autoExtractEnabled: string;
   autoExtractMinImportance: string;
   chatDefaultMode: string;
@@ -209,6 +212,18 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         label: "Mark sender's message as 'seen' after every reply",
         hint: "When the bot answers via business connection (auto-reply, AI, friendly, secretary relay, or dashboard send), it also calls readBusinessMessage so the sender gets a seen tick. Requires the can_read_messages right in Telegram Business → Chatbots. Turn this OFF if you'd rather not show seen ticks.",
         type: "toggle",
+      },
+      {
+        key: "smsWebhookSecret",
+        label: "📱 SMS Forwarder webhook token",
+        hint: "Shared secret for the Android SMS-Forwarder app's webhook. Pick anything random. The full URL is shown right below — paste it into the app's Webhook URL field. No other field in the app needs changing.",
+        type: "text",
+      },
+      {
+        key: "smsWebhookChatTitle",
+        label: "📱 Display title for SMS-Forwarder messages",
+        hint: 'Label used in /messages and /chats for SMS that came through the webhook. Default "📱 SMS Forwarder".',
+        type: "text",
       },
     ],
   },
@@ -530,6 +545,9 @@ export default function SettingsPage() {
       <div className="flex flex-col gap-4 md:gap-6">
         {/* Owner reference photo — uploads a file instead of needing a URL. */}
         <OwnerPhotoUploader />
+        {/* Generated webhook URL the operator pastes into the SMS-Forwarder
+            Android app. Depends on smsWebhookSecret being set. */}
+        <SmsWebhookUrl secret={values.smsWebhookSecret ?? ""} />
         {/* Custom rich editor: Secretaries */}
         <Card>
           <h2 className="text-sm font-semibold mb-1">Secretaries</h2>

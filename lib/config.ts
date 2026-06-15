@@ -81,6 +81,13 @@ export const DEFAULT_SETTINGS = {
   aiChatModelsCsv: "",
   sttLanguage: "fa",
   markMessagesAsRead: "true",
+  // Drop-in webhook that accepts the SMS-Forwarder Android app's
+  // exact JSON shape ({chat_id, text}) so the operator only has to
+  // change the URL field. Token is a shared secret in the query
+  // string. Chat title is the label these forwards appear under in
+  // /messages.
+  smsWebhookSecret: "",
+  smsWebhookChatTitle: "📱 SMS Forwarder",
   autoExtractEnabled: "true",
   autoExtractMinImportance: "4",
   monitorDefaultIntervalMinutes: "30",
@@ -172,6 +179,8 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   aiChatModelsCsv: optional("AI_CHAT_MODELS_CSV"),
   sttLanguage: optional("STT_LANGUAGE"),
   markMessagesAsRead: optional("MARK_MESSAGES_AS_READ"),
+  smsWebhookSecret: optional("SMS_WEBHOOK_SECRET"),
+  smsWebhookChatTitle: optional("SMS_WEBHOOK_CHAT_TITLE"),
   autoExtractEnabled: optional("AUTO_EXTRACT_ENABLED"),
   autoExtractMinImportance: optional("AUTO_EXTRACT_MIN_IMPORTANCE"),
   monitorDefaultIntervalMinutes: optional("MONITOR_DEFAULT_INTERVAL_MINUTES"),
