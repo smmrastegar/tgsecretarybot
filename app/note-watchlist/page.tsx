@@ -125,7 +125,7 @@ export default function NoteWatchlistPage() {
     <Shell>
       <PageTitle
         title="🕵️ Note Watchlist"
-        subtitle="چند مفهوم تعریف کن — هر پیامی توی هر چتی که LLM تشخیص بده بهشون اشاره داره، اینجا ثبت می‌شه، توی Notes چت ذخیره می‌شه و برای کانال notes_inbox هم فوروارد می‌شه."
+        subtitle="مفاهیمی که اینجا تعریف می‌کنی روی پیام‌های همه‌ی چت‌ها فعاله — global. این با فلگ auto_extract_notes توی هر چت فرق داره: اون مال یه چت خاصه و آدرس/لوکیشن/مخاطب رو بی‌قاعده استخراج می‌کنه؛ Watchlist روی همه‌ی چت‌ها فعاله و فقط دنبال مفاهیم انتخاب‌شده‌ی توست."
       />
 
       <Card className="mb-4">

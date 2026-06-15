@@ -44,7 +44,7 @@ const TILES: Array<{
     href: "/note-watchlist",
     emoji: "🕵️",
     label: "Note Watchlist",
-    desc: "مفاهیمی که می‌خوای AI توی همه پیام‌ها بپایه — match ها توی Notes چت + کانال notes_inbox ذخیره می‌شن.",
+    desc: "مفاهیم global برای همه‌ی چت‌ها (با aliases) — جدا از auto_extract_notes هر چت. اگه پیامی به مفهومی اشاره کنه، توی Notes + کانال notes_inbox ثبت می‌شه.",
   },
   {
     href: "/ask",
