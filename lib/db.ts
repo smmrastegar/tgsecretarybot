@@ -1384,6 +1384,7 @@ export async function listMessages(opts: {
   unhandledOnly?: boolean;
   chatId?: number;
   search?: string;
+  kind?: "all" | "deleted" | "edited";
   limit?: number;
   offset?: number;
 }): Promise<MessageRow[]> {
@@ -1392,11 +1393,9 @@ export async function listMessages(opts: {
   const offset = Math.max(opts.offset ?? 0, 0);
   const q = sql();
   const search = opts.search ? `%${opts.search}%` : null;
-  // Pull chat_rules.first_name / last_name / nickname too — the list
-  // UI uses these to label the sender (DM chats only). The bare
-  // sender_name from messages_log is the Telegram-supplied first
-  // name; the operator may have set a fuller name on /chats/[id]
-  // that should win.
+  const kind = opts.kind ?? "all";
+  const onlyDeleted = kind === "deleted";
+  const onlyEdited = kind === "edited";
   const rows = await q`
     SELECT m.*, COALESCE(r.mode, 'secretary') AS chat_mode,
            r.first_name AS chat_rule_first_name,
@@ -1409,6 +1408,11 @@ export async function listMessages(opts: {
       AND (${opts.unhandledOnly ?? false}::boolean = FALSE OR m.handled_at IS NULL)
       AND (${opts.chatId ?? null}::bigint IS NULL OR m.chat_id = ${opts.chatId ?? null}::bigint)
       AND (${search}::text IS NULL OR m.message_text ILIKE ${search} OR m.sender_name ILIKE ${search})
+      AND (${onlyDeleted}::boolean = FALSE OR m.deleted_at IS NOT NULL)
+      AND (
+        ${onlyEdited}::boolean = FALSE
+        OR EXISTS (SELECT 1 FROM message_edits e WHERE e.message_log_id = m.id)
+      )
     ORDER BY m.created_at DESC
     LIMIT ${limit} OFFSET ${offset}`;
   return rows.map(rowToMessage);

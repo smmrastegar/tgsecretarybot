@@ -109,6 +109,10 @@ export default function MessagesPage() {
   const [search, setSearch] = useState("");
   const [urgentOnly, setUrgentOnly] = useState(false);
   const [threaded, setThreaded] = useState(false);
+  // Default filter is "deleted" per operator request — they mostly
+  // come here to audit what got deleted. "all" + "edited" are the
+  // other two options.
+  const [kind, setKind] = useState<"deleted" | "all" | "edited">("deleted");
   const [transcribing, setTranscribing] = useState<Set<number>>(new Set());
   const [transcribeMsg, setTranscribeMsg] = useState<Record<number, string>>({});
 
@@ -178,12 +182,13 @@ export default function MessagesPage() {
     params.set("offset", "0");
     if (urgentOnly) params.set("urgent", "1");
     if (search) params.set("q", search);
+    if (kind !== "all") params.set("kind", kind);
     const r = await fetch(`/api/messages?${params}`);
     const j = (await r.json()) as { messages: Message[] };
     setMessages(j.messages);
     setHasMore(j.messages.length === PAGE);
     setLoading(false);
-  }, [search, urgentOnly]);
+  }, [search, urgentOnly, kind]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
@@ -193,12 +198,13 @@ export default function MessagesPage() {
     params.set("offset", String(messages.length));
     if (urgentOnly) params.set("urgent", "1");
     if (search) params.set("q", search);
+    if (kind !== "all") params.set("kind", kind);
     const r = await fetch(`/api/messages?${params}`);
     const j = (await r.json()) as { messages: Message[] };
     setMessages((prev) => [...prev, ...j.messages]);
     setHasMore(j.messages.length === PAGE);
     setLoadingMore(false);
-  }, [loadingMore, hasMore, messages.length, urgentOnly, search]);
+  }, [loadingMore, hasMore, messages.length, urgentOnly, search, kind]);
 
   useEffect(() => {
     const id = setTimeout(load, 300);
@@ -236,6 +242,32 @@ export default function MessagesPage() {
           placeholder="Search text or sender…"
           className="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm placeholder:text-[var(--color-text-dim)]"
         />
+        <div
+          role="tablist"
+          className="flex border border-[var(--color-border)] rounded-md overflow-hidden text-xs"
+        >
+          {(
+            [
+              ["deleted", "🗑 پاک‌شده"],
+              ["all", "همه"],
+              ["edited", "✎ ویرایش‌شده"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              role="tab"
+              aria-selected={kind === value}
+              onClick={() => setKind(value)}
+              className={`px-3 py-2 ${
+                kind === value
+                  ? "bg-[var(--color-accent)] text-white"
+                  : "bg-[var(--color-surface)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <label className="text-xs text-[var(--color-text-dim)] flex items-center gap-2 px-3 py-2 border border-[var(--color-border)] rounded-md cursor-pointer hover:bg-[var(--color-surface-2)]">
           <input
             type="checkbox"
