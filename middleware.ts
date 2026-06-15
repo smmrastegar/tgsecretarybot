@@ -7,6 +7,11 @@ const PUBLIC_PREFIXES = [
   "/api/setup",
   "/api/auth",
   "/api/cron",
+  // Inbound SMS webhook — has its own per-row token auth via the
+  // sms_webhooks table. Session-gating it would lock out the
+  // Android SMS-Forwarder app (which sees the middleware's
+  // {"error":"unauthorized"} response and retries forever).
+  "/api/sms-webhook",
   "/_next",
   "/favicon",
 ];
