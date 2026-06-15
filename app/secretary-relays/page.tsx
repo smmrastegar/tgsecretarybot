@@ -104,7 +104,7 @@ export default function SecretaryRelaysPage() {
     <Shell>
       <PageTitle
         title="🧑‍💼 Secretary Routes"
-        subtitle="هر Route یک لیست از فرستنده‌ها (DM در حالت secretary) و یک لیست از گیرنده‌ها داره. پیام‌های اون فرستنده‌ها برای همه‌ی گیرنده‌ها فوروارد می‌شه و جواب گیرنده‌ها مستقیم به‌جای شما برمی‌گرده."
+        subtitle="هر Route یک لیست از فرستنده‌ها (DMها) و یک لیست از گیرنده‌ها داره. هر پیامی از یک فرستنده برای همه‌ی گیرنده‌ها فوروارد می‌شه و جواب گیرنده‌ها مستقیم به‌جای شما برمی‌گرده. لازم نیست حالت secretary رو روی چت ست کنی."
       />
 
       <Card className="mb-4">
@@ -211,7 +211,7 @@ function RelayCard({
           relayId={relay.id}
           kind="sources"
           title="📥 فرستنده‌ها (Sources)"
-          help="chat ID افرادی که می‌خوای پیام‌هاشون فوروارد بشه. این چت باید حالت secretary روش فعال باشه."
+          help="chat ID افرادی که می‌خوای پیام‌هاشون فوروارد بشه. به‌محض اینکه پیامی از این چت بیاد، برای تمام گیرنده‌ها فرستاده می‌شه — لازم نیست chat mode رو دستی تغییر بدی."
           parties={relay.sources}
           onChange={onChange}
         />

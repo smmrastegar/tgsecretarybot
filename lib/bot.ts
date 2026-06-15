@@ -2334,6 +2334,25 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     }
   }
 
+  // Multi-recipient Secretary Routes — independent of mode/alert
+  // gates. The whole point of the Route system is that the operator
+  // explicitly listed a chat as a source, so EVERY message from that
+  // chat goes to every recipient. Fires for DMs only (relay between
+  // groups would be confusing) but for any message, urgent or not.
+  let relayDelivered = 0;
+  if (isDmPrivate) {
+    const relayed = await maybeForwardViaRelays({
+      msg,
+      bcId,
+      senderName,
+      bot,
+    }).catch((err) => {
+      console.error("[relay] forward failed:", err);
+      return { delivered: 0, relays: 0 };
+    });
+    relayDelivered = relayed.delivered;
+  }
+
   // Mode-based response path (DMs only; groups stay log-only).
   if (isDmPrivate) {
     if (mode === "secretary" && shouldAlert) {
@@ -2347,19 +2366,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         settings,
         bot,
       });
-      // Parallel multi-recipient Secretary Routes. Runs alongside the
-      // legacy single-secretary system above. If the chat is in any
-      // enabled Route's source list, every recipient also gets a copy.
-      const relayed = await maybeForwardViaRelays({
-        msg,
-        bcId,
-        senderName,
-        bot,
-      }).catch((err) => {
-        console.error("[relay] forward failed:", err);
-        return { delivered: 0, relays: 0 };
-      });
-      const anyHandled = secretaryHandled || relayed.delivered > 0;
+      const anyHandled = secretaryHandled || relayDelivered > 0;
       const suppressAuto =
         anyHandled &&
         (settings.secretarySuppressAutoReply ?? "true").toLowerCase() !== "false";
