@@ -633,6 +633,244 @@ export async function askMessages(input: {
     .trim();
 }
 
+// Deeper, slower group analysis: track concrete tasks the members of
+// the group announced, classify each as announced / in-progress / done
+// / stalled, and (when possible) measure how long it took from
+// announcement to completion. Output is Persian — the owner reads the
+// dashboard in Persian.
+const TASK_ANALYZE_PROMPT = `You analyze a Telegram group's recent message log for the
+group owner. Your job is to surface CONCRETE WORK ITEMS — tasks, deliverables,
+commitments, work-in-progress announcements — and track their lifecycle.
+
+The owner's questions you are answering are:
+1. What tasks were raised in this group?
+2. How many of those tasks have been done? How many are still in progress? How many never got picked up (stalled)?
+3. For each completed task: how long did it take from the moment it was announced until it was reported done?
+
+LIFECYCLE — read carefully:
+- "announced" = someone said the task should be done / will be done / asked for it. Usually phrased as
+  a request, plan, or assignment. e.g. "این کارو انجام بده", "باید تا فردا تموم کنم",
+  "می‌خواهیم X رو راه‌اندازی کنیم".
+- "in_progress" = someone announced they are actively doing it, or there's evidence work is happening,
+  but no completion message yet. e.g. "دارم روش کار می‌کنم", "نصف راه".
+- "done" = someone announced completion or delivery. e.g. "تموم شد", "آماده‌ست", "deploy شد",
+  "فرستادم", "پرداخت کردم". A completion message MUST exist in the log to qualify.
+- "stalled" = announced but no follow-up activity for many days, or the conversation moved on.
+
+Reply with STRICT JSON only, no prose, no code fences. All free-text fields MUST be in Persian (فارسی):
+
+{
+  "overview": "<2-4 sentence Persian overview of what this group is working on right now>",
+  "stats": {
+    "total_tasks": <int>,
+    "announced": <int>,
+    "in_progress": <int>,
+    "done": <int>,
+    "stalled": <int>,
+    "avg_completion_hours": <number or null>
+  },
+  "tasks": [
+    {
+      "title": "<عنوان کوتاه فارسی>",
+      "owner": "<اسم فرد مسئول یا null>",
+      "announced_by": "<اسم اعلام‌کننده>",
+      "announced_at": "<ISO 8601 of the announcing message>",
+      "status": "announced" | "in_progress" | "done" | "stalled",
+      "completed_at": "<ISO 8601 یا null>",
+      "duration_hours": <number یا null>,
+      "evidence": ["<نقل قول کوتاه از پیام مرتبط>", "..."]
+    }
+  ],
+  "people": [
+    {
+      "name": "<نام دقیق همان‌طور که در sender ظاهر شده>",
+      "role": "<یک جمله کوتاه فارسی درباره نقش/سهم این فرد در گروه>",
+      "tasks_announced": <int>,
+      "tasks_completed": <int>
+    }
+  ]
+}
+
+Rules:
+- IMPORTANT: announced_at and completed_at must be EXACT ISO timestamps taken FROM the message list
+  provided in the payload (the "at" field). Do not invent dates.
+- duration_hours = (completed_at - announced_at) in hours, rounded to 1 decimal. null if status != "done".
+- Inside "evidence" quote a short phrase from the actual message text — don't paraphrase.
+- A task only counts as "done" if there is a clear completion message in the log. If you only see the
+  announcement, mark it "announced" (or "stalled" if the log is recent and old).
+- Tasks should be SPECIFIC and CONCRETE. Skip casual chatter, jokes, generic encouragement.
+  Merge near-duplicates (same task announced multiple times) into one entry.
+- The "people" list should focus on the MOST ACTIVE members and ONLY count tasks they ANNOUNCED
+  (announced_by == their name) and tasks they COMPLETED (owner == their name AND status == "done").
+- stats.avg_completion_hours = average of duration_hours across all "done" tasks, null if no done tasks.
+- Sort tasks by announced_at DESCENDING (newest first).
+- Sort people by tasks_announced DESCENDING.
+- Be generous about what counts as a task — anything an operator would track on a kanban / todo list.`;
+
+export type GroupTaskRecord = {
+  title: string;
+  owner: string | null;
+  announcedBy: string;
+  announcedAt: string;
+  status: "announced" | "in_progress" | "done" | "stalled";
+  completedAt: string | null;
+  durationHours: number | null;
+  evidence: string[];
+};
+
+export type GroupPersonRecord = {
+  name: string;
+  role: string;
+  tasksAnnounced: number;
+  tasksCompleted: number;
+};
+
+export type GroupTaskAnalysis = {
+  overview: string;
+  stats: {
+    totalTasks: number;
+    announced: number;
+    inProgress: number;
+    done: number;
+    stalled: number;
+    avgCompletionHours: number | null;
+  };
+  tasks: GroupTaskRecord[];
+  people: GroupPersonRecord[];
+};
+
+export async function analyzeGroupTasks(input: {
+  chatTitle: string | null;
+  ownerName: string;
+  ownerContext: string;
+  chatNotes?: string | null;
+  messages: { sender: string; text: string; at: Date }[];
+  chatId?: number;
+}): Promise<GroupTaskAnalysis> {
+  const payload = {
+    chat_title: input.chatTitle,
+    owner_name: input.ownerName,
+    owner_context: input.ownerContext || undefined,
+    chat_notes: input.chatNotes || undefined,
+    messages: input.messages.slice(-600).map((m) => ({
+      sender: m.sender,
+      text: m.text.slice(0, 600),
+      at: m.at.toISOString(),
+    })),
+  };
+  const content = await callOpenRouter(
+    [
+      { role: "system", content: TASK_ANALYZE_PROMPT },
+      { role: "user", content: JSON.stringify(payload) },
+    ],
+    {
+      maxTokens: 4000,
+      jsonObject: true,
+      temperature: 0.1,
+      purpose: "group_task_analysis",
+      chatId: input.chatId ?? null,
+    },
+  );
+  return parseTaskAnalysis(content);
+}
+
+function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
+  const json = extractJson(raw);
+  const empty: GroupTaskAnalysis = {
+    overview: "",
+    stats: {
+      totalTasks: 0,
+      announced: 0,
+      inProgress: 0,
+      done: 0,
+      stalled: 0,
+      avgCompletionHours: null,
+    },
+    tasks: [],
+    people: [],
+  };
+  if (!json) return empty;
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return empty;
+  }
+  const asStr = (v: unknown): string =>
+    typeof v === "string" ? v : v == null ? "" : String(v);
+  const asNumOrNull = (v: unknown): number | null => {
+    if (v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const asInt = (v: unknown): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.round(n) : 0;
+  };
+  const validStatuses = new Set([
+    "announced",
+    "in_progress",
+    "done",
+    "stalled",
+  ]);
+  const tasksRaw = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+  const tasks: GroupTaskRecord[] = tasksRaw
+    .map((t): GroupTaskRecord | null => {
+      if (typeof t !== "object" || t === null) return null;
+      const r = t as Record<string, unknown>;
+      const status = asStr(r.status).toLowerCase();
+      if (!validStatuses.has(status)) return null;
+      const evidence = Array.isArray(r.evidence)
+        ? (r.evidence as unknown[]).filter(
+            (x): x is string => typeof x === "string",
+          )
+        : [];
+      return {
+        title: asStr(r.title).trim(),
+        owner: r.owner ? asStr(r.owner).trim() || null : null,
+        announcedBy: asStr(r.announced_by).trim(),
+        announcedAt: asStr(r.announced_at).trim(),
+        status: status as GroupTaskRecord["status"],
+        completedAt: r.completed_at
+          ? asStr(r.completed_at).trim() || null
+          : null,
+        durationHours: asNumOrNull(r.duration_hours),
+        evidence,
+      };
+    })
+    .filter((x): x is GroupTaskRecord => x !== null && Boolean(x.title));
+  const peopleRaw = Array.isArray(parsed.people) ? parsed.people : [];
+  const people: GroupPersonRecord[] = peopleRaw
+    .map((p): GroupPersonRecord | null => {
+      if (typeof p !== "object" || p === null) return null;
+      const r = p as Record<string, unknown>;
+      return {
+        name: asStr(r.name).trim(),
+        role: asStr(r.role).trim(),
+        tasksAnnounced: asInt(r.tasks_announced),
+        tasksCompleted: asInt(r.tasks_completed),
+      };
+    })
+    .filter((x): x is GroupPersonRecord => x !== null && Boolean(x.name));
+  const statsRaw =
+    typeof parsed.stats === "object" && parsed.stats
+      ? (parsed.stats as Record<string, unknown>)
+      : {};
+  return {
+    overview: asStr(parsed.overview).trim(),
+    stats: {
+      totalTasks: asInt(statsRaw.total_tasks),
+      announced: asInt(statsRaw.announced),
+      inProgress: asInt(statsRaw.in_progress),
+      done: asInt(statsRaw.done),
+      stalled: asInt(statsRaw.stalled),
+      avgCompletionHours: asNumOrNull(statsRaw.avg_completion_hours),
+    },
+    tasks,
+    people,
+  };
+}
+
 export async function summarizeGroup(input: {
   chatTitle: string | null;
   ownerName: string;

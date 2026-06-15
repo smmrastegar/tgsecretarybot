@@ -3515,6 +3515,57 @@ export async function upsertGroupSummary(s: {
       created_at = NOW()`;
 }
 
+// Flat per-chat message dump for AI analytics. Returns messages from a
+// single chat over a time window, oldest first, so the model sees the
+// natural conversation flow when classifying announce/in-progress/done
+// task lifecycles on /groups/[id].
+export async function listChatMessagesForAnalysis(args: {
+  chatId: number;
+  since: Date;
+  limit?: number;
+}): Promise<{
+  chatTitle: string | null;
+  messages: { sender: string; text: string; at: Date; fromOwner: boolean }[];
+}> {
+  await ensureSchema();
+  const limit = Math.min(Math.max(args.limit ?? 1500, 1), 5000);
+  const rows = await sql()`
+    SELECT chat_title, sender_name, message_text, transcript,
+           media_description, media_kind, created_at, from_owner
+    FROM messages_log
+    WHERE chat_id = ${args.chatId}
+      AND created_at >= ${args.since.toISOString()}
+      AND COALESCE(skipped_reason, '') <> 'muted'
+    ORDER BY created_at ASC
+    LIMIT ${limit}`;
+  let chatTitle: string | null = null;
+  const messages: {
+    sender: string;
+    text: string;
+    at: Date;
+    fromOwner: boolean;
+  }[] = [];
+  for (const r of rows) {
+    if (!chatTitle && r.chat_title) chatTitle = r.chat_title as string;
+    const transcript = (r.transcript as string) ?? null;
+    const desc = (r.media_description as string) ?? null;
+    const kind = (r.media_kind as string) ?? null;
+    const body = (r.message_text as string) ?? "";
+    let text = body;
+    if (!text && transcript) text = `[voice] ${transcript}`;
+    else if (!text && desc) text = `[${kind ?? "media"}] ${desc}`;
+    else if (!text && kind) text = `[${kind}]`;
+    if (!text) continue;
+    messages.push({
+      sender: (r.sender_name as string) ?? "?",
+      text,
+      at: r.created_at as Date,
+      fromOwner: Boolean(r.from_owner),
+    });
+  }
+  return { chatTitle, messages };
+}
+
 export async function groupActivityForPeriod(args: {
   start: Date;
   end: Date;

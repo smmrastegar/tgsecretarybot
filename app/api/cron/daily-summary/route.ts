@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
+import { getCurrentSession } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
 import {
   audit,
@@ -14,7 +15,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-function authorized(request: Request): boolean {
+async function authorized(request: Request): Promise<boolean> {
+  // Logged-in operators hitting this from the /groups dashboard
+  // shouldn't need the cron secret. Middleware exempts /api/cron
+  // wholesale (so the actual cron can hit it without a session), so
+  // we check the session ourselves here as an alternative path.
+  const session = await getCurrentSession().catch(() => null);
+  if (session) return true;
   const secret = config.cronSecret;
   if (!secret) return true;
   const header = request.headers.get("authorization");
@@ -31,7 +38,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 }
 
 async function run(request: Request): Promise<NextResponse> {
-  if (!authorized(request)) {
+  if (!(await authorized(request))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   if (!hasDb()) {

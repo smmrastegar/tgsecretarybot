@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import { relTime, truncate } from "@/lib/format";
@@ -98,9 +99,12 @@ export default function GroupsPage() {
             <Card key={s.id}>
               <div className="flex items-start justify-between mb-3 gap-3">
                 <div>
-                  <div className="font-medium">
+                  <Link
+                    href={`/groups/${s.chatId}`}
+                    className="font-medium hover:underline text-[var(--color-accent)]"
+                  >
                     {s.chatTitle ?? `chat ${s.chatId}`}
-                  </div>
+                  </Link>
                   <div className="text-xs text-[var(--color-text-dim)] mt-1">
                     {new Date(s.periodStart).toLocaleString()} —{" "}
                     {new Date(s.periodEnd).toLocaleString()}
