@@ -35,6 +35,9 @@ async function handle(request: Request): Promise<NextResponse> {
     return NextResponse.json({
       ok: true,
       service: "sms-webhook",
+      // Bump on intentional behaviour changes so the operator can
+      // tell from a curl whether the latest commit is actually live.
+      version: 2,
       hint: "POST with ?token=<secret> + {text, chat_id} body. Manage tokens at /webhooks.",
       deployedAt: new Date().toISOString(),
     });
