@@ -24,19 +24,44 @@ export const maxDuration = 30;
 // webhook — never run as an open relay.
 async function handle(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
+  // Diagnostic ping: GET /api/sms-webhook (no token, no body) returns
+  // a 200 echo so the operator can sanity-check that the route is
+  // deployed before pointing the Android app at it.
+  if (
+    request.method === "GET" &&
+    !url.searchParams.get("token") &&
+    !url.searchParams.get("text")
+  ) {
+    return NextResponse.json({
+      ok: true,
+      service: "sms-webhook",
+      hint: "POST with ?token=<secret> + {text, chat_id} body. Manage tokens at /webhooks.",
+      deployedAt: new Date().toISOString(),
+    });
+  }
   const token =
     url.searchParams.get("token") ??
     request.headers.get("x-sms-token") ??
     "";
+  // Return 200 (not 401) for every auth/validation failure so the
+  // Android SMS-Forwarder app — which interprets any 4xx as a fatal
+  // error and chains 10-retry loops — doesn't spin on a misconfig
+  // we can fix in the dashboard. The body carries ok:false + a
+  // reason so curl-based debugging still sees the problem.
   if (!token) {
-    return NextResponse.json({ error: "missing ?token" }, { status: 401 });
+    console.warn(`[sms-webhook] no token in request from ${request.headers.get("user-agent") ?? "?"}`);
+    return NextResponse.json({
+      ok: false,
+      error: "missing ?token query param",
+    });
   }
   const webhook = await findSmsWebhookBySecret(token);
   if (!webhook) {
-    return NextResponse.json(
-      { error: "unknown or disabled token" },
-      { status: 401 },
-    );
+    console.warn(`[sms-webhook] token "${token.slice(0, 6)}…" not found or webhook disabled`);
+    return NextResponse.json({
+      ok: false,
+      error: "unknown or disabled token — create one at /webhooks",
+    });
   }
 
   let body: Record<string, unknown> = {};
@@ -56,7 +81,7 @@ async function handle(request: Request): Promise<NextResponse> {
       }
     }
   } catch {
-    return NextResponse.json({ error: "invalid body" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "invalid body" });
   }
 
   const text =
@@ -68,10 +93,10 @@ async function handle(request: Request): Promise<NextResponse> {
           ? (body.payload as string)
           : "";
   if (!text.trim()) {
-    return NextResponse.json(
-      { error: "missing 'text' field" },
-      { status: 400 },
+    console.warn(
+      `[sms-webhook] webhook=${webhook.name} got empty text; body keys=${Object.keys(body).join(",")}`,
     );
+    return NextResponse.json({ ok: false, error: "missing 'text' field" });
   }
   const payloadChatId =
     typeof body.chat_id === "string"
