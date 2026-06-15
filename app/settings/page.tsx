@@ -35,6 +35,12 @@ const TILES: Array<{
     desc: "ورودی‌های مستقل SMS — هر کدوم اسم و URL خودش رو داره (برای SMS-Forwarder اندروید)",
   },
   {
+    href: "/secretary-relays",
+    emoji: "🧑‍💼",
+    label: "Secretary Routes",
+    desc: "هر Route یه لیست فرستنده + گیرنده داره؛ پیام DM به چند تا منشی فوروارد می‌شه و جواب اون‌ها مستقیم برمی‌گرده.",
+  },
+  {
     href: "/ask",
     emoji: "🔎",
     label: "Ask",

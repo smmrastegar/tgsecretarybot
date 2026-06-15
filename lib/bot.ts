@@ -69,6 +69,10 @@ import {
   type SecretarySession,
   isChatIgnored,
   recordPhoneContact,
+  findEnabledRelaysForSource,
+  findSecretaryRelayLinkByRecipientMessage,
+  findLatestInboundLinkForRecipient,
+  recordSecretaryRelayLink,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -1398,6 +1402,13 @@ function buildBot(): Bot {
     await handleSecretaryReply(m, bot).catch((err) =>
       console.error("[secretary] handler error:", err),
     );
+    // Multi-recipient Secretary Routes reply path. Independent of the
+    // legacy single-secretary system above — looks up
+    // secretary_relay_links instead of secretary_sessions. Returns
+    // true when a relay actually fired.
+    await handleSecretaryRelayReply(m, bot).catch((err) =>
+      console.error("[relay] handler error:", err),
+    );
     // Harvest any contact share into phone_contacts so the SMS
     // router can identify this number on a later inbound SMS.
     harvestContactShare(m);
@@ -2228,8 +2239,21 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         settings,
         bot,
       });
+      // Parallel multi-recipient Secretary Routes. Runs alongside the
+      // legacy single-secretary system above. If the chat is in any
+      // enabled Route's source list, every recipient also gets a copy.
+      const relayed = await maybeForwardViaRelays({
+        msg,
+        bcId,
+        senderName,
+        bot,
+      }).catch((err) => {
+        console.error("[relay] forward failed:", err);
+        return { delivered: 0, relays: 0 };
+      });
+      const anyHandled = secretaryHandled || relayed.delivered > 0;
       const suppressAuto =
-        secretaryHandled &&
+        anyHandled &&
         (settings.secretarySuppressAutoReply ?? "true").toLowerCase() !== "false";
       if (!suppressAuto) {
         autoReplied = await maybeAutoReply(
@@ -3128,6 +3152,169 @@ async function maybeForwardToSecretary(args: {
     } else {
       console.error("[secretary] forward failed:", err);
     }
+    return false;
+  }
+}
+
+// Multi-recipient Secretary Routes: when the source chat has
+// mode='secretary' AND it's listed in one or more enabled Routes,
+// fan-out every incoming message to every recipient in those Routes.
+// Links each forwarded copy back to the source message so a recipient
+// reply (in their own DM with the bot) can be routed back. Separate
+// from the legacy single-secretary path so both can coexist.
+async function maybeForwardViaRelays(args: {
+  msg: Message;
+  bcId: string;
+  senderName: string;
+  bot: Bot;
+}): Promise<{ delivered: number; relays: number }> {
+  const { msg, bcId, senderName, bot } = args;
+  if (msg.chat.type !== "private") return { delivered: 0, relays: 0 };
+  if (!hasDb()) return { delivered: 0, relays: 0 };
+  const relays = await findEnabledRelaysForSource(msg.chat.id).catch(() => []);
+  if (relays.length === 0) return { delivered: 0, relays: 0 };
+
+  let delivered = 0;
+  for (const relay of relays) {
+    if (relay.recipients.length === 0) continue;
+    // Per-relay header — the recipient sees who the source is. The
+    // SOURCE (original sender) never sees this header; their chat is
+    // untouched at this stage.
+    const headerText = `📨 [${relay.name}] از: ${senderName}`;
+    for (const rcpt of relay.recipients) {
+      // Skip self-routes — never forward to the source chat itself.
+      if (rcpt.chatId === msg.chat.id) continue;
+      try {
+        const header = await bot.api.sendMessage(rcpt.chatId, headerText);
+        await recordSecretaryRelayLink({
+          relayId: relay.id,
+          businessConnectionId: bcId,
+          sourceChatId: msg.chat.id,
+          sourceMessageId: msg.message_id,
+          recipientChatId: rcpt.chatId,
+          recipientMessageId: header.message_id,
+          direction: "inbound",
+        });
+        const ids = await relayAnyMessage({
+          bot,
+          source: msg,
+          toChatId: rcpt.chatId,
+          replyToMessageId: header.message_id,
+        });
+        for (const id of ids) {
+          await recordSecretaryRelayLink({
+            relayId: relay.id,
+            businessConnectionId: bcId,
+            sourceChatId: msg.chat.id,
+            sourceMessageId: msg.message_id,
+            recipientChatId: rcpt.chatId,
+            recipientMessageId: id,
+            direction: "inbound",
+          });
+        }
+        delivered++;
+        console.log(
+          `[relay] forwarded source=${msg.chat.id} relay=${relay.id} → rcpt=${rcpt.chatId} parts=${ids.length}`,
+        );
+      } catch (err) {
+        const e = err as { error_code?: number; description?: string };
+        if (e?.error_code === 403) {
+          console.warn(
+            `[relay] recipient ${rcpt.chatId} hasn't /start'd the bot — skipping`,
+          );
+        } else {
+          console.error(
+            `[relay] forward to ${rcpt.chatId} (relay=${relay.id}) failed:`,
+            err,
+          );
+        }
+      }
+    }
+  }
+  return { delivered, relays: relays.length };
+}
+
+// Reply path: a recipient typed in their DM with the bot. If they
+// replied to a forwarded message we routed (or recently received one
+// without using reply-to), relay the body back to the original
+// source's chat as if it came from the owner — via the same business
+// connection so the source sees "me" on the other end.
+async function handleSecretaryRelayReply(
+  msg: Message,
+  bot: Bot,
+): Promise<boolean> {
+  if (msg.chat.type !== "private") return false;
+  if (!msg.from) return false;
+  if (msg.text && msg.text.startsWith("/")) return false;
+  if (!hasDb()) return false;
+
+  const replyTo = msg.reply_to_message;
+  let link = replyTo
+    ? await findSecretaryRelayLinkByRecipientMessage(
+        msg.chat.id,
+        replyTo.message_id,
+      ).catch(() => null)
+    : null;
+  if (!link) {
+    // Recipient didn't tap reply — assume the most recent inbound link
+    // for this chat. 120-min window mirrors the legacy secretary
+    // session idle window.
+    link = await findLatestInboundLinkForRecipient(msg.chat.id, 120).catch(
+      () => null,
+    );
+  }
+  if (!link) return false;
+  if (!link.businessConnectionId) return false;
+
+  try {
+    const sentIds = await relayAnyMessage({
+      bot,
+      source: msg,
+      toChatId: link.sourceChatId,
+      businessConnectionId: link.businessConnectionId,
+    });
+    // Mark the original sender message as read so the source sees a
+    // "seen" tick.
+    if (link.sourceMessageId) {
+      await markBusinessRead(
+        bot,
+        link.businessConnectionId,
+        link.sourceChatId,
+        link.sourceMessageId,
+      ).catch(() => {});
+    }
+    // Track outbound copy so future replies-to-our-reply still relay.
+    for (const id of sentIds) {
+      await recordSecretaryRelayLink({
+        relayId: link.relayId,
+        businessConnectionId: link.businessConnectionId,
+        sourceChatId: link.sourceChatId,
+        sourceMessageId: id,
+        recipientChatId: msg.chat.id,
+        recipientMessageId: msg.message_id,
+        direction: "outbound",
+      });
+    }
+    try {
+      await bot.api.setMessageReaction(msg.chat.id, msg.message_id, [
+        { type: "emoji", emoji: "👍" },
+      ]);
+    } catch {
+      // Older clients reject; ignore.
+    }
+    console.log(
+      `[relay] reply rcpt=${msg.chat.id} → source=${link.sourceChatId} parts=${sentIds.length}`,
+    );
+    return true;
+  } catch (err) {
+    console.error("[relay] reply failed:", err);
+    await bot.api
+      .sendMessage(
+        msg.chat.id,
+        `❌ Failed to relay: ${String(err).slice(0, 200)}`,
+        { reply_parameters: { message_id: msg.message_id } },
+      )
+      .catch(() => {});
     return false;
   }
 }

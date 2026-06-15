@@ -234,6 +234,57 @@ export async function ensureSchema(): Promise<void> {
         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await q`CREATE INDEX IF NOT EXISTS sms_webhooks_secret_idx ON sms_webhooks (secret)`;
+    // Secretary Routes: multi-recipient relay layer that sits on top of
+    // chat_rules.mode='secretary'. A Route is a named bundle of
+    // recipients (chats that receive the forwarded message) plus a
+    // list of source chats it covers. When a message arrives in a
+    // chat whose mode is 'secretary' AND which is in some enabled
+    // Route's source list, the message is fanned out to every
+    // recipient. Replies in recipient chats are mapped back to the
+    // source via the secretary_relay_links join.
+    await q`
+      CREATE TABLE IF NOT EXISTS secretary_relays (
+        id          BIGSERIAL PRIMARY KEY,
+        name        TEXT NOT NULL,
+        enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`
+      CREATE TABLE IF NOT EXISTS secretary_relay_sources (
+        relay_id        BIGINT NOT NULL REFERENCES secretary_relays(id) ON DELETE CASCADE,
+        source_chat_id  BIGINT NOT NULL,
+        source_label    TEXT,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (relay_id, source_chat_id)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS secretary_relay_sources_chat_idx
+      ON secretary_relay_sources (source_chat_id)`;
+    await q`
+      CREATE TABLE IF NOT EXISTS secretary_relay_recipients (
+        relay_id          BIGINT NOT NULL REFERENCES secretary_relays(id) ON DELETE CASCADE,
+        recipient_chat_id BIGINT NOT NULL,
+        recipient_label   TEXT,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (relay_id, recipient_chat_id)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS secretary_relay_recipients_chat_idx
+      ON secretary_relay_recipients (recipient_chat_id)`;
+    await q`
+      CREATE TABLE IF NOT EXISTS secretary_relay_links (
+        id                     BIGSERIAL PRIMARY KEY,
+        relay_id               BIGINT REFERENCES secretary_relays(id) ON DELETE SET NULL,
+        business_connection_id TEXT,
+        source_chat_id         BIGINT NOT NULL,
+        source_message_id      BIGINT,
+        recipient_chat_id      BIGINT NOT NULL,
+        recipient_message_id   BIGINT NOT NULL,
+        direction              TEXT   NOT NULL,
+        created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (recipient_chat_id, recipient_message_id)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS secretary_relay_links_source_idx
+      ON secretary_relay_links (source_chat_id, source_message_id)`;
     // AI-extracted OTP / verification code surfaced inline on every
     // message that carried one. Populated by maybeExtractOtp in
     // bot.ts (background, fire-and-forget). Dashboard renders a
@@ -2755,6 +2806,336 @@ export async function touchSmsWebhook(id: number): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
   await sql()`UPDATE sms_webhooks SET last_used_at = NOW() WHERE id = ${id}`;
+}
+
+// --- Secretary relays ---
+
+export type SecretaryRelay = {
+  id: number;
+  name: string;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type SecretaryRelayParty = {
+  relayId: number;
+  chatId: number;
+  label: string | null;
+  createdAt: Date;
+};
+
+function rowToSecretaryRelay(r: Record<string, unknown>): SecretaryRelay {
+  return {
+    id: Number(r.id),
+    name: r.name as string,
+    enabled: Boolean(r.enabled),
+    createdAt: r.created_at as Date,
+    updatedAt: r.updated_at as Date,
+  };
+}
+
+export async function listSecretaryRelays(args?: {
+  enabledOnly?: boolean;
+}): Promise<SecretaryRelay[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const enabledOnly = args?.enabledOnly ?? false;
+  const rows = await sql()`
+    SELECT id, name, enabled, created_at, updated_at
+    FROM secretary_relays
+    WHERE (${enabledOnly}::boolean = FALSE OR enabled = TRUE)
+    ORDER BY created_at DESC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToSecretaryRelay);
+}
+
+export async function getSecretaryRelay(id: number): Promise<SecretaryRelay | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, name, enabled, created_at, updated_at
+    FROM secretary_relays WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToSecretaryRelay(r) : null;
+}
+
+export async function createSecretaryRelay(args: {
+  name: string;
+  enabled?: boolean;
+}): Promise<SecretaryRelay> {
+  if (!hasDb()) throw new Error("DATABASE_URL not set");
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO secretary_relays (name, enabled)
+    VALUES (${args.name}, ${args.enabled ?? true})
+    RETURNING id, name, enabled, created_at, updated_at`;
+  return rowToSecretaryRelay(rows[0] as Record<string, unknown>);
+}
+
+export async function updateSecretaryRelay(
+  id: number,
+  patch: Partial<{ name: string; enabled: boolean }>,
+): Promise<SecretaryRelay | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    UPDATE secretary_relays SET
+      name = COALESCE(${patch.name ?? null}, name),
+      enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
+      updated_at = NOW()
+    WHERE id = ${id}
+    RETURNING id, name, enabled, created_at, updated_at`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToSecretaryRelay(r) : null;
+}
+
+export async function deleteSecretaryRelay(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`DELETE FROM secretary_relays WHERE id = ${id}`;
+}
+
+export async function listSecretaryRelaySources(
+  relayId: number,
+): Promise<SecretaryRelayParty[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT relay_id, source_chat_id, source_label, created_at
+    FROM secretary_relay_sources
+    WHERE relay_id = ${relayId}
+    ORDER BY created_at ASC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    relayId: Number(r.relay_id),
+    chatId: Number(r.source_chat_id),
+    label: (r.source_label as string) ?? null,
+    createdAt: r.created_at as Date,
+  }));
+}
+
+export async function addSecretaryRelaySource(args: {
+  relayId: number;
+  sourceChatId: number;
+  label?: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO secretary_relay_sources (relay_id, source_chat_id, source_label)
+    VALUES (${args.relayId}, ${args.sourceChatId}, ${args.label ?? null})
+    ON CONFLICT (relay_id, source_chat_id) DO UPDATE SET
+      source_label = COALESCE(EXCLUDED.source_label, secretary_relay_sources.source_label)`;
+}
+
+export async function removeSecretaryRelaySource(args: {
+  relayId: number;
+  sourceChatId: number;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    DELETE FROM secretary_relay_sources
+    WHERE relay_id = ${args.relayId}
+      AND source_chat_id = ${args.sourceChatId}`;
+}
+
+export async function listSecretaryRelayRecipients(
+  relayId: number,
+): Promise<SecretaryRelayParty[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT relay_id, recipient_chat_id, recipient_label, created_at
+    FROM secretary_relay_recipients
+    WHERE relay_id = ${relayId}
+    ORDER BY created_at ASC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    relayId: Number(r.relay_id),
+    chatId: Number(r.recipient_chat_id),
+    label: (r.recipient_label as string) ?? null,
+    createdAt: r.created_at as Date,
+  }));
+}
+
+export async function addSecretaryRelayRecipient(args: {
+  relayId: number;
+  recipientChatId: number;
+  label?: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO secretary_relay_recipients (relay_id, recipient_chat_id, recipient_label)
+    VALUES (${args.relayId}, ${args.recipientChatId}, ${args.label ?? null})
+    ON CONFLICT (relay_id, recipient_chat_id) DO UPDATE SET
+      recipient_label = COALESCE(EXCLUDED.recipient_label, secretary_relay_recipients.recipient_label)`;
+}
+
+export async function removeSecretaryRelayRecipient(args: {
+  relayId: number;
+  recipientChatId: number;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    DELETE FROM secretary_relay_recipients
+    WHERE relay_id = ${args.relayId}
+      AND recipient_chat_id = ${args.recipientChatId}`;
+}
+
+// Lookup: every enabled Route that lists this source chat.
+export async function findEnabledRelaysForSource(
+  sourceChatId: number,
+): Promise<
+  Array<SecretaryRelay & { recipients: SecretaryRelayParty[] }>
+> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT r.id, r.name, r.enabled, r.created_at, r.updated_at
+    FROM secretary_relays r
+    JOIN secretary_relay_sources s ON s.relay_id = r.id
+    WHERE r.enabled = TRUE
+      AND s.source_chat_id = ${sourceChatId}
+    ORDER BY r.created_at ASC`;
+  const relays = (rows as Array<Record<string, unknown>>).map(
+    rowToSecretaryRelay,
+  );
+  const out: Array<SecretaryRelay & { recipients: SecretaryRelayParty[] }> = [];
+  for (const relay of relays) {
+    const recipients = await listSecretaryRelayRecipients(relay.id);
+    out.push({ ...relay, recipients });
+  }
+  return out;
+}
+
+export async function recordSecretaryRelayLink(args: {
+  relayId: number | null;
+  businessConnectionId: string | null;
+  sourceChatId: number;
+  sourceMessageId: number | null;
+  recipientChatId: number;
+  recipientMessageId: number;
+  direction: "inbound" | "outbound";
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO secretary_relay_links (
+      relay_id, business_connection_id, source_chat_id, source_message_id,
+      recipient_chat_id, recipient_message_id, direction
+    ) VALUES (
+      ${args.relayId ?? null}, ${args.businessConnectionId},
+      ${args.sourceChatId}, ${args.sourceMessageId ?? null},
+      ${args.recipientChatId}, ${args.recipientMessageId}, ${args.direction}
+    )
+    ON CONFLICT (recipient_chat_id, recipient_message_id) DO UPDATE SET
+      source_message_id = COALESCE(EXCLUDED.source_message_id,
+                                   secretary_relay_links.source_message_id)`;
+}
+
+export type SecretaryRelayLink = {
+  id: number;
+  relayId: number | null;
+  businessConnectionId: string | null;
+  sourceChatId: number;
+  sourceMessageId: number | null;
+  recipientChatId: number;
+  recipientMessageId: number;
+  direction: string;
+};
+
+// Reply routing: given an inbound message at (recipient_chat,
+// recipient_message_id) — typically the message the recipient is
+// REPLYING to — find the source chat to relay the reply back to.
+export async function findSecretaryRelayLinkByRecipientMessage(
+  recipientChatId: number,
+  recipientMessageId: number,
+): Promise<SecretaryRelayLink | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, relay_id, business_connection_id, source_chat_id, source_message_id,
+           recipient_chat_id, recipient_message_id, direction
+    FROM secretary_relay_links
+    WHERE recipient_chat_id = ${recipientChatId}
+      AND recipient_message_id = ${recipientMessageId}
+    LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  if (!r) return null;
+  return {
+    id: Number(r.id),
+    relayId: r.relay_id != null ? Number(r.relay_id) : null,
+    businessConnectionId: (r.business_connection_id as string) ?? null,
+    sourceChatId: Number(r.source_chat_id),
+    sourceMessageId:
+      r.source_message_id != null ? Number(r.source_message_id) : null,
+    recipientChatId: Number(r.recipient_chat_id),
+    recipientMessageId: Number(r.recipient_message_id),
+    direction: r.direction as string,
+  };
+}
+
+// Fallback when the recipient typed a fresh message (no reply): pick
+// the most recent inbound link for this recipient chat. Lets a
+// recipient "just type" in their DM without manually replying to the
+// forwarded message.
+export async function findLatestInboundLinkForRecipient(
+  recipientChatId: number,
+  withinMinutes: number,
+): Promise<SecretaryRelayLink | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, relay_id, business_connection_id, source_chat_id, source_message_id,
+           recipient_chat_id, recipient_message_id, direction
+    FROM secretary_relay_links
+    WHERE recipient_chat_id = ${recipientChatId}
+      AND direction = 'inbound'
+      AND created_at > NOW() - make_interval(mins => ${withinMinutes})
+    ORDER BY created_at DESC LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  if (!r) return null;
+  return {
+    id: Number(r.id),
+    relayId: r.relay_id != null ? Number(r.relay_id) : null,
+    businessConnectionId: (r.business_connection_id as string) ?? null,
+    sourceChatId: Number(r.source_chat_id),
+    sourceMessageId:
+      r.source_message_id != null ? Number(r.source_message_id) : null,
+    recipientChatId: Number(r.recipient_chat_id),
+    recipientMessageId: Number(r.recipient_message_id),
+    direction: r.direction as string,
+  };
+}
+
+// Source-side reverse lookup: when the source message itself comes in
+// (e.g. for a "delete" or "edit" propagation), find the recipient
+// copies. Not used by the current implementation but exposed for
+// future extension.
+export async function listRelayLinksBySource(
+  sourceChatId: number,
+  sourceMessageId: number,
+): Promise<SecretaryRelayLink[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, relay_id, business_connection_id, source_chat_id, source_message_id,
+           recipient_chat_id, recipient_message_id, direction
+    FROM secretary_relay_links
+    WHERE source_chat_id = ${sourceChatId}
+      AND source_message_id = ${sourceMessageId}`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    relayId: r.relay_id != null ? Number(r.relay_id) : null,
+    businessConnectionId: (r.business_connection_id as string) ?? null,
+    sourceChatId: Number(r.source_chat_id),
+    sourceMessageId:
+      r.source_message_id != null ? Number(r.source_message_id) : null,
+    recipientChatId: Number(r.recipient_chat_id),
+    recipientMessageId: Number(r.recipient_message_id),
+    direction: r.direction as string,
+  }));
 }
 
 export async function setChatPhoneNumber(
