@@ -294,31 +294,88 @@ ${args.body.slice(0, 1500)}`;
   };
 }
 
-// Matches: leading ☎️ (with or without variation selector), 📞, or ☎.
-// Followed by optional whitespace, then a phone-looking run
-// (+ / digits / spaces / dashes / parens), then optional body.
-const SMS_PREFIX_RX =
-  /^(?:☎️|☎|📞|📱)\s*([+\d][\d\s\-()]{4,20})\s*([\s\S]*)$/u;
+// Try these patterns in order. The first to match wins.
+//
+//   1. ☎️ <phone> <body>          — classic numeric sender ("☎️ +989… …")
+//   2. ☎️ <name>: <body>          — colon-separated alphanumeric sender
+//                                   ("☎️ ParsianBank: ...", "📱 BANK …")
+//   3. ☎️ <header line>\n<body>   — alphanumeric sender on its own line
+//                                   followed by the body on next line(s)
+//
+// We also accept the operator's webhook-pasted SMS in the format the
+// Android SMS-Forwarder sends after URL-decoding. When NONE of these
+// match, routeSmsForward falls back to treating the whole text as
+// body — see that function.
+const SMS_PHONE_RX =
+  /^(?:☎️|☎|📞|📱)\s*([+\d][\d\s\-()]{4,20})\s+([\s\S]+)$/u;
+const SMS_NAMED_RX =
+  /^(?:☎️|☎|📞|📱)\s*([^\n]+?)\s*[:：]\s*([\s\S]+)$/u;
+const SMS_LINE_RX =
+  /^(?:☎️|☎|📞|📱)\s*([^\n]+)\n+([\s\S]+)$/u;
 
 export type SmsExtraction = {
   phone: string;
   body: string;
+  // True when `phone` is actually an alphanumeric sender ID
+  // (ParsianBank / Snapp / MTN …) rather than a real phone number.
+  // Owner lookup is skipped for these since the phone_contacts table
+  // is keyed by digits.
+  isAlphanumeric: boolean;
 };
 
 export function detectSmsForward(text: string): SmsExtraction | null {
   if (!text) return null;
-  const m = text.trim().match(SMS_PREFIX_RX);
-  if (!m) return null;
-  const rawPhone = (m[1] ?? "").trim();
-  const body = (m[2] ?? "").trim();
-  if (!rawPhone) return null;
-  // Normalise the phone to "+E164-ish" — strip non-digits but keep
-  // the leading "+" if present.
-  const hadPlus = rawPhone.startsWith("+");
-  const digits = rawPhone.replace(/\D/g, "");
-  if (digits.length < 6) return null;
-  const phone = (hadPlus ? "+" : "") + digits;
-  return { phone, body };
+  const trimmed = text.trim();
+
+  // 1. Numeric phone.
+  let m = trimmed.match(SMS_PHONE_RX);
+  if (m) {
+    const rawPhone = (m[1] ?? "").trim();
+    const body = (m[2] ?? "").trim();
+    if (rawPhone) {
+      const hadPlus = rawPhone.startsWith("+");
+      const digits = rawPhone.replace(/\D/g, "");
+      if (digits.length >= 6) {
+        return {
+          phone: (hadPlus ? "+" : "") + digits,
+          body,
+          isAlphanumeric: false,
+        };
+      }
+    }
+  }
+
+  // 2. Alphanumeric sender + colon + body. The named header MUST
+  // contain at least one letter so we don't mistakenly route plain
+  // numbers through this branch.
+  m = trimmed.match(SMS_NAMED_RX);
+  if (m) {
+    const sender = (m[1] ?? "").trim();
+    const body = (m[2] ?? "").trim();
+    if (sender && body && /\p{L}/u.test(sender)) {
+      return {
+        phone: sender.slice(0, 60),
+        body,
+        isAlphanumeric: true,
+      };
+    }
+  }
+
+  // 3. Alphanumeric header on its own line.
+  m = trimmed.match(SMS_LINE_RX);
+  if (m) {
+    const sender = (m[1] ?? "").trim();
+    const body = (m[2] ?? "").trim();
+    if (sender && body && /\p{L}/u.test(sender)) {
+      return {
+        phone: sender.slice(0, 60),
+        body,
+        isAlphanumeric: true,
+      };
+    }
+  }
+
+  return null;
 }
 
 export async function routeSmsForward(args: {
@@ -333,8 +390,18 @@ export async function routeSmsForward(args: {
   // matched against the SMS-aggregator's own messages_log rows).
   sourceLabel?: string | null;
 }): Promise<{ delivered: number; skipped?: string } | null> {
-  const sms = detectSmsForward(args.text);
-  if (!sms) return null;
+  // Try to parse a phone-or-name header. When that fails (e.g. the
+  // SMS-Forwarder app sent a plain bank notification with no ☎️
+  // prefix at all), fall back to a "no-header" extraction so the
+  // body still gets logged, gated, deduped and forwarded.
+  const parsed = detectSmsForward(args.text);
+  const sms: SmsExtraction =
+    parsed ?? {
+      phone: args.sourceLabel?.trim() || "SMS",
+      body: args.text.trim(),
+      isAlphanumeric: true,
+    };
+  if (!sms.body) return null;
 
   const inboxes = await listChatsByFunction("sms_inbox");
   if (inboxes.length === 0) {
@@ -413,16 +480,26 @@ export async function routeSmsForward(args: {
     );
   }
 
-  const owner = await findOwnerOfPhone(sms.phone).catch(() => null);
+  // Owner lookup only makes sense for numeric phones. Alphanumeric
+  // sender IDs like "ParsianBank" / "Snapp" / "MTN" aren't in the
+  // phone_contacts table.
+  const owner = sms.isAlphanumeric
+    ? null
+    : await findOwnerOfPhone(sms.phone).catch(() => null);
   const fallbackLabel = args.sourceLabel?.trim() || null;
-  // Header priority: real contact owner > webhook/source label >
-  // bare phone. The owner branch wins because that's the most
-  // useful for the recipient — "+989… — Moti" is unambiguous.
-  const headerPlain = owner?.name
-    ? `☎️ ${sms.phone} — ${owner.name}`
-    : fallbackLabel
-      ? `☎️ ${sms.phone} — ${fallbackLabel}`
-      : `☎️ ${sms.phone}`;
+  // Header rendering depends on what we have:
+  //   - alphanumeric sender: "📨 ParsianBank — <webhook label?>"
+  //   - numeric phone with owner: "☎️ +989… — Moti"
+  //   - numeric phone, no owner: "☎️ +989…" (+ webhook label fallback)
+  const headerPlain = sms.isAlphanumeric
+    ? fallbackLabel && fallbackLabel.toLowerCase() !== sms.phone.toLowerCase()
+      ? `📨 ${sms.phone} — ${fallbackLabel}`
+      : `📨 ${sms.phone}`
+    : owner?.name
+      ? `☎️ ${sms.phone} — ${owner.name}`
+      : fallbackLabel
+        ? `☎️ ${sms.phone} — ${fallbackLabel}`
+        : `☎️ ${sms.phone}`;
 
   // OTP was already extracted by the pre-check above; the variable
   // `otp` is in scope here. The dashboard's saveOtpCode call still

@@ -1160,6 +1160,41 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
 const WATCHLIST_PROMPT = `You watch incoming messages for the operator and report which (if any) of
 the operator's WATCHED CONCEPTS the current message hits.
 
+CRITICAL — BE CONSERVATIVE. A wrong match is MUCH worse than a missed match.
+The operator gets a Telegram ping for every match; spurious matches are the
+single biggest complaint. When in doubt: NO MATCH.
+
+A concept MATCHES the message ONLY when ONE of these is true:
+1. The FULL concept label appears in the message verbatim (minor typo /
+   Persian↔Latin transliteration tolerance allowed).
+2. One of the listed aliases appears in the message verbatim
+   (case-insensitive, minor-typo tolerant).
+3. The message gives unambiguous CONTEXT that can only refer to that
+   specific concept (e.g. "the new album by Amir Bal" when "Amir Bal" is an
+   alias and the chat is clearly about that artist).
+
+A concept DOES NOT MATCH when ANY of these are true:
+- Only PART of a multi-word name appears, e.g. just "Amir" alone for the
+  concept "Amir Bal Afshan" — first names are common, "Amir" alone is not
+  a reference.
+- A DIFFERENT person shares a name fragment with the concept. "Amir Hossein
+  Mirzaei", "Amir Mousa Kazemi", "Amir Reza Kouhestani", "Amir Hossein
+  Mansouri" — none of these are matches for "Amir Bal Afshan" even though
+  they share "Amir".
+- A GENERIC WORD that happens to be in the concept's name appears in a
+  different context. The word "بال" (wing) does NOT match the artist
+  "امیر بال افشان". The university name "امیرکبیر" does NOT match either.
+  The unrelated word "بالاس" does NOT match.
+- The message merely SOUNDS similar to the concept or contains words that
+  rhyme / look similar.
+- The reference is speculative, e.g. "this song reminds me of...", "names
+  that sound similar", "بادیگارد ۲" being a song unrelated to the artist.
+
+For PERSON concepts specifically: a single first name (even when the concept
+is a multi-word name) NEVER matches on its own. The match must include
+enough of the full name to be unambiguous, OR an explicit alias that's been
+listed by the operator.
+
 The user payload contains:
 - "items": array of watched concepts, each
     { "id": <number>,
@@ -1185,19 +1220,39 @@ Reply with STRICT JSON only, no prose, no code fences:
 }
 
 Rules:
-- "matches" is empty when nothing in the message corresponds to any watched concept.
-- A match means the message contains a SUBSTANTIVE mention of the concept OR ANY of its
-  aliases — not just a passing keyword from a different context. Use the description to judge.
+- "matches" is empty when nothing in the message corresponds to any watched
+  concept. EMPTY IS THE COMMON CASE — most messages don't match anything.
+- A match means the message contains a SUBSTANTIVE, UNAMBIGUOUS mention of
+  the concept OR ANY of its aliases. The full alias must appear, or enough
+  context to make the reference unambiguous.
 - Aliases are CASE-INSENSITIVE; "Amir Bal" matches "amir bal".
-- Be tolerant of typos and minor spelling variants when matching aliases.
-- Aliases can be in a different language than the message; "Amir Bal" in the alias list still
-  matches "امیر بال" in the message, and vice versa.
+- Be tolerant of typos and minor spelling variants WITHIN an alias, but
+  never expand the alias's meaning.
+- Aliases can be in a different language than the message; "Amir Bal" in
+  the alias list still matches "امیر بال" in the message, and vice versa.
 - Quote must be lifted VERBATIM from the message. Never paraphrase.
-- matched_alias should echo back the closest alias (or the concept label itself) so the
-  operator can see which trigger fired.
+- matched_alias should echo back the closest alias (or the concept label
+  itself) so the operator can see which trigger fired.
 - Multiple concepts can match the same message; emit one entry per match.
-- Keep "reason" Persian and concise (e.g. "خبر سفارش جدید با مبلغ ۲ میلیون").
-- Never invent items not in the payload.`;
+- Keep "reason" Persian and concise.
+- Never invent items not in the payload.
+
+NEGATIVE EXAMPLES — every one of these is NOT a match for "امیر بال افشان"
+(with alias "امیر بال"). Do NOT match these:
+  message: "امیرحسین میرزائی پیام داد"     → NO MATCH (different person)
+  message: "امیر موسی کاظمی"                 → NO MATCH (different person)
+  message: "بادیگارد ۲"                       → NO MATCH (unrelated phrase)
+  message: "امیرحسین منصوری"                  → NO MATCH (different person)
+  message: "بالاس"                              → NO MATCH (just a substring)
+  message: "امیررضا کوهستانی"                 → NO MATCH (different person)
+  message: "دانشگاه امیرکبیر"                 → NO MATCH (institution name)
+  message: "آلبوم جدید امیر تتلو"             → NO MATCH (different artist)
+  message: "این آهنگ شبیه آهنگ‌های امیر هست" → NO MATCH (vague reference)
+
+POSITIVE EXAMPLES — these ARE matches for the same concept:
+  message: "امیر بال یه آهنگ جدید داده"     → MATCH (full alias appears)
+  message: "the new album by Amir Bal Afshan dropped" → MATCH (full concept)
+  message: "Amir Bal کجاست؟"                  → MATCH (full alias)`;
 
 export type WatchlistMatchResult = {
   itemId: number;
@@ -1205,6 +1260,61 @@ export type WatchlistMatchResult = {
   quote: string;
   reason: string;
 };
+
+// Lowercase + collapse ZWNJ to space + collapse repeating whitespace.
+// Used by both the alias word-boundary check and the cross-script
+// fold below.
+function normalizeForWatchMatch(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/‌/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// True iff every space-separated token of `needle` appears as a whole
+// word in `haystack`. "Whole word" = preceded and followed by a
+// whitespace/punctuation boundary or string edge. This is what kills
+// the "امیر inside امیرحسین" false-positive pattern: when the alias
+// has two tokens ("امیر" + "بال"), both must appear individually as
+// whole words, not as substrings of a longer name.
+function allTokensWholeWordPresent(needle: string, haystack: string): boolean {
+  const a = normalizeForWatchMatch(needle);
+  const m = normalizeForWatchMatch(haystack);
+  if (!a || !m) return false;
+  const tokens = a.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  // \p{P} is Unicode punctuation; we accept either whitespace,
+  // punctuation, OR string boundary on each side.
+  return tokens.every((tok) => {
+    const re = new RegExp(
+      `(^|[\\s\\p{P}\\p{S}])${escapeRegex(tok)}([\\s\\p{P}\\p{S}]|$)`,
+      "u",
+    );
+    return re.test(m);
+  });
+}
+
+// Sanity-check the LLM verdict against the actual message text. Drops
+// hallucinated matches where neither the concept label nor any alias
+// actually appears as a whole word in the message — the most common
+// false-positive shape (partial name overlap, substring of a longer
+// word, vague semantic association).
+function validWatchlistMatch(args: {
+  message: string;
+  concept: string;
+  aliases: string[];
+}): boolean {
+  if (allTokensWholeWordPresent(args.concept, args.message)) return true;
+  for (const a of args.aliases) {
+    if (allTokensWholeWordPresent(a, args.message)) return true;
+  }
+  return false;
+}
 
 export async function scanForWatchlistConcepts(input: {
   text: string;
@@ -1261,6 +1371,7 @@ export async function scanForWatchlistConcepts(input: {
     if (!Array.isArray(parsed.matches)) return [];
     const validIds = new Set(input.items.map((it) => it.id));
     const out: WatchlistMatchResult[] = [];
+    const itemById = new Map(input.items.map((it) => [it.id, it]));
     for (const m of parsed.matches) {
       if (typeof m !== "object" || m === null) continue;
       const r = m as Record<string, unknown>;
@@ -1272,6 +1383,24 @@ export async function scanForWatchlistConcepts(input: {
           ? r.matched_alias.trim().slice(0, 120)
           : null;
       if (!validIds.has(itemId) || !quote) continue;
+      // Defensive sanity check: every alias / concept must appear as
+      // a whole word in the message text. This kills the LLM's
+      // most common false-positive shape — matching "امیر" inside
+      // "امیرحسین" or matching "بال" inside "بالاس".
+      const item = itemById.get(itemId);
+      if (item) {
+        const ok = validWatchlistMatch({
+          message: input.text,
+          concept: item.concept,
+          aliases: item.aliases ?? [],
+        });
+        if (!ok) {
+          console.log(
+            `[watchlist] dropping LLM match for concept="${item.concept}" — neither concept nor any alias appears as a whole word in message`,
+          );
+          continue;
+        }
+      }
       out.push({
         itemId,
         matchedAlias,
