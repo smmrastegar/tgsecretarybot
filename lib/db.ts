@@ -88,6 +88,28 @@ export async function ensureSchema(): Promise<void> {
     await q`CREATE INDEX IF NOT EXISTS message_edits_msg_idx ON message_edits (message_log_id, edited_at DESC)`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS source TEXT`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_source_idx ON messages_log (source) WHERE source IS NOT NULL`;
+    // Forum topics — supergroups can be split into topics (a.k.a.
+    // threads). Every message in a forum carries msg.message_thread_id
+    // pointing at the topic root. We store the id on every row so
+    // /groups/[id] can section the analysis by topic. The name is
+    // resolved separately via the forum_topics table (populated by
+    // forum_topic_created / _edited events).
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS message_thread_id BIGINT`;
+    await q`CREATE INDEX IF NOT EXISTS messages_log_thread_idx
+      ON messages_log (chat_id, message_thread_id, created_at)
+      WHERE message_thread_id IS NOT NULL`;
+    await q`
+      CREATE TABLE IF NOT EXISTS forum_topics (
+        chat_id            BIGINT NOT NULL,
+        message_thread_id  BIGINT NOT NULL,
+        name               TEXT,
+        icon_color         INT,
+        icon_emoji         TEXT,
+        is_closed          BOOLEAN NOT NULL DEFAULT FALSE,
+        is_hidden          BOOLEAN NOT NULL DEFAULT FALSE,
+        observed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (chat_id, message_thread_id)
+      )`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_owner_chat_idx ON messages_log (chat_id, created_at DESC) WHERE from_owner = TRUE`;
     // Groups arrive via regular bot.on("message"), not via business
     // connections — they don't have a bcId. Relax the NOT NULL so we
@@ -1229,6 +1251,7 @@ export type LogMessage = {
   mediaFileId?: string | null;
   mediaKind?: string | null;
   source?: string | null;
+  messageThreadId?: number | null;
 };
 
 export async function logMessage(m: LogMessage): Promise<number> {
@@ -1260,15 +1283,79 @@ export async function logMessage(m: LogMessage): Promise<number> {
       business_connection_id, owner_user_id, chat_id, chat_type, chat_title,
       sender_id, sender_username, sender_name, message_id, message_text,
       importance, urgent, concerns_owner, reason, alerted, auto_replied,
-      from_owner, skipped_reason, media_file_id, media_kind, source
+      from_owner, skipped_reason, media_file_id, media_kind, source,
+      message_thread_id
     ) VALUES (
       ${m.businessConnectionId}, ${m.ownerUserId}, ${m.chatId}, ${m.chatType}, ${m.chatTitle},
       ${m.senderId}, ${m.senderUsername}, ${m.senderName}, ${m.messageId}, ${m.messageText},
       ${m.importance}, ${m.urgent}, ${m.concernsOwner}, ${m.reason}, ${m.alerted}, ${m.autoReplied},
       ${m.fromOwner ?? false}, ${m.skippedReason ?? null},
-      ${m.mediaFileId ?? null}, ${m.mediaKind ?? null}, ${m.source ?? null}
+      ${m.mediaFileId ?? null}, ${m.mediaKind ?? null}, ${m.source ?? null},
+      ${m.messageThreadId ?? null}
     ) RETURNING id`;
   return Number((rows[0] as { id: string }).id);
+}
+
+// --- Forum topics ---
+
+export type ForumTopic = {
+  chatId: number;
+  messageThreadId: number;
+  name: string | null;
+  iconColor: number | null;
+  iconEmoji: string | null;
+  isClosed: boolean;
+  isHidden: boolean;
+  observedAt: Date;
+};
+
+export async function upsertForumTopic(args: {
+  chatId: number;
+  messageThreadId: number;
+  name?: string | null;
+  iconColor?: number | null;
+  iconEmoji?: string | null;
+  isClosed?: boolean;
+  isHidden?: boolean;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO forum_topics (
+      chat_id, message_thread_id, name, icon_color, icon_emoji, is_closed, is_hidden
+    ) VALUES (
+      ${args.chatId}, ${args.messageThreadId}, ${args.name ?? null},
+      ${args.iconColor ?? null}, ${args.iconEmoji ?? null},
+      ${args.isClosed ?? false}, ${args.isHidden ?? false}
+    )
+    ON CONFLICT (chat_id, message_thread_id) DO UPDATE SET
+      name = COALESCE(EXCLUDED.name, forum_topics.name),
+      icon_color = COALESCE(EXCLUDED.icon_color, forum_topics.icon_color),
+      icon_emoji = COALESCE(EXCLUDED.icon_emoji, forum_topics.icon_emoji),
+      is_closed = EXCLUDED.is_closed,
+      is_hidden = EXCLUDED.is_hidden,
+      observed_at = NOW()`;
+}
+
+export async function listForumTopics(chatId: number): Promise<ForumTopic[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT chat_id, message_thread_id, name, icon_color, icon_emoji,
+           is_closed, is_hidden, observed_at
+    FROM forum_topics
+    WHERE chat_id = ${chatId}
+    ORDER BY message_thread_id ASC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    chatId: Number(r.chat_id),
+    messageThreadId: Number(r.message_thread_id),
+    name: (r.name as string) ?? null,
+    iconColor: r.icon_color != null ? Number(r.icon_color) : null,
+    iconEmoji: (r.icon_emoji as string) ?? null,
+    isClosed: Boolean(r.is_closed),
+    isHidden: Boolean(r.is_hidden),
+    observedAt: r.observed_at as Date,
+  }));
 }
 
 export async function getMessageForTranscript(id: number): Promise<{
@@ -4475,13 +4562,20 @@ export async function listChatMessagesForAnalysis(args: {
   limit?: number;
 }): Promise<{
   chatTitle: string | null;
-  messages: { sender: string; text: string; at: Date; fromOwner: boolean }[];
+  messages: {
+    sender: string;
+    text: string;
+    at: Date;
+    fromOwner: boolean;
+    messageThreadId: number | null;
+  }[];
 }> {
   await ensureSchema();
   const limit = Math.min(Math.max(args.limit ?? 1500, 1), 5000);
   const rows = await sql()`
     SELECT chat_title, sender_name, message_text, transcript,
-           media_description, media_kind, created_at, from_owner
+           media_description, media_kind, created_at, from_owner,
+           message_thread_id
     FROM messages_log
     WHERE chat_id = ${args.chatId}
       AND created_at >= ${args.since.toISOString()}
@@ -4494,6 +4588,7 @@ export async function listChatMessagesForAnalysis(args: {
     text: string;
     at: Date;
     fromOwner: boolean;
+    messageThreadId: number | null;
   }[] = [];
   for (const r of rows) {
     if (!chatTitle && r.chat_title) chatTitle = r.chat_title as string;
@@ -4511,6 +4606,8 @@ export async function listChatMessagesForAnalysis(args: {
       text,
       at: r.created_at as Date,
       fromOwner: Boolean(r.from_owner),
+      messageThreadId:
+        r.message_thread_id != null ? Number(r.message_thread_id) : null,
     });
   }
   return { chatTitle, messages };

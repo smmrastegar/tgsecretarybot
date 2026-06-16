@@ -641,7 +641,7 @@ export async function askMessages(input: {
 const TASK_ANALYZE_PROMPT = `You analyze a Telegram group's recent message log for the
 group owner. Your job is to surface CONCRETE WORK ITEMS — tasks, deliverables,
 commitments, work-in-progress announcements — track their lifecycle, label each
-member's role, and flag risks (overdue / stalled).
+member's role, and flag risks (overdue / stalled / conflict).
 
 The owner's questions you are answering are:
 1. What tasks were raised in this group?
@@ -649,6 +649,11 @@ The owner's questions you are answering are:
 3. For each completed task: how long did it take from announcement until done?
 4. Who plays what role in this team (executor / reporter / supervisor / ...)?
 5. What's at risk RIGHT NOW that the owner should look at?
+6. If this is a forum supergroup with topics (each message carries "topic_name"), produce a
+   per-topic breakdown so the owner can see what's going on in each topic separately.
+7. Surface CRITICAL items that the owner should personally jump on: things stuck/delayed
+   beyond their due date, AND interpersonal conflicts / arguments / heated disagreements
+   that the group can't resolve internally.
 
 LIFECYCLE — read carefully:
 - "announced" = someone said the task should be done / will be done / asked for it. Usually phrased as
@@ -681,11 +686,13 @@ Reply with STRICT JSON only, no prose, no code fences. All free-text fields MUST
     "done": <int>,
     "stalled": <int>,
     "overdue": <int>,
+    "conflicts": <int — تعداد بحث/دعوای مهم در این بازه>,
     "avg_completion_hours": <number or null>
   },
   "tasks": [
     {
       "title": "<عنوان کوتاه فارسی>",
+      "topic_name": "<اسم تاپیک گروه یا null اگر تاپیک نداشت>",
       "owner": "<اسم فرد مسئول یا null>",
       "announced_by": "<اسم اعلام‌کننده>",
       "announced_at": "<ISO 8601 of the announcing message>",
@@ -713,9 +720,31 @@ Reply with STRICT JSON only, no prose, no code fences. All free-text fields MUST
   ],
   "highlights": [
     {
-      "kind": "overdue" | "stalled" | "risk" | "win",
+      "kind": "overdue" | "stalled" | "risk" | "win" | "conflict",
       "title": "<یک عبارت کوتاه فارسی>",
-      "details": "<توضیح یک‌خطی فارسی>"
+      "details": "<توضیح یک‌خطی فارسی>",
+      "topic_name": "<اسم تاپیک یا null>"
+    }
+  ],
+  "topic_breakdown": [
+    {
+      "topic_name": "<اسم تاپیک یا 'General' برای پیام‌های بدون تاپیک>",
+      "message_count": <int>,
+      "active_senders": <int>,
+      "summary": "<۲ تا ۴ جمله فارسی خلاصه این تاپیک>",
+      "open_tasks": <int>,
+      "overdue_tasks": <int>,
+      "key_points": ["<نکته‌ی کوتاه فارسی>", "..."]
+    }
+  ],
+  "critical_for_inbox": [
+    {
+      "kind": "overdue" | "conflict" | "stuck" | "escalation",
+      "title": "<یک خط فارسی برای کانال notes_inbox>",
+      "details": "<۱ تا ۳ خط توضیح فارسی — کافیه برای این که owner بدونه چی شده و چی کار باید بکنه>",
+      "topic_name": "<اسم تاپیک یا null>",
+      "people": ["<اسامی درگیر>"],
+      "evidence": ["<نقل قول کوتاه>"]
     }
   ]
 }
@@ -731,14 +760,39 @@ Rules:
   not done.
 - delay_hours = positive number when completed_at > due_at, else 0 or null.
 - The "highlights" section is the operator's emergency-room view: surface anything overdue, stalled,
-  blocked, or notable wins. Max 6 entries, sort by importance.
+  blocked, conflict, or notable wins. Max 8 entries, sort by importance.
+- "conflict" highlights = interpersonal disagreement, argument, blame, or escalation that the
+  group can't resolve internally — the operator should mediate.
 - Sort tasks by status priority (overdue first, then in_progress, announced, done last) and within
   each status by announced_at DESCENDING.
 - on_time_rate = (tasks where completed_on_time=true) / (tasks where status="done" and owner=this
   person). null when person has no done tasks.
 - Be generous about what counts as a task — anything an operator would track on a kanban / todo list.
 - Skip casual chatter, jokes, generic encouragement. Merge near-duplicates (same task announced
-  multiple times) into one entry.`;
+  multiple times) into one entry.
+
+Forum / topic rules:
+- Each input message may carry "topic_name". When present, that's the forum topic the message was
+  posted in. When absent or null, treat it as the group's "General" channel.
+- Always emit topic_breakdown — one entry per distinct topic_name (including "General" when there's
+  general-channel activity). For non-forum groups (every message has null topic), emit a single
+  topic_breakdown entry with topic_name="General".
+- topic_name on each task = the topic the task was raised in. If a task spans multiple topics, pick
+  the topic where it was announced.
+- Sort topic_breakdown by message_count DESC.
+- key_points (3-6 short bullets per topic) = the noteworthy things happening in that topic right
+  now. Be specific, not generic.
+
+critical_for_inbox rules:
+- This is the ONLY thing the operator gets push-notified about. Be CONSERVATIVE — only include items
+  that are genuinely on fire:
+    * "overdue" = a task whose due_at has clearly passed and nobody has shipped.
+    * "stuck" = a task that's been silent for many days with explicit blockers and no progress.
+    * "conflict" = a real argument / blame / personal escalation in the messages. Casual debate or
+      a single disagreement isn't a conflict.
+    * "escalation" = someone in the chat explicitly asks for the owner / manager / supervisor.
+- Max 5 items. Quote actual messages in "evidence". List who's involved in "people".
+- If nothing critical, return an empty array — DON'T pad it.`;
 
 export type PersonRoleLabel =
   | "executor"
@@ -761,6 +815,7 @@ export const PERSON_ROLE_LABELS: PersonRoleLabel[] = [
 
 export type GroupTaskRecord = {
   title: string;
+  topicName: string | null;
   owner: string | null;
   announcedBy: string;
   announcedAt: string;
@@ -786,9 +841,29 @@ export type GroupPersonRecord = {
 };
 
 export type GroupHighlight = {
-  kind: "overdue" | "stalled" | "risk" | "win";
+  kind: "overdue" | "stalled" | "risk" | "win" | "conflict";
   title: string;
   details: string;
+  topicName: string | null;
+};
+
+export type GroupTopicBreakdown = {
+  topicName: string;
+  messageCount: number;
+  activeSenders: number;
+  summary: string;
+  openTasks: number;
+  overdueTasks: number;
+  keyPoints: string[];
+};
+
+export type GroupCriticalItem = {
+  kind: "overdue" | "conflict" | "stuck" | "escalation";
+  title: string;
+  details: string;
+  topicName: string | null;
+  people: string[];
+  evidence: string[];
 };
 
 export type GroupTaskAnalysis = {
@@ -800,11 +875,14 @@ export type GroupTaskAnalysis = {
     done: number;
     stalled: number;
     overdue: number;
+    conflicts: number;
     avgCompletionHours: number | null;
   };
   tasks: GroupTaskRecord[];
   people: GroupPersonRecord[];
   highlights: GroupHighlight[];
+  topicBreakdown: GroupTopicBreakdown[];
+  criticalForInbox: GroupCriticalItem[];
 };
 
 export async function analyzeGroupTasks(input: {
@@ -812,18 +890,33 @@ export async function analyzeGroupTasks(input: {
   ownerName: string;
   ownerContext: string;
   chatNotes?: string | null;
-  messages: { sender: string; text: string; at: Date }[];
+  messages: {
+    sender: string;
+    text: string;
+    at: Date;
+    topicName?: string | null;
+  }[];
+  topics?: Array<{ name: string; messageThreadId: number }>;
   chatId?: number;
 }): Promise<GroupTaskAnalysis> {
+  const isForum =
+    (input.topics?.length ?? 0) > 0 ||
+    input.messages.some((m) => m.topicName);
   const payload = {
     chat_title: input.chatTitle,
     owner_name: input.ownerName,
     owner_context: input.ownerContext || undefined,
     chat_notes: input.chatNotes || undefined,
+    is_forum: isForum || undefined,
+    topics:
+      input.topics && input.topics.length > 0
+        ? input.topics.map((t) => t.name)
+        : undefined,
     messages: input.messages.slice(-600).map((m) => ({
       sender: m.sender,
       text: m.text.slice(0, 600),
       at: m.at.toISOString(),
+      topic_name: m.topicName ?? undefined,
     })),
   };
   const content = await callOpenRouter(
@@ -853,11 +946,14 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
       done: 0,
       stalled: 0,
       overdue: 0,
+      conflicts: 0,
       avgCompletionHours: null,
     },
     tasks: [],
     people: [],
     highlights: [],
+    topicBreakdown: [],
+    criticalForInbox: [],
   };
   if (!json) return empty;
   let parsed: Record<string, unknown> = {};
@@ -889,7 +985,19 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
     "stalled",
   ]);
   const validRoles = new Set<string>(PERSON_ROLE_LABELS);
-  const validHighlights = new Set(["overdue", "stalled", "risk", "win"]);
+  const validHighlights = new Set([
+    "overdue",
+    "stalled",
+    "risk",
+    "win",
+    "conflict",
+  ]);
+  const validCritical = new Set([
+    "overdue",
+    "conflict",
+    "stuck",
+    "escalation",
+  ]);
   const tasksRaw = Array.isArray(parsed.tasks) ? parsed.tasks : [];
   const tasks: GroupTaskRecord[] = tasksRaw
     .map((t): GroupTaskRecord | null => {
@@ -904,6 +1012,7 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
         : [];
       return {
         title: asStr(r.title).trim(),
+        topicName: r.topic_name ? asStr(r.topic_name).trim() || null : null,
         owner: r.owner ? asStr(r.owner).trim() || null : null,
         announcedBy: asStr(r.announced_by).trim(),
         announcedAt: asStr(r.announced_at).trim(),
@@ -959,9 +1068,66 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
         kind: kind as GroupHighlight["kind"],
         title,
         details: asStr(r.details).trim(),
+        topicName: r.topic_name ? asStr(r.topic_name).trim() || null : null,
       };
     })
     .filter((x): x is GroupHighlight => x !== null);
+  const topicsRaw = Array.isArray(parsed.topic_breakdown)
+    ? parsed.topic_breakdown
+    : [];
+  const topicBreakdown: GroupTopicBreakdown[] = topicsRaw
+    .map((t): GroupTopicBreakdown | null => {
+      if (typeof t !== "object" || t === null) return null;
+      const r = t as Record<string, unknown>;
+      const name = asStr(r.topic_name).trim();
+      if (!name) return null;
+      const keyPoints = Array.isArray(r.key_points)
+        ? (r.key_points as unknown[]).filter(
+            (x): x is string => typeof x === "string",
+          )
+        : [];
+      return {
+        topicName: name,
+        messageCount: asInt(r.message_count),
+        activeSenders: asInt(r.active_senders),
+        summary: asStr(r.summary).trim(),
+        openTasks: asInt(r.open_tasks),
+        overdueTasks: asInt(r.overdue_tasks),
+        keyPoints,
+      };
+    })
+    .filter((x): x is GroupTopicBreakdown => x !== null);
+  const criticalRaw = Array.isArray(parsed.critical_for_inbox)
+    ? parsed.critical_for_inbox
+    : [];
+  const criticalForInbox: GroupCriticalItem[] = criticalRaw
+    .map((c): GroupCriticalItem | null => {
+      if (typeof c !== "object" || c === null) return null;
+      const r = c as Record<string, unknown>;
+      const kind = asStr(r.kind).toLowerCase().trim();
+      if (!validCritical.has(kind)) return null;
+      const title = asStr(r.title).trim();
+      if (!title) return null;
+      const people = Array.isArray(r.people)
+        ? (r.people as unknown[]).filter(
+            (x): x is string => typeof x === "string",
+          )
+        : [];
+      const evidence = Array.isArray(r.evidence)
+        ? (r.evidence as unknown[]).filter(
+            (x): x is string => typeof x === "string",
+          )
+        : [];
+      return {
+        kind: kind as GroupCriticalItem["kind"],
+        title,
+        details: asStr(r.details).trim(),
+        topicName: r.topic_name ? asStr(r.topic_name).trim() || null : null,
+        people,
+        evidence,
+      };
+    })
+    .filter((x): x is GroupCriticalItem => x !== null);
   const statsRaw =
     typeof parsed.stats === "object" && parsed.stats
       ? (parsed.stats as Record<string, unknown>)
@@ -975,11 +1141,14 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
       done: asInt(statsRaw.done),
       stalled: asInt(statsRaw.stalled),
       overdue: asInt(statsRaw.overdue),
+      conflicts: asInt(statsRaw.conflicts),
       avgCompletionHours: asNumOrNull(statsRaw.avg_completion_hours),
     },
     tasks,
     people,
     highlights,
+    topicBreakdown,
+    criticalForInbox,
   };
 }
 

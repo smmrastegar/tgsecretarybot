@@ -16,6 +16,7 @@ export type PersonRoleLabel =
 
 export type Task = {
   title: string;
+  topicName: string | null;
   owner: string | null;
   announcedBy: string;
   announcedAt: string;
@@ -41,9 +42,29 @@ export type Person = {
 };
 
 export type Highlight = {
-  kind: "overdue" | "stalled" | "risk" | "win";
+  kind: "overdue" | "stalled" | "risk" | "win" | "conflict";
   title: string;
   details: string;
+  topicName: string | null;
+};
+
+export type TopicBreakdown = {
+  topicName: string;
+  messageCount: number;
+  activeSenders: number;
+  summary: string;
+  openTasks: number;
+  overdueTasks: number;
+  keyPoints: string[];
+};
+
+export type CriticalItem = {
+  kind: "overdue" | "conflict" | "stuck" | "escalation";
+  title: string;
+  details: string;
+  topicName: string | null;
+  people: string[];
+  evidence: string[];
 };
 
 export type Analysis = {
@@ -55,11 +76,14 @@ export type Analysis = {
     done: number;
     stalled: number;
     overdue: number;
+    conflicts: number;
     avgCompletionHours: number | null;
   };
   tasks: Task[];
   people: Person[];
   highlights: Highlight[];
+  topicBreakdown: TopicBreakdown[];
+  criticalForInbox: CriticalItem[];
 };
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -104,6 +128,7 @@ const HIGHLIGHT_LABELS: Record<Highlight["kind"], string> = {
   stalled: "🛑 متوقف",
   risk: "⚠️ ریسک",
   win: "✅ موفقیت",
+  conflict: "⚔️ بحث/دعوا",
 };
 
 const HIGHLIGHT_TONES: Record<
@@ -114,6 +139,21 @@ const HIGHLIGHT_TONES: Record<
   stalled: "warn",
   risk: "warn",
   win: "success",
+  conflict: "danger",
+};
+
+const CRITICAL_LABELS: Record<CriticalItem["kind"], string> = {
+  overdue: "⏰ معوق",
+  conflict: "⚔️ بحث/دعوا",
+  stuck: "🛑 گیر کرده",
+  escalation: "📣 درخواست رسیدگی",
+};
+
+const CRITICAL_TONES: Record<CriticalItem["kind"], "danger" | "warn"> = {
+  overdue: "danger",
+  conflict: "danger",
+  stuck: "warn",
+  escalation: "warn",
 };
 
 export function formatDuration(hours: number | null): string {
@@ -174,7 +214,7 @@ export default function GroupAnalyticsView({
         </Card>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-7 gap-3 mb-6">
         <StatCard label="کل کارها" value={analysis.stats.totalTasks} />
         <StatCard
           label="تموم"
@@ -191,12 +231,61 @@ export default function GroupAnalyticsView({
         />
         <StatCard label="اعلام‌شده" value={analysis.stats.announced} />
         <StatCard label="معوق / متوقف" value={analysis.stats.overdue + analysis.stats.stalled} />
+        <StatCard label="بحث/دعوا" value={analysis.stats.conflicts ?? 0} />
         <StatCard
           label="میانگین زمان انجام"
           value={formatDuration(analysis.stats.avgCompletionHours)}
           hint="از زمان اعلام تا تموم"
         />
       </div>
+
+      {analysis.criticalForInbox && analysis.criticalForInbox.length > 0 && (
+        <Card className="mb-4 border-red-700">
+          <div className="text-sm font-medium mb-3 text-red-300">
+            🆘 موارد بحرانی — نیاز به رسیدگی مستقیم شما
+          </div>
+          <div className="text-[11px] text-[var(--color-text-dim)] mb-3">
+            این موارد به کانال notes_inbox هم ارسال شدن.
+          </div>
+          <div className="flex flex-col gap-3">
+            {analysis.criticalForInbox.map((c, i) => (
+              <div
+                key={i}
+                className="border-b border-[var(--color-border)] last:border-0 pb-3 last:pb-0"
+              >
+                <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                  <Badge tone={CRITICAL_TONES[c.kind]}>
+                    {CRITICAL_LABELS[c.kind]}
+                  </Badge>
+                  <span className="font-medium">{c.title}</span>
+                  {c.topicName && (
+                    <span className="text-[10px] text-[var(--color-text-dim)]">
+                      🧵 {c.topicName}
+                    </span>
+                  )}
+                </div>
+                {c.details && (
+                  <p className="text-sm leading-relaxed">{c.details}</p>
+                )}
+                {c.people.length > 0 && (
+                  <div className="text-[11px] text-[var(--color-text-dim)] mt-1">
+                    👥 {c.people.join(" / ")}
+                  </div>
+                )}
+                {c.evidence.length > 0 && (
+                  <ul className="mt-1.5 text-[11px] text-[var(--color-text-dim)] list-disc pr-5 space-y-0.5">
+                    {c.evidence.slice(0, 3).map((q, j) => (
+                      <li key={j} className="break-words">
+                        «{q}»
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {analysis.highlights.length > 0 && (
         <Card className="mb-4 border-amber-800">
@@ -218,6 +307,51 @@ export default function GroupAnalyticsView({
                     </div>
                   )}
                 </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {analysis.topicBreakdown && analysis.topicBreakdown.length > 1 && (
+        <Card className="mb-4">
+          <div className="text-sm font-medium mb-3">🧵 تفکیک بر اساس تاپیک</div>
+          <div className="grid md:grid-cols-2 gap-3">
+            {analysis.topicBreakdown.map((t, i) => (
+              <div
+                key={`${t.topicName}-${i}`}
+                className="border border-[var(--color-border)] rounded-md p-3"
+              >
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
+                  <div className="font-medium">{t.topicName}</div>
+                  <div className="flex gap-1.5">
+                    <Badge tone="neutral">
+                      {t.messageCount} پیام · {t.activeSenders} نفر
+                    </Badge>
+                    {t.openTasks > 0 && (
+                      <Badge tone="info">{t.openTasks} باز</Badge>
+                    )}
+                    {t.overdueTasks > 0 && (
+                      <Badge tone="danger">
+                        {t.overdueTasks} معوق
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                {t.summary && (
+                  <p className="text-xs leading-relaxed mb-2 whitespace-pre-wrap">
+                    {t.summary}
+                  </p>
+                )}
+                {t.keyPoints.length > 0 && (
+                  <ul className="text-[11px] text-[var(--color-text-dim)] list-disc pr-5 space-y-0.5">
+                    {t.keyPoints.slice(0, 6).map((p, j) => (
+                      <li key={j} className="break-words">
+                        {p}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             ))}
           </div>
@@ -323,7 +457,14 @@ function TaskRow({ task, emphasize }: { task: Task; emphasize?: boolean }) {
       }`}
     >
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="font-medium flex-1 min-w-0">{task.title}</div>
+        <div className="font-medium flex-1 min-w-0">
+          {task.title}
+          {task.topicName && (
+            <span className="text-[10px] text-[var(--color-text-dim)] mr-2 ms-2">
+              🧵 {task.topicName}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-1 flex-wrap">
           {task.isOverdue && <Badge tone="danger">⏰ معوق</Badge>}
           <Badge tone={STATUS_TONES[task.status]}>

@@ -79,6 +79,7 @@ import {
   recordNoteWatchMatch,
   addChatNote,
   listChatsByFunction,
+  upsertForumTopic,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -2519,6 +2520,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         autoReplied,
         mediaFileId,
         mediaKind,
+        messageThreadId: msg.message_thread_id ?? null,
       });
       void maybeExtractOtp({ logId, text });
       void maybeApplyNoteWatch({
@@ -3621,6 +3623,67 @@ async function handleChannelPost(msg: Message, bot: Bot): Promise<void> {
 async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
   if (msg.chat.type !== "group" && msg.chat.type !== "supergroup") return;
   if (msg.from?.is_bot) return;
+  // Forum topic harvest. Telegram delivers forum_topic_created on the
+  // very first message of a new topic and forum_topic_edited when the
+  // operator renames one. Both arrive as regular messages with the
+  // special field set, so we capture them here regardless of who the
+  // sender is.
+  type ForumLike = {
+    forum_topic_created?: {
+      name?: string;
+      icon_color?: number;
+      icon_custom_emoji_id?: string;
+    };
+    forum_topic_edited?: { name?: string; icon_custom_emoji_id?: string };
+    forum_topic_closed?: Record<string, unknown>;
+    forum_topic_reopened?: Record<string, unknown>;
+    general_forum_topic_hidden?: Record<string, unknown>;
+    general_forum_topic_unhidden?: Record<string, unknown>;
+  };
+  const forum = msg as unknown as ForumLike;
+  const threadId = msg.message_thread_id ?? null;
+  if (threadId) {
+    if (forum.forum_topic_created) {
+      await upsertForumTopic({
+        chatId: msg.chat.id,
+        messageThreadId: threadId,
+        name: forum.forum_topic_created.name ?? null,
+        iconColor: forum.forum_topic_created.icon_color ?? null,
+        iconEmoji: forum.forum_topic_created.icon_custom_emoji_id ?? null,
+      }).catch((err) =>
+        console.warn("[forum] topic_created upsert failed:", err),
+      );
+    } else if (forum.forum_topic_edited) {
+      await upsertForumTopic({
+        chatId: msg.chat.id,
+        messageThreadId: threadId,
+        name: forum.forum_topic_edited.name ?? null,
+        iconEmoji: forum.forum_topic_edited.icon_custom_emoji_id ?? null,
+      }).catch((err) =>
+        console.warn("[forum] topic_edited upsert failed:", err),
+      );
+    } else if (forum.forum_topic_closed) {
+      await upsertForumTopic({
+        chatId: msg.chat.id,
+        messageThreadId: threadId,
+        isClosed: true,
+      }).catch(() => {});
+    } else if (forum.forum_topic_reopened) {
+      await upsertForumTopic({
+        chatId: msg.chat.id,
+        messageThreadId: threadId,
+        isClosed: false,
+      }).catch(() => {});
+    } else {
+      // Plain message inside a known topic — ensure we at least have
+      // a row so the analyzer can render "Topic #N" while we wait for
+      // the topic_created event.
+      await upsertForumTopic({
+        chatId: msg.chat.id,
+        messageThreadId: threadId,
+      }).catch(() => {});
+    }
+  }
   await handleAnyChatPost(msg, bot);
 }
 
@@ -3830,6 +3893,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         autoReplied: false,
         mediaFileId,
         mediaKind,
+        messageThreadId: msg.message_thread_id ?? null,
       });
       void maybeExtractOtp({ logId, text });
       void maybeApplyNoteWatch({

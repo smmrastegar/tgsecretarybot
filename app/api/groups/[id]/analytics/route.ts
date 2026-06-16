@@ -1,14 +1,21 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import {
+  addChatNote,
   getCachedGroupAnalytics,
   getChatRule,
   getGroupAnalyticsShareToken,
   listChatMessagesForAnalysis,
+  listChatsByFunction,
+  listForumTopics,
   upsertGroupAnalytics,
 } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
-import { analyzeGroupTasks } from "@/lib/classifier";
+import {
+  analyzeGroupTasks,
+  type GroupCriticalItem,
+} from "@/lib/classifier";
+import { getBot } from "@/lib/bot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,6 +108,29 @@ async function handle(
   }
   const settings = await getSettings();
   const rule = await getChatRule(chatId).catch(() => null);
+  // Resolve topic_name for every message via the forum_topics table.
+  // Falls back to "Topic #<id>" if the bot saw a message in a topic
+  // before it saw the forum_topic_created event.
+  const topics = await listForumTopics(chatId).catch(() => []);
+  const topicNameByThread = new Map<number, string>();
+  for (const t of topics) {
+    topicNameByThread.set(
+      t.messageThreadId,
+      t.name && t.name.trim() ? t.name : `Topic #${t.messageThreadId}`,
+    );
+  }
+  const messagesWithTopics = messages.map((m) => ({
+    sender: m.fromOwner
+      ? settings.ownerDisplayName || settings.ownerName || "owner"
+      : m.sender,
+    text: m.text,
+    at: m.at,
+    topicName:
+      m.messageThreadId == null
+        ? null
+        : (topicNameByThread.get(m.messageThreadId) ??
+          `Topic #${m.messageThreadId}`),
+  }));
 
   const analysis = await analyzeGroupTasks({
     chatId,
@@ -108,13 +138,17 @@ async function handle(
     ownerName: settings.ownerName,
     ownerContext: settings.ownerContext,
     chatNotes: rule?.notes ?? null,
-    messages: messages.map((m) => ({
-      sender: m.fromOwner
-        ? settings.ownerDisplayName || settings.ownerName || "owner"
-        : m.sender,
-      text: m.text,
-      at: m.at,
-    })),
+    topics:
+      topics.length > 0
+        ? topics.map((t) => ({
+            name:
+              t.name && t.name.trim()
+                ? t.name
+                : `Topic #${t.messageThreadId}`,
+            messageThreadId: t.messageThreadId,
+          }))
+        : undefined,
+    messages: messagesWithTopics,
   });
   await upsertGroupAnalytics({
     chatId,
@@ -124,6 +158,17 @@ async function handle(
     messageCount: messages.length,
     analysis,
   }).catch((err) => console.warn("[groups] cache write failed:", err));
+
+  // Push critical items into notes_inbox + chat_notes so the operator
+  // gets a Telegram ping in the configured inbox channel and the
+  // dashboard /notes viewer reflects the same items.
+  if (analysis.criticalForInbox.length > 0) {
+    await postCriticalToInbox({
+      chatId,
+      chatTitle,
+      items: analysis.criticalForInbox,
+    }).catch((err) => console.warn("[groups] critical inbox failed:", err));
+  }
   return NextResponse.json({
     ok: true,
     cached: false,
@@ -133,4 +178,75 @@ async function handle(
     analysis,
     shareToken: token,
   });
+}
+
+const KIND_BADGE: Record<GroupCriticalItem["kind"], string> = {
+  overdue: "⏰ معوق",
+  conflict: "⚔️ بحث/دعوا",
+  stuck: "🛑 گیر کرده",
+  escalation: "📣 درخواست رسیدگی",
+};
+
+function escHtml(s: string): string {
+  return s.replace(/[&<>]/g, (c) =>
+    c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;",
+  );
+}
+
+async function postCriticalToInbox(args: {
+  chatId: number;
+  chatTitle: string | null;
+  items: GroupCriticalItem[];
+}): Promise<void> {
+  const inboxes = await listChatsByFunction("notes_inbox").catch(() => []);
+  const inbox = inboxes[0];
+  const bot = getBot();
+  for (const it of args.items) {
+    // chat_notes mirror so /notes viewer reflects the critical item.
+    await addChatNote({
+      chatId: args.chatId,
+      kind: "group_critical",
+      title: `${KIND_BADGE[it.kind]} — ${it.title}`,
+      content: it.details,
+      metadata: {
+        kind: it.kind,
+        topic_name: it.topicName,
+        people: it.people,
+        evidence: it.evidence,
+        chat_title: args.chatTitle,
+      },
+    }).catch((err) =>
+      console.warn(`[groups] chat_notes write failed (${it.kind}):`, err),
+    );
+    if (!inbox) continue;
+    try {
+      const peopleLine =
+        it.people.length > 0
+          ? `\n👥 ${escHtml(it.people.join(" / "))}`
+          : "";
+      const topicLine = it.topicName
+        ? `\n🧵 ${escHtml(it.topicName)}`
+        : "";
+      const evidenceLine =
+        it.evidence.length > 0
+          ? "\n\n" +
+            it.evidence
+              .slice(0, 3)
+              .map((q) => `💬 «${escHtml(q)}»`)
+              .join("\n")
+          : "";
+      const text =
+        `${KIND_BADGE[it.kind]} <b>${escHtml(it.title)}</b>\n` +
+        `📍 ${escHtml(args.chatTitle ?? `chat ${args.chatId}`)}` +
+        topicLine +
+        peopleLine +
+        `\n\n${escHtml(it.details)}` +
+        evidenceLine;
+      await bot.api.sendMessage(inbox.chatId, text.slice(0, 4096), {
+        parse_mode: "HTML",
+      });
+    } catch (err) {
+      console.warn(`[groups] inbox send failed (${it.kind}):`, err);
+    }
+  }
 }
