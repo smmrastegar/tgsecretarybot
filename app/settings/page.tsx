@@ -80,7 +80,7 @@ const TILES: Array<{
     href: "/notes",
     emoji: "📒",
     label: "Notes",
-    desc: "آدرس‌ها، لوکیشن‌ها، شماره‌ها و نکات مهم استخراج‌شده از هر چت",
+    desc: "تب «یادداشت‌ها» (استخراج‌شده از هر چت) + تب «مفاهیم» (global Watchlist) + تب «تنظیمات» پیشرفته (cooldown / digest / archive).",
   },
   {
     href: "/media-routing",

@@ -46,7 +46,21 @@ export async function PUT(
     concept?: string;
     description?: string | null;
     enabled?: boolean;
+    emoji?: string | null;
+    priority?: string;
+    forwardToInbox?: boolean;
+    cooldownOverrideMinutes?: number | null;
   };
+  const validPri =
+    body.priority === "low" || body.priority === "normal" || body.priority === "high"
+      ? body.priority
+      : undefined;
+  let cooldown: number | null | undefined = undefined;
+  if (body.cooldownOverrideMinutes === null) cooldown = null;
+  else if (body.cooldownOverrideMinutes !== undefined) {
+    const n = Number(body.cooldownOverrideMinutes);
+    cooldown = Number.isFinite(n) && n >= 0 ? Math.round(n) : undefined;
+  }
   const item = await updateNoteWatchItem(itemId, {
     concept: body.concept,
     description:
@@ -54,6 +68,13 @@ export async function PUT(
         ? undefined
         : (body.description?.trim() || null),
     enabled: body.enabled,
+    emoji:
+      body.emoji === undefined
+        ? undefined
+        : (body.emoji?.trim() || null),
+    priority: validPri,
+    forwardToInbox: body.forwardToInbox,
+    cooldownOverrideMinutes: cooldown,
   });
   if (!item) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json({ item });

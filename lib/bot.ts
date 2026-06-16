@@ -75,6 +75,7 @@ import {
   findLatestInboundLinkForRecipient,
   recordSecretaryRelayLink,
   listNoteWatchItemsWithAliases,
+  hasRecentNoteWatchMatch,
   recordNoteWatchMatch,
   addChatNote,
   listChatsByFunction,
@@ -1579,6 +1580,24 @@ async function maybeApplyNoteWatch(args: {
 }): Promise<void> {
   if (!args.text.trim()) return;
   if (!hasDb()) return;
+  const settings = await getSettings();
+  // Master switch.
+  if ((settings.notesWatchlistEnabled ?? "true").toLowerCase() === "false") {
+    return;
+  }
+  // Short-message gate to save LLM cost.
+  const minLen = Math.max(
+    Number(settings.notesWatchlistMinMessageLength) || 0,
+    0,
+  );
+  if (args.text.trim().length < minLen) return;
+  const globalCooldownMin = Math.max(
+    Number(settings.notesWatchlistCooldownMinutes) || 0,
+    0,
+  );
+  const forwardDefault =
+    (settings.notesWatchlistForwardToInbox ?? "true").toLowerCase() !== "false";
+
   const items = await listNoteWatchItemsWithAliases({
     enabledOnly: true,
   }).catch(() => []);
@@ -1613,15 +1632,40 @@ async function maybeApplyNoteWatch(args: {
   for (const m of matches) {
     const item = byId.get(m.itemId);
     if (!item) continue;
+    // Per-concept cooldown wins over global; 0 / null = use global.
+    const effectiveCooldownMin =
+      item.cooldownOverrideMinutes ?? globalCooldownMin;
+    if (effectiveCooldownMin > 0) {
+      const recent = await hasRecentNoteWatchMatch({
+        itemId: item.id,
+        chatId: args.chatId,
+        withinMinutes: effectiveCooldownMin,
+      }).catch(() => false);
+      if (recent) {
+        console.log(
+          `[watchlist] cooldown active item=${item.id} chat=${args.chatId} — skipping`,
+        );
+        continue;
+      }
+    }
     let forwardedTo: number | null = null;
-    if (inbox) {
+    // Per-concept forward toggle overrides the global default.
+    const shouldForward = item.forwardToInbox && forwardDefault;
+    if (inbox && shouldForward) {
       try {
         const aliasTag =
           m.matchedAlias && m.matchedAlias.toLowerCase() !== item.concept.toLowerCase()
             ? ` <i>(${esc(m.matchedAlias)})</i>`
             : "";
+        const priorityTag =
+          item.priority === "high"
+            ? "🚨 "
+            : item.priority === "low"
+              ? "🔅 "
+              : "";
+        const conceptIcon = item.emoji ? `${item.emoji} ` : "📝 ";
         const text =
-          `📝 <b>${esc(item.concept)}</b>${aliasTag}\n` +
+          `${priorityTag}${conceptIcon}<b>${esc(item.concept)}</b>${aliasTag}\n` +
           `از: ${esc(args.senderName)}` +
           (args.chatTitle ? ` · ${esc(args.chatTitle)}` : "") +
           `\n\n💬 «${esc(m.quote)}»` +

@@ -137,6 +137,30 @@ export const DEFAULT_SETTINGS = {
   hikerApprovedUsd: "10",
   hikerCostPerCallUsd: "0.005",
   hikerOptimizeChangeDetection: "true",
+  // --- Notes / Watchlist global settings ---
+  // Master switch for the AI watchlist scanner. When OFF the bot
+  // skips watchlist scanning entirely for every incoming message.
+  notesWatchlistEnabled: "true",
+  // When ON, every watchlist match is also forwarded to the chat
+  // whose function role is notes_inbox. Per-concept override exists
+  // on note_watch_items.forward_to_inbox.
+  notesWatchlistForwardToInbox: "true",
+  // Minimum minutes between two matches of the SAME concept from
+  // the SAME chat. Stops one busy chat from spamming the inbox.
+  // Per-concept override lives on note_watch_items.cooldown_override_minutes.
+  notesWatchlistCooldownMinutes: "30",
+  // Skip scanning messages shorter than this. Saves LLM cost on
+  // "ok" / "👍" / etc.
+  notesWatchlistMinMessageLength: "8",
+  // Auto-archive notes older than N days. 0 = never auto-archive.
+  // Applied by a background sweep so old kanban / address notes
+  // don't pile up.
+  notesAutoArchiveDays: "0",
+  // Daily digest: when ON, post a one-shot summary of the previous
+  // 24h of watchlist matches into the notes_inbox channel at the
+  // configured UTC hour.
+  notesDailyDigestEnabled: "false",
+  notesDailyDigestHourUTC: "8",
   // Optional UI-settable override for HIKER_API_KEY. When non-empty
   // this wins over the env var so the owner can rotate the key
   // without a Vercel redeploy.
@@ -219,6 +243,13 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   // can set it without redeploying.
   hikerApiKeyOverride: undefined,
   hikerApiKeyName: optional("HIKER_API_KEY_NAME"),
+  notesWatchlistEnabled: optional("NOTES_WATCHLIST_ENABLED"),
+  notesWatchlistForwardToInbox: optional("NOTES_WATCHLIST_FORWARD_TO_INBOX"),
+  notesWatchlistCooldownMinutes: optional("NOTES_WATCHLIST_COOLDOWN_MINUTES"),
+  notesWatchlistMinMessageLength: optional("NOTES_WATCHLIST_MIN_MESSAGE_LENGTH"),
+  notesAutoArchiveDays: optional("NOTES_AUTO_ARCHIVE_DAYS"),
+  notesDailyDigestEnabled: optional("NOTES_DAILY_DIGEST_ENABLED"),
+  notesDailyDigestHourUTC: optional("NOTES_DAILY_DIGEST_HOUR_UTC"),
 };
 
 export function envOverride(key: SettingKey): string | undefined {

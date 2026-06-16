@@ -334,6 +334,17 @@ export async function ensureSchema(): Promise<void> {
       )`;
     await q`CREATE INDEX IF NOT EXISTS note_watch_aliases_item_idx
       ON note_watch_aliases (item_id)`;
+    // Per-concept advanced knobs. emoji is a visual prefix shown on
+    // the dashboard chip and inside the notes_inbox notice. priority
+    // is low|normal|high — high adds 🚨 to the notice and (later) can
+    // gate fire-alert. forward_to_inbox is a per-concept override of
+    // the global notesWatchlistForwardToInbox flag. cooldown_override
+    // overrides the global minutes-between-matches setting for this
+    // concept only.
+    await q`ALTER TABLE note_watch_items ADD COLUMN IF NOT EXISTS emoji TEXT`;
+    await q`ALTER TABLE note_watch_items ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'normal'`;
+    await q`ALTER TABLE note_watch_items ADD COLUMN IF NOT EXISTS forward_to_inbox BOOLEAN NOT NULL DEFAULT TRUE`;
+    await q`ALTER TABLE note_watch_items ADD COLUMN IF NOT EXISTS cooldown_override_minutes INT`;
     // Group analytics: cache the full task-lifecycle analysis per
     // (chat, window-days) so the public share link can serve it
     // instantly without paying for an LLM call. Also stores a
@@ -3051,6 +3062,10 @@ export type NoteWatchItem = {
   enabled: boolean;
   matchCount: number;
   lastMatchedAt: Date | null;
+  emoji: string | null;
+  priority: "low" | "normal" | "high";
+  forwardToInbox: boolean;
+  cooldownOverrideMinutes: number | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -3070,6 +3085,9 @@ export type NoteWatchMatch = {
 };
 
 function rowToNoteWatchItem(r: Record<string, unknown>): NoteWatchItem {
+  const rawPri = (r.priority as string) ?? "normal";
+  const priority: NoteWatchItem["priority"] =
+    rawPri === "low" || rawPri === "high" ? rawPri : "normal";
   return {
     id: Number(r.id),
     concept: r.concept as string,
@@ -3077,6 +3095,14 @@ function rowToNoteWatchItem(r: Record<string, unknown>): NoteWatchItem {
     enabled: Boolean(r.enabled),
     matchCount: Number(r.match_count ?? 0),
     lastMatchedAt: (r.last_matched_at as Date) ?? null,
+    emoji: (r.emoji as string) ?? null,
+    priority,
+    forwardToInbox:
+      r.forward_to_inbox == null ? true : Boolean(r.forward_to_inbox),
+    cooldownOverrideMinutes:
+      r.cooldown_override_minutes != null
+        ? Number(r.cooldown_override_minutes)
+        : null,
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
   };
@@ -3106,7 +3132,9 @@ export async function listNoteWatchItems(args?: {
   await ensureSchema();
   const enabledOnly = args?.enabledOnly ?? false;
   const rows = await sql()`
-    SELECT id, concept, description, enabled, match_count, last_matched_at, created_at, updated_at
+    SELECT id, concept, description, enabled, match_count, last_matched_at,
+           emoji, priority, forward_to_inbox, cooldown_override_minutes,
+           created_at, updated_at
     FROM note_watch_items
     WHERE (${enabledOnly}::boolean = FALSE OR enabled = TRUE)
     ORDER BY created_at DESC`;
@@ -3119,7 +3147,9 @@ export async function getNoteWatchItem(
   if (!hasDb()) return null;
   await ensureSchema();
   const rows = await sql()`
-    SELECT id, concept, description, enabled, match_count, last_matched_at, created_at, updated_at
+    SELECT id, concept, description, enabled, match_count, last_matched_at,
+           emoji, priority, forward_to_inbox, cooldown_override_minutes,
+           created_at, updated_at
     FROM note_watch_items WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToNoteWatchItem(r) : null;
@@ -3135,28 +3165,52 @@ export async function createNoteWatchItem(args: {
   const rows = await sql()`
     INSERT INTO note_watch_items (concept, description, enabled)
     VALUES (${args.concept}, ${args.description ?? null}, ${args.enabled ?? true})
-    RETURNING id, concept, description, enabled, match_count, last_matched_at, created_at, updated_at`;
+    RETURNING id, concept, description, enabled, match_count, last_matched_at,
+              emoji, priority, forward_to_inbox, cooldown_override_minutes,
+              created_at, updated_at`;
   return rowToNoteWatchItem(rows[0] as Record<string, unknown>);
 }
 
 export async function updateNoteWatchItem(
   id: number,
-  patch: Partial<{ concept: string; description: string | null; enabled: boolean }>,
+  patch: Partial<{
+    concept: string;
+    description: string | null;
+    enabled: boolean;
+    emoji: string | null;
+    priority: "low" | "normal" | "high";
+    forwardToInbox: boolean;
+    cooldownOverrideMinutes: number | null;
+  }>,
 ): Promise<NoteWatchItem | null> {
   if (!hasDb()) return null;
   await ensureSchema();
-  // Use marker for description so we can tell "leave alone" (undefined)
-  // from "set to NULL" (null).
+  // Use markers for nullable fields so we can tell "leave alone"
+  // (undefined) from "set to NULL" (null).
   const descMarker = patch.description === undefined ? 0 : 1;
   const descValue = patch.description ?? null;
+  const emojiMarker = patch.emoji === undefined ? 0 : 1;
+  const emojiValue = patch.emoji ?? null;
+  const cooldownMarker =
+    patch.cooldownOverrideMinutes === undefined ? 0 : 1;
+  const cooldownValue = patch.cooldownOverrideMinutes ?? null;
   const rows = await sql()`
     UPDATE note_watch_items SET
       concept = COALESCE(${patch.concept ?? null}, concept),
       description = CASE WHEN ${descMarker}::int = 1 THEN ${descValue} ELSE description END,
       enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
+      emoji = CASE WHEN ${emojiMarker}::int = 1 THEN ${emojiValue} ELSE emoji END,
+      priority = COALESCE(${patch.priority ?? null}, priority),
+      forward_to_inbox = COALESCE(${patch.forwardToInbox ?? null}::boolean, forward_to_inbox),
+      cooldown_override_minutes = CASE
+        WHEN ${cooldownMarker}::int = 1 THEN ${cooldownValue}::int
+        ELSE cooldown_override_minutes
+      END,
       updated_at = NOW()
     WHERE id = ${id}
-    RETURNING id, concept, description, enabled, match_count, last_matched_at, created_at, updated_at`;
+    RETURNING id, concept, description, enabled, match_count, last_matched_at,
+              emoji, priority, forward_to_inbox, cooldown_override_minutes,
+              created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToNoteWatchItem(r) : null;
 }
@@ -3267,6 +3321,41 @@ export async function recordNoteWatchMatch(args: {
     WHERE id = ${args.itemId}`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToNoteWatchMatch(r) : null;
+}
+
+// Cooldown gate: returns true when there's already a recent match
+// for this (itemId, chatId) within the window — caller should skip
+// the LLM call / forward to keep one chat from spamming the inbox.
+export async function hasRecentNoteWatchMatch(args: {
+  itemId: number;
+  chatId: number;
+  withinMinutes: number;
+}): Promise<boolean> {
+  if (!hasDb()) return false;
+  await ensureSchema();
+  if (args.withinMinutes <= 0) return false;
+  const rows = await sql()`
+    SELECT 1 FROM note_watch_matches
+    WHERE item_id = ${args.itemId}
+      AND chat_id = ${args.chatId}
+      AND created_at > NOW() - make_interval(mins => ${args.withinMinutes})
+    LIMIT 1`;
+  return rows.length > 0;
+}
+
+// Archive sweeper used by the optional notesAutoArchiveDays setting.
+// Marks every non-archived chat_notes row older than `days` as
+// archived. Returns the number affected so the cron can log it.
+export async function archiveOldChatNotes(days: number): Promise<number> {
+  if (!hasDb() || days <= 0) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    UPDATE chat_notes
+    SET archived_at = NOW()
+    WHERE archived_at IS NULL
+      AND created_at < NOW() - make_interval(days => ${days})
+    RETURNING id`;
+  return rows.length;
 }
 
 export async function listNoteWatchMatches(args?: {
