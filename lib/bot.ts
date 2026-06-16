@@ -2617,6 +2617,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         mediaFileId,
         mediaKind,
         messageThreadId: msg.message_thread_id ?? null,
+        inlineButtons: extractInlineUrlButtons(msg),
       });
       void maybeExtractOtp({ logId, text });
       void maybeApplyNoteWatch({
@@ -3462,6 +3463,28 @@ async function maybeForwardToSecretary(args: {
 // Links each forwarded copy back to the source message so a recipient
 // reply (in their own DM with the bot) can be routed back. Separate
 // from the legacy single-secretary path so both can coexist.
+// Pull every URL button out of an incoming message's inline keyboard.
+// Used to capture the HTML / Preview / Summary / Text / Debug links
+// that email-bridge channels attach to every post — the dashboard
+// stores them so /messages can offer "📧 نمایش HTML" on a row.
+function extractInlineUrlButtons(
+  msg: Message,
+): Array<{ label: string; url: string }> | null {
+  const kb = msg.reply_markup?.inline_keyboard;
+  if (!kb || kb.length === 0) return null;
+  const out: Array<{ label: string; url: string }> = [];
+  for (const row of kb) {
+    for (const btn of row) {
+      const url = (btn as { url?: unknown }).url;
+      const text = (btn as { text?: unknown }).text;
+      if (typeof url !== "string" || !url) continue;
+      if (typeof text !== "string" || !text) continue;
+      out.push({ label: text.trim().slice(0, 120), url: url.slice(0, 2000) });
+    }
+  }
+  return out.length > 0 ? out : null;
+}
+
 // Identify what KIND of payload a message carries — used for both
 // error logging and to know whether we need a separate text payload.
 function messageKind(msg: Message): string {
@@ -4286,6 +4309,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         mediaFileId,
         mediaKind,
         messageThreadId: msg.message_thread_id ?? null,
+        inlineButtons: extractInlineUrlButtons(msg),
       });
       void maybeExtractOtp({ logId, text });
       void maybeApplyNoteWatch({

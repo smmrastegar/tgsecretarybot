@@ -88,6 +88,11 @@ export async function ensureSchema(): Promise<void> {
     await q`CREATE INDEX IF NOT EXISTS message_edits_msg_idx ON message_edits (message_log_id, edited_at DESC)`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS source TEXT`;
     await q`CREATE INDEX IF NOT EXISTS messages_log_source_idx ON messages_log (source) WHERE source IS NOT NULL`;
+    // Inline URL buttons captured from msg.reply_markup. Channels
+    // that act as email gateways attach HTML / Preview / Summary /
+    // Text / Debug links to every post — we keep them so the
+    // dashboard can render the proper HTML body on demand.
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS inline_buttons JSONB`;
     // Forum topics — supergroups can be split into topics (a.k.a.
     // threads). Every message in a forum carries msg.message_thread_id
     // pointing at the topic root. We store the id on every row so
@@ -1288,6 +1293,7 @@ export type LogMessage = {
   mediaKind?: string | null;
   source?: string | null;
   messageThreadId?: number | null;
+  inlineButtons?: Array<{ label: string; url: string }> | null;
 };
 
 export async function logMessage(m: LogMessage): Promise<number> {
@@ -1314,20 +1320,24 @@ export async function logMessage(m: LogMessage): Promise<number> {
   if (existing.length > 0) {
     return Number((existing[0] as { id: string }).id);
   }
+  const buttonsJson =
+    m.inlineButtons && m.inlineButtons.length > 0
+      ? JSON.stringify(m.inlineButtons)
+      : null;
   const rows = await sql()`
     INSERT INTO messages_log (
       business_connection_id, owner_user_id, chat_id, chat_type, chat_title,
       sender_id, sender_username, sender_name, message_id, message_text,
       importance, urgent, concerns_owner, reason, alerted, auto_replied,
       from_owner, skipped_reason, media_file_id, media_kind, source,
-      message_thread_id
+      message_thread_id, inline_buttons
     ) VALUES (
       ${m.businessConnectionId}, ${m.ownerUserId}, ${m.chatId}, ${m.chatType}, ${m.chatTitle},
       ${m.senderId}, ${m.senderUsername}, ${m.senderName}, ${m.messageId}, ${m.messageText},
       ${m.importance}, ${m.urgent}, ${m.concernsOwner}, ${m.reason}, ${m.alerted}, ${m.autoReplied},
       ${m.fromOwner ?? false}, ${m.skippedReason ?? null},
       ${m.mediaFileId ?? null}, ${m.mediaKind ?? null}, ${m.source ?? null},
-      ${m.messageThreadId ?? null}
+      ${m.messageThreadId ?? null}, ${buttonsJson}::jsonb
     ) RETURNING id`;
   return Number((rows[0] as { id: string }).id);
 }
@@ -1392,6 +1402,21 @@ export async function listForumTopics(chatId: number): Promise<ForumTopic[]> {
     isHidden: Boolean(r.is_hidden),
     observedAt: r.observed_at as Date,
   }));
+}
+
+// Pull just the inline_buttons column for a single message — used by
+// the email-html viewer so it can verify the requested URL is one of
+// the buttons the message originally carried (not an arbitrary fetch).
+export async function getMessageInlineButtons(
+  id: number,
+): Promise<Array<{ label: string; url: string }> | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT inline_buttons FROM messages_log WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as { inline_buttons: unknown } | undefined;
+  if (!r) return null;
+  return parseInlineButtons(r.inline_buttons);
 }
 
 export async function getMessageForTranscript(id: number): Promise<{
@@ -1609,6 +1634,7 @@ export type MessageRow = {
   chatFirstName: string | null;
   chatLastName: string | null;
   chatNickname: string | null;
+  inlineButtons: Array<{ label: string; url: string }> | null;
 };
 
 function rowToMessage(r: Record<string, unknown>): MessageRow {
@@ -1653,7 +1679,32 @@ function rowToMessage(r: Record<string, unknown>): MessageRow {
     chatFirstName: (r.chat_rule_first_name as string) ?? null,
     chatLastName: (r.chat_rule_last_name as string) ?? null,
     chatNickname: (r.chat_rule_nickname as string) ?? null,
+    inlineButtons: parseInlineButtons(r.inline_buttons),
   };
+}
+
+function parseInlineButtons(
+  raw: unknown,
+): Array<{ label: string; url: string }> | null {
+  if (!raw) return null;
+  let parsed: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!Array.isArray(parsed)) return null;
+  const out: Array<{ label: string; url: string }> = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    const it = item as { label?: unknown; url?: unknown };
+    const label = typeof it.label === "string" ? it.label : "";
+    const url = typeof it.url === "string" ? it.url : "";
+    if (label && url) out.push({ label, url });
+  }
+  return out.length > 0 ? out : null;
 }
 
 export async function listMessages(opts: {

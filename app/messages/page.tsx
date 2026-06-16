@@ -94,6 +94,7 @@ type Message = {
   editCount: number;
   fromOwner: boolean;
   source: string | null;
+  inlineButtons: Array<{ label: string; url: string }> | null;
   chatMode:
     | "off"
     | "secretary"
@@ -433,6 +434,16 @@ export default function MessagesPage() {
                       )}
                       {truncate(visibleText, 200)}
                     </div>
+                    {m.inlineButtons && m.inlineButtons.length > 0 && (
+                      <div className="flex justify-end">
+                        <Link
+                          href={`/messages/${m.id}/email`}
+                          className="text-[10px] px-2 py-0.5 rounded-md bg-[var(--color-accent)] text-white"
+                        >
+                          📧 HTML
+                        </Link>
+                      </div>
+                    )}
                     {m.mediaKind && !m.deletedAt && (
                       <div className="flex justify-center">
                         <MediaView messageId={m.id} kind={m.mediaKind} />
@@ -542,6 +553,27 @@ export default function MessagesPage() {
               {m.otpCode && (
                 <div className="mt-2">
                   <OtpChip code={m.otpCode} />
+                </div>
+              )}
+              {m.inlineButtons && m.inlineButtons.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <Link
+                    href={`/messages/${m.id}/email`}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-[var(--color-accent)] text-white"
+                  >
+                    📧 نمایش HTML
+                  </Link>
+                  {m.inlineButtons.map((b) => (
+                    <a
+                      key={b.label + b.url}
+                      href={b.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] px-2.5 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                    >
+                      {b.label} ↗
+                    </a>
+                  ))}
                 </div>
               )}
               <div
