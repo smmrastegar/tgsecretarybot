@@ -389,12 +389,19 @@ export async function routeSmsForward(args: {
   // shows up instead of just "☎️ +PHONE" (or a wrong contact
   // matched against the SMS-aggregator's own messages_log rows).
   sourceLabel?: string | null;
+  // When true (set ONLY by the SMS webhook route), allow routing
+  // even when the body lacks a ☎️/📱 prefix — the message arrived
+  // through an explicit SMS channel so it IS an SMS regardless of
+  // header shape. NEVER set this from bot.ts; we'd accidentally
+  // forward every DM message into the sms_inbox.
+  allowNoHeader?: boolean;
 }): Promise<{ delivered: number; skipped?: string } | null> {
-  // Try to parse a phone-or-name header. When that fails (e.g. the
-  // SMS-Forwarder app sent a plain bank notification with no ☎️
-  // prefix at all), fall back to a "no-header" extraction so the
-  // body still gets logged, gated, deduped and forwarded.
+  // Try to parse a phone-or-name header. When that fails and the
+  // caller didn't opt into the no-header fallback (i.e. we're being
+  // invoked from a regular DM hot path), bail out — these messages
+  // are NOT SMS and must not land in the sms_inbox.
   const parsed = detectSmsForward(args.text);
+  if (!parsed && !args.allowNoHeader) return null;
   const sms: SmsExtraction =
     parsed ?? {
       phone: args.sourceLabel?.trim() || "SMS",

@@ -153,6 +153,10 @@ async function handle(request: Request): Promise<NextResponse> {
       // (e.g. "📱 پیامک مرضیه"). Used in the forward header when
       // findOwnerOfPhone can't resolve the actual contact.
       sourceLabel: webhook.name,
+      // The text arrived through THIS SMS channel, so even when it
+      // doesn't carry a ☎️/📱 prefix we still want it routed into
+      // the sms_inbox — that's the whole point of the webhook.
+      allowNoHeader: true,
     });
   } catch (err) {
     console.warn("[sms-webhook] route failed:", err);
