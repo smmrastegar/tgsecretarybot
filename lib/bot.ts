@@ -10,7 +10,7 @@ import {
   scanForWatchlistConcepts,
   summarizeGroup,
 } from "./classifier";
-import { sttConfigured, transcribeAudio } from "./stt";
+import { downloadTelegramFile, sttConfigured, transcribeAudio } from "./stt";
 import { generatePersonalPhoto, looksLikePhotoRequest } from "./image-gen";
 import {
   getRoutedMessage,
@@ -3387,13 +3387,134 @@ function messageKind(msg: Message): string {
   return "unknown";
 }
 
-// Relay any incoming message to a recipient AS the owner of the
-// business connection. Uses copyMessage for media — Telegram's
-// official way to move a message of any kind without an attribution
-// header — and a plain sendMessage for text-only. Both code paths
-// include business_connection_id so the recipient sees the message
-// arrive inside their existing chat with the owner, not from the
-// bot's account.
+// Pick the right file_id for whatever media the message carries.
+// Telegram's File ID is bot-scoped — for re-sending under the owner's
+// business connection we use the file_id from the inbound business
+// message; if that's rejected we fall back to download + InputFile.
+function mediaFileId(msg: Message): {
+  kind:
+    | "photo"
+    | "video"
+    | "voice"
+    | "audio"
+    | "document"
+    | "animation"
+    | "sticker"
+    | "video_note";
+  fileId: string;
+} | null {
+  if (msg.photo && msg.photo.length > 0) {
+    const biggest = msg.photo[msg.photo.length - 1];
+    return biggest ? { kind: "photo", fileId: biggest.file_id } : null;
+  }
+  if (msg.video) return { kind: "video", fileId: msg.video.file_id };
+  if (msg.voice) return { kind: "voice", fileId: msg.voice.file_id };
+  if (msg.audio) return { kind: "audio", fileId: msg.audio.file_id };
+  if (msg.document) return { kind: "document", fileId: msg.document.file_id };
+  if (msg.animation)
+    return { kind: "animation", fileId: msg.animation.file_id };
+  if (msg.sticker) return { kind: "sticker", fileId: msg.sticker.file_id };
+  if (msg.video_note)
+    return { kind: "video_note", fileId: msg.video_note.file_id };
+  return null;
+}
+
+type MediaKind = NonNullable<ReturnType<typeof mediaFileId>>["kind"];
+
+// Per-media-type send via business_connection_id. file is either the
+// raw file_id (fast path) or an InputFile after download+reupload
+// (fallback). Caption (where supported) carries the source caption.
+async function sendMediaAsOwner(args: {
+  bot: Bot;
+  toChatId: number;
+  businessConnectionId: string;
+  kind: MediaKind;
+  file: string | InputFile;
+  caption?: string;
+  replyToMessageId?: number;
+}): Promise<number> {
+  const { bot, toChatId, businessConnectionId, kind, file } = args;
+  const base: Record<string, unknown> = {
+    business_connection_id: businessConnectionId,
+  };
+  if (args.replyToMessageId !== undefined) {
+    base.reply_parameters = { message_id: args.replyToMessageId };
+  }
+  const withCaption = (capable: boolean) =>
+    capable && args.caption ? { ...base, caption: args.caption } : base;
+  switch (kind) {
+    case "photo": {
+      const m = await bot.api.sendPhoto(
+        toChatId,
+        file,
+        withCaption(true),
+      );
+      return m.message_id;
+    }
+    case "video": {
+      const m = await bot.api.sendVideo(toChatId, file, withCaption(true));
+      return m.message_id;
+    }
+    case "voice": {
+      const m = await bot.api.sendVoice(toChatId, file, withCaption(true));
+      return m.message_id;
+    }
+    case "audio": {
+      const m = await bot.api.sendAudio(toChatId, file, withCaption(true));
+      return m.message_id;
+    }
+    case "document": {
+      const m = await bot.api.sendDocument(toChatId, file, withCaption(true));
+      return m.message_id;
+    }
+    case "animation": {
+      const m = await bot.api.sendAnimation(
+        toChatId,
+        file,
+        withCaption(true),
+      );
+      return m.message_id;
+    }
+    case "sticker": {
+      // Stickers ignore captions. Pass only base options.
+      const m = await bot.api.sendSticker(toChatId, file, base);
+      return m.message_id;
+    }
+    case "video_note": {
+      // Video notes also ignore captions.
+      const m = await bot.api.sendVideoNote(toChatId, file, base);
+      return m.message_id;
+    }
+  }
+}
+
+// Telegram error codes that mean "file_id won't work as-is" — these
+// trigger the download + re-upload fallback. Everything else is
+// propagated to the caller so genuine network / permission failures
+// don't waste a download round-trip.
+function isFileIdProblem(err: unknown): boolean {
+  const e = err as { error_code?: number; description?: string };
+  if (e?.error_code !== 400) return false;
+  const d = (e.description ?? "").toLowerCase();
+  return (
+    d.includes("file") ||
+    d.includes("wrong type") ||
+    d.includes("not found") ||
+    d.includes("identifier")
+  );
+}
+
+// Relay one incoming business message to a recipient AS the owner.
+//
+//   * text → sendMessage(business_connection_id)
+//   * any media → sendXxx(file_id, business_connection_id) — and if
+//     Telegram rejects the file_id (which it does for some kinds
+//     where the file scope doesn't transfer cleanly across business
+//     chats) fall back to downloading the file via the bot's File API
+//     and re-uploading as an InputFile.
+//
+// Service messages, polls, location / contact / dice / venue all fall
+// through to copyMessage (no file to download, just metadata).
 async function relayCopyViaBusiness(args: {
   bot: Bot;
   msg: Message;
@@ -3402,36 +3523,75 @@ async function relayCopyViaBusiness(args: {
   replyToMessageId?: number;
 }): Promise<number[]> {
   const { bot, msg, toChatId, businessConnectionId, replyToMessageId } = args;
-  const replyOpt =
-    replyToMessageId !== undefined
-      ? { reply_parameters: { message_id: replyToMessageId } }
-      : {};
-  // Plain text — sendMessage is the simplest. copyMessage also works,
-  // but sendMessage is what every other relay path uses for text.
-  const kind = messageKind(msg);
-  if (kind === "text" && msg.text) {
-    const sent = await bot.api.sendMessage(
+  const baseOpts: Record<string, unknown> = {
+    business_connection_id: businessConnectionId,
+  };
+  if (replyToMessageId !== undefined) {
+    baseOpts.reply_parameters = { message_id: replyToMessageId };
+  }
+
+  // Plain text.
+  if (msg.text && !mediaFileId(msg)) {
+    const m = await bot.api.sendMessage(
       toChatId,
       msg.text.slice(0, 4096),
-      { business_connection_id: businessConnectionId, ...replyOpt },
+      baseOpts,
     );
-    return [sent.message_id];
+    return [m.message_id];
   }
-  // Everything else: copyMessage. It preserves photo / video / voice /
-  // audio / document / animation / sticker / video_note / location /
-  // contact / dice / venue / poll without us having to dispatch on
-  // each media kind. Service messages can't be copied — copyMessage
-  // throws 400 in that case and the catch in the caller logs which
-  // kind failed.
-  //
-  // Cast: grammy's types for copyMessage haven't been updated to
-  // expose business_connection_id (Telegram added it in Bot API 7.4)
-  // — the option IS supported by the Bot API and the request goes
-  // through fine.
-  const copyOpts = {
-    business_connection_id: businessConnectionId,
-    ...replyOpt,
-  } as unknown as Parameters<typeof bot.api.copyMessage>[3];
+
+  // File-bearing media.
+  const media = mediaFileId(msg);
+  if (media) {
+    const caption = msg.caption?.slice(0, 1024);
+    try {
+      const id = await sendMediaAsOwner({
+        bot,
+        toChatId,
+        businessConnectionId,
+        kind: media.kind,
+        file: media.fileId,
+        caption,
+        replyToMessageId,
+      });
+      console.log(
+        `[relay] ${media.kind} sent via file_id rcpt=${toChatId}`,
+      );
+      return [id];
+    } catch (err) {
+      if (!isFileIdProblem(err)) throw err;
+      console.warn(
+        `[relay] ${media.kind} file_id rejected — falling back to download+reupload`,
+      );
+      // Fallback: download via the bot's File API and re-upload.
+      const { data, name } = await downloadTelegramFile(
+        config.telegramBotToken,
+        media.fileId,
+      );
+      const fallbackName = name || `${media.kind}.bin`;
+      const inputFile = new InputFile(data, fallbackName);
+      const id = await sendMediaAsOwner({
+        bot,
+        toChatId,
+        businessConnectionId,
+        kind: media.kind,
+        file: inputFile,
+        caption,
+        replyToMessageId,
+      });
+      console.log(
+        `[relay] ${media.kind} re-uploaded ok rcpt=${toChatId} bytes=${data.length}`,
+      );
+      return [id];
+    }
+  }
+
+  // No file payload but not text either (location, contact, dice,
+  // venue, poll, service messages...). copyMessage is the right
+  // primitive: it carries the structured metadata as the owner.
+  const copyOpts = baseOpts as unknown as Parameters<
+    typeof bot.api.copyMessage
+  >[3];
   const sent = await bot.api.copyMessage(
     toChatId,
     msg.chat.id,
@@ -3615,13 +3775,23 @@ async function maybeRelayRecipientReplyBusiness(args: {
         .catch(() => {});
       return false;
     }
+    // Read-receipt: the recipient just answered, so mark the source's
+    // last forwarded message as read. Telegram's read cursor moves
+    // forward, so this implicitly marks every earlier customer
+    // message as seen too. Per markBusinessRead, this only works
+    // when the operator granted can_read_messages to the bot when
+    // setting up the Business connection — failures get a clear
+    // [read] warning in the log.
     if (link.sourceMessageId) {
+      console.log(
+        `[relay] marking source=${link.sourceChatId} msg=${link.sourceMessageId} as read on reply`,
+      );
       await markBusinessRead(
         bot,
         sendBcId,
         link.sourceChatId,
         link.sourceMessageId,
-      ).catch(() => {});
+      );
     }
     for (const id of sentIds) {
       await recordSecretaryRelayLink({
