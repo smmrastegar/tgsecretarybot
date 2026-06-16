@@ -77,24 +77,33 @@ async function classifySmsForForwarding(args: {
 
   const systemPrompt = `You decide whether an incoming SMS should be forwarded to the operator's curated inbox or filtered out.
 
-FORWARD (DECISION: YES) when the SMS is personal / transactional and addressed to the recipient (${ownerName}). Examples:
-- One-time codes / OTP / verification / login PINs.
+FORWARD (DECISION: YES) when the SMS is personal / transactional / informational and addressed to the recipient (${ownerName}). Examples:
+- ONE-TIME CODES — OTP / verification / login PINs / access codes / security codes / 2FA codes. ANY isolated 4-8 digit number presented as a code (English OR Persian digits ۰-۹) is an OTP, even when the SMS frames it as a "warning" / "alert" / "هشدار" — that's just decoration to draw attention.
 - Bank, payment, or delivery notifications.
 - Appointment reminders, account warnings, balance alerts.
+- Government-service messages, court notices, tax notices, customs notices.
 - A real person texting them.
 - Service-account messages where they personally took an action.
 
-FILTER (DECISION: NO) when the SMS is marketing / promotional / mass blast. Examples:
-- "Black Friday 50% off …"
+Specifically forward when the body contains any of these Persian/English signals AND a short numeric code:
+- "کد" / "code" / "PIN" / "OTP"
+- "کد تایید" / "verification code" / "access code" / "کد دسترسی"
+- "هشدار" + a numeric code (still an OTP — operator wants to see it)
+- "رمز" / "password" + a one-time-looking number
+- service brands like "پنجره ملی", "ثنا", "ملی پلاس", "بانک", "snapp", "alopeyk", "tapsi", "irancell", "همراه اول"...
+
+FILTER (DECISION: NO) ONLY when the SMS is plainly marketing / promotional / mass blast with NO code that addresses the user. Examples:
+- "Black Friday 50% off …" with no per-user code.
 - "Vote for X" / political campaign.
-- Generic discount codes meant for many recipients.
-- Newsletter / promo / advertising pitch.
-- Spam / scam.
+- Newsletter / promo / advertising pitch with no recipient action.
+- Pure spam / scam with no actionable code.
+
+If in doubt FORWARD. False alarms are cheap; missing an OTP is expensive.
 
 Reply on EXACTLY two lines, no preamble, no markdown:
 
 DECISION: YES
-CATEGORY: <one short label like "otp" / "bank" / "appointment" / "promo" / "spam" / "person">
+CATEGORY: <one short label like "otp" / "bank" / "appointment" / "promo" / "spam" / "person" / "gov" / "delivery">
 
 or
 
@@ -228,24 +237,53 @@ export async function routeSmsForward(args: {
     return { delivered: 0, skipped: "source chat is the sms_inbox" };
   }
 
-  // LLM gate: only forward personal / transactional SMS. Promotional
-  // / mass blasts are filtered out so the inbox stays clean.
-  const decision = await classifySmsForForwarding({
-    phone: sms.phone,
-    body: sms.body,
-  });
-  if (!decision.forward) {
-    console.log(
-      `[sms] gate=NO phone=${sms.phone} category=${decision.category} — skipping forward (${decision.reason})`,
-    );
-    return {
-      delivered: 0,
-      skipped: `gate filtered (${decision.category})`,
-    };
+  // OTP pre-check: pull the verification code out FIRST so we have it
+  // for tap-to-copy AND so we can short-circuit the gate. An SMS that
+  // carries a clear OTP is ALWAYS personal/transactional — the user
+  // needs to see it — and we don't want phrasing like "هشدار کد
+  // دسترسی" tricking the gate into classifying it as a security
+  // alert instead of a code.
+  let otp: string | null = null;
+  if (sms.body) {
+    try {
+      const { extractOtpCodeAi } = await import("./rules");
+      otp = await extractOtpCodeAi(sms.body);
+    } catch (err) {
+      console.warn("[sms] otp pre-extract failed:", err);
+    }
   }
-  console.log(
-    `[sms] gate=YES phone=${sms.phone} category=${decision.category} (${decision.reason})`,
-  );
+
+  // LLM gate: only forward personal / transactional SMS. Promotional
+  // / mass blasts are filtered out so the inbox stays clean. Bypassed
+  // when the pre-check found an OTP — see above.
+  let decision: GateDecision;
+  if (otp) {
+    decision = {
+      forward: true,
+      reason: `OTP detected (${otp}) — bypassing gate`,
+      category: "otp",
+    };
+    console.log(
+      `[sms] gate bypassed phone=${sms.phone} otp=${otp} — auto-forward`,
+    );
+  } else {
+    decision = await classifySmsForForwarding({
+      phone: sms.phone,
+      body: sms.body,
+    });
+    if (!decision.forward) {
+      console.log(
+        `[sms] gate=NO phone=${sms.phone} category=${decision.category} — skipping forward (${decision.reason})`,
+      );
+      return {
+        delivered: 0,
+        skipped: `gate filtered (${decision.category})`,
+      };
+    }
+    console.log(
+      `[sms] gate=YES phone=${sms.phone} category=${decision.category} (${decision.reason})`,
+    );
+  }
 
   const owner = await findOwnerOfPhone(sms.phone).catch(() => null);
   const fallbackLabel = args.sourceLabel?.trim() || null;
@@ -258,15 +296,9 @@ export async function routeSmsForward(args: {
       ? `☎️ ${sms.phone} — ${fallbackLabel}`
       : `☎️ ${sms.phone}`;
 
-  // Try to pull the OTP code out so we can inline it inside
-  // <code>…</code> — Telegram renders that as tap-to-copy.
-  let otp: string | null = null;
-  if (sms.body) {
-    try {
-      const { extractOtpCodeAi } = await import("./rules");
-      otp = await extractOtpCodeAi(sms.body);
-    } catch {}
-  }
+  // OTP was already extracted by the pre-check above; the variable
+  // `otp` is in scope here. The dashboard's saveOtpCode call still
+  // happens in the webhook route handler.
 
   // HTML so we can attach the code block. Escape everything we
   // didn't construct ourselves.

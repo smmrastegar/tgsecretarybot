@@ -461,7 +461,13 @@ input: "Hello, how are you?"
 output: CODE: none
 
 input: "Source Address: 447480022838\\nDate: Fri, 12 Jun 2026 15:18:17 GMT\\nText: 431459 is your Call.com verification code."
-output: CODE: 431459`;
+output: CODE: 431459
+
+input: "پنجره ملی خدمات دولت\\nهشدار کد دسترسی به اطلاعات محرمانه!\\n45290"
+output: CODE: 45290
+
+input: "ثنا\\nرمز ورود یکبار مصرف: 738261\\nاین رمز را با کسی به اشتراک نگذارید."
+output: CODE: 738261`;
   const userPrompt = `Message:\n${body.slice(0, 1500)}`;
   let raw: string;
   try {
