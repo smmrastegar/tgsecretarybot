@@ -3366,6 +3366,81 @@ async function maybeForwardToSecretary(args: {
 // Links each forwarded copy back to the source message so a recipient
 // reply (in their own DM with the bot) can be routed back. Separate
 // from the legacy single-secretary path so both can coexist.
+// Identify what KIND of payload a message carries — used for both
+// error logging and to know whether we need a separate text payload.
+function messageKind(msg: Message): string {
+  if (msg.photo && msg.photo.length > 0) return "photo";
+  if (msg.video) return "video";
+  if (msg.voice) return "voice";
+  if (msg.audio) return "audio";
+  if (msg.document) return "document";
+  if (msg.animation) return "gif";
+  if (msg.sticker) return "sticker";
+  if (msg.video_note) return "video_note";
+  if (msg.location) return "location";
+  if (msg.contact) return "contact";
+  if (msg.dice) return "dice";
+  if (msg.venue) return "venue";
+  if (msg.poll) return "poll";
+  if (msg.text) return "text";
+  if (msg.caption) return "caption-only";
+  return "unknown";
+}
+
+// Relay any incoming message to a recipient AS the owner of the
+// business connection. Uses copyMessage for media — Telegram's
+// official way to move a message of any kind without an attribution
+// header — and a plain sendMessage for text-only. Both code paths
+// include business_connection_id so the recipient sees the message
+// arrive inside their existing chat with the owner, not from the
+// bot's account.
+async function relayCopyViaBusiness(args: {
+  bot: Bot;
+  msg: Message;
+  toChatId: number;
+  businessConnectionId: string;
+  replyToMessageId?: number;
+}): Promise<number[]> {
+  const { bot, msg, toChatId, businessConnectionId, replyToMessageId } = args;
+  const replyOpt =
+    replyToMessageId !== undefined
+      ? { reply_parameters: { message_id: replyToMessageId } }
+      : {};
+  // Plain text — sendMessage is the simplest. copyMessage also works,
+  // but sendMessage is what every other relay path uses for text.
+  const kind = messageKind(msg);
+  if (kind === "text" && msg.text) {
+    const sent = await bot.api.sendMessage(
+      toChatId,
+      msg.text.slice(0, 4096),
+      { business_connection_id: businessConnectionId, ...replyOpt },
+    );
+    return [sent.message_id];
+  }
+  // Everything else: copyMessage. It preserves photo / video / voice /
+  // audio / document / animation / sticker / video_note / location /
+  // contact / dice / venue / poll without us having to dispatch on
+  // each media kind. Service messages can't be copied — copyMessage
+  // throws 400 in that case and the catch in the caller logs which
+  // kind failed.
+  //
+  // Cast: grammy's types for copyMessage haven't been updated to
+  // expose business_connection_id (Telegram added it in Bot API 7.4)
+  // — the option IS supported by the Bot API and the request goes
+  // through fine.
+  const copyOpts = {
+    business_connection_id: businessConnectionId,
+    ...replyOpt,
+  } as unknown as Parameters<typeof bot.api.copyMessage>[3];
+  const sent = await bot.api.copyMessage(
+    toChatId,
+    msg.chat.id,
+    msg.message_id,
+    copyOpts,
+  );
+  return [sent.message_id];
+}
+
 async function maybeForwardViaRelays(args: {
   msg: Message;
   bcId: string;
@@ -3378,22 +3453,19 @@ async function maybeForwardViaRelays(args: {
   const relays = await findEnabledRelaysForSource(msg.chat.id).catch(() => []);
   if (relays.length === 0) return { delivered: 0, relays: 0 };
 
+  const kind = messageKind(msg);
   let delivered = 0;
+  let anyRecipientGotIt = false;
   for (const relay of relays) {
     if (relay.recipients.length === 0) continue;
-    // Per-relay header — the recipient sees who the source is. The
-    // SOURCE (original sender) never sees this header; their chat is
-    // untouched at this stage.
+    // Per-relay header — the recipient sees who the source is.
     const headerText = `📨 [${relay.name}] از: ${senderName}`;
     for (const rcpt of relay.recipients) {
       // Skip self-routes — never forward to the source chat itself.
       if (rcpt.chatId === msg.chat.id) continue;
       try {
-        // CRITICAL: include business_connection_id so the recipient
-        // sees the message arriving from the owner's own Telegram
-        // account, not from the bot. This matches the operator's
-        // mental model — they're delegating their inbox to the
-        // recipient, who replies in their normal chat with the owner.
+        // 1. Header (sent as the owner so the recipient sees their
+        // own chat with the owner).
         const header = await bot.api.sendMessage(rcpt.chatId, headerText, {
           business_connection_id: bcId,
         });
@@ -3406,14 +3478,35 @@ async function maybeForwardViaRelays(args: {
           recipientMessageId: header.message_id,
           direction: "inbound",
         });
-        const ids = await relayAnyMessage({
-          bot,
-          source: msg,
-          toChatId: rcpt.chatId,
-          businessConnectionId: bcId,
-          replyToMessageId: header.message_id,
-        });
-        for (const id of ids) {
+        // 2. Body via copyMessage — handles every media type cleanly.
+        let bodyIds: number[] = [];
+        try {
+          bodyIds = await relayCopyViaBusiness({
+            bot,
+            msg,
+            toChatId: rcpt.chatId,
+            businessConnectionId: bcId,
+            replyToMessageId: header.message_id,
+          });
+        } catch (err) {
+          const e = err as { error_code?: number; description?: string };
+          // copyMessage refuses service / forwarded / unknown
+          // payloads with 400. Tell the recipient what kind of
+          // message they're missing so the relay doesn't go silent.
+          console.warn(
+            `[relay] copy kind=${kind} chat=${msg.chat.id}→${rcpt.chatId} failed: ${e?.error_code} ${e?.description}`,
+          );
+          const fallback = await bot.api.sendMessage(
+            rcpt.chatId,
+            `[${kind} نتونست منتقل بشه: ${e?.description ?? "unknown"}]`,
+            {
+              business_connection_id: bcId,
+              reply_parameters: { message_id: header.message_id },
+            },
+          );
+          bodyIds = [fallback.message_id];
+        }
+        for (const id of bodyIds) {
           await recordSecretaryRelayLink({
             relayId: relay.id,
             businessConnectionId: bcId,
@@ -3425,23 +3518,34 @@ async function maybeForwardViaRelays(args: {
           });
         }
         delivered++;
+        anyRecipientGotIt = true;
         console.log(
-          `[relay] forwarded source=${msg.chat.id} relay=${relay.id} → rcpt=${rcpt.chatId} parts=${ids.length} (via business)`,
+          `[relay] forwarded kind=${kind} source=${msg.chat.id} relay=${relay.id} → rcpt=${rcpt.chatId} parts=${bodyIds.length}`,
         );
       } catch (err) {
         const e = err as { error_code?: number; description?: string };
         if (e?.error_code === 403) {
           console.warn(
-            `[relay] recipient ${rcpt.chatId} not in owner's chats — owner needs an existing chat with this person for business relay to work`,
+            `[relay] recipient ${rcpt.chatId} not reachable via business (no existing chat / blocked / privacy)`,
           );
         } else {
           console.error(
-            `[relay] forward to ${rcpt.chatId} (relay=${relay.id}) failed:`,
-            err,
+            `[relay] forward to ${rcpt.chatId} (relay=${relay.id}, kind=${kind}) failed: ${e?.error_code} ${e?.description}`,
           );
         }
       }
     }
+  }
+  // Read-receipt propagation. As soon as ANY recipient received the
+  // forward, mark the source's message as read so the customer sees
+  // a "seen" tick — that's the operator's promise: "someone's on it".
+  // Without this the source would have to wait for an actual reply to
+  // see the tick, even though their message is already in the
+  // recipient's inbox.
+  if (anyRecipientGotIt) {
+    await markBusinessRead(bot, bcId, msg.chat.id, msg.message_id).catch(
+      () => {},
+    );
   }
   return { delivered, relays: relays.length };
 }
@@ -3482,13 +3586,35 @@ async function maybeRelayRecipientReplyBusiness(args: {
   // connection) rather than the stored one, since the owner could
   // have multiple business connections.
   const sendBcId = link.businessConnectionId ?? bcId;
+  const kind = messageKind(msg);
   try {
-    const sentIds = await relayAnyMessage({
-      bot,
-      source: msg,
-      toChatId: link.sourceChatId,
-      businessConnectionId: sendBcId,
-    });
+    let sentIds: number[] = [];
+    try {
+      sentIds = await relayCopyViaBusiness({
+        bot,
+        msg,
+        toChatId: link.sourceChatId,
+        businessConnectionId: sendBcId,
+      });
+    } catch (err) {
+      const e = err as { error_code?: number; description?: string };
+      console.warn(
+        `[relay] reply-copy kind=${kind} rcpt=${msg.chat.id}→source=${link.sourceChatId} failed: ${e?.error_code} ${e?.description}`,
+      );
+      // Fail loudly to the recipient so they know their reply didn't
+      // reach the customer.
+      await bot.api
+        .sendMessage(
+          msg.chat.id,
+          `❌ ارسال ${kind} به فرستنده نشد: ${e?.description ?? "unknown"}`,
+          {
+            business_connection_id: sendBcId,
+            reply_parameters: { message_id: msg.message_id },
+          },
+        )
+        .catch(() => {});
+      return false;
+    }
     if (link.sourceMessageId) {
       await markBusinessRead(
         bot,
@@ -3509,7 +3635,7 @@ async function maybeRelayRecipientReplyBusiness(args: {
       });
     }
     console.log(
-      `[relay] reply (business) rcpt=${msg.chat.id} → source=${link.sourceChatId} parts=${sentIds.length}`,
+      `[relay] reply kind=${kind} rcpt=${msg.chat.id} → source=${link.sourceChatId} parts=${sentIds.length}`,
     );
     return true;
   } catch (err) {
