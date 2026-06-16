@@ -8,8 +8,18 @@
 // function role, prepended with "☎️ +PHONE — Name" (or just
 // "☎️ +PHONE" when the lookup fails).
 
-import type { Bot } from "grammy";
-import { findOwnerOfPhone, listChatsByFunction, recordAiUsage } from "./db";
+import { InlineKeyboard, type Bot } from "grammy";
+import {
+  findOwnerOfPhone,
+  findSmsDedup,
+  listChatsByFunction,
+  listSmsBlockRules,
+  recordAiUsage,
+  smsBodySignature,
+  setSmsDedupMessageId,
+  touchSmsBlockRule,
+  upsertSmsDedup,
+} from "./db";
 import { config } from "./config";
 import { getSettings } from "./settings";
 
@@ -50,6 +60,102 @@ type GateDecision = {
   category: string;
 };
 
+// Ask the LLM: "does this new SMS match ANY of the operator's
+// blocked examples?". Returns the id of the matching rule (so we can
+// bump hit_count and the operator can see which rule fired) or null
+// when nothing matched. Fail-open: any error returns null so the
+// gate flow still decides.
+async function checkBlockedByOperator(args: {
+  body: string;
+}): Promise<{ ruleId: number; reason: string } | null> {
+  if (!config.openrouterApiKey) return null;
+  const rules = await listSmsBlockRules({ enabledOnly: true }).catch(() => []);
+  if (rules.length === 0) return null;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${config.openrouterApiKey}`,
+    "Content-Type": "application/json",
+    "X-Title": config.openrouterAppName,
+  };
+  if (config.openrouterAppUrl) headers["HTTP-Referer"] = config.openrouterAppUrl;
+  const systemPrompt = `You are a junk-mail filter. The operator has saved a list of
+EXAMPLE SMS bodies they want blocked — "don't bring me this kind again". Each
+example is one full message. A new SMS just arrived; tell me if it's the SAME
+KIND as ANY of the blocked examples.
+
+"Same kind" means: same sender role + same purpose + similar phrasing pattern
+(e.g. two real-estate listings from different agencies are the same kind; two
+beauty-salon discount ads are the same kind; an OTP and a real-estate ad are
+NOT the same kind even if they share words).
+
+Reply on EXACTLY one line, no preamble:
+
+MATCH: <id of the example it matches>
+
+or, when nothing matches:
+
+MATCH: none
+
+Never explain.`;
+  const rulesBlock = rules
+    .slice(0, 30)
+    .map((r) => `- id=${r.id}: ${r.exampleBody.replace(/\s+/g, " ").slice(0, 300)}`)
+    .join("\n");
+  const userPrompt = `BLOCKED EXAMPLES:\n${rulesBlock}\n\nNEW SMS:\n${args.body.slice(0, 1500)}`;
+  for (const model of GATE_MODELS) {
+    try {
+      const res = await fetchWithTimeout(
+        "https://openrouter.ai/api/v1/chat/completions",
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model,
+            temperature: 0,
+            max_tokens: 30,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+          }),
+        },
+        GATE_TIMEOUT_MS,
+      );
+      if (!res.ok) continue;
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+        error?: { message?: string };
+      };
+      if (json.error) continue;
+      const text = (json.choices?.[0]?.message?.content ?? "").trim();
+      if (!text) continue;
+      await recordAiUsage({
+        chatId: null,
+        businessConnectionId: null,
+        model,
+        purpose: "sms_block_check",
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        costUsd: GATE_COST_USD,
+      }).catch(() => {});
+      const m = text.match(/MATCH\s*:\s*(\d+|none)/i);
+      const tok = m?.[1]?.toLowerCase();
+      if (!tok || tok === "none") return null;
+      const ruleId = Number(tok);
+      if (!Number.isFinite(ruleId)) return null;
+      const rule = rules.find((r) => r.id === ruleId);
+      if (!rule) return null;
+      return {
+        ruleId,
+        reason: `matches operator block rule #${ruleId} (${rule.label ?? rule.exampleBody.slice(0, 40)})`,
+      };
+    } catch (err) {
+      console.warn(`[sms] block-check ${model} failed:`, err);
+    }
+  }
+  return null;
+}
+
 // LLM gate: decide whether the SMS is personal/transactional AND
 // addressed to the operator. Skip-on-failure (returns forward=true)
 // because losing a real OTP because the model timed out is worse
@@ -77,33 +183,35 @@ async function classifySmsForForwarding(args: {
 
   const systemPrompt = `You decide whether an incoming SMS should be forwarded to the operator's curated inbox or filtered out.
 
-FORWARD (DECISION: YES) when the SMS is personal / transactional / informational and addressed to the recipient (${ownerName}). Examples:
+The operator's preference is LOOSE — they want most SMS through. ONLY the specific clearly-promotional categories below should be filtered. EVERYTHING ELSE is forwarded, including news, event announcements, concerts, theater, charity, religious notices, government notices, election notices, weather alerts, and even mildly-promotional "discount available" messages from services the operator may genuinely use.
+
+ALWAYS FORWARD (DECISION: YES). Examples:
 - ONE-TIME CODES — OTP / verification / login PINs / access codes / security codes / 2FA codes. ANY isolated 4-8 digit number presented as a code (English OR Persian digits ۰-۹) is an OTP, even when the SMS frames it as a "warning" / "alert" / "هشدار" — that's just decoration to draw attention.
-- Bank, payment, or delivery notifications.
+- Bank, payment, transaction, or delivery notifications.
 - Appointment reminders, account warnings, balance alerts.
-- Government-service messages, court notices, tax notices, customs notices.
+- Government, court, tax, customs, ثبت احوال, پنجره ملی, ثنا notices.
+- Event / concert / theater / cinema / festival / exhibition / conference announcements.
+- News, weather alerts, traffic, power outage notices, water cut notices.
+- Charity / religious / educational announcements.
 - A real person texting them.
 - Service-account messages where they personally took an action.
+- Tickets / boarding passes / parking violations.
+- Anything carrying a useful link or address.
 
-Specifically forward when the body contains any of these Persian/English signals AND a short numeric code:
-- "کد" / "code" / "PIN" / "OTP"
-- "کد تایید" / "verification code" / "access code" / "کد دسترسی"
-- "هشدار" + a numeric code (still an OTP — operator wants to see it)
-- "رمز" / "password" + a one-time-looking number
-- service brands like "پنجره ملی", "ثنا", "ملی پلاس", "بانک", "snapp", "alopeyk", "tapsi", "irancell", "همراه اول"...
-
-FILTER (DECISION: NO) ONLY when the SMS is plainly marketing / promotional / mass blast with NO code that addresses the user. Examples:
-- "Black Friday 50% off …" with no per-user code.
-- "Vote for X" / political campaign.
+FILTER (DECISION: NO) — only these clearly-annoying categories:
+- Real-estate listings / apartment-for-rent / apartment-for-sale ads ("املاک", "اجاره", "فروش آپارتمان", "خرید ملک", ...).
+- Beauty / cosmetics / spa / makeup / skin-care ads ("لوازم آرایشی", "بهداشتی", "آرایش", "مژه", "ناخن", "میکاپ", ...).
+- Discount / sale / coupon mass-blasts with no recipient action ("X% off", "حراج", "تخفیف", "Black Friday", "جمعه سیاه", ...).
 - Newsletter / promo / advertising pitch with no recipient action.
-- Pure spam / scam with no actionable code.
+- Political campaign solicitations / vote-for-X.
+- Pure spam / phishing / obvious scam.
 
-If in doubt FORWARD. False alarms are cheap; missing an OTP is expensive.
+If in doubt FORWARD. False alarms are cheap; missing real content is expensive.
 
 Reply on EXACTLY two lines, no preamble, no markdown:
 
 DECISION: YES
-CATEGORY: <one short label like "otp" / "bank" / "appointment" / "promo" / "spam" / "person" / "gov" / "delivery">
+CATEGORY: <one short label like "otp" / "bank" / "appointment" / "promo" / "spam" / "person" / "gov" / "delivery" / "event" / "news" / "real_estate" / "beauty" / "discount">
 
 or
 
@@ -253,6 +361,26 @@ export async function routeSmsForward(args: {
     }
   }
 
+  // Block-list pre-check: when an OTP isn't already detected,
+  // consult the operator's curated "don't bring me this kind again"
+  // rules. A match drops the SMS entirely — silently, since the
+  // operator already decided once that they don't want it.
+  if (!otp && sms.body) {
+    const blocked = await checkBlockedByOperator({ body: sms.body }).catch(
+      () => null,
+    );
+    if (blocked) {
+      await touchSmsBlockRule(blocked.ruleId).catch(() => {});
+      console.log(
+        `[sms] blocked phone=${sms.phone} rule=${blocked.ruleId} (${blocked.reason})`,
+      );
+      return {
+        delivered: 0,
+        skipped: `blocked by operator (rule ${blocked.ruleId})`,
+      };
+    }
+  }
+
   // LLM gate: only forward personal / transactional SMS. Promotional
   // / mass blasts are filtered out so the inbox stays clean. Bypassed
   // when the pre-check found an OTP — see above.
@@ -311,25 +439,97 @@ export async function routeSmsForward(args: {
   if (sms.body) parts.push("", esc(sms.body));
   const outText = parts.join("\n");
 
-  const { sendRuleForward } = await import("./rule-delivery");
+  // Dedup signature for "same SMS arrived again" → edit-in-place
+  // instead of posting a new copy.
+  const signature = otp
+    ? `otp:${otp}` // OTP body changes a lot but the code is the dedup key
+    : smsBodySignature(sms.body || sms.phone);
+
   let delivered = 0;
   for (const inbox of inboxes) {
-    const out = await sendRuleForward({
-      bot: args.bot,
-      chatId: inbox.chatId,
-      text: outText,
-      parseMode: "HTML",
+    const existing = await findSmsDedup(inbox.chatId, signature, 48).catch(
+      () => null,
+    );
+    if (existing && existing.telegramMessageId) {
+      // Same SMS again — edit the original to bump the count + time.
+      const repeats = existing.repeatCount + 1;
+      const augmented =
+        outText +
+        `\n\n🔁 <i>دفعه ${repeats} — اولین: ${formatTehranTime(existing.firstSentAt)} · آخرین: همین الان</i>`;
+      try {
+        await args.bot.api.editMessageText(
+          inbox.chatId,
+          existing.telegramMessageId,
+          augmented.slice(0, 4096),
+          {
+            parse_mode: "HTML",
+            reply_markup: buildSmsActionKeyboard(existing.id),
+          },
+        );
+        await upsertSmsDedup({
+          inboxChatId: inbox.chatId,
+          bodySignature: signature,
+          bodyPreview: sms.body.slice(0, 200),
+          telegramMessageId: existing.telegramMessageId,
+        });
+        delivered++;
+        console.log(
+          `[sms] dedup edit inbox=${inbox.chatId} msg=${existing.telegramMessageId} repeats=${repeats}`,
+        );
+        continue;
+      } catch (err) {
+        // editMessageText fails when the original message was
+        // deleted by the operator — fall through to fresh send.
+        console.warn(
+          `[sms] dedup edit failed inbox=${inbox.chatId}, falling back to fresh send:`,
+          err,
+        );
+      }
+    }
+    // Fresh send. Insert/refresh the dedup row first to get an id
+    // for the action keyboard.
+    const dedup = await upsertSmsDedup({
+      inboxChatId: inbox.chatId,
+      bodySignature: signature,
+      bodyPreview: sms.body.slice(0, 200),
+      telegramMessageId: null,
     });
-    if (out.ok) {
+    try {
+      const sent = await args.bot.api.sendMessage(inbox.chatId, outText, {
+        parse_mode: "HTML",
+        reply_markup: buildSmsActionKeyboard(dedup.id),
+      });
+      await setSmsDedupMessageId(dedup.id, sent.message_id);
       delivered++;
       console.log(
-        `[sms] forwarded phone=${sms.phone} owner="${owner?.name ?? "?"}" → inbox=${inbox.chatId} mode=${out.mode} msg_id=${out.sentMessageId}`,
+        `[sms] forwarded phone=${sms.phone} owner="${owner?.name ?? "?"}" → inbox=${inbox.chatId} msg=${sent.message_id} dedup=${dedup.id}`,
       );
-    } else {
+    } catch (err) {
       console.warn(
-        `[sms] forward to inbox=${inbox.chatId} failed: ${out.error}`,
+        `[sms] forward to inbox=${inbox.chatId} failed:`,
+        err,
       );
     }
   }
   return { delivered };
+}
+
+function buildSmsActionKeyboard(dedupId: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🗑 پاک کن", `sms:rm:${dedupId}`)
+    .text("🚫 این مدل رو نیار", `sms:block:${dedupId}`);
+}
+
+function formatTehranTime(d: Date): string {
+  try {
+    return new Intl.DateTimeFormat("fa-IR", {
+      timeZone: "Asia/Tehran",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
+  } catch {
+    return d.toISOString();
+  }
 }

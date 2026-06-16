@@ -35,6 +35,12 @@ const TILES: Array<{
     desc: "ورودی‌های مستقل SMS — هر کدوم اسم و URL خودش رو داره (برای SMS-Forwarder اندروید)",
   },
   {
+    href: "/sms-block-rules",
+    emoji: "🚫",
+    label: "SMS Blocks",
+    desc: "نمونه‌هایی از SMS که نمی‌خوای ببینی (تبلیغ ملک، آرایشی، حراج، ...). AI پیام‌های شبیه به این‌ها رو فیلتر می‌کنه.",
+  },
+  {
     href: "/secretary-relays",
     emoji: "🧑‍💼",
     label: "Secretary Routes",

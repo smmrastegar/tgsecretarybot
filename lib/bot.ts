@@ -80,6 +80,9 @@ import {
   addChatNote,
   listChatsByFunction,
   upsertForumTopic,
+  createSmsBlockRule,
+  deleteSmsDedup,
+  getSmsDedup,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -359,6 +362,93 @@ async function maybeDescribeMedia(args: {
 //   as:resum:<chatId>:<startSec>   — re-generate the summary
 //   as:send:<chatId>:<startSec>    — send the previously-suggested
 //                                    reply to the source chat
+// 🗑 / 🚫 buttons under each forwarded SMS in the notes_inbox /
+// sms_inbox channel. callback_data shapes:
+//   "sms:rm:<dedup_id>"    — delete the Telegram copy + drop the
+//                            dedup row so a future duplicate posts
+//                            fresh instead of editing nothing.
+//   "sms:block:<dedup_id>" — also adds the body as an sms_block_rules
+//                            example so future similar SMS are
+//                            filtered before they ever reach the
+//                            inbox. Best-effort delete the Telegram
+//                            copy too.
+async function handleSmsCallback(
+  ctx: Context,
+  data: string,
+  _bot: Bot,
+): Promise<void> {
+  const parts = data.split(":");
+  if (parts.length < 3) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  const action = parts[1];
+  const dedupId = Number(parts[2]);
+  if (!Number.isFinite(dedupId)) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  const row = await getSmsDedup(dedupId).catch(() => null);
+  if (!row) {
+    await ctx
+      .answerCallbackQuery({ text: "ردیف dedup پیدا نشد." })
+      .catch(() => {});
+    return;
+  }
+  if (action === "rm") {
+    try {
+      if (row.telegramMessageId) {
+        await ctx.api.deleteMessage(row.inboxChatId, row.telegramMessageId);
+      }
+      await deleteSmsDedup(dedupId);
+      await ctx.answerCallbackQuery({ text: "پاک شد." }).catch(() => {});
+    } catch (err) {
+      console.warn("[sms_cb] delete failed:", err);
+      await ctx
+        .answerCallbackQuery({
+          text: "نشد پاک کنم — احتمالاً قبلاً پاک شده.",
+          show_alert: false,
+        })
+        .catch(() => {});
+    }
+    return;
+  }
+  if (action === "block") {
+    try {
+      // Use the original body preview as the example. The signature
+      // is normalised so it's a poor seed; bodyPreview is the human-
+      // readable body for the gate's LLM check.
+      const example = row.bodyPreview ?? row.bodySignature;
+      const rule = await createSmsBlockRule({
+        exampleBody: example,
+        label: null,
+        createdBy: ctx.from?.id ?? null,
+      });
+      // Delete the Telegram message too — once the user blocked it
+      // they probably don't want it lingering.
+      if (row.telegramMessageId) {
+        await ctx.api
+          .deleteMessage(row.inboxChatId, row.telegramMessageId)
+          .catch(() => {});
+      }
+      await deleteSmsDedup(dedupId);
+      await ctx
+        .answerCallbackQuery({
+          text: `بلاک شد. (rule #${rule.id})`,
+          show_alert: false,
+        })
+        .catch(() => {});
+    } catch (err) {
+      console.warn("[sms_cb] block failed:", err);
+      await ctx
+        .answerCallbackQuery({ text: "بلاک نشد — خطا." })
+        .catch(() => {});
+    }
+    return;
+  }
+  await ctx.answerCallbackQuery().catch(() => {});
+}
+
 // 📝 Transcribe button on voice / video-note copies forwarded into
 // the voice_storage channel. callback_data is the constant "tx:lookup"
 // — the button is always attached to the storage message itself, so
@@ -1233,6 +1323,12 @@ function buildBot(): Bot {
     if (data.startsWith("tx:")) {
       await handleTranscribeCallback(ctx, data, bot).catch((err) =>
         console.error("[transcribe] failed:", err),
+      );
+      return;
+    }
+    if (data.startsWith("sms:")) {
+      await handleSmsCallback(ctx, data, bot).catch((err) =>
+        console.error("[sms_callback] failed:", err),
       );
       return;
     }
