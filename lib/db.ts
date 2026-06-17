@@ -405,6 +405,10 @@ export async function ensureSchema(): Promise<void> {
       ON note_watch_matches (item_id, created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS note_watch_matches_chat_idx
       ON note_watch_matches (chat_id, created_at DESC)`;
+    // The "🚩 گزارش خطا" button under a notes_inbox notice stamps
+    // this column so the dashboard can flag the row + the scanner
+    // can learn to be more conservative on similar text later.
+    await q`ALTER TABLE note_watch_matches ADD COLUMN IF NOT EXISTS reported_wrong_at TIMESTAMPTZ`;
     // Dynamic per-concept aliases. One concept ("کنسرت امیر بال")
     // can have many alias rows ("Amir Bal", "اجرای امیر", "کنسرت
     // برج میلاد") — the LLM sees the full list when scanning so it
@@ -1475,6 +1479,61 @@ export async function getMessageInlineButtons(
   const r = rows[0] as { inline_buttons: unknown } | undefined;
   if (!r) return null;
   return parseInlineButtons(r.inline_buttons);
+}
+
+// Watchlist match reporting: the "🚩 گزارش خطا" button under the
+// notes_inbox notice records a wrong-match flag. The next time the
+// scanner runs on a SIMILAR-looking message the bot can be more
+// conservative (or the operator can re-tune the concept).
+export async function getNoteWatchMatch(
+  id: number,
+): Promise<NoteWatchMatch | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, item_id, chat_id, chat_title, message_log_id, source_message_id,
+           sender_name, quote, reason, forwarded_to, created_at
+    FROM note_watch_matches WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToNoteWatchMatch(r) : null;
+}
+
+export async function markNoteWatchMatchWrong(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`UPDATE note_watch_matches SET reported_wrong_at = NOW() WHERE id = ${id}`;
+}
+
+// Look up the full original message text by messages_log.id —
+// powers the "📄 متن کامل" button under a watchlist notice.
+export async function getMessageFullText(id: number): Promise<{
+  text: string;
+  chatTitle: string | null;
+  senderName: string;
+  createdAt: Date;
+} | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT message_text, transcript, media_description, media_kind,
+           chat_title, sender_name, created_at
+    FROM messages_log WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  if (!r) return null;
+  const body = (r.message_text as string) ?? "";
+  const transcript = (r.transcript as string) ?? null;
+  const desc = (r.media_description as string) ?? null;
+  const kind = (r.media_kind as string) ?? null;
+  let text = body;
+  if (!text && transcript) text = `[voice] ${transcript}`;
+  else if (!text && desc) text = `[${kind ?? "media"}] ${desc}`;
+  else if (!text && kind) text = `[${kind}]`;
+  return {
+    text,
+    chatTitle: (r.chat_title as string) ?? null,
+    senderName: (r.sender_name as string) ?? "?",
+    createdAt: r.created_at as Date,
+  };
 }
 
 export async function getMessageForTranscript(id: number): Promise<{

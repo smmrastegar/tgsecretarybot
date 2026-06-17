@@ -84,7 +84,10 @@ import {
   createSmsBlockRule,
   deleteSmsDedup,
   expediteMonitoredAccountFetch,
+  getMessageFullText,
+  getNoteWatchMatch,
   getSmsDedup,
+  markNoteWatchMatchWrong,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -369,6 +372,132 @@ async function maybeDescribeMedia(args: {
 //   "insta:fetchnow:<account_id>"
 // Pushing the account's pending_fetch_at to NOW makes the next cron
 // tick (≤ 5 min) process it.
+// 📄 متن کامل / 🚩 گزارش خطا buttons under each watchlist notice
+// in the notes_inbox channel. callback_data shapes:
+//   "nw:full:<match_id>"  → reply to the notice with the full
+//                            original message text (so the operator
+//                            can see what the model actually saw,
+//                            not just the short quoted span).
+//   "nw:wrong:<match_id>" → stamp note_watch_matches.reported_wrong_at
+//                            and replace the keyboard with a single
+//                            "🚩 گزارش شد" badge.
+async function handleNoteWatchCallback(
+  ctx: Context,
+  data: string,
+  _bot: Bot,
+): Promise<void> {
+  const parts = data.split(":");
+  if (parts.length < 3) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  const action = parts[1];
+  const matchId = Number(parts[2]);
+  if (!Number.isFinite(matchId)) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  const match = await getNoteWatchMatch(matchId).catch(() => null);
+  if (!match) {
+    await ctx
+      .answerCallbackQuery({ text: "match پیدا نشد." })
+      .catch(() => {});
+    return;
+  }
+  if (action === "full") {
+    if (!match.messageLogId) {
+      await ctx
+        .answerCallbackQuery({
+          text: "متن کامل ذخیره نشده — این match قبل از این فیچر ثبت شده.",
+          show_alert: true,
+        })
+        .catch(() => {});
+      return;
+    }
+    const full = await getMessageFullText(match.messageLogId).catch(
+      () => null,
+    );
+    if (!full) {
+      await ctx
+        .answerCallbackQuery({ text: "متن پیدا نشد." })
+        .catch(() => {});
+      return;
+    }
+    const esc = (s: string) =>
+      s.replace(/[&<>]/g, (c) =>
+        c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;",
+      );
+    const header = [
+      `📄 <b>متن کامل پیام</b>`,
+      `از: ${esc(full.senderName)}` +
+        (full.chatTitle ? ` · ${esc(full.chatTitle)}` : ""),
+    ].join("\n");
+    const body = esc(full.text || "(خالی)");
+    const text = `${header}\n\n${body}`.slice(0, 4096);
+    const noticeMessageId = (
+      ctx.callbackQuery?.message as { message_id?: number } | undefined
+    )?.message_id;
+    try {
+      await ctx.api.sendMessage(match.forwardedTo ?? match.chatId, text, {
+        parse_mode: "HTML",
+        ...(noticeMessageId
+          ? { reply_parameters: { message_id: noticeMessageId } }
+          : {}),
+      });
+      await ctx
+        .answerCallbackQuery({ text: "✅ متن کامل ارسال شد." })
+        .catch(() => {});
+    } catch (err) {
+      console.warn("[nw_cb] full-text send failed:", err);
+      await ctx
+        .answerCallbackQuery({
+          text: "ارسال نشد — احتمالاً بات توی این چت permission نداره.",
+          show_alert: true,
+        })
+        .catch(() => {});
+    }
+    return;
+  }
+  if (action === "wrong") {
+    try {
+      await markNoteWatchMatchWrong(matchId);
+      // Edit the keyboard to a single "🚩 گزارش شد" badge so the
+      // operator knows the report stuck and can't double-press it.
+      try {
+        const noticeMsg = ctx.callbackQuery?.message as
+          | { chat: { id: number }; message_id: number }
+          | undefined;
+        if (noticeMsg) {
+          await ctx.api.editMessageReplyMarkup(
+            noticeMsg.chat.id,
+            noticeMsg.message_id,
+            {
+              reply_markup: new InlineKeyboard().text(
+                "🚩 گزارش شد",
+                `nw:noop:${matchId}`,
+              ),
+            },
+          );
+        }
+      } catch {
+        // Editing fails when the message was deleted or 48h+ old;
+        // the markNoteWatchMatchWrong above is what matters.
+      }
+      await ctx
+        .answerCallbackQuery({ text: "✅ گزارش شد." })
+        .catch(() => {});
+    } catch (err) {
+      console.warn("[nw_cb] mark-wrong failed:", err);
+      await ctx
+        .answerCallbackQuery({ text: "ثبت نشد." })
+        .catch(() => {});
+    }
+    return;
+  }
+  // Unknown action (or "noop" for the post-report badge) — silent ack.
+  await ctx.answerCallbackQuery().catch(() => {});
+}
+
 async function handleInstaCallback(
   ctx: Context,
   data: string,
@@ -1399,6 +1528,12 @@ function buildBot(): Bot {
       );
       return;
     }
+    if (data.startsWith("nw:")) {
+      await handleNoteWatchCallback(ctx, data, bot).catch((err) =>
+        console.error("[nw_callback] failed:", err),
+      );
+      return;
+    }
     if (data.startsWith("sms:")) {
       await handleSmsCallback(ctx, data, bot).catch((err) =>
         console.error("[sms_callback] failed:", err),
@@ -1820,6 +1955,28 @@ export async function maybeApplyNoteWatch(args: {
         continue;
       }
     }
+    // Record the match FIRST so we have its id for the inline
+    // keyboard's callback_data. The forward step below uses it to
+    // wire the "📄 متن کامل" / "🚩 گزارش خطا" buttons; if the row
+    // wasn't there yet the buttons would be orphaned.
+    const matchRow = await recordNoteWatchMatch({
+      itemId: item.id,
+      chatId: args.chatId,
+      chatTitle: args.chatTitle,
+      messageLogId: args.logId || null,
+      sourceMessageId: args.messageId,
+      senderName: args.senderName,
+      quote: m.quote,
+      reason: m.reason
+        ? m.matchedAlias && m.matchedAlias.toLowerCase() !== item.concept.toLowerCase()
+          ? `(${m.matchedAlias}) ${m.reason}`
+          : m.reason
+        : m.matchedAlias,
+      forwardedTo: null,
+    }).catch((err) => {
+      console.warn(`[watchlist] record failed item=${item.id}:`, err);
+      return null;
+    });
     let forwardedTo: number | null = null;
     // Per-concept forward toggle overrides the global default.
     const shouldForward = item.forwardToInbox && forwardDefault;
@@ -1842,8 +1999,14 @@ export async function maybeApplyNoteWatch(args: {
           (args.chatTitle ? ` · ${esc(args.chatTitle)}` : "") +
           `\n\n💬 «${esc(m.quote)}»` +
           (m.reason ? `\n\n🔎 ${esc(m.reason)}` : "");
+        const keyboard = matchRow
+          ? new InlineKeyboard()
+              .text("📄 متن کامل", `nw:full:${matchRow.id}`)
+              .text("🚩 گزارش خطا", `nw:wrong:${matchRow.id}`)
+          : undefined;
         await args.bot.api.sendMessage(inbox.chatId, text.slice(0, 4096), {
           parse_mode: "HTML",
+          ...(keyboard ? { reply_markup: keyboard } : {}),
         });
         forwardedTo = inbox.chatId;
       } catch (err) {
@@ -1862,29 +2025,13 @@ export async function maybeApplyNoteWatch(args: {
       senderName: args.senderName,
       metadata: {
         watch_item_id: item.id,
+        match_id: matchRow?.id ?? null,
         matched_alias: m.matchedAlias,
         reason: m.reason || null,
         chat_title: args.chatTitle,
       },
     }).catch((err) =>
       console.warn(`[watchlist] addChatNote failed item=${item.id}:`, err),
-    );
-    await recordNoteWatchMatch({
-      itemId: item.id,
-      chatId: args.chatId,
-      chatTitle: args.chatTitle,
-      messageLogId: args.logId || null,
-      sourceMessageId: args.messageId,
-      senderName: args.senderName,
-      quote: m.quote,
-      reason: m.reason
-        ? m.matchedAlias && m.matchedAlias.toLowerCase() !== item.concept.toLowerCase()
-          ? `(${m.matchedAlias}) ${m.reason}`
-          : m.reason
-        : m.matchedAlias,
-      forwardedTo,
-    }).catch((err) =>
-      console.warn(`[watchlist] record failed item=${item.id}:`, err),
     );
     console.log(
       `[watchlist] match item=${item.id} chat=${args.chatId} concept="${item.concept}"`,
