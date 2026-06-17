@@ -753,6 +753,24 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_profile BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS check_mentioned BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS interval_minutes INT NOT NULL DEFAULT 30`;
+    // One-shot migration: when the operator switched the dashboard
+    // to only offer 3h / 6h / 12h / 24h / notify, any account still
+    // sitting on a legacy sub-3h value (5 / 10 / 15 / 30 / 60 / 120)
+    // would still be polled every N minutes by the cron and break
+    // the cost-predictability guarantee — there's a 30-min row
+    // visible in a recent screenshot pulling $5.76/month on its
+    // own. Bump every such row up to 12h (the new default). Idempotent
+    // via the settings flag so we don't overwrite an operator's
+    // future legitimate manual change.
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.monitored_3h_floor.v1'`;
+      if ((flag as unknown[]).length === 0) {
+        await q`UPDATE monitored_accounts SET interval_minutes = 720
+                WHERE interval_minutes < 180`;
+        await q`INSERT INTO settings (key, value) VALUES ('migration.monitored_3h_floor.v1', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS instagram_user_id TEXT`;
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS full_name TEXT`;
     // Optimization snapshot: media_count from cheap user-info call.
@@ -6324,7 +6342,7 @@ export async function addMonitoredAccount(args: {
     VALUES (
       ${args.platform}, ${username},
       ${args.url ?? `https://instagram.com/${username}`},
-      ${d.intervalMinutes ?? 30},
+      ${Math.max(180, d.intervalMinutes ?? 720)},
       ${d.checkStories ?? true},
       ${d.checkPosts ?? false},
       ${d.checkReels ?? false},

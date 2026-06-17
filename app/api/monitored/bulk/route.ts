@@ -52,8 +52,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   } else {
     const patch = body.patch ?? {};
     if (patch.intervalMinutes !== undefined) {
+      // 3h floor — see /api/monitored/[id]/route.ts for the
+      // same clamp. Anything shorter is a legacy value from
+      // before the notify-mode rollout.
       patch.intervalMinutes = Math.max(
-        5,
+        180,
         Math.min(Number(patch.intervalMinutes), 24 * 60),
       );
     }

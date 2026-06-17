@@ -2226,9 +2226,13 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
   // visible "worst case" guarantee.
   function ticksPerMonth(intervalMinutes: number, mode?: string): number {
     if (mode === "notify") return 8 * 30;
-    const hours = TEHRAN_TRIGGER_HOURS[intervalMinutes];
+    // 3-hour floor — anything shorter is a stale row the migration
+    // missed, treat it as the 3h schedule so the dashboard doesn't
+    // show the legacy cost regime.
+    const m = Math.max(180, intervalMinutes);
+    const hours = TEHRAN_TRIGGER_HOURS[m];
     if (hours && hours.length > 0) return hours.length * 30;
-    return intervalMinutes > 0 ? (30 * 24 * 60) / intervalMinutes : 0;
+    return m > 0 ? (30 * 24 * 60) / m : 0;
   }
 
   const perAccountMonthly = accounts.map((a) => {

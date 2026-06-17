@@ -63,9 +63,13 @@ export async function PATCH(
     body.intervalMinutes !== undefined ||
     body.mode !== undefined
   ) {
+    // 3-hour floor. We only offer 3h / 6h / 12h / 24h or notify
+    // mode; legacy values shorter than 180 minutes are silently
+    // bumped so the operator can't accidentally land on the
+    // "every 30 minutes" cost regime.
     const interval =
       body.intervalMinutes !== undefined
-        ? Math.max(5, Math.min(Number(body.intervalMinutes), 24 * 60))
+        ? Math.max(180, Math.min(Number(body.intervalMinutes), 24 * 60))
         : undefined;
     const mode =
       body.mode === "interval" || body.mode === "notify"

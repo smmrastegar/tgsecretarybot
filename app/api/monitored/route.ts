@@ -67,8 +67,12 @@ export async function GET(): Promise<NextResponse> {
     })),
     targetChatId: target?.chatId ?? null,
     defaults: {
-      intervalMinutes:
-        Number(settings.monitorDefaultIntervalMinutes) || 30,
+      // 3h is the hard floor — never default to anything lower even
+      // if the legacy setting still says "30".
+      intervalMinutes: Math.max(
+        180,
+        Number(settings.monitorDefaultIntervalMinutes) || 720,
+      ),
       checkStories: parseBool(settings.monitorDefaultCheckStories, true),
       checkPosts: parseBool(settings.monitorDefaultCheckPosts, false),
       checkReels: parseBool(settings.monitorDefaultCheckReels, false),
@@ -107,7 +111,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     username,
     tenantId: tenant.id,
     defaults: {
-      intervalMinutes: Number(settings.monitorDefaultIntervalMinutes) || 30,
+      intervalMinutes: Math.max(
+        180,
+        Number(settings.monitorDefaultIntervalMinutes) || 720,
+      ),
       checkStories: parseBool(settings.monitorDefaultCheckStories, true),
       checkPosts: parseBool(settings.monitorDefaultCheckPosts, false),
       checkReels: parseBool(settings.monitorDefaultCheckReels, false),
