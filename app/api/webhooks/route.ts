@@ -26,17 +26,19 @@ export async function POST(request: Request): Promise<NextResponse> {
   const body = (await request.json().catch(() => ({}))) as {
     name?: string;
     secret?: string;
+    kind?: "sms" | "insta";
   };
   const name = body.name?.trim();
   if (!name) {
     return NextResponse.json({ error: "name required" }, { status: 400 });
   }
+  const kind: "sms" | "insta" = body.kind === "insta" ? "insta" : "sms";
   // Generate a URL-safe 24-char token if the operator didn't supply
   // one. Random enough to be the only auth on the endpoint.
   const secret =
     body.secret?.trim() ||
     randomBytes(18).toString("base64url").replace(/[^A-Za-z0-9]/g, "");
-  const webhook = await createSmsWebhook({ name, secret });
+  const webhook = await createSmsWebhook({ name, secret, kind });
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,

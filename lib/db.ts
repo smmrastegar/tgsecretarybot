@@ -261,6 +261,11 @@ export async function ensureSchema(): Promise<void> {
         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await q`CREATE INDEX IF NOT EXISTS sms_webhooks_secret_idx ON sms_webhooks (secret)`;
+    // The same webhook table now hosts two kinds: 'sms' (the
+    // original — pasted into the Android SMS-Forwarder app) and
+    // 'insta' (URL hit by an external Instagram change-detector;
+    // shape is /api/insta-webhook?token=…&action=story&id=<username>).
+    await q`ALTER TABLE sms_webhooks ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'sms'`;
     // SMS dedup: when the same SMS body arrives repeatedly to the
     // same inbox we update one Telegram message in-place instead of
     // posting N copies. body_signature is a whitespace-normalised
@@ -755,6 +760,24 @@ export async function ensureSchema(): Promise<void> {
     // reels / mentioned fetches entirely. Saves ~4× the cost on
     // accounts that don't post often (most accounts).
     await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS last_media_count INT`;
+    // Notify mode: instead of polling on a fixed clock, the cron
+    // skips this account and waits for an external /api/insta-webhook
+    // to fire. mode = 'interval' (default, current behaviour) or
+    // 'notify'. last_notify_at tracks the most recent inbound
+    // webhook so we can enforce a 3-hour cooldown between
+    // notify-triggered fetches. pending_fetch_at holds the next
+    // scheduled fetch when we deferred (because of the cooldown OR
+    // the 02-08 quiet window); cron checks this column too.
+    // pending_notify_kinds is the JSON array of "actions" the
+    // operator's notify service asked for ('story' / 'post' /
+    // 'reel' / 'mentioned' / 'profile' / 'any').
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'interval'`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS last_notify_at TIMESTAMPTZ`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS pending_fetch_at TIMESTAMPTZ`;
+    await q`ALTER TABLE monitored_accounts ADD COLUMN IF NOT EXISTS pending_notify_kinds JSONB`;
+    await q`CREATE INDEX IF NOT EXISTS monitored_accounts_pending_idx
+      ON monitored_accounts (pending_fetch_at)
+      WHERE pending_fetch_at IS NOT NULL`;
     await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'story'`;
     await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS caption TEXT`;
     await q`ALTER TABLE monitor_events ADD COLUMN IF NOT EXISTS media_type TEXT`;
@@ -3024,27 +3047,34 @@ export type SmsWebhook = {
   name: string;
   secret: string;
   enabled: boolean;
+  kind: "sms" | "insta";
   lastUsedAt: Date | null;
   createdAt: Date;
 };
 
 function rowToSmsWebhook(r: Record<string, unknown>): SmsWebhook {
+  const rawKind = (r.kind as string) ?? "sms";
   return {
     id: Number(r.id),
     name: r.name as string,
     secret: r.secret as string,
     enabled: Boolean(r.enabled),
+    kind: rawKind === "insta" ? "insta" : "sms",
     lastUsedAt: (r.last_used_at as Date) ?? null,
     createdAt: r.created_at as Date,
   };
 }
 
-export async function listSmsWebhooks(): Promise<SmsWebhook[]> {
+export async function listSmsWebhooks(args?: {
+  kind?: "sms" | "insta";
+}): Promise<SmsWebhook[]> {
   if (!hasDb()) return [];
   await ensureSchema();
+  const kindFilter = args?.kind ?? null;
   const rows = await sql()`
-    SELECT id, name, secret, enabled, last_used_at, created_at
+    SELECT id, name, secret, enabled, kind, last_used_at, created_at
     FROM sms_webhooks
+    WHERE (${kindFilter}::text IS NULL OR kind = ${kindFilter}::text)
     ORDER BY created_at DESC`;
   return (rows as Array<Record<string, unknown>>).map(rowToSmsWebhook);
 }
@@ -3052,13 +3082,15 @@ export async function listSmsWebhooks(): Promise<SmsWebhook[]> {
 export async function createSmsWebhook(args: {
   name: string;
   secret: string;
+  kind?: "sms" | "insta";
 }): Promise<SmsWebhook> {
   if (!hasDb()) throw new Error("DATABASE_URL not set");
   await ensureSchema();
+  const kind = args.kind ?? "sms";
   const rows = await sql()`
-    INSERT INTO sms_webhooks (name, secret)
-    VALUES (${args.name}, ${args.secret})
-    RETURNING id, name, secret, enabled, last_used_at, created_at`;
+    INSERT INTO sms_webhooks (name, secret, kind)
+    VALUES (${args.name}, ${args.secret}, ${kind})
+    RETURNING id, name, secret, enabled, kind, last_used_at, created_at`;
   return rowToSmsWebhook(rows[0] as Record<string, unknown>);
 }
 
@@ -3073,7 +3105,7 @@ export async function updateSmsWebhook(
       name = COALESCE(${patch.name ?? null}, name),
       enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled)
     WHERE id = ${id}
-    RETURNING id, name, secret, enabled, last_used_at, created_at`;
+    RETURNING id, name, secret, enabled, kind, last_used_at, created_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToSmsWebhook(r) : null;
 }
@@ -3086,13 +3118,16 @@ export async function deleteSmsWebhook(id: number): Promise<void> {
 
 export async function findSmsWebhookBySecret(
   secret: string,
+  kind?: "sms" | "insta",
 ): Promise<SmsWebhook | null> {
   if (!hasDb() || !secret) return null;
   await ensureSchema();
+  const kindFilter = kind ?? null;
   const rows = await sql()`
-    SELECT id, name, secret, enabled, last_used_at, created_at
+    SELECT id, name, secret, enabled, kind, last_used_at, created_at
     FROM sms_webhooks
     WHERE secret = ${secret} AND enabled = TRUE
+      AND (${kindFilter}::text IS NULL OR kind = ${kindFilter}::text)
     LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToSmsWebhook(r) : null;
@@ -5856,6 +5891,13 @@ export type MonitoredAccount = {
   checkProfile: boolean;
   checkMentioned: boolean;
   intervalMinutes: number;
+  // 'interval' = poll on a clock schedule (the default).
+  // 'notify'   = wait for /api/insta-webhook to fire; cron stays off
+  //              this account except for the 24h-staleness fallback.
+  mode: "interval" | "notify";
+  lastNotifyAt: Date | null;
+  pendingFetchAt: Date | null;
+  pendingNotifyKinds: string[] | null;
   instagramUserId: string | null;
   fullName: string | null;
   lastCheckedAt: Date | null;
@@ -5868,6 +5910,24 @@ export type MonitoredAccount = {
 };
 
 function rowToMonitored(r: Record<string, unknown>): MonitoredAccount {
+  const rawMode = (r.mode as string) ?? "interval";
+  const mode: MonitoredAccount["mode"] =
+    rawMode === "notify" ? "notify" : "interval";
+  let pendingKinds: string[] | null = null;
+  if (Array.isArray(r.pending_notify_kinds)) {
+    pendingKinds = (r.pending_notify_kinds as unknown[]).filter(
+      (x): x is string => typeof x === "string",
+    );
+  } else if (typeof r.pending_notify_kinds === "string") {
+    try {
+      const parsed = JSON.parse(r.pending_notify_kinds);
+      if (Array.isArray(parsed)) {
+        pendingKinds = parsed.filter(
+          (x): x is string => typeof x === "string",
+        );
+      }
+    } catch {}
+  }
   return {
     id: Number(r.id),
     platform: r.platform as string,
@@ -5882,6 +5942,10 @@ function rowToMonitored(r: Record<string, unknown>): MonitoredAccount {
     checkProfile: Boolean(r.check_profile),
     checkMentioned: Boolean(r.check_mentioned),
     intervalMinutes: Number(r.interval_minutes ?? 30),
+    mode,
+    lastNotifyAt: (r.last_notify_at as Date) ?? null,
+    pendingFetchAt: (r.pending_fetch_at as Date) ?? null,
+    pendingNotifyKinds: pendingKinds,
     instagramUserId: (r.instagram_user_id as string) ?? null,
     fullName: (r.full_name as string) ?? null,
     lastCheckedAt: (r.last_checked_at as Date) ?? null,
@@ -5907,7 +5971,8 @@ export async function listMonitoredAccounts(opts: {
            check_stories, check_posts, check_reels, check_profile,
            check_mentioned, interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, last_media_count,
-           tenant_id,
+           tenant_id, mode, last_notify_at, pending_fetch_at,
+           pending_notify_kinds,
            created_at, updated_at
     FROM monitored_accounts
     WHERE (${opts.platform ?? null}::text IS NULL OR platform = ${opts.platform ?? null})
@@ -6000,7 +6065,8 @@ export async function getMonitoredAccount(
            check_stories, check_posts, check_reels, check_profile,
            check_mentioned, interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, last_media_count,
-           tenant_id,
+           tenant_id, mode, last_notify_at, pending_fetch_at,
+           pending_notify_kinds,
            created_at, updated_at
     FROM monitored_accounts
     WHERE id = ${id}
@@ -6048,34 +6114,183 @@ export async function dueMonitoredAccounts(
            check_stories, check_posts, check_reels, check_profile,
            check_mentioned, interval_minutes, instagram_user_id, full_name,
            last_checked_at, last_story_at, last_error, last_media_count,
-           tenant_id,
+           tenant_id, mode, last_notify_at, pending_fetch_at,
+           pending_notify_kinds,
            created_at, updated_at
     FROM monitored_accounts
     WHERE enabled = TRUE
       AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
-      AND (last_checked_at IS NULL
-           OR last_checked_at < NOW() - ((interval_minutes * 0.95) || ' minutes')::INTERVAL)
       AND (
-        last_checked_at IS NULL
-        OR CASE
-          WHEN interval_minutes = 180 THEN
-            EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
-              IN (9, 12, 15, 18, 21)
-          WHEN interval_minutes = 360 THEN
-            EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
-              IN (10, 16, 22)
-          WHEN interval_minutes = 720 THEN
-            EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
-              IN (10, 22)
-          WHEN interval_minutes = 1440 THEN
-            EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
-              = 19
-          ELSE TRUE
-        END
+        -- Path A: 'interval' mode on the standard schedule.
+        (
+          mode = 'interval'
+          AND (last_checked_at IS NULL
+               OR last_checked_at < NOW() - ((interval_minutes * 0.95) || ' minutes')::INTERVAL)
+          AND (
+            last_checked_at IS NULL
+            OR CASE
+              WHEN interval_minutes = 180 THEN
+                EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
+                  IN (9, 12, 15, 18, 21)
+              WHEN interval_minutes = 360 THEN
+                EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
+                  IN (10, 16, 22)
+              WHEN interval_minutes = 720 THEN
+                EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
+                  IN (10, 22)
+              WHEN interval_minutes = 1440 THEN
+                EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
+                  = 19
+              ELSE TRUE
+            END
+          )
+        )
+        OR
+        -- Path B: 'notify' mode with a pending fetch that's now due
+        -- (the 3-hour cooldown elapsed OR the deferred-to-peak time
+        -- arrived). pending_fetch_at is in the past once due.
+        (
+          mode = 'notify'
+          AND pending_fetch_at IS NOT NULL
+          AND pending_fetch_at <= NOW()
+        )
+        OR
+        -- Path C: 24h staleness fallback. Any account (notify or
+        -- interval) that hasn't been touched in 24+ hours is treated
+        -- like a 24h-interval account — only fires at the 19:00
+        -- Tehran peak slot. Keeps notify-mode accounts moving even
+        -- if the external service is down.
+        (
+          last_checked_at IS NOT NULL
+          AND last_checked_at < NOW() - INTERVAL '24 hours'
+          AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT = 19
+        )
       )
     ORDER BY last_checked_at NULLS FIRST, id ASC
     LIMIT ${limit}`;
   return (rows as Array<Record<string, unknown>>).map(rowToMonitored);
+}
+
+// --- Notify-mode helpers ---
+
+// Record an inbound webhook hit. Returns the updated row so the
+// caller can act on the pending_fetch_at the cron now sees. Logic:
+//   1. If the account was last NOTIFIED less than 3 hours ago AND
+//      already has a pending fetch queued, just append the requested
+//      kinds to pending_notify_kinds and leave pending_fetch_at
+//      unchanged.
+//   2. Otherwise schedule pending_fetch_at = last_notify_at + 3h
+//      (or NOW + 3h if no last_notify_at). That's the 3-hour
+//      cool-down "worst-case cost" guarantee the operator asked for.
+//      Also snap forward to the next allowed peak hour if the
+//      computed time falls inside the 02-08 quiet window.
+//   3. Always touch last_notify_at to NOW.
+// The actual fetch happens later in the cron when pending_fetch_at
+// <= NOW — see Path B in dueMonitoredAccounts.
+export async function recordInstaNotify(args: {
+  username: string;
+  kinds: string[];
+  tenantId?: number | null;
+}): Promise<MonitoredAccount | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const username = args.username.trim().toLowerCase();
+  if (!username) return null;
+  const tenantId = args.tenantId ?? null;
+  // Fetch current state first so we know what kinds to merge.
+  const cur = await sql()`
+    SELECT id, platform, username, mode, last_notify_at,
+           pending_fetch_at, pending_notify_kinds
+    FROM monitored_accounts
+    WHERE platform = 'instagram'
+      AND lower(username) = ${username}
+      AND (${tenantId}::bigint IS NULL OR tenant_id = ${tenantId})
+    LIMIT 1`;
+  const r0 = cur[0] as Record<string, unknown> | undefined;
+  if (!r0) return null;
+  const existingKinds = Array.isArray(r0.pending_notify_kinds)
+    ? (r0.pending_notify_kinds as unknown[]).filter(
+        (x): x is string => typeof x === "string",
+      )
+    : [];
+  const mergedKinds = Array.from(new Set([...existingKinds, ...args.kinds]));
+  const rows = await sql()`
+    UPDATE monitored_accounts
+    SET
+      last_notify_at = NOW(),
+      pending_notify_kinds = ${JSON.stringify(mergedKinds)}::jsonb,
+      pending_fetch_at = CASE
+        -- If there's already a pending fetch queued, leave it alone.
+        WHEN pending_fetch_at IS NOT NULL THEN pending_fetch_at
+        -- Otherwise: schedule for last_notify_at + 3h, or NOW + 3h
+        -- when this is the first notify. If the resulting time falls
+        -- inside the 02-08 Tehran quiet window, snap forward to 08:00
+        -- the same Tehran day.
+        ELSE GREATEST(
+          NOW() + INTERVAL '3 hours',
+          COALESCE(last_notify_at, NOW()) + INTERVAL '3 hours'
+        )
+      END,
+      updated_at = NOW()
+    WHERE id = ${Number(r0.id)}
+    RETURNING id, platform, username, url, external_id, topic_id, enabled,
+              check_stories, check_posts, check_reels, check_profile,
+              check_mentioned, interval_minutes, instagram_user_id, full_name,
+              last_checked_at, last_story_at, last_error, last_media_count,
+              tenant_id, mode, last_notify_at, pending_fetch_at,
+              pending_notify_kinds, created_at, updated_at`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToMonitored(r) : null;
+}
+
+// Called by the cron after a notify-mode account has been processed.
+// Clears the pending queue so the next notify starts a fresh 3-hour
+// window.
+export async function clearMonitoredAccountPending(
+  id: number,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE monitored_accounts
+    SET pending_fetch_at = NULL,
+        pending_notify_kinds = NULL,
+        updated_at = NOW()
+    WHERE id = ${id}`;
+}
+
+// Operator tapped "🔍 الان بگیر" on a deferred notify message:
+// move pending_fetch_at to NOW so the next cron tick (≤ 5 min)
+// processes it.
+export async function expediteMonitoredAccountFetch(
+  id: number,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE monitored_accounts
+    SET pending_fetch_at = NOW(),
+        updated_at = NOW()
+    WHERE id = ${id}
+      AND mode = 'notify'`;
+}
+
+export async function setMonitoredAccountMode(args: {
+  id: number;
+  mode: "interval" | "notify";
+  tenantId?: number | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE monitored_accounts
+    SET mode = ${args.mode},
+        pending_fetch_at = NULL,
+        pending_notify_kinds = NULL,
+        updated_at = NOW()
+    WHERE id = ${args.id}
+      AND (${args.tenantId ?? null}::bigint IS NULL
+           OR tenant_id = ${args.tenantId ?? null}::bigint)`;
 }
 
 // Manual add: insert a single account by username. Pulls defaults
@@ -6124,7 +6339,8 @@ export async function addMonitoredAccount(args: {
               check_stories, check_posts, check_reels, check_profile,
               check_mentioned, interval_minutes, instagram_user_id, full_name,
               last_checked_at, last_story_at, last_error, last_media_count,
-              tenant_id,
+              tenant_id, mode, last_notify_at, pending_fetch_at,
+              pending_notify_kinds,
               created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToMonitored(r) : null;
@@ -6139,10 +6355,15 @@ export async function updateMonitoredAccountConfig(
     checkProfile?: boolean;
     checkMentioned?: boolean;
     intervalMinutes?: number;
+    mode?: "interval" | "notify";
   },
   tenantId?: number | null,
 ): Promise<void> {
   if (!hasDb()) return;
+  // When the operator flips an account out of notify mode we wipe
+  // the pending queue so a stale notify doesn't fire after the
+  // switch.
+  const modeChanged = patch.mode !== undefined;
   await sql()`
     UPDATE monitored_accounts SET
       check_stories = COALESCE(${patch.checkStories ?? null}, check_stories),
@@ -6153,6 +6374,15 @@ export async function updateMonitoredAccountConfig(
       interval_minutes = COALESCE(${
         patch.intervalMinutes ?? null
       }::int, interval_minutes),
+      mode = COALESCE(${patch.mode ?? null}::text, mode),
+      pending_fetch_at = CASE
+        WHEN ${modeChanged}::boolean THEN NULL
+        ELSE pending_fetch_at
+      END,
+      pending_notify_kinds = CASE
+        WHEN ${modeChanged}::boolean THEN NULL
+        ELSE pending_notify_kinds
+      END,
       updated_at = NOW()
     WHERE id = ${id}
       AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})`;

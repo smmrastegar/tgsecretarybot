@@ -83,6 +83,7 @@ import {
   addSmsAcceptSignature,
   createSmsBlockRule,
   deleteSmsDedup,
+  expediteMonitoredAccountFetch,
   getSmsDedup,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
@@ -363,6 +364,41 @@ async function maybeDescribeMedia(args: {
 //   as:resum:<chatId>:<startSec>   — re-generate the summary
 //   as:send:<chatId>:<startSec>    — send the previously-suggested
 //                                    reply to the source chat
+// 🔍 الان بگیر button under the deferred-notify message in the
+// storage / download_archive channel. callback_data shape:
+//   "insta:fetchnow:<account_id>"
+// Pushing the account's pending_fetch_at to NOW makes the next cron
+// tick (≤ 5 min) process it.
+async function handleInstaCallback(
+  ctx: Context,
+  data: string,
+  _bot: Bot,
+): Promise<void> {
+  const parts = data.split(":");
+  if (parts.length < 3 || parts[1] !== "fetchnow") {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  const accountId = Number(parts[2]);
+  if (!Number.isFinite(accountId)) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  try {
+    await expediteMonitoredAccountFetch(accountId);
+    await ctx
+      .answerCallbackQuery({
+        text: "✅ توی فرصت بعدی cron گرفته می‌شه (تا ۵ دقیقه دیگه).",
+      })
+      .catch(() => {});
+  } catch (err) {
+    console.warn("[insta_cb] expedite failed:", err);
+    await ctx
+      .answerCallbackQuery({ text: "نشد — خطا." })
+      .catch(() => {});
+  }
+}
+
 // 🗑 / 🚫 buttons under each forwarded SMS in the notes_inbox /
 // sms_inbox channel. callback_data shapes:
 //   "sms:rm:<dedup_id>"    — delete the Telegram copy + drop the
@@ -1354,6 +1390,12 @@ function buildBot(): Bot {
     if (data.startsWith("tx:")) {
       await handleTranscribeCallback(ctx, data, bot).catch((err) =>
         console.error("[transcribe] failed:", err),
+      );
+      return;
+    }
+    if (data.startsWith("insta:")) {
+      await handleInstaCallback(ctx, data, bot).catch((err) =>
+        console.error("[insta_callback] failed:", err),
       );
       return;
     }

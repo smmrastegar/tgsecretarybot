@@ -5,11 +5,14 @@ import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import { relTime } from "@/lib/format";
 
+type WebhookKind = "sms" | "insta";
+
 type Webhook = {
   id: number;
   name: string;
   secret: string;
   enabled: boolean;
+  kind: WebhookKind;
   lastUsedAt: string | null;
   createdAt: string;
 };
@@ -19,6 +22,7 @@ export default function WebhooksPage() {
   const [loading, setLoading] = useState(true);
   const [origin, setOrigin] = useState("");
   const [newName, setNewName] = useState("");
+  const [newKind, setNewKind] = useState<WebhookKind>("sms");
   const [creating, setCreating] = useState(false);
   const [copiedId, setCopiedId] = useState<number | null>(null);
 
@@ -50,7 +54,7 @@ export default function WebhooksPage() {
       const r = await fetch("/api/webhooks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName.trim() }),
+        body: JSON.stringify({ name: newName.trim(), kind: newKind }),
       });
       if (r.ok) {
         setNewName("");
@@ -59,7 +63,7 @@ export default function WebhooksPage() {
     } finally {
       setCreating(false);
     }
-  }, [newName, load]);
+  }, [newName, newKind, load]);
 
   const rename = useCallback(
     async (id: number, name: string) => {
@@ -95,8 +99,13 @@ export default function WebhooksPage() {
     [load],
   );
 
-  const urlFor = (secret: string) =>
-    origin ? `${origin}/api/sms-webhook?token=${encodeURIComponent(secret)}` : "";
+  const urlFor = (w: Webhook) => {
+    if (!origin) return "";
+    if (w.kind === "insta") {
+      return `${origin}/api/insta-webhook?token=${encodeURIComponent(w.secret)}&action=story&id=<USERNAME>`;
+    }
+    return `${origin}/api/sms-webhook?token=${encodeURIComponent(w.secret)}`;
+  };
 
   const copy = async (id: number, url: string) => {
     try {
@@ -110,17 +119,45 @@ export default function WebhooksPage() {
     <Shell>
       <PageTitle
         title="📡 Webhooks"
-        subtitle="هر webhook یه ورودی مستقل SMS هست با اسم و URL خودش. URL رو تو اپ SMS-Forwarder اندروید پیست کن — اسم webhook میشه chat_title پیام‌هایی که میان."
+        subtitle="هر webhook یه ورودی مستقل با اسم و URL خودش. دو نوع: SMS (واسه SMS-Forwarder اندروید) و Insta (واسه سرویس notify اینستاگرام)."
       />
 
       <Card className="mb-4">
         <div className="text-xs font-medium mb-2">+ webhook جدید</div>
+        <div className="flex gap-2 flex-wrap mb-2">
+          <button
+            type="button"
+            onClick={() => setNewKind("sms")}
+            className={`text-[11px] px-3 py-1 rounded-md border ${
+              newKind === "sms"
+                ? "bg-[var(--color-accent)] text-white border-transparent"
+                : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+            }`}
+          >
+            📱 SMS
+          </button>
+          <button
+            type="button"
+            onClick={() => setNewKind("insta")}
+            className={`text-[11px] px-3 py-1 rounded-md border ${
+              newKind === "insta"
+                ? "bg-[var(--color-accent)] text-white border-transparent"
+                : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+            }`}
+          >
+            📷 Insta notify
+          </button>
+        </div>
         <div className="flex gap-2 flex-wrap">
           <input
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            placeholder="اسم (مثلاً «📱 سیم‌کارت ۱ مهدی»)"
+            placeholder={
+              newKind === "insta"
+                ? "اسم (مثلاً «notify اصلی»)"
+                : "اسم (مثلاً «📱 سیم‌کارت ۱ مهدی»)"
+            }
             className="flex-1 min-w-[200px] text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5"
             onKeyDown={(e) => {
               if (e.key === "Enter") create();
@@ -135,8 +172,9 @@ export default function WebhooksPage() {
           </button>
         </div>
         <p className="text-[10px] text-[var(--color-text-dim)] mt-2">
-          توکن خودکار generate می‌شه؛ نمی‌تونی همون توکن رو بعداً ببینی توی
-          لاگ‌ها — URL کامل رو همینجا کپی کن.
+          {newKind === "insta"
+            ? "URL برای سرویس notify اینستا. به شکل token + action + id آماده می‌شه؛ توی URL کلمه‌ی <USERNAME> رو با یوزرنیم اکانت عوض کن."
+            : "توکن خودکار generate می‌شه؛ نمی‌تونی همون توکن رو بعداً ببینی توی لاگ‌ها — URL کامل رو همینجا کپی کن."}
         </p>
       </Card>
 
@@ -151,7 +189,7 @@ export default function WebhooksPage() {
       ) : (
         <div className="flex flex-col gap-3">
           {list.map((w) => {
-            const url = urlFor(w.secret);
+            const url = urlFor(w);
             return (
               <Card key={w.id} className="!p-3">
                 <div className="flex items-start justify-between gap-2 flex-wrap mb-2">
@@ -165,6 +203,9 @@ export default function WebhooksPage() {
                       }}
                       className="text-sm font-medium bg-transparent border-b border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-accent)] focus:outline-none px-1 py-0.5"
                     />
+                    <Badge tone={w.kind === "insta" ? "info" : "neutral"}>
+                      {w.kind === "insta" ? "📷 insta" : "📱 sms"}
+                    </Badge>
                     {w.enabled ? (
                       <Badge tone="success">on</Badge>
                     ) : (

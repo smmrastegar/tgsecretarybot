@@ -45,6 +45,7 @@ export async function PATCH(
     checkProfile?: boolean;
     checkMentioned?: boolean;
     intervalMinutes?: number;
+    mode?: "interval" | "notify";
     resetError?: boolean;
   };
   if (body.resetError === true) {
@@ -59,11 +60,16 @@ export async function PATCH(
     body.checkReels !== undefined ||
     body.checkProfile !== undefined ||
     body.checkMentioned !== undefined ||
-    body.intervalMinutes !== undefined
+    body.intervalMinutes !== undefined ||
+    body.mode !== undefined
   ) {
     const interval =
       body.intervalMinutes !== undefined
         ? Math.max(5, Math.min(Number(body.intervalMinutes), 24 * 60))
+        : undefined;
+    const mode =
+      body.mode === "interval" || body.mode === "notify"
+        ? body.mode
         : undefined;
     await updateMonitoredAccountConfig(
       n,
@@ -74,6 +80,7 @@ export async function PATCH(
         checkProfile: body.checkProfile,
         checkMentioned: body.checkMentioned,
         intervalMinutes: interval,
+        mode,
       },
       tenant.id,
     );

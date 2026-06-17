@@ -12,6 +12,10 @@ const PUBLIC_PREFIXES = [
   // Android SMS-Forwarder app (which sees the middleware's
   // {"error":"unauthorized"} response and retries forever).
   "/api/sms-webhook",
+  // Insta-notify webhook — token in the URL is the auth, same as
+  // /api/sms-webhook. Session-gating would lock out the operator's
+  // external change-detector service.
+  "/api/insta-webhook",
   // Public share links — the URL token itself is the auth. Anyone
   // holding /share/groups/<token> can view the cached analytics for
   // that chat but cannot trigger a recompute or modify anything.

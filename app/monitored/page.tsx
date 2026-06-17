@@ -19,6 +19,9 @@ type Account = {
   checkProfile: boolean;
   checkMentioned: boolean;
   intervalMinutes: number;
+  mode: "interval" | "notify";
+  lastNotifyAt: string | null;
+  pendingFetchAt: string | null;
   instagramUserId: string | null;
   lastCheckedAt: string | null;
   lastStoryAt: string | null;
@@ -79,6 +82,7 @@ const TEHRAN_TRIGGER_HOURS: Record<number, number[]> = {
 function intervalLabel(m: number): string {
   if (m < 60) return `${m} دقیقه`;
   if (m === 60) return "۱ ساعت";
+  if (m === 1440) return "۲۴ ساعت (روزانه)";
   if (m % 60 === 0) return `${m / 60} ساعت`;
   return `${m} دقیقه`;
 }
@@ -1460,10 +1464,17 @@ export default function MonitoredPage() {
                   ))}
                   <span className="text-[var(--color-text-dim)]">هر</span>
                   <select
-                    value={a.intervalMinutes}
-                    onChange={(e) =>
-                      patch(a.id, { intervalMinutes: Number(e.target.value) })
-                    }
+                    value={a.mode === "notify" ? "notify" : String(a.intervalMinutes)}
+                    onChange={(e) => {
+                      if (e.target.value === "notify") {
+                        patch(a.id, { mode: "notify" });
+                      } else {
+                        patch(a.id, {
+                          mode: "interval",
+                          intervalMinutes: Number(e.target.value),
+                        });
+                      }
+                    }}
                     className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1.5 py-0.5"
                   >
                     {INTERVAL_OPTIONS.map((m) => (
@@ -1471,6 +1482,7 @@ export default function MonitoredPage() {
                         {intervalLabel(m)}
                       </option>
                     ))}
+                    <option value="notify">🔔 notify</option>
                   </select>
                   {a.lastError && (
                     <span
@@ -2206,14 +2218,21 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
   // day * 30. For intervals without a curated schedule fall back to
   // the old "wall-clock / interval" estimate. This matches the gate
   // applied in lib/db.ts dueMonitoredAccounts.
-  function ticksPerMonth(intervalMinutes: number): number {
+  //
+  // For notify-mode accounts we compute the WORST CASE: a 3-hour
+  // cooldown caps fetches at 8 per day → 240 per month. Actual
+  // spending is usually much lower (only when the external notify
+  // service actually fires), but the estimate has to fit the user-
+  // visible "worst case" guarantee.
+  function ticksPerMonth(intervalMinutes: number, mode?: string): number {
+    if (mode === "notify") return 8 * 30;
     const hours = TEHRAN_TRIGGER_HOURS[intervalMinutes];
     if (hours && hours.length > 0) return hours.length * 30;
     return intervalMinutes > 0 ? (30 * 24 * 60) / intervalMinutes : 0;
   }
 
   const perAccountMonthly = accounts.map((a) => {
-    const ticks = ticksPerMonth(a.intervalMinutes);
+    const ticks = ticksPerMonth(a.intervalMinutes, a.mode);
     const monthly = costPerTick(a) * ticks;
     return { account: a, ticks, monthly };
   });
@@ -2223,19 +2242,44 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
   const overspend = totalMonthly > plan.monthly;
   const percentOfPlan = plan.monthly > 0 ? (totalMonthly / plan.monthly) * 100 : 0;
 
-  // Group by interval to show how the three preset intervals compare.
-  type Row = { minutes: number; count: number; cost: number };
+  // Group by bucket. Notify-mode accounts get their own row
+  // (worst-case cap). Interval-mode accounts bucket by their
+  // intervalMinutes — pulled from the actual data so accounts on
+  // legacy values (15 / 30 / 60 min) still appear in the breakdown.
+  type Row = { key: string; label: string; count: number; cost: number };
+  const enabledAccounts = accounts.filter((a) => a.enabled);
+  const notifyAccounts = enabledAccounts.filter((a) => a.mode === "notify");
+  const intervalAccounts = enabledAccounts.filter((a) => a.mode !== "notify");
+  const intervalSet = new Set<number>(
+    intervalAccounts.map((a) => a.intervalMinutes),
+  );
   const intervalBreakdown: Row[] = [];
-  for (const minutes of INTERVAL_OPTIONS) {
-    const inGroup = accounts.filter(
-      (a) => a.enabled && a.intervalMinutes === minutes,
+  if (notifyAccounts.length > 0) {
+    const cost = notifyAccounts.reduce(
+      (s, a) => s + costPerTick(a) * ticksPerMonth(a.intervalMinutes, "notify"),
+      0,
     );
-    if (inGroup.length === 0) continue;
-    const cost = inGroup.reduce((s, a) => {
-      const ticks = ticksPerMonth(minutes);
-      return s + costPerTick(a) * ticks;
-    }, 0);
-    intervalBreakdown.push({ minutes, count: inGroup.length, cost });
+    intervalBreakdown.push({
+      key: "notify",
+      label: "🔔 notify (سقف ۸ بار/روز با cooldown ۳h)",
+      count: notifyAccounts.length,
+      cost,
+    });
+  }
+  for (const minutes of Array.from(intervalSet).sort((a, b) => a - b)) {
+    const inGroup = intervalAccounts.filter(
+      (a) => a.intervalMinutes === minutes,
+    );
+    const cost = inGroup.reduce(
+      (s, a) => s + costPerTick(a) * ticksPerMonth(minutes),
+      0,
+    );
+    intervalBreakdown.push({
+      key: `i:${minutes}`,
+      label: intervalLabel(minutes),
+      count: inGroup.length,
+      cost,
+    });
   }
 
   return (
@@ -2311,21 +2355,25 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
           </div>
           <div className="flex flex-col gap-1.5">
             {intervalBreakdown.map((row) => {
-              const hours = TEHRAN_TRIGGER_HOURS[row.minutes];
+              const minutes = row.key.startsWith("i:")
+                ? Number(row.key.slice(2))
+                : null;
+              const hours =
+                minutes != null ? TEHRAN_TRIGGER_HOURS[minutes] : undefined;
               const slots = hours
                 ? hours.map((h) => `${h}:۰۰`).join("، ")
-                : "—";
+                : null;
               return (
                 <div
-                  key={row.minutes}
+                  key={row.key}
                   className="flex items-start justify-between text-[11px] gap-3"
                 >
                   <span className="min-w-0">
-                    {intervalLabel(row.minutes)}{" "}
+                    {row.label}{" "}
                     <span className="text-[var(--color-text-dim)]">
                       · {row.count} اکانت
                     </span>
-                    {hours && (
+                    {slots && (
                       <span className="block text-[10px] text-[var(--color-text-dim)] mt-0.5">
                         ساعت‌های اجرا: {slots}
                       </span>

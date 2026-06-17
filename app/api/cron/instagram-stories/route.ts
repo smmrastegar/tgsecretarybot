@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
-import { dueMonitoredAccounts, hasDb } from "@/lib/db";
+import {
+  clearMonitoredAccountPending,
+  dueMonitoredAccounts,
+  hasDb,
+} from "@/lib/db";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 import { getActiveKey, HikerOutOfCreditsError } from "@/lib/hikerapi";
 import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
@@ -71,10 +75,52 @@ async function processTenant(
     for (const acc of due) {
       out.checked++;
       try {
-        const result = await processAccount({ account: acc, target, bot });
+        // Notify-mode accounts carry the requested actions in
+        // pending_notify_kinds. Translate "story"/"post"/"reel"/...
+        // into the kindOverrides processAccount expects, and only
+        // include kinds the account actually has enabled (so a
+        // notify that says "post" doesn't fetch posts if the
+        // operator turned check_posts off).
+        const pendingKinds =
+          acc.mode === "notify" && acc.pendingNotifyKinds
+            ? acc.pendingNotifyKinds
+            : null;
+        const kindOverrides:
+          | {
+              story?: boolean;
+              post?: boolean;
+              reel?: boolean;
+              mentioned?: boolean;
+            }
+          | undefined = (() => {
+          if (!pendingKinds) return undefined;
+          if (pendingKinds.includes("any")) return undefined;
+          // Translate the notify "actions" into kindOverrides AND
+          // require the account's check_* flags to be on. A notify
+          // that says "post" must not fetch posts when the operator
+          // turned check_posts off — that's a hard rule.
+          return {
+            story: pendingKinds.includes("story") && acc.checkStories,
+            post: pendingKinds.includes("post") && acc.checkPosts,
+            reel: pendingKinds.includes("reel") && acc.checkReels,
+            mentioned:
+              pendingKinds.includes("mentioned") && acc.checkMentioned,
+          };
+        })();
+        const result = await processAccount({
+          account: acc,
+          target,
+          bot,
+          ...(kindOverrides ? { kindOverrides } : {}),
+        });
         out.detected += result.detected;
         out.forwarded += result.forwarded;
         out.errors.push(...result.errors);
+        // Clear the pending queue after a successful notify-mode run
+        // so the next webhook starts a fresh 3-hour window.
+        if (acc.mode === "notify" && acc.pendingFetchAt) {
+          await clearMonitoredAccountPending(acc.id).catch(() => {});
+        }
       } catch (err) {
         if (err instanceof HikerOutOfCreditsError) {
           out.bail = "out_of_credits";
