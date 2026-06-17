@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import { relTime } from "@/lib/format";
+
+const EVENTS_PAGE_SIZE = 10;
 
 type Account = {
   id: number;
@@ -90,6 +92,8 @@ export default function MonitoredPage() {
   });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [eventsHasMore, setEventsHasMore] = useState(false);
+  const [eventsLoadingMore, setEventsLoadingMore] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [newUsername, setNewUsername] = useState("");
@@ -111,7 +115,12 @@ export default function MonitoredPage() {
           defaults: Defaults;
         };
         setAccounts(j.accounts);
-        setEvents(j.events);
+        // Initial events page is 10 — even if /api/monitored hands us
+        // more on the first call, only show the head and let the
+        // scroll loader bring the rest in.
+        const head = (j.events ?? []).slice(0, EVENTS_PAGE_SIZE);
+        setEvents(head);
+        setEventsHasMore((j.events ?? []).length >= EVENTS_PAGE_SIZE);
         setStorageChats(j.storageChats);
         setDownloaderChats(j.downloaderChats);
         setTargetChatId(j.targetChatId);
@@ -1463,54 +1472,46 @@ export default function MonitoredPage() {
         </Card>
       )}
 
-      {events.length > 0 && (
-        <Card>
-          <div className="text-sm font-medium mb-2">📬 رویدادهای اخیر</div>
-          <div className="flex flex-col gap-1">
-            {events.slice(0, 50).map((e) => (
-              <div
-                key={e.id}
-                className="text-xs flex items-center gap-2 p-1.5 border border-[var(--color-border)] rounded-md flex-wrap"
-              >
-                <span className="text-[var(--color-text-dim)]">
-                  {relTime(e.detectedAt)}
-                </span>
-                <span className="font-medium">@{e.username ?? e.accountId}</span>
-                {e.storyUrl && (
-                  <a
-                    href={e.storyUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline text-blue-400 truncate min-w-0"
-                  >
-                    {e.storyUrl}
-                  </a>
-                )}
-                <Badge
-                  tone={
-                    e.status === "forwarded"
-                      ? "success"
-                      : e.status === "error"
-                        ? "danger"
-                        : "info"
-                  }
-                >
-                  {e.status}
-                </Badge>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
+      <RecentEventsCard
+        events={events}
+        hasMore={eventsHasMore}
+        loadingMore={eventsLoadingMore}
+        onLoadMore={async () => {
+          if (eventsLoadingMore || !eventsHasMore) return;
+          setEventsLoadingMore(true);
+          try {
+            const r = await fetch(
+              `/api/monitored/events?limit=${EVENTS_PAGE_SIZE}&offset=${events.length}`,
+            );
+            if (r.ok) {
+              const j = (await r.json()) as { events: Event[] };
+              if (j.events.length === 0) {
+                setEventsHasMore(false);
+              } else {
+                setEvents((cur) => {
+                  const seen = new Set(cur.map((e) => e.id));
+                  const fresh = j.events.filter((e) => !seen.has(e.id));
+                  return [...cur, ...fresh];
+                });
+                if (j.events.length < EVENTS_PAGE_SIZE) {
+                  setEventsHasMore(false);
+                }
+              }
+            }
+          } finally {
+            setEventsLoadingMore(false);
+          }
+        }}
+      />
 
       {refreshDialog && (
         <div
-          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          className="fixed inset-0 bg-black/60 flex items-start sm:items-center justify-center z-50 p-3 sm:p-4 overflow-y-auto"
           onClick={() => setRefreshDialog(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-md"
+            className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 sm:p-5 w-full max-w-md my-4 max-h-[92vh] overflow-y-auto"
           >
             <h2 className="text-base font-semibold mb-1">
               🔄 دوباره گرفتن @{refreshDialog.username}
@@ -1591,12 +1592,12 @@ export default function MonitoredPage() {
 
       {keyDialog && (
         <div
-          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          className="fixed inset-0 bg-black/60 flex items-start sm:items-center justify-center z-50 p-3 sm:p-4 overflow-y-auto"
           onClick={() => setKeyDialog(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-md"
+            className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 sm:p-5 w-full max-w-md my-4 max-h-[92vh] overflow-y-auto"
           >
             <h2 className="text-base font-semibold mb-1">
               🔑 کلید HikerAPI
@@ -1824,14 +1825,23 @@ function BudgetSettingsDialog(props: {
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 overflow-y-auto"
+      className="fixed inset-0 bg-black/60 flex items-start sm:items-center justify-center z-50 p-3 sm:p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-2xl my-8"
+        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 sm:p-5 w-full max-w-2xl my-4 sm:my-8 max-h-[94vh] overflow-y-auto"
       >
-        <h2 className="text-base font-semibold mb-1">⚙️ تنظیمات بودجه HikerAPI</h2>
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <h2 className="text-base font-semibold">⚙️ تنظیمات بودجه HikerAPI</h2>
+          <button
+            onClick={onClose}
+            aria-label="بستن"
+            className="text-lg leading-none text-[var(--color-text-dim)] hover:text-white px-2 -mt-1"
+          >
+            ✕
+          </button>
+        </div>
         <p className="text-xs text-[var(--color-text-dim)] mb-4">
           HikerAPI خودش $ نشون نمی‌ده — ما هر call رو با هزینه تخمینی محلی جمع
           می‌زنیم. سقف کل + هر چند $ یه‌بار از تو می‌پرسه ادامه بدیم یا نه.
@@ -1890,7 +1900,7 @@ function BudgetSettingsDialog(props: {
           </span>
         </label>
 
-        <div className="flex gap-2 mb-5">
+        <div className="flex flex-wrap gap-2 mb-5">
           <button
             onClick={() => onApproveAbsolute(Number(budgetUsd))}
             className="text-xs px-3 py-1.5 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30"
@@ -1905,7 +1915,7 @@ function BudgetSettingsDialog(props: {
           >
             ⏸ pause الان
           </button>
-          <div className="flex-1" />
+          <div className="hidden sm:block flex-1" />
           <button
             onClick={save}
             disabled={saving}
@@ -2291,6 +2301,89 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
         <div className="mt-2 text-[11px] text-red-300">
           ⚠️ تخمین بیشتر از پلن {plan.label} ($${plan.monthly}/mo) هست. interval بیشتری
           بزن یا چند اکانت رو خاموش کن.
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function RecentEventsCard({
+  events,
+  hasMore,
+  loadingMore,
+  onLoadMore,
+}: {
+  events: Event[];
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+}) {
+  // IntersectionObserver wired to a sentinel at the bottom of the
+  // list. When the sentinel enters the viewport we call onLoadMore;
+  // the parent debounces its own state so a second hit is ignored
+  // until the first fetch is done.
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && hasMore && !loadingMore) {
+            onLoadMore();
+          }
+        }
+      },
+      { rootMargin: "120px 0px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [hasMore, loadingMore, onLoadMore]);
+
+  if (events.length === 0) return null;
+  return (
+    <Card>
+      <div className="text-sm font-medium mb-2">📬 رویدادهای اخیر</div>
+      <div className="flex flex-col gap-1">
+        {events.map((e) => (
+          <div
+            key={e.id}
+            className="text-xs flex items-center gap-2 p-1.5 border border-[var(--color-border)] rounded-md flex-wrap"
+          >
+            <span className="text-[var(--color-text-dim)]">
+              {relTime(e.detectedAt)}
+            </span>
+            <span className="font-medium">@{e.username ?? e.accountId}</span>
+            {e.storyUrl && (
+              <a
+                href={e.storyUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline text-blue-400 truncate min-w-0"
+              >
+                {e.storyUrl}
+              </a>
+            )}
+            <Badge
+              tone={
+                e.status === "forwarded"
+                  ? "success"
+                  : e.status === "error"
+                    ? "danger"
+                    : "info"
+              }
+            >
+              {e.status}
+            </Badge>
+          </div>
+        ))}
+      </div>
+      {(hasMore || loadingMore) && (
+        <div
+          ref={sentinelRef}
+          className="text-center text-[10px] text-[var(--color-text-dim)] py-2 mt-1"
+        >
+          {loadingMore ? "..." : ""}
         </div>
       )}
     </Card>

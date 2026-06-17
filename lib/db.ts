@@ -6458,6 +6458,7 @@ export async function markMonitorEventError(args: {
 export async function listRecentMonitorEvents(
   limit = 50,
   tenantId?: number | null,
+  offset = 0,
 ): Promise<
   Array<MonitorEvent & { username: string | null; platform: string | null }>
 > {
@@ -6472,7 +6473,8 @@ export async function listRecentMonitorEvents(
     LEFT JOIN monitored_accounts a ON a.id = e.account_id
     WHERE (${tenantId ?? null}::bigint IS NULL OR e.tenant_id = ${tenantId ?? null})
     ORDER BY e.detected_at DESC
-    LIMIT ${Math.min(Math.max(limit, 1), 500)}`;
+    LIMIT ${Math.min(Math.max(limit, 1), 500)}
+    OFFSET ${Math.max(offset, 0)}`;
   return (rows as Array<Record<string, unknown>>).map((r) => ({
     id: Number(r.id),
     accountId: Number(r.account_id),
