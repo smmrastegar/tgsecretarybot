@@ -55,10 +55,11 @@ type Defaults = {
 
 // The owner asked for ONLY four options on Instagram polling:
 // 3h / 6h / 12h / 24h, all anchored to Asia/Tehran peak hours.
-// Smaller numbers (5/10/15/30 minutes) were cheap with the notify-
-// service push, but with direct HikerAPI polling they burn budget
-// for no real benefit on social-media accounts that update at most
-// a few times a day.
+//
+// Hard rule from the operator: intervals SHORTER than 12 hours
+// (3h, 6h) must NEVER run during the very-late-night quiet window
+// of 02:00–08:00 Tehran. The schedules below respect that — the
+// earliest sub-12h trigger is 09:00, and the latest is 22:00.
 //
 //   3h  → ساعت‌های ۹، ۱۲، ۱۵، ۱۸، ۲۱ تهران (۵ بار)
 //   6h  → ساعت‌های ۱۰، ۱۶، ۲۲ تهران (۳ بار)
@@ -2303,6 +2304,10 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
         <div className="border-t border-[var(--color-border)] pt-2 mt-1">
           <div className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
             تفکیک بر اساس interval (همه ساعت‌ها به وقت تهران)
+            <div className="mt-0.5">
+              🌙 ساعت ۲ تا ۸ صبح هیچ بررسی‌ای انجام نمی‌شه (intervals کمتر از ۱۲h
+              فقط از ۹ صبح تا حدود ۲۲ شب اجرا می‌شن).
+            </div>
           </div>
           <div className="flex flex-col gap-1.5">
             {intervalBreakdown.map((row) => {

@@ -6021,9 +6021,12 @@ export async function dueMonitoredAccounts(
   await ensureSchema();
   // Peak-hours gate. The cron runs every 5 min, but for each
   // interval bucket we only let it fire during a curated set of
-  // Tehran-time hours (Asia/Tehran). Low-traffic overnight hours
-  // are skipped so we don't waste HikerAPI calls on quiet windows
-  // when nobody is posting.
+  // Tehran-time hours (Asia/Tehran). The operator's hard rule:
+  // intervals SHORTER than 12 hours (3h, 6h) must NEVER run during
+  // the very-late-night quiet window of 02:00–08:00 Tehran. The
+  // schedules below all respect that — 3h fires no earlier than
+  // 09:00, 6h no earlier than 10:00 — so an account on a < 12h
+  // interval has at least a 9-hour overnight gap with no calls.
   //
   //   3h  → 09, 12, 15, 18, 21    (five daytime/evening slots)
   //   6h  → 10, 16, 22            (three slots: morning, late afternoon, late evening)
