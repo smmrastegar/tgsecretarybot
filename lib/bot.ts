@@ -2018,6 +2018,7 @@ export async function maybeApplyNoteWatch(args: {
         concept: it.concept,
         description: it.description,
         aliases: it.aliases,
+        context: it.context,
       })),
       chatTitle: args.chatTitle,
       senderName: args.senderName,

@@ -437,6 +437,14 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE note_watch_items ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'normal'`;
     await q`ALTER TABLE note_watch_items ADD COLUMN IF NOT EXISTS forward_to_inbox BOOLEAN NOT NULL DEFAULT TRUE`;
     await q`ALTER TABLE note_watch_items ADD COLUMN IF NOT EXISTS cooldown_override_minutes INT`;
+    // Scope / context filter: operator describes the domain the
+    // concept lives in (e.g. "music / singer / concert / album /
+    // performance") so the scanner can drop common-name false
+    // positives. A message that mentions "آرمان" in a daily-life
+    // context doesn't match a "آرمان گرشاسبی" concept whose context
+    // is "music"; the message must contain BOTH the alias AND a
+    // signal that it's in that context for the match to fire.
+    await q`ALTER TABLE note_watch_items ADD COLUMN IF NOT EXISTS context TEXT`;
     // Group analytics: cache the full task-lifecycle analysis per
     // (chat, window-days) so the public share link can serve it
     // instantly without paying for an LLM call. Also stores a
@@ -3638,6 +3646,11 @@ export type NoteWatchItem = {
   priority: "low" | "normal" | "high";
   forwardToInbox: boolean;
   cooldownOverrideMinutes: number | null;
+  // Domain the concept lives in — e.g. "music / singer / concert".
+  // The scanner only fires when the message is clearly in this
+  // context AND contains the concept / an alias. Null = no
+  // context filter (match purely on string presence).
+  context: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -3675,6 +3688,7 @@ function rowToNoteWatchItem(r: Record<string, unknown>): NoteWatchItem {
       r.cooldown_override_minutes != null
         ? Number(r.cooldown_override_minutes)
         : null,
+    context: (r.context as string) ?? null,
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
   };
@@ -3706,7 +3720,7 @@ export async function listNoteWatchItems(args?: {
   const rows = await sql()`
     SELECT id, concept, description, enabled, match_count, last_matched_at,
            emoji, priority, forward_to_inbox, cooldown_override_minutes,
-           created_at, updated_at
+           context, created_at, updated_at
     FROM note_watch_items
     WHERE (${enabledOnly}::boolean = FALSE OR enabled = TRUE)
     ORDER BY created_at DESC`;
@@ -3721,7 +3735,7 @@ export async function getNoteWatchItem(
   const rows = await sql()`
     SELECT id, concept, description, enabled, match_count, last_matched_at,
            emoji, priority, forward_to_inbox, cooldown_override_minutes,
-           created_at, updated_at
+           context, created_at, updated_at
     FROM note_watch_items WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToNoteWatchItem(r) : null;
@@ -3739,7 +3753,7 @@ export async function createNoteWatchItem(args: {
     VALUES (${args.concept}, ${args.description ?? null}, ${args.enabled ?? true})
     RETURNING id, concept, description, enabled, match_count, last_matched_at,
               emoji, priority, forward_to_inbox, cooldown_override_minutes,
-              created_at, updated_at`;
+              context, created_at, updated_at`;
   return rowToNoteWatchItem(rows[0] as Record<string, unknown>);
 }
 
@@ -3753,6 +3767,7 @@ export async function updateNoteWatchItem(
     priority: "low" | "normal" | "high";
     forwardToInbox: boolean;
     cooldownOverrideMinutes: number | null;
+    context: string | null;
   }>,
 ): Promise<NoteWatchItem | null> {
   if (!hasDb()) return null;
@@ -3766,6 +3781,8 @@ export async function updateNoteWatchItem(
   const cooldownMarker =
     patch.cooldownOverrideMinutes === undefined ? 0 : 1;
   const cooldownValue = patch.cooldownOverrideMinutes ?? null;
+  const contextMarker = patch.context === undefined ? 0 : 1;
+  const contextValue = patch.context ?? null;
   const rows = await sql()`
     UPDATE note_watch_items SET
       concept = COALESCE(${patch.concept ?? null}, concept),
@@ -3778,11 +3795,12 @@ export async function updateNoteWatchItem(
         WHEN ${cooldownMarker}::int = 1 THEN ${cooldownValue}::int
         ELSE cooldown_override_minutes
       END,
+      context = CASE WHEN ${contextMarker}::int = 1 THEN ${contextValue} ELSE context END,
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id, concept, description, enabled, match_count, last_matched_at,
               emoji, priority, forward_to_inbox, cooldown_override_minutes,
-              created_at, updated_at`;
+              context, created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToNoteWatchItem(r) : null;
 }

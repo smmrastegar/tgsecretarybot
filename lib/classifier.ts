@@ -1202,10 +1202,33 @@ The user payload contains:
       "description": <longer guidance, may be empty>,
       "aliases": [<other ways the concept might be referenced — names,
                    spellings, related phrases. Treat every alias as a
-                   way of pointing at the same concept.>]
+                   way of pointing at the same concept.>],
+      "context": <optional — the DOMAIN this concept lives in,
+                   e.g. "music / singer / concert / album". When set,
+                   the match MUST also be in that domain>
     }.
 - "message": the incoming message text (already includes any voice transcript / media description).
 - "chat_title", "sender": optional context for whose message this is.
+
+CONTEXT GATE — CRITICAL when items[].context is set:
+A concept whose "context" is defined ONLY matches if the message is
+clearly in that domain. The concept name + an alias appearing in an
+UNRELATED context is NOT a match. Examples:
+
+  context: "music / singer / concert / album"
+  message: "آرمان خونست؟" (asking if a friend named Arman will come for dinner)
+    → NO MATCH (mentions the alias "آرمان" but in a daily-life context,
+      not music)
+  message: "آلبوم جدید آرمان منتشر شد" (new Arman album dropped)
+    → MATCH (mentions "آرمان" AND the context word "آلبوم" makes the
+      music domain unambiguous)
+  message: "آرمان از کنسرت برگشت" (Arman is back from the concert)
+    → MATCH (clearly music context)
+
+Context words don't have to appear verbatim — judge whether the
+message is unambiguously about the concept's domain. When in doubt
+about the context: NO MATCH (we'd rather miss a hit than burn the
+operator's inbox with off-topic name collisions).
 
 Reply with STRICT JSON only, no prose, no code fences:
 {
@@ -1520,6 +1543,7 @@ export async function scanForWatchlistConceptsDebug(input: {
     concept: string;
     description: string | null;
     aliases?: string[];
+    context?: string | null;
   }>;
   chatTitle?: string | null;
   senderName?: string | null;
@@ -1542,6 +1566,7 @@ export async function scanForWatchlistConceptsDebug(input: {
         Array.isArray(it.aliases) && it.aliases.length > 0
           ? it.aliases.slice(0, 30)
           : undefined,
+      context: it.context || undefined,
     })),
     chat_title: input.chatTitle || undefined,
     sender: input.senderName || undefined,
@@ -1635,6 +1660,7 @@ export async function scanForWatchlistConcepts(input: {
     concept: string;
     description: string | null;
     aliases?: string[];
+    context?: string | null;
   }>;
   chatTitle?: string | null;
   senderName?: string | null;

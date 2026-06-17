@@ -25,6 +25,7 @@ export type WatchlistItem = {
   priority: "low" | "normal" | "high";
   forwardToInbox: boolean;
   cooldownOverrideMinutes: number | null;
+  context: string | null;
 };
 
 type Match = {
@@ -333,6 +334,16 @@ function ItemCard({
         rows={4}
         className="w-full text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 mb-1.5 leading-relaxed"
         style={{ minHeight: "5rem" }}
+      />
+      <input
+        type="text"
+        defaultValue={item.context ?? ""}
+        onBlur={(e) => {
+          const v = e.target.value;
+          if (v !== (item.context ?? "")) onUpdate({ context: v || null });
+        }}
+        placeholder="🎯 فضای جستجو (مثلاً «music / singer / concert / album») — خالی = همه‌جا"
+        className="w-full text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 mb-1.5"
       />
       <AliasEditor item={item} />
 

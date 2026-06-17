@@ -50,6 +50,7 @@ export async function PUT(
     priority?: string;
     forwardToInbox?: boolean;
     cooldownOverrideMinutes?: number | null;
+    context?: string | null;
   };
   const validPri =
     body.priority === "low" || body.priority === "normal" || body.priority === "high"
@@ -75,6 +76,10 @@ export async function PUT(
     priority: validPri,
     forwardToInbox: body.forwardToInbox,
     cooldownOverrideMinutes: cooldown,
+    context:
+      body.context === undefined
+        ? undefined
+        : (body.context?.trim() || null),
   });
   if (!item) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json({ item });
