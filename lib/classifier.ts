@@ -1211,19 +1211,45 @@ The user payload contains:
 - "chat_title", "sender": optional context for whose message this is.
 
 CONTEXT GATE — CRITICAL when items[].context is set:
-A concept whose "context" is defined ONLY matches if the message is
-clearly in that domain. The concept name + an alias appearing in an
-UNRELATED context is NOT a match. Examples:
 
-  context: "music / singer / concert / album"
-  message: "آرمان خونست؟" (asking if a friend named Arman will come for dinner)
-    → NO MATCH (mentions the alias "آرمان" but in a daily-life context,
-      not music)
+THE CONTEXT MUST BE EVIDENT IN THE MESSAGE ITSELF, NOT INFERRED FROM
+THE CONCEPT.
+
+The fact that the concept is "a singer" or "a music artist" DOES NOT
+mean a message that mentions that name is about music. The MESSAGE
+must contain words, topics, or situations that on their own anchor it
+in the configured domain.
+
+Mechanical test before emitting a match:
+  1. Mentally erase the concept name and aliases from the message.
+  2. Look at what's left. Does it independently signal the configured
+     domain (e.g. for "music / singer / concert / album": words like
+     "آهنگ", "آلبوم", "کنسرت", "خواننده", "ترانه", "تک‌آهنگ", lyric
+     fragments, streaming platform names, song-release verbs)?
+  3. If the remaining text gives NO domain signal — NO MATCH.
+
+If your "reason" reduces to "the alias is a singer" or "the concept is
+in the music domain", that is REASONING ABOUT THE CONCEPT — gate FAILS.
+The reason must point to something IN THE MESSAGE that's in-domain.
+
+Examples (context = "music / singer / concert / album"):
+
+  message: "آرمان خونست؟" (is Arman home?)
+    → NO MATCH (only the alias, no music word, asking location)
+  message: "آرمان کجاست؟" (where is Arman?)
+    → NO MATCH (only the alias, no music word, asking location)
+  message: "آرمان بیا" (Arman come here)
+    → NO MATCH (only the alias, social/availability)
+  message: "آرمان شام میای؟" (Arman, are you coming for dinner?)
+    → NO MATCH (social plan, no music signal)
+  message: "آرمان زنگ زد" (Arman called)
+    → NO MATCH (just a phone-call event)
   message: "آلبوم جدید آرمان منتشر شد" (new Arman album dropped)
-    → MATCH (mentions "آرمان" AND the context word "آلبوم" makes the
-      music domain unambiguous)
+    → MATCH (the word "آلبوم" anchors it to music)
   message: "آرمان از کنسرت برگشت" (Arman is back from the concert)
-    → MATCH (clearly music context)
+    → MATCH (the word "کنسرت" anchors it to music)
+  message: "آهنگ جدید آرمان رو گوش دادی؟" (heard the new Arman song?)
+    → MATCH ("آهنگ" + "گوش دادی" anchor music)
 
 Context words don't have to appear verbatim — judge whether the
 message is unambiguously about the concept's domain. When in doubt

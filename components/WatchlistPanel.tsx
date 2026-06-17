@@ -335,16 +335,7 @@ function ItemCard({
         className="w-full text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 mb-1.5 leading-relaxed"
         style={{ minHeight: "5rem" }}
       />
-      <input
-        type="text"
-        defaultValue={item.context ?? ""}
-        onBlur={(e) => {
-          const v = e.target.value;
-          if (v !== (item.context ?? "")) onUpdate({ context: v || null });
-        }}
-        placeholder="🎯 فضای جستجو (مثلاً «music / singer / concert / album») — خالی = همه‌جا"
-        className="w-full text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 mb-1.5"
-      />
+      <ContextEditor item={item} onUpdate={onUpdate} />
       <AliasEditor item={item} />
 
       <div className="flex items-center gap-3 mb-1 flex-wrap">
@@ -455,6 +446,95 @@ function AdvancedItemSettings({
             className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
           />
         </label>
+      </div>
+    </div>
+  );
+}
+
+function ContextEditor({
+  item,
+  onUpdate,
+}: {
+  item: WatchlistItem;
+  onUpdate: (patch: Partial<WatchlistItem>) => void;
+}) {
+  // Context is stored as a single string in DB; the UI splits on `/`
+  // (matches the existing examples) so each domain word becomes a chip.
+  const tokens = (item.context ?? "")
+    .split("/")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const [draft, setDraft] = useState("");
+
+  const persist = (next: string[]) => {
+    const joined = next.join(" / ");
+    if (joined === (item.context ?? "")) return;
+    onUpdate({ context: joined || null });
+  };
+
+  const add = () => {
+    const v = draft.trim();
+    if (!v) return;
+    if (tokens.includes(v)) {
+      setDraft("");
+      return;
+    }
+    persist([...tokens, v]);
+    setDraft("");
+  };
+
+  const remove = (token: string) => {
+    persist(tokens.filter((t) => t !== token));
+  };
+
+  return (
+    <div className="mb-2 border-t border-[var(--color-border)] pt-2">
+      <div className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
+        🎯 فضای جستجو — هر کلمه یک chip. خالی = همه‌جا.
+      </div>
+      <div className="flex flex-wrap gap-1 mb-1.5">
+        {tokens.length === 0 && (
+          <span className="text-[10px] text-[var(--color-text-dim)] italic">
+            فضایی تعریف نشده — همه پیام‌ها بررسی می‌شن.
+          </span>
+        )}
+        {tokens.map((t) => (
+          <span
+            key={t}
+            className="inline-flex items-center gap-1 text-[10px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1.5 py-0.5"
+          >
+            {t}
+            <button
+              onClick={() => remove(t)}
+              className="text-red-300 hover:text-red-200"
+              aria-label={`remove ${t}`}
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-1">
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="+ کلمه فضا (مثلاً music) — Enter"
+          className="flex-1 min-w-0 text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <button
+          onClick={add}
+          disabled={!draft.trim()}
+          className="text-[11px] px-2 py-1 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+        >
+          +
+        </button>
       </div>
     </div>
   );
