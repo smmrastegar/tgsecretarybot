@@ -2214,6 +2214,7 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
 
   return (
     <Card className="mb-3 !p-3">
+     <div dir="rtl">
       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
         <div className="text-sm font-medium">📈 تخمین هزینه‌ی ماهانه HikerAPI</div>
         <label className="text-[10px] flex items-center gap-1 cursor-pointer">
@@ -2303,6 +2304,7 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
           بزن یا چند اکانت رو خاموش کن.
         </div>
       )}
+     </div>
     </Card>
   );
 }
