@@ -3736,7 +3736,7 @@ export async function listFollowUpCandidates(args?: {
         MAX(CASE WHEN NOT m.from_owner THEN m.created_at END) AS last_customer_at
       FROM messages_log m
       WHERE m.chat_type = 'private'
-        AND m.created_at > NOW() - INTERVAL '7 days'
+        AND m.created_at > NOW() - INTERVAL '365 days'
         AND COALESCE(m.skipped_reason, '') <> 'muted'
         AND (${tenantId}::bigint IS NULL OR m.tenant_id = ${tenantId})
       GROUP BY m.chat_id
@@ -3804,7 +3804,7 @@ export async function listFollowUpCandidates(args?: {
         AND COALESCE(skipped_reason, '') <> 'muted'
         AND created_at > COALESCE(${
           lastOwnerAt ? lastOwnerAt.toISOString() : null
-        }::timestamptz, NOW() - INTERVAL '7 days')`;
+        }::timestamptz, NOW() - INTERVAL '365 days')`;
     const s = summaryRows[0] as
       | { cnt: number; last_text: string | null }
       | undefined;
