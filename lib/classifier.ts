@@ -1268,35 +1268,109 @@ function normalizeForWatchMatch(s: string): string {
   return s
     .toLowerCase()
     .replace(/‌/g, " ")
+    // Persian/Arabic letter variants the user mixes up freely.
+    // ي ↔ ی, ك ↔ ک, ة ↔ ه, ء ↔ '' (drop hamza), إ/أ/آ → ا.
+    .replace(/[يى]/g, "ی")
+    .replace(/[ك]/g, "ک")
+    .replace(/[ة]/g, "ه")
+    .replace(/[إأآ]/g, "ا")
+    .replace(/[ؤ]/g, "و")
+    .replace(/[ئ]/g, "ی")
+    .replace(/[ء]/g, "")
+    // Persian/Arabic digits → Latin.
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
     .replace(/[ \t]+/g, " ")
     .trim();
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Levenshtein distance — small + iterative, no allocations beyond
+// two rolling rows. Used by the fuzzy token matcher to tolerate
+// common Persian typos: ب ↔ پ, س ↔ ص, ت ↔ ط, etc. — the LLM
+// already matches these, the validator just has to agree.
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev: number[] = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    const curr: number[] = new Array(n + 1);
+    curr[0] = i;
+    const ai = a.charAt(i - 1);
+    for (let j = 1; j <= n; j++) {
+      const cost = ai === b.charAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j]! + 1, // deletion
+        curr[j - 1]! + 1, // insertion
+        prev[j - 1]! + cost, // substitution
+      );
+    }
+    prev = curr;
+  }
+  return prev[n]!;
 }
 
-// True iff every space-separated token of `needle` appears as a whole
-// word in `haystack`. "Whole word" = preceded and followed by a
-// whitespace/punctuation boundary or string edge. This is what kills
-// the "امیر inside امیرحسین" false-positive pattern: when the alias
-// has two tokens ("امیر" + "بال"), both must appear individually as
-// whole words, not as substrings of a longer name.
-function allTokensWholeWordPresent(needle: string, haystack: string): boolean {
+// Max edit distance we tolerate per token: 0 for short tokens (1-3
+// chars; common false-positive cliff), 1 for medium (4-6), 2 for
+// long (7+). Tracks how the LLM thinks: it tolerates a single typo
+// in a name but doesn't confuse "Ali" with "Eli".
+function maxFuzzy(token: string): number {
+  if (token.length >= 7) return 2;
+  if (token.length >= 4) return 1;
+  return 0;
+}
+
+// True iff `needle` appears in `haystack` either as a whole-word
+// match OR as a near-match (Levenshtein within the per-length
+// budget) within a single token. Folds Persian variants first.
+function tokenAppearsFuzzy(needle: string, hayTokens: string[]): boolean {
+  const budget = maxFuzzy(needle);
+  for (const h of hayTokens) {
+    if (h === needle) return true;
+    if (budget > 0 && Math.abs(h.length - needle.length) <= budget) {
+      if (levenshtein(h, needle) <= budget) return true;
+    }
+    // Also allow a fuzzy SUBSTRING of a longer compound word for
+    // long needles — e.g. "گرشاسبی" inside "گرشاسپی‌جون" should
+    // still hit. We check every window of |needle|±budget chars.
+    if (budget > 0 && h.length > needle.length + budget) {
+      const minLen = needle.length - budget;
+      const maxLen = needle.length + budget;
+      for (let w = minLen; w <= Math.min(maxLen, h.length); w++) {
+        for (let s = 0; s + w <= h.length; s++) {
+          if (levenshtein(h.substring(s, s + w), needle) <= budget) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// True iff every space-separated token of `needle` appears as a
+// whole word (or near-match) in `haystack`. Catches the "امیر
+// inside امیرحسین" false-positive at the parser level, but tolerates
+// a single typo in any token so "گرشاسبی" matches "گرشاسپی".
+function allTokensWholeWordPresent(
+  needle: string,
+  haystack: string,
+): boolean {
   const a = normalizeForWatchMatch(needle);
   const m = normalizeForWatchMatch(haystack);
   if (!a || !m) return false;
-  const tokens = a.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return false;
-  // \p{P} is Unicode punctuation; we accept either whitespace,
-  // punctuation, OR string boundary on each side.
-  return tokens.every((tok) => {
-    const re = new RegExp(
-      `(^|[\\s\\p{P}\\p{S}])${escapeRegex(tok)}([\\s\\p{P}\\p{S}]|$)`,
-      "u",
-    );
-    return re.test(m);
-  });
+  const needleTokens = a.split(/\s+/).filter(Boolean);
+  if (needleTokens.length === 0) return false;
+  // Split haystack on whitespace AND Unicode punctuation/symbols so
+  // "گرشاسپی!" tokenises to "گرشاسپی" cleanly.
+  const hayTokens = m
+    .split(/[\s\p{P}\p{S}]+/u)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  return needleTokens.every((tok) => tokenAppearsFuzzy(tok, hayTokens));
 }
 
 // Sanity-check the LLM verdict against the actual message text. Drops
