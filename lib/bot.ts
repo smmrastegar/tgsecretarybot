@@ -427,28 +427,74 @@ async function handleNoteWatchCallback(
       s.replace(/[&<>]/g, (c) =>
         c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;",
       );
+    const body = esc(full.text || "(خالی)");
+    // Two paths:
+    //   1. Append to the notice itself via editMessageText. Always
+    //      works because the bot already authored the message.
+    //   2. Fallback: send a fresh reply (only if editing fails for
+    //      some reason, e.g. the original notice was deleted).
+    const noticeMsg = ctx.callbackQuery?.message as
+      | { chat: { id: number }; message_id: number; text?: string; caption?: string }
+      | undefined;
+    const existingText =
+      noticeMsg?.text ?? noticeMsg?.caption ?? "";
+    // Don't re-append if the operator already pressed the button
+    // earlier — detect the "📄 متن کامل" marker we wrote on the
+    // first press.
+    const alreadyAppended = existingText.includes("📄 متن کامل");
+    if (noticeMsg && !alreadyAppended) {
+      const appended =
+        `${existingText}\n\n📄 <b>متن کامل</b>\n${body}`.slice(0, 4096);
+      try {
+        await ctx.api.editMessageText(
+          noticeMsg.chat.id,
+          noticeMsg.message_id,
+          appended,
+          {
+            parse_mode: "HTML",
+            // Keep the 🚩 گزارش خطا button alive after the edit —
+            // the operator might still want to flag it as wrong.
+            reply_markup: new InlineKeyboard().text(
+              "🚩 گزارش خطا",
+              `nw:wrong:${matchId}`,
+            ),
+          },
+        );
+        await ctx
+          .answerCallbackQuery({ text: "✅ متن کامل اضافه شد." })
+          .catch(() => {});
+        return;
+      } catch (err) {
+        console.warn(
+          "[nw_cb] edit notice with full-text failed, falling back to fresh send:",
+          err,
+        );
+      }
+    } else if (alreadyAppended) {
+      await ctx
+        .answerCallbackQuery({ text: "متن کامل قبلاً اضافه شده." })
+        .catch(() => {});
+      return;
+    }
+    // Fallback: send a fresh reply.
     const header = [
       `📄 <b>متن کامل پیام</b>`,
       `از: ${esc(full.senderName)}` +
         (full.chatTitle ? ` · ${esc(full.chatTitle)}` : ""),
     ].join("\n");
-    const body = esc(full.text || "(خالی)");
     const text = `${header}\n\n${body}`.slice(0, 4096);
-    const noticeMessageId = (
-      ctx.callbackQuery?.message as { message_id?: number } | undefined
-    )?.message_id;
     try {
       await ctx.api.sendMessage(match.forwardedTo ?? match.chatId, text, {
         parse_mode: "HTML",
-        ...(noticeMessageId
-          ? { reply_parameters: { message_id: noticeMessageId } }
+        ...(noticeMsg
+          ? { reply_parameters: { message_id: noticeMsg.message_id } }
           : {}),
       });
       await ctx
         .answerCallbackQuery({ text: "✅ متن کامل ارسال شد." })
         .catch(() => {});
     } catch (err) {
-      console.warn("[nw_cb] full-text send failed:", err);
+      console.warn("[nw_cb] full-text fresh send failed:", err);
       await ctx
         .answerCallbackQuery({
           text: "ارسال نشد — احتمالاً بات توی این چت permission نداره.",
