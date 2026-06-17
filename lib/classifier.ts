@@ -1390,7 +1390,32 @@ function validWatchlistMatch(args: {
   return false;
 }
 
-export async function scanForWatchlistConcepts(input: {
+export type WatchlistScanDebug = {
+  // What the LLM returned BEFORE the defensive validator.
+  llmRaw: Array<{
+    itemId: number;
+    matchedAlias: string | null;
+    quote: string;
+    reason: string;
+  }>;
+  // What the validator dropped, with a "why" line per drop.
+  droppedByValidator: Array<{
+    itemId: number;
+    concept: string;
+    matchedAlias: string | null;
+    quote: string;
+    reason: string;
+  }>;
+  // What survived everything and would actually fire a notice.
+  finalMatches: WatchlistMatchResult[];
+  llmFailed: boolean;
+};
+
+// Debug counterpart of scanForWatchlistConcepts — same prompt, same
+// LLM, same validator, but exposes every stage of the pipeline so the
+// "تست" button on /note-watchlist can show the operator exactly where
+// a match got accepted or dropped.
+export async function scanForWatchlistConceptsDebug(input: {
   text: string;
   items: Array<{
     id: number;
@@ -1402,8 +1427,14 @@ export async function scanForWatchlistConcepts(input: {
   senderName?: string | null;
   chatId?: number;
   businessConnectionId?: string;
-}): Promise<WatchlistMatchResult[]> {
-  if (!input.text.trim() || input.items.length === 0) return [];
+}): Promise<WatchlistScanDebug> {
+  const empty: WatchlistScanDebug = {
+    llmRaw: [],
+    droppedByValidator: [],
+    finalMatches: [],
+    llmFailed: false,
+  };
+  if (!input.text.trim() || input.items.length === 0) return empty;
   const payload = {
     items: input.items.slice(0, 20).map((it) => ({
       id: it.id,
@@ -1436,56 +1467,84 @@ export async function scanForWatchlistConcepts(input: {
     );
   } catch (err) {
     console.warn("[watchlist] scan failed:", err);
-    return [];
+    return { ...empty, llmFailed: true };
   }
   const json = extractJson(raw);
-  if (!json) return [];
+  if (!json) return empty;
+  let parsed: { matches?: unknown } = {};
   try {
-    const parsed = JSON.parse(json) as { matches?: unknown };
-    if (!Array.isArray(parsed.matches)) return [];
-    const validIds = new Set(input.items.map((it) => it.id));
-    const out: WatchlistMatchResult[] = [];
-    const itemById = new Map(input.items.map((it) => [it.id, it]));
-    for (const m of parsed.matches) {
-      if (typeof m !== "object" || m === null) continue;
-      const r = m as Record<string, unknown>;
-      const itemId = Number(r.item_id);
-      const quote = typeof r.quote === "string" ? r.quote.trim() : "";
-      const reason = typeof r.reason === "string" ? r.reason.trim() : "";
-      const matchedAlias =
-        typeof r.matched_alias === "string" && r.matched_alias.trim()
-          ? r.matched_alias.trim().slice(0, 120)
-          : null;
-      if (!validIds.has(itemId) || !quote) continue;
-      // Defensive sanity check: every alias / concept must appear as
-      // a whole word in the message text. This kills the LLM's
-      // most common false-positive shape — matching "امیر" inside
-      // "امیرحسین" or matching "بال" inside "بالاس".
-      const item = itemById.get(itemId);
-      if (item) {
-        const ok = validWatchlistMatch({
-          message: input.text,
-          concept: item.concept,
-          aliases: item.aliases ?? [],
-        });
-        if (!ok) {
-          console.log(
-            `[watchlist] dropping LLM match for concept="${item.concept}" — neither concept nor any alias appears as a whole word in message`,
-          );
-          continue;
-        }
-      }
-      out.push({
+    parsed = JSON.parse(json) as { matches?: unknown };
+  } catch {
+    return empty;
+  }
+  if (!Array.isArray(parsed.matches)) return empty;
+  const validIds = new Set(input.items.map((it) => it.id));
+  const itemById = new Map(input.items.map((it) => [it.id, it]));
+  const llmRaw: WatchlistScanDebug["llmRaw"] = [];
+  const dropped: WatchlistScanDebug["droppedByValidator"] = [];
+  const finalMatches: WatchlistMatchResult[] = [];
+  for (const m of parsed.matches) {
+    if (typeof m !== "object" || m === null) continue;
+    const r = m as Record<string, unknown>;
+    const itemId = Number(r.item_id);
+    const quote = typeof r.quote === "string" ? r.quote.trim() : "";
+    const reason = typeof r.reason === "string" ? r.reason.trim() : "";
+    const matchedAlias =
+      typeof r.matched_alias === "string" && r.matched_alias.trim()
+        ? r.matched_alias.trim().slice(0, 120)
+        : null;
+    if (!validIds.has(itemId) || !quote) continue;
+    llmRaw.push({ itemId, matchedAlias, quote: quote.slice(0, 200), reason });
+    const item = itemById.get(itemId);
+    if (!item) continue;
+    const ok = validWatchlistMatch({
+      message: input.text,
+      concept: item.concept,
+      aliases: item.aliases ?? [],
+    });
+    if (!ok) {
+      console.log(
+        `[watchlist] dropping LLM match for concept="${item.concept}" — neither concept nor any alias appears as a whole word in message`,
+      );
+      dropped.push({
         itemId,
+        concept: item.concept,
         matchedAlias,
         quote: quote.slice(0, 200),
         reason,
       });
+      continue;
     }
-    return out;
-  } catch {
-    return [];
+    finalMatches.push({
+      itemId,
+      matchedAlias,
+      quote: quote.slice(0, 200),
+      reason,
+    });
   }
+  return {
+    llmRaw,
+    droppedByValidator: dropped,
+    finalMatches,
+    llmFailed: false,
+  };
+}
+
+export async function scanForWatchlistConcepts(input: {
+  text: string;
+  items: Array<{
+    id: number;
+    concept: string;
+    description: string | null;
+    aliases?: string[];
+  }>;
+  chatTitle?: string | null;
+  senderName?: string | null;
+  chatId?: number;
+  businessConnectionId?: string;
+}): Promise<WatchlistMatchResult[]> {
+  const debug = await scanForWatchlistConceptsDebug(input);
+  return debug.finalMatches;
 }
 
 export async function summarizeGroup(input: {

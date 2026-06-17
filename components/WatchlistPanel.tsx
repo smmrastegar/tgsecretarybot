@@ -267,6 +267,7 @@ function ItemCard({
   onDelete: () => void;
 }) {
   const [advanced, setAdvanced] = useState(false);
+  const [testing, setTesting] = useState(false);
   return (
     <Card
       className={`!p-3 transition-colors ${
@@ -327,15 +328,24 @@ function ItemCard({
       />
       <AliasEditor item={item} />
 
-      <button
-        onClick={() => setAdvanced((v) => !v)}
-        className="text-[10px] text-[var(--color-accent)] hover:underline mb-1"
-      >
-        {advanced ? "▴ بستن تنظیمات پیشرفته" : "▾ تنظیمات پیشرفته"}
-      </button>
+      <div className="flex items-center gap-3 mb-1">
+        <button
+          onClick={() => setAdvanced((v) => !v)}
+          className="text-[10px] text-[var(--color-accent)] hover:underline"
+        >
+          {advanced ? "▴ بستن تنظیمات پیشرفته" : "▾ تنظیمات پیشرفته"}
+        </button>
+        <button
+          onClick={() => setTesting((v) => !v)}
+          className="text-[10px] text-[var(--color-accent)] hover:underline"
+        >
+          {testing ? "▴ بستن تست" : "🧪 تست"}
+        </button>
+      </div>
       {advanced && (
         <AdvancedItemSettings item={item} onUpdate={onUpdate} />
       )}
+      {testing && <ConceptTester itemId={item.id} concept={item.concept} />}
 
       <div className="flex items-center justify-between text-[10px] text-[var(--color-text-dim)]">
         <button
@@ -534,6 +544,198 @@ function AliasEditor({ item }: { item: WatchlistItem }) {
           +
         </button>
       </div>
+    </div>
+  );
+}
+
+type TestVerdict =
+  | "skipped"
+  | "no_llm_match"
+  | "validator_dropped"
+  | "would_be_cooled_down"
+  | "match"
+  | "llm_failed";
+
+type TestResponse = {
+  ok: boolean;
+  verdict: TestVerdict;
+  reason: string;
+  gates?: {
+    masterEnabled: boolean;
+    minLen: number;
+    textLen: number;
+    passesLength: boolean;
+    itemEnabled: boolean;
+    forwardToInbox: boolean;
+    forwardDefault: boolean;
+    cooldownMin: number;
+  };
+  cooldownActive?: boolean | null;
+  debug?: {
+    llmRaw: Array<{
+      itemId: number;
+      matchedAlias: string | null;
+      quote: string;
+      reason: string;
+    }>;
+    droppedByValidator: Array<{
+      itemId: number;
+      concept: string;
+      matchedAlias: string | null;
+      quote: string;
+      reason: string;
+    }>;
+    finalMatches: Array<{
+      itemId: number;
+      matchedAlias: string | null;
+      quote: string;
+      reason: string;
+    }>;
+    llmFailed: boolean;
+  };
+  error?: string;
+};
+
+function ConceptTester({
+  itemId,
+  concept,
+}: {
+  itemId: number;
+  concept: string;
+}) {
+  const [text, setText] = useState("");
+  const [chatId, setChatId] = useState("");
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<TestResponse | null>(null);
+
+  const run = async () => {
+    if (!text.trim()) return;
+    setRunning(true);
+    setResult(null);
+    try {
+      const body: Record<string, unknown> = { text: text.trim() };
+      const cid = Number(chatId.trim());
+      if (Number.isFinite(cid) && cid !== 0) body.chatId = cid;
+      const r = await fetch(`/api/note-watchlist/${itemId}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = (await r.json()) as TestResponse;
+      setResult(j);
+    } catch (e) {
+      setResult({
+        ok: false,
+        verdict: "llm_failed",
+        reason: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const verdictTone = (() => {
+    switch (result?.verdict) {
+      case "match":
+        return "bg-emerald-900/40 border-emerald-800 text-emerald-200";
+      case "would_be_cooled_down":
+        return "bg-amber-900/40 border-amber-800 text-amber-200";
+      case "no_llm_match":
+      case "validator_dropped":
+      case "skipped":
+        return "bg-amber-900/40 border-amber-800 text-amber-200";
+      case "llm_failed":
+        return "bg-red-900/40 border-red-800 text-red-200";
+      default:
+        return "";
+    }
+  })();
+
+  return (
+    <div
+      className="border border-[var(--color-border)] rounded-md p-2 mb-2 bg-[var(--color-surface-2)]/40"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
+        یه پیام نمونه پیست کن تا ببینی این concept روش match می‌شه یا نه و
+        دقیقاً چی شد. (هزینه: یک LLM call.)
+      </div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="متن نمونه (مثلاً «آلبوم جدید آرمان گرشاسبی پخش شد»)"
+        rows={3}
+        className="w-full text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 mb-1.5"
+      />
+      <div className="flex gap-1.5 flex-wrap items-center mb-2">
+        <input
+          type="text"
+          inputMode="numeric"
+          value={chatId}
+          onChange={(e) => setChatId(e.target.value)}
+          placeholder="chat ID (اختیاری — برای چک cooldown)"
+          dir="ltr"
+          className="flex-1 min-w-[120px] text-[11px] tabular-nums bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+        />
+        <button
+          onClick={run}
+          disabled={running || !text.trim()}
+          className="text-[11px] px-3 py-1 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+        >
+          {running ? "..." : "🧪 اجرا"}
+        </button>
+      </div>
+      {result && (
+        <div
+          className={`text-[11px] border rounded-md p-2 mb-1 ${verdictTone}`}
+        >
+          <div className="font-medium mb-1">
+            verdict: {result.verdict}
+          </div>
+          <div className="mb-1.5">{result.reason}</div>
+          {result.debug && result.debug.llmRaw.length > 0 && (
+            <div className="mt-1 pt-1 border-t border-current/30">
+              <div className="text-[10px] opacity-80 mb-0.5">
+                LLM گفت match (قبل از validator):
+              </div>
+              {result.debug.llmRaw.map((m, i) => (
+                <div
+                  key={i}
+                  className="text-[10px] opacity-90 break-words"
+                >
+                  • alias=<b>{m.matchedAlias ?? "—"}</b> · quote=«{m.quote}» ·{" "}
+                  {m.reason}
+                </div>
+              ))}
+            </div>
+          )}
+          {result.debug && result.debug.droppedByValidator.length > 0 && (
+            <div className="mt-1 pt-1 border-t border-current/30">
+              <div className="text-[10px] opacity-80 mb-0.5">
+                validator رد کرد (alias یا concept به‌صورت whole-word توی
+                متن نیست):
+              </div>
+              {result.debug.droppedByValidator.map((m, i) => (
+                <div key={i} className="text-[10px] opacity-90 break-words">
+                  • «{m.quote}»
+                </div>
+              ))}
+              <div className="text-[10px] opacity-80 mt-1">
+                راه‌حل: یه alias دقیق‌تر اضافه کن که واقعاً توی پیام بیاد
+                (مثلاً «{concept}»‌ی که توی پیام دیدی رو دقیقاً copy کن).
+              </div>
+            </div>
+          )}
+          {result.gates && (
+            <details className="mt-1.5 text-[10px] opacity-80">
+              <summary className="cursor-pointer">جزئیات gate ها</summary>
+              <pre className="text-[10px] mt-1 overflow-x-auto">
+{JSON.stringify(result.gates, null, 2)}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
     </div>
   );
 }
