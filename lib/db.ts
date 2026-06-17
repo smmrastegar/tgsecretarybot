@@ -6019,6 +6019,27 @@ export async function dueMonitoredAccounts(
 ): Promise<MonitoredAccount[]> {
   if (!hasDb()) return [];
   await ensureSchema();
+  // Peak-hours gate. The cron runs every 5 min, but for each
+  // interval bucket we only let it fire during a curated set of
+  // Tehran-time hours (Asia/Tehran). Low-traffic overnight hours
+  // are skipped so we don't waste HikerAPI calls on quiet windows
+  // when nobody is posting.
+  //
+  //   3h  → 09, 12, 15, 18, 21    (five daytime/evening slots)
+  //   6h  → 10, 16, 22            (three slots: morning, late afternoon, late evening)
+  //   12h → 10, 22                (two slots, exactly 12h apart)
+  //   24h → 19                    (one slot at evening peak)
+  //
+  // For never-checked accounts (last_checked_at IS NULL) we ignore
+  // the hour gate so a brand-new account doesn't wait until 19:00
+  // Tehran for its first run — addMonitoredAccount also kicks an
+  // immediate processAccount() but this is defence in depth.
+  //
+  // Strict interval `last_checked_at < NOW() - interval_minutes`
+  // can miss a trigger that lands at the same minute, so we relax
+  // it to 95% — i.e. an account that was checked within the last
+  // 5% of its window is still considered due. This handles the
+  // 5-minute cron drift around a hourly trigger.
   const rows = await sql()`
     SELECT id, platform, username, url, external_id, topic_id, enabled,
            check_stories, check_posts, check_reels, check_profile,
@@ -6030,7 +6051,25 @@ export async function dueMonitoredAccounts(
     WHERE enabled = TRUE
       AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
       AND (last_checked_at IS NULL
-           OR last_checked_at < NOW() - (interval_minutes || ' minutes')::INTERVAL)
+           OR last_checked_at < NOW() - ((interval_minutes * 0.95) || ' minutes')::INTERVAL)
+      AND (
+        last_checked_at IS NULL
+        OR CASE
+          WHEN interval_minutes = 180 THEN
+            EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
+              IN (9, 12, 15, 18, 21)
+          WHEN interval_minutes = 360 THEN
+            EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
+              IN (10, 16, 22)
+          WHEN interval_minutes = 720 THEN
+            EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
+              IN (10, 22)
+          WHEN interval_minutes = 1440 THEN
+            EXTRACT(HOUR FROM (NOW() AT TIME ZONE 'Asia/Tehran'))::INT
+              = 19
+          ELSE TRUE
+        END
+      )
     ORDER BY last_checked_at NULLS FIRST, id ASC
     LIMIT ${limit}`;
   return (rows as Array<Record<string, unknown>>).map(rowToMonitored);

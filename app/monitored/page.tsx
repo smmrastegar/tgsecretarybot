@@ -53,12 +53,27 @@ type Defaults = {
   checkMentioned: boolean;
 };
 
-// The owner asked for ONLY three options on Instagram polling: 3h /
-// 6h / 12h. Smaller numbers (5/10/15/30 minutes) were cheap with the
-// notify-service push, but with direct HikerAPI polling they burn
-// budget for no real benefit on social-media accounts that update at
-// most a few times a day.
-const INTERVAL_OPTIONS = [180, 360, 720] as const;
+// The owner asked for ONLY four options on Instagram polling:
+// 3h / 6h / 12h / 24h, all anchored to Asia/Tehran peak hours.
+// Smaller numbers (5/10/15/30 minutes) were cheap with the notify-
+// service push, but with direct HikerAPI polling they burn budget
+// for no real benefit on social-media accounts that update at most
+// a few times a day.
+//
+//   3h  → ساعت‌های ۹، ۱۲، ۱۵، ۱۸، ۲۱ تهران (۵ بار)
+//   6h  → ساعت‌های ۱۰، ۱۶، ۲۲ تهران (۳ بار)
+//   12h → ساعت‌های ۱۰، ۲۲ تهران (۲ بار)
+//   24h → ساعت ۱۹ تهران (۱ بار)
+//
+// Must stay in sync with dueMonitoredAccounts in lib/db.ts.
+const INTERVAL_OPTIONS = [180, 360, 720, 1440] as const;
+
+const TEHRAN_TRIGGER_HOURS: Record<number, number[]> = {
+  180: [9, 12, 15, 18, 21],
+  360: [10, 16, 22],
+  720: [10, 22],
+  1440: [19],
+};
 
 function intervalLabel(m: number): string {
   if (m < 60) return `${m} دقیقه`;
@@ -2186,8 +2201,18 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
     return cost;
   }
 
+  // Ticks per month is the number of Tehran peak-hour triggers per
+  // day * 30. For intervals without a curated schedule fall back to
+  // the old "wall-clock / interval" estimate. This matches the gate
+  // applied in lib/db.ts dueMonitoredAccounts.
+  function ticksPerMonth(intervalMinutes: number): number {
+    const hours = TEHRAN_TRIGGER_HOURS[intervalMinutes];
+    if (hours && hours.length > 0) return hours.length * 30;
+    return intervalMinutes > 0 ? (30 * 24 * 60) / intervalMinutes : 0;
+  }
+
   const perAccountMonthly = accounts.map((a) => {
-    const ticks = a.intervalMinutes > 0 ? (30 * 24 * 60) / a.intervalMinutes : 0;
+    const ticks = ticksPerMonth(a.intervalMinutes);
     const monthly = costPerTick(a) * ticks;
     return { account: a, ticks, monthly };
   });
@@ -2206,7 +2231,7 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
     );
     if (inGroup.length === 0) continue;
     const cost = inGroup.reduce((s, a) => {
-      const ticks = (30 * 24 * 60) / minutes;
+      const ticks = ticksPerMonth(minutes);
       return s + costPerTick(a) * ticks;
     }, 0);
     intervalBreakdown.push({ minutes, count: inGroup.length, cost });
@@ -2277,23 +2302,36 @@ function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
       {intervalBreakdown.length > 0 && (
         <div className="border-t border-[var(--color-border)] pt-2 mt-1">
           <div className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
-            تفکیک بر اساس interval
+            تفکیک بر اساس interval (همه ساعت‌ها به وقت تهران)
           </div>
           <div className="flex flex-col gap-1.5">
-            {intervalBreakdown.map((row) => (
-              <div
-                key={row.minutes}
-                className="flex items-center justify-between text-[11px]"
-              >
-                <span>
-                  {intervalLabel(row.minutes)}{" "}
-                  <span className="text-[var(--color-text-dim)]">
-                    · {row.count} اکانت
+            {intervalBreakdown.map((row) => {
+              const hours = TEHRAN_TRIGGER_HOURS[row.minutes];
+              const slots = hours
+                ? hours.map((h) => `${h}:۰۰`).join("، ")
+                : "—";
+              return (
+                <div
+                  key={row.minutes}
+                  className="flex items-start justify-between text-[11px] gap-3"
+                >
+                  <span className="min-w-0">
+                    {intervalLabel(row.minutes)}{" "}
+                    <span className="text-[var(--color-text-dim)]">
+                      · {row.count} اکانت
+                    </span>
+                    {hours && (
+                      <span className="block text-[10px] text-[var(--color-text-dim)] mt-0.5">
+                        ساعت‌های اجرا: {slots}
+                      </span>
+                    )}
                   </span>
-                </span>
-                <span className="tabular-nums">${row.cost.toFixed(2)}/ماه</span>
-              </div>
-            ))}
+                  <span className="tabular-nums shrink-0">
+                    ${row.cost.toFixed(2)}/ماه
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
