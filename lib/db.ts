@@ -3828,6 +3828,121 @@ export async function listFollowUpCandidates(args?: {
   return out;
 }
 
+// Debug-only counterpart to listFollowUpCandidates: returns ALL
+// private chats with a "decided" reason describing exactly which
+// gate fired (or "would_ping_first" / "would_ping_escalate" when
+// the chat is a real candidate). Used by the cron's ?debug=1 mode
+// so the operator can see why a specific chat isn't being pinged.
+export type FollowUpDebugRow = {
+  chatId: number;
+  chatTitle: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  nickname: string | null;
+  lastCustomerMessageAt: Date | null;
+  lastOwnerMessageAt: Date | null;
+  hoursSinceCustomer: number | null;
+  followUpEnabled: boolean;
+  thresholdHours: number;
+  escalateHours: number;
+  lastPingAt: Date | null;
+  lastPingKind: string | null;
+  ackedAt: Date | null;
+  muted: boolean;
+  ignored: boolean;
+  isBot: boolean;
+  decided: string;
+};
+
+export async function debugFollowUpScan(args?: {
+  tenantId?: number | null;
+}): Promise<FollowUpDebugRow[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const tenantId = args?.tenantId ?? null;
+  const rows = await sql()`
+    WITH per_chat AS (
+      SELECT
+        m.chat_id,
+        MAX(CASE WHEN m.from_owner THEN m.created_at END) AS last_owner_at,
+        MAX(CASE WHEN NOT m.from_owner THEN m.created_at END) AS last_customer_at
+      FROM messages_log m
+      WHERE m.chat_type = 'private'
+        AND m.created_at > NOW() - INTERVAL '365 days'
+        AND COALESCE(m.skipped_reason, '') <> 'muted'
+        AND (${tenantId}::bigint IS NULL OR m.tenant_id = ${tenantId})
+      GROUP BY m.chat_id
+    )
+    SELECT
+      p.chat_id, p.last_owner_at, p.last_customer_at,
+      r.first_name, r.last_name, r.nickname, r.chat_title,
+      COALESCE(r.follow_up_enabled, TRUE) AS follow_up_enabled,
+      COALESCE(r.follow_up_threshold_hours, 2) AS threshold_h,
+      COALESCE(r.follow_up_escalate_hours, 12) AS escalate_h,
+      r.follow_up_last_ping_at, r.follow_up_last_ping_kind,
+      r.follow_up_acked_at,
+      COALESCE(r.muted, FALSE) AS muted,
+      COALESCE(r.ignored, FALSE) AS ignored,
+      COALESCE(r.is_bot, FALSE) AS is_bot,
+      CASE
+        WHEN p.last_customer_at IS NULL THEN NULL
+        ELSE EXTRACT(EPOCH FROM (NOW() - p.last_customer_at)) / 3600.0
+      END AS hours_since_customer,
+      CASE
+        WHEN p.last_customer_at IS NULL THEN 'no_customer_message'
+        WHEN p.last_owner_at IS NOT NULL AND p.last_owner_at >= p.last_customer_at
+          THEN 'replied_by_owner'
+        WHEN COALESCE(r.follow_up_enabled, TRUE) = FALSE THEN 'follow_up_disabled'
+        WHEN COALESCE(r.muted, FALSE) THEN 'chat_muted'
+        WHEN COALESCE(r.ignored, FALSE) THEN 'chat_ignored'
+        WHEN COALESCE(r.is_bot, FALSE) THEN 'is_bot'
+        WHEN r.follow_up_acked_at IS NOT NULL
+             AND r.follow_up_acked_at >= p.last_customer_at THEN 'acked'
+        WHEN r.follow_up_last_ping_at IS NULL
+             AND EXTRACT(EPOCH FROM (NOW() - p.last_customer_at)) / 3600.0
+                 < COALESCE(r.follow_up_threshold_hours, 2)
+          THEN 'below_threshold'
+        WHEN r.follow_up_last_ping_at IS NULL THEN 'would_ping_first'
+        WHEN r.follow_up_last_ping_kind = 'first'
+             AND EXTRACT(EPOCH FROM (NOW() - r.follow_up_last_ping_at)) / 3600.0
+                 < COALESCE(r.follow_up_escalate_hours, 12)
+          THEN 'waiting_for_escalate'
+        WHEN r.follow_up_last_ping_kind = 'first' THEN 'would_ping_escalate'
+        ELSE 'already_pinged_escalate'
+      END AS decided
+    FROM per_chat p
+    LEFT JOIN chat_rules r ON r.chat_id = p.chat_id
+    ORDER BY p.last_customer_at DESC NULLS LAST
+    LIMIT 300`;
+  const out: FollowUpDebugRow[] = [];
+  for (const r0 of rows as Array<Record<string, unknown>>) {
+    out.push({
+      chatId: Number(r0.chat_id),
+      chatTitle: (r0.chat_title as string) ?? null,
+      firstName: (r0.first_name as string) ?? null,
+      lastName: (r0.last_name as string) ?? null,
+      nickname: (r0.nickname as string) ?? null,
+      lastCustomerMessageAt: (r0.last_customer_at as Date) ?? null,
+      lastOwnerMessageAt: (r0.last_owner_at as Date) ?? null,
+      hoursSinceCustomer:
+        r0.hours_since_customer == null
+          ? null
+          : Number(r0.hours_since_customer),
+      followUpEnabled: Boolean(r0.follow_up_enabled),
+      thresholdHours: Number(r0.threshold_h),
+      escalateHours: Number(r0.escalate_h),
+      lastPingAt: (r0.follow_up_last_ping_at as Date) ?? null,
+      lastPingKind: (r0.follow_up_last_ping_kind as string) ?? null,
+      ackedAt: (r0.follow_up_acked_at as Date) ?? null,
+      muted: Boolean(r0.muted),
+      ignored: Boolean(r0.ignored),
+      isBot: Boolean(r0.is_bot),
+      decided: String(r0.decided),
+    });
+  }
+  return out;
+}
+
 export async function setChatSummaryIntervalHours(args: {
   chatId: number;
   hours: number | null;

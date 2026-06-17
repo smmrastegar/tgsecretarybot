@@ -4,6 +4,7 @@ import { config } from "@/lib/config";
 import { getCurrentSession } from "@/lib/auth";
 import { getBot } from "@/lib/bot";
 import {
+  debugFollowUpScan,
   hasDb,
   listChatsByFunction,
   listFollowUpCandidates,
@@ -109,7 +110,49 @@ async function run(request: Request): Promise<NextResponse> {
   if (!hasDb()) {
     return NextResponse.json({ error: "DATABASE_URL not set" }, { status: 500 });
   }
+  const url = new URL(request.url);
+  const debug = url.searchParams.get("debug") === "1";
   const tenants = (await listTenants()).filter((t) => t.isEnabled);
+  if (debug) {
+    const out: unknown[] = [];
+    for (const t of tenants) {
+      const rows = await runWithTenant(t.id, () =>
+        debugFollowUpScan({ tenantId: t.id }),
+      );
+      const buckets: Record<string, number> = {};
+      for (const r of rows) buckets[r.decided] = (buckets[r.decided] ?? 0) + 1;
+      out.push({
+        tenantId: t.id,
+        totalChats: rows.length,
+        buckets,
+        chats: rows.map((r) => ({
+          chatId: r.chatId,
+          name:
+            [r.firstName, r.lastName].filter(Boolean).join(" ").trim() ||
+            r.nickname ||
+            r.chatTitle ||
+            null,
+          decided: r.decided,
+          hoursSinceCustomer:
+            r.hoursSinceCustomer == null
+              ? null
+              : Number(r.hoursSinceCustomer.toFixed(2)),
+          thresholdHours: r.thresholdHours,
+          escalateHours: r.escalateHours,
+          followUpEnabled: r.followUpEnabled,
+          muted: r.muted,
+          ignored: r.ignored,
+          isBot: r.isBot,
+          lastCustomerMessageAt: r.lastCustomerMessageAt,
+          lastOwnerMessageAt: r.lastOwnerMessageAt,
+          lastPingAt: r.lastPingAt,
+          lastPingKind: r.lastPingKind,
+          ackedAt: r.ackedAt,
+        })),
+      });
+    }
+    return NextResponse.json({ ok: true, debug: true, tenants: out });
+  }
   const results = [];
   for (const t of tenants) {
     try {
