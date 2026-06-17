@@ -80,6 +80,7 @@ import {
   addChatNote,
   listChatsByFunction,
   upsertForumTopic,
+  addSmsAcceptSignature,
   createSmsBlockRule,
   deleteSmsDedup,
   getSmsDedup,
@@ -409,6 +410,36 @@ async function handleSmsCallback(
           text: "نشد پاک کنم — احتمالاً قبلاً پاک شده.",
           show_alert: false,
         })
+        .catch(() => {});
+    }
+    return;
+  }
+  if (action === "ok") {
+    try {
+      await addSmsAcceptSignature({
+        bodySignature: row.bodySignature,
+        bodyPreview: row.bodyPreview ?? row.bodySignature,
+        createdBy: ctx.from?.id ?? null,
+      });
+      // Remove the action keyboard from the current message — the
+      // operator told us they're fine with this pattern, no reason
+      // to keep the buttons visible. Future SMS that hash to the
+      // same signature will arrive without buttons in the first
+      // place (see isSmsAcceptedSignature check in routeSmsForward).
+      if (row.telegramMessageId) {
+        await ctx.api
+          .editMessageReplyMarkup(row.inboxChatId, row.telegramMessageId, {
+            reply_markup: undefined,
+          })
+          .catch(() => {});
+      }
+      await ctx
+        .answerCallbackQuery({ text: "✅ پذیرفته شد." })
+        .catch(() => {});
+    } catch (err) {
+      console.warn("[sms_cb] accept failed:", err);
+      await ctx
+        .answerCallbackQuery({ text: "ذخیره نشد — خطا." })
         .catch(() => {});
     }
     return;

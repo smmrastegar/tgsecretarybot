@@ -12,11 +12,13 @@ import { InlineKeyboard, type Bot } from "grammy";
 import {
   findOwnerOfPhone,
   findSmsDedup,
+  isSmsAcceptedSignature,
   listChatsByFunction,
   listSmsBlockRules,
   recordAiUsage,
   smsBodySignature,
   setSmsDedupMessageId,
+  touchSmsAcceptSignature,
   touchSmsBlockRule,
   upsertSmsDedup,
 } from "./db";
@@ -529,17 +531,30 @@ export async function routeSmsForward(args: {
     ? `otp:${otp}` // OTP body changes a lot but the code is the dedup key
     : smsBodySignature(sms.body || sms.phone);
 
+  // Was this kind of SMS already explicitly accepted by the
+  // operator? If yes, deliver clean — no inline buttons, no
+  // dedup ping. They told us they're fine with this pattern;
+  // they don't want to be asked again.
+  const accepted = await isSmsAcceptedSignature(signature).catch(() => false);
+  if (accepted) {
+    await touchSmsAcceptSignature(signature).catch(() => {});
+  }
+
   let delivered = 0;
   for (const inbox of inboxes) {
     const existing = await findSmsDedup(inbox.chatId, signature, 48).catch(
       () => null,
     );
     if (existing && existing.telegramMessageId) {
-      // Same SMS again — edit the original to bump the count + time.
+      // Same SMS again — edit the original to bump the count + the
+      // hh:mm clock of the latest arrival. The operator asked us to
+      // drop "اولین: <time>" — the original message's send time is
+      // already visible in Telegram, so we only carry the count and
+      // the latest clock time.
       const repeats = existing.repeatCount + 1;
       const augmented =
         outText +
-        `\n\n🔁 <i>دفعه ${repeats} — اولین: ${formatTehranTime(existing.firstSentAt)} · آخرین: همین الان</i>`;
+        `\n\n🔁 <i>دفعه ${repeats} — آخرین: ${formatTehranTime(new Date())}</i>`;
       try {
         await args.bot.api.editMessageText(
           inbox.chatId,
@@ -547,7 +562,9 @@ export async function routeSmsForward(args: {
           augmented.slice(0, 4096),
           {
             parse_mode: "HTML",
-            reply_markup: buildSmsActionKeyboard(existing.id),
+            reply_markup: accepted
+              ? undefined
+              : buildSmsActionKeyboard(existing.id),
           },
         );
         await upsertSmsDedup({
@@ -558,7 +575,7 @@ export async function routeSmsForward(args: {
         });
         delivered++;
         console.log(
-          `[sms] dedup edit inbox=${inbox.chatId} msg=${existing.telegramMessageId} repeats=${repeats}`,
+          `[sms] dedup edit inbox=${inbox.chatId} msg=${existing.telegramMessageId} repeats=${repeats} accepted=${accepted}`,
         );
         continue;
       } catch (err) {
@@ -581,12 +598,14 @@ export async function routeSmsForward(args: {
     try {
       const sent = await args.bot.api.sendMessage(inbox.chatId, outText, {
         parse_mode: "HTML",
-        reply_markup: buildSmsActionKeyboard(dedup.id),
+        reply_markup: accepted
+          ? undefined
+          : buildSmsActionKeyboard(dedup.id),
       });
       await setSmsDedupMessageId(dedup.id, sent.message_id);
       delivered++;
       console.log(
-        `[sms] forwarded phone=${sms.phone} owner="${owner?.name ?? "?"}" → inbox=${inbox.chatId} msg=${sent.message_id} dedup=${dedup.id}`,
+        `[sms] forwarded phone=${sms.phone} owner="${owner?.name ?? "?"}" → inbox=${inbox.chatId} msg=${sent.message_id} dedup=${dedup.id} accepted=${accepted}`,
       );
     } catch (err) {
       console.warn(
@@ -599,7 +618,12 @@ export async function routeSmsForward(args: {
 }
 
 function buildSmsActionKeyboard(dedupId: number): InlineKeyboard {
+  // Three actions per SMS: delete the Telegram copy, block this
+  // kind so the AI gate filters similar messages, or accept this
+  // kind so future repeats arrive WITHOUT buttons (the operator's
+  // "don't ask me again" tick).
   return new InlineKeyboard()
+    .text("✅ پذیرفتم", `sms:ok:${dedupId}`)
     .text("🗑 پاک کن", `sms:rm:${dedupId}`)
     .text("🚫 این مدل رو نیار", `sms:block:${dedupId}`);
 }
@@ -608,8 +632,6 @@ function formatTehranTime(d: Date): string {
   try {
     return new Intl.DateTimeFormat("fa-IR", {
       timeZone: "Asia/Tehran",
-      month: "short",
-      day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
     }).format(d);

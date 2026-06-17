@@ -297,6 +297,23 @@ export async function ensureSchema(): Promise<void> {
       )`;
     await q`CREATE INDEX IF NOT EXISTS sms_block_rules_enabled_idx
       ON sms_block_rules (enabled) WHERE enabled = TRUE`;
+    // SMS accept signatures: once the operator taps "✅ پذیرفتم"
+    // under a forwarded SMS, future SMS with the same dedup
+    // signature arrive without action buttons — they're approved
+    // and the operator doesn't want to see the block/accept
+    // question on every repeat.
+    await q`
+      CREATE TABLE IF NOT EXISTS sms_accept_signatures (
+        id              BIGSERIAL PRIMARY KEY,
+        body_signature  TEXT NOT NULL UNIQUE,
+        body_preview    TEXT,
+        hit_count       INT NOT NULL DEFAULT 0,
+        last_hit_at     TIMESTAMPTZ,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_by      BIGINT
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS sms_accept_signatures_sig_idx
+      ON sms_accept_signatures (body_signature)`;
     // Secretary Routes: multi-recipient relay layer that sits on top of
     // chat_rules.mode='secretary'. A Route is a named bundle of
     // recipients (chats that receive the forwarded message) plus a
@@ -3306,6 +3323,45 @@ export async function touchSmsBlockRule(id: number): Promise<void> {
     UPDATE sms_block_rules
     SET hit_count = hit_count + 1, last_hit_at = NOW()
     WHERE id = ${id}`;
+}
+
+// --- SMS accept signatures ---
+
+export async function addSmsAcceptSignature(args: {
+  bodySignature: string;
+  bodyPreview: string;
+  createdBy?: number | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO sms_accept_signatures (body_signature, body_preview, created_by)
+    VALUES (${args.bodySignature}, ${args.bodyPreview.slice(0, 400)},
+            ${args.createdBy ?? null})
+    ON CONFLICT (body_signature) DO NOTHING`;
+}
+
+export async function isSmsAcceptedSignature(
+  signature: string,
+): Promise<boolean> {
+  if (!hasDb() || !signature) return false;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT 1 FROM sms_accept_signatures
+    WHERE body_signature = ${signature}
+    LIMIT 1`;
+  return rows.length > 0;
+}
+
+export async function touchSmsAcceptSignature(
+  signature: string,
+): Promise<void> {
+  if (!hasDb() || !signature) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE sms_accept_signatures
+    SET hit_count = hit_count + 1, last_hit_at = NOW()
+    WHERE body_signature = ${signature}`;
 }
 
 // --- Group analytics cache + share token ---
