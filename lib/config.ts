@@ -90,7 +90,7 @@ export const DEFAULT_SETTINGS = {
   smsWebhookChatTitle: "📱 SMS Forwarder",
   autoExtractEnabled: "true",
   autoExtractMinImportance: "4",
-  monitorDefaultIntervalMinutes: "30",
+  monitorDefaultIntervalMinutes: "720",
   monitorDefaultCheckStories: "true",
   monitorDefaultCheckPosts: "false",
   monitorDefaultCheckReels: "false",
@@ -100,6 +100,10 @@ export const DEFAULT_SETTINGS = {
   // Instagram cheaply on its own and webhooks us when something
   // actually changes. We do the expensive Hiker fetch only on
   // those pings. See docs/EXTERNAL_MONITOR_API.md for the contract.
+  // External Notify service is deprecated — the cron now polls
+  // HikerAPI directly on a per-account interval. Forced to "false"
+  // so /api/monitored/notify won't accept inbound webhooks even if
+  // the operator forgot to flip it off.
   monitorExternalEnabled: "false",
   monitorExternalBaseUrl: "",
   monitorExternalSecret: "",

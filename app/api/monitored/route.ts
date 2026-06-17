@@ -14,7 +14,6 @@ import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 import { getSettings } from "@/lib/settings";
 import { requireTenant } from "@/lib/tenant";
 import { runWithTenant } from "@/lib/tenant-context";
-import { registerAccount } from "@/lib/external-monitor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -123,11 +122,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     target: account ? String(account.id) : null,
     details: { username, tenantId: tenant.id },
   });
-  // Tell the external change-detector to watch this username.
-  // Fire-and-forget — failure is logged but doesn't block the add.
-  registerAccount({ username }).catch((err) =>
-    console.warn("[external-monitor] register failed:", err),
-  );
+  // External change-detector is intentionally NOT called anymore.
+  // The owner moved to direct HikerAPI polling on a per-account
+  // interval (3h / 6h / 12h, default 12h) — the cron at
+  // /api/cron/instagram-stories runs every 5 min and processes
+  // accounts whose interval has elapsed.
   let detected = 0;
   let forwarded = 0;
   const errors: string[] = [];

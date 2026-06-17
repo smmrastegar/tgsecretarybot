@@ -11,7 +11,6 @@ import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 import { requireTenant } from "@/lib/tenant";
 import { runWithTenant } from "@/lib/tenant-context";
-import { registerAccount } from "@/lib/external-monitor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -136,14 +135,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     action: "monitor.import",
     details: { inserted, updated, parsed: parsed.length, tenantId: tenant.id },
   });
-  // Push every imported username to the external change-detector,
-  // fire-and-forget. registerAccount() is idempotent so re-pushing
-  // an existing one is harmless.
-  for (const it of items) {
-    registerAccount({ username: it.username }).catch((err) =>
-      console.warn("[external-monitor] import register failed:", err),
-    );
-  }
+  // External change-detector push removed — owner moved to direct
+  // HikerAPI polling. Each imported account joins the cron
+  // rotation on the configured interval (3h / 6h / 12h, default 12h).
 
   const IMMEDIATE_ON_ADD = 5;
   let detected = 0;

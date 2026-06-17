@@ -8,7 +8,6 @@ import {
   setMonitoredAccountEnabled,
   updateMonitoredAccountConfig,
 } from "@/lib/db";
-import { unregisterAccount } from "@/lib/external-monitor";
 import { requireTenant } from "@/lib/tenant";
 
 export const runtime = "nodejs";
@@ -121,14 +120,8 @@ export async function DELETE(
     // Re-check across all tenants — if anyone else tracks the same
     // username, leave the subscription alone.
     const { listMonitoredAccounts } = await import("@/lib/db");
-    const stillTracked = (
-      await listMonitoredAccounts({ platform: "instagram" })
-    ).some((x) => x.username === acc.username);
-    if (!stillTracked) {
-      unregisterAccount(acc.username).catch((err) =>
-        console.warn("[external-monitor] unregister failed:", err),
-      );
-    }
+    // External change-detector unregistration removed — owner moved
+    // to direct HikerAPI polling. See /api/cron/instagram-stories.
   }
   await audit({
     actorId: session.userId,

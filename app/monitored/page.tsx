@@ -51,13 +51,18 @@ type Defaults = {
   checkMentioned: boolean;
 };
 
-const INTERVAL_OPTIONS = [5, 10, 15, 30, 60, 120, 240, 480, 1440] as const;
+// The owner asked for ONLY three options on Instagram polling: 3h /
+// 6h / 12h. Smaller numbers (5/10/15/30 minutes) were cheap with the
+// notify-service push, but with direct HikerAPI polling they burn
+// budget for no real benefit on social-media accounts that update at
+// most a few times a day.
+const INTERVAL_OPTIONS = [180, 360, 720] as const;
 
 function intervalLabel(m: number): string {
   if (m < 60) return `${m} دقیقه`;
   if (m === 60) return "۱ ساعت";
-  if (m === 1440) return "۲۴ ساعت";
-  return `${m / 60} ساعت`;
+  if (m % 60 === 0) return `${m / 60} ساعت`;
+  return `${m} دقیقه`;
 }
 
 function chatLabel(c: ChatBrief): string {
@@ -76,7 +81,7 @@ export default function MonitoredPage() {
   const [downloaderChats, setDownloaderChats] = useState<ChatBrief[]>([]);
   const [targetChatId, setTargetChatId] = useState<number | null>(null);
   const [defaults, setDefaults] = useState<Defaults>({
-    intervalMinutes: 30,
+    intervalMinutes: 720,
     checkStories: true,
     checkPosts: false,
     checkReels: false,
@@ -1020,6 +1025,8 @@ export default function MonitoredPage() {
           <div className="text-[11px] text-[var(--color-text-dim)]">…</div>
         )}
       </Card>
+
+      <MonthlyEstimateCard accounts={accounts} />
 
       <Card className="mb-3 !p-3">
         <div className="text-sm font-medium mb-2">📦 کانال‌های Storage</div>
@@ -2120,5 +2127,172 @@ function BudgetSettingsDialog(props: {
         </div>
       </div>
     </div>
+  );
+}
+
+// HikerAPI per-call prices we use today, in USD. These mirror the
+// authoritative table in lib/hikerapi-budget.ts; if that file changes
+// these need to bump too.
+const HIKER_USD = {
+  userByUsername: 0.001,
+  stories: 0.003,
+  posts: 0.012,
+  reels: 0.012,
+  mentions: 0.012,
+} as const;
+
+// HikerAPI plan tiers (best estimate — confirm against your contract).
+// Used only to color/explain the projected monthly cost; the cron
+// itself never references these.
+const PLAN_TIERS = [
+  { id: "basic", label: "Basic", monthly: 30 },
+  { id: "pro", label: "Pro", monthly: 100 },
+  { id: "ultra", label: "Ultra", monthly: 300 },
+] as const;
+
+// Probability that each "expensive feed" call is actually made when
+// optimize_change_detection is on (i.e. the account's media_count
+// changed since last check). 25% is a reasonable upper bound for the
+// kinds of accounts the operator follows; real numbers will be lower.
+const CHANGE_DETECTION_HIT_RATE = 0.25;
+
+function MonthlyEstimateCard({ accounts }: { accounts: Account[] }) {
+  const [optimizeOn, setOptimizeOn] = useState(true);
+  const [pickedPlan, setPickedPlan] = useState<(typeof PLAN_TIERS)[number]["id"]>("ultra");
+
+  // Cost per single tick of one account, before any optimization.
+  function costPerTick(a: Account): number {
+    if (!a.enabled) return 0;
+    // The user-by-username lookup is always paid (it's the cheap
+    // baseline call that decides whether to go further).
+    let cost = HIKER_USD.userByUsername;
+    if (a.checkStories) cost += HIKER_USD.stories;
+    // Posts / reels / mentions are gated by optimize_change_detection
+    // when it's on — multiply by the hit-rate to estimate average cost.
+    const heavyHitRate = optimizeOn ? CHANGE_DETECTION_HIT_RATE : 1;
+    if (a.checkPosts) cost += HIKER_USD.posts * heavyHitRate;
+    if (a.checkReels) cost += HIKER_USD.reels * heavyHitRate;
+    if (a.checkMentioned) cost += HIKER_USD.mentions * heavyHitRate;
+    return cost;
+  }
+
+  const perAccountMonthly = accounts.map((a) => {
+    const ticks = a.intervalMinutes > 0 ? (30 * 24 * 60) / a.intervalMinutes : 0;
+    const monthly = costPerTick(a) * ticks;
+    return { account: a, ticks, monthly };
+  });
+  const totalMonthly = perAccountMonthly.reduce((s, r) => s + r.monthly, 0);
+  const enabledCount = accounts.filter((a) => a.enabled).length;
+  const plan = PLAN_TIERS.find((p) => p.id === pickedPlan) ?? PLAN_TIERS[2];
+  const overspend = totalMonthly > plan.monthly;
+  const percentOfPlan = plan.monthly > 0 ? (totalMonthly / plan.monthly) * 100 : 0;
+
+  // Group by interval to show how the three preset intervals compare.
+  type Row = { minutes: number; count: number; cost: number };
+  const intervalBreakdown: Row[] = [];
+  for (const minutes of INTERVAL_OPTIONS) {
+    const inGroup = accounts.filter(
+      (a) => a.enabled && a.intervalMinutes === minutes,
+    );
+    if (inGroup.length === 0) continue;
+    const cost = inGroup.reduce((s, a) => {
+      const ticks = (30 * 24 * 60) / minutes;
+      return s + costPerTick(a) * ticks;
+    }, 0);
+    intervalBreakdown.push({ minutes, count: inGroup.length, cost });
+  }
+
+  return (
+    <Card className="mb-3 !p-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+        <div className="text-sm font-medium">📈 تخمین هزینه‌ی ماهانه HikerAPI</div>
+        <label className="text-[10px] flex items-center gap-1 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={optimizeOn}
+            onChange={(e) => setOptimizeOn(e.target.checked)}
+          />
+          optimize_change_detection
+        </label>
+      </div>
+      <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+        تخمین بر اساس interval هر اکانت و kind های روشن. با{" "}
+        <code>optimize_change_detection</code> فرض می‌گیریم فقط{" "}
+        {Math.round(CHANGE_DETECTION_HIT_RATE * 100)}٪ از تیک‌ها posts/reels/mentions
+        می‌خونن (وقتی media_count تغییر کرده). بدون اون، هر تیک کامل خونده می‌شه.
+      </p>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+        <div className="bg-[var(--color-surface-2)] rounded-md p-2">
+          <div className="text-[10px] text-[var(--color-text-dim)]">اکانت‌های فعال</div>
+          <div className="text-xl font-semibold mt-1">{enabledCount}</div>
+        </div>
+        <div className="bg-[var(--color-surface-2)] rounded-md p-2">
+          <div className="text-[10px] text-[var(--color-text-dim)]">تخمین ماهانه</div>
+          <div
+            className={`text-xl font-semibold mt-1 ${overspend ? "text-red-300" : "text-emerald-300"}`}
+          >
+            ${totalMonthly.toFixed(2)}
+          </div>
+        </div>
+        <div className="bg-[var(--color-surface-2)] rounded-md p-2">
+          <div className="text-[10px] text-[var(--color-text-dim)]">
+            ٪ پلن {plan.label}
+          </div>
+          <div
+            className={`text-xl font-semibold mt-1 ${overspend ? "text-red-300" : ""}`}
+          >
+            {percentOfPlan.toFixed(0)}٪
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-1 flex-wrap mb-3">
+        {PLAN_TIERS.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => setPickedPlan(p.id)}
+            className={`text-[11px] px-2 py-1 rounded-md border ${
+              pickedPlan === p.id
+                ? "bg-[var(--color-accent)] text-white border-transparent"
+                : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+            }`}
+          >
+            {p.label} (${p.monthly}/mo)
+          </button>
+        ))}
+      </div>
+
+      {intervalBreakdown.length > 0 && (
+        <div className="border-t border-[var(--color-border)] pt-2 mt-1">
+          <div className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
+            تفکیک بر اساس interval
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {intervalBreakdown.map((row) => (
+              <div
+                key={row.minutes}
+                className="flex items-center justify-between text-[11px]"
+              >
+                <span>
+                  {intervalLabel(row.minutes)}{" "}
+                  <span className="text-[var(--color-text-dim)]">
+                    · {row.count} اکانت
+                  </span>
+                </span>
+                <span className="tabular-nums">${row.cost.toFixed(2)}/ماه</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {overspend && (
+        <div className="mt-2 text-[11px] text-red-300">
+          ⚠️ تخمین بیشتر از پلن {plan.label} ($${plan.monthly}/mo) هست. interval بیشتری
+          بزن یا چند اکانت رو خاموش کن.
+        </div>
+      )}
+    </Card>
   );
 }
