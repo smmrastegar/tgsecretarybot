@@ -135,25 +135,33 @@ async function handle(request: Request): Promise<NextResponse> {
   }
   await touchSmsWebhook(webhook.id).catch(() => {});
 
-  // Post a "you have a notify" message into the storage / download
-  // channel with a fetch-now button. This is what the operator sees
-  // immediately, even before the 3-hour cooldown elapses or the
-  // 02-08 quiet window opens up.
+  // Post a "you have a notify" message into the SAME chat the cron
+  // would deliver stories to — that's the chat the operator is
+  // watching. Order matches resolveTargetChat in
+  // lib/instagram-monitor.ts: prefer 'storage', then 'downloader',
+  // then 'download_archive' as a last-resort fallback.
   const bot = getBot();
   const inboxes = [
-    ...(await listChatsByFunction("download_archive").catch(() => [])),
     ...(await listChatsByFunction("storage").catch(() => [])),
+    ...(await listChatsByFunction("downloader").catch(() => [])),
+    ...(await listChatsByFunction("download_archive").catch(() => [])),
   ];
   const inbox = inboxes[0];
   const inQuiet = isTehranQuietHour(new Date());
   const profileUrl = `https://instagram.com/${encodeURIComponent(username)}/`;
   const storyUrl = `https://instagram.com/stories/${encodeURIComponent(username)}/`;
   const target = action === "story" ? storyUrl : profileUrl;
+  const inboxStatus = {
+    found: Boolean(inbox),
+    chatId: inbox?.chatId ?? null,
+    sent: false,
+    error: null as string | null,
+  };
   if (inbox) {
     try {
       const headerLines = [
         `🔔 <b>Insta notify</b> · @${escapeHtml(username)}`,
-        `📩 action: ${action}`,
+        `📩 action: ${escapeHtml(action)}`,
         inQuiet
           ? "🌙 ساعت quiet هست — fetch به ساعت ۸ صبح موکول شد. می‌تونی دکمه‌ی پایین رو بزنی برای fetch فوری."
           : account.pendingFetchAt
@@ -164,13 +172,29 @@ async function handle(request: Request): Promise<NextResponse> {
         "🔍 الان بگیر",
         `insta:fetchnow:${account.id}`,
       );
-      await bot.api.sendMessage(inbox.chatId, headerLines.join("\n") + `\n\n${target}`, {
-        parse_mode: "HTML",
-        reply_markup: kb,
-      });
+      await bot.api.sendMessage(
+        inbox.chatId,
+        headerLines.join("\n") + `\n\n${target}`,
+        {
+          parse_mode: "HTML",
+          reply_markup: kb,
+        },
+      );
+      inboxStatus.sent = true;
+      console.log(
+        `[insta-webhook] notice sent inbox=${inbox.chatId} account=${account.id} action=${action}`,
+      );
     } catch (err) {
-      console.warn("[insta-webhook] inbox notice failed:", err);
+      const e = err as { error_code?: number; description?: string };
+      inboxStatus.error = `${e?.error_code ?? "?"}: ${e?.description ?? String(err)}`;
+      console.error(
+        `[insta-webhook] inbox notice failed inbox=${inbox.chatId}: ${inboxStatus.error}`,
+      );
     }
+  } else {
+    console.warn(
+      `[insta-webhook] no chat tagged with storage/downloader/download_archive — notice dropped`,
+    );
   }
 
   return NextResponse.json({
@@ -180,6 +204,7 @@ async function handle(request: Request): Promise<NextResponse> {
     action,
     pendingFetchAt: account.pendingFetchAt,
     quiet: inQuiet,
+    inbox: inboxStatus,
   });
 }
 
