@@ -199,6 +199,15 @@ ALWAYS FORWARD (DECISION: YES). Examples:
 - Service-account messages where they personally took an action.
 - Tickets / boarding passes / parking violations.
 - Anything carrying a useful link or address.
+- SERVICE / SITE MONITORING / UPTIME / ERROR / DOWNTIME / OUTAGE alerts — anything saying a website, server, API, or service is down, slow, broken, or has thrown an error. Includes monitoring services (Limoome, Uptime Robot, Pingdom, StatusCake, ...), DevOps alerts, log-watcher pings, and anything mentioning "با خطا مواجه شده", "down", "offline", "unreachable", "5xx", "error". The recipient set up this monitoring themselves — it's personal infra, not promo.
+
+CRITICAL — Iranian SMS legal note:
+ALL bulk-SMS senders in Iran are LEGALLY REQUIRED to append "لغو11" /
+"لغو10" / "لغو<digits>" / "Unsubscribe" to every commercial message.
+That tail by itself is NOT proof of promo content. Banks, government,
+hospitals, monitoring services, and legitimate transactional senders
+also include it. JUDGE THE BODY, NOT THE TAIL. A monitoring alert
+ending in "لغو11" is still a monitoring alert, not a discount blast.
 
 FILTER (DECISION: NO) — only these clearly-annoying categories:
 - Real-estate listings / apartment-for-rent / apartment-for-sale ads ("املاک", "اجاره", "فروش آپارتمان", "خرید ملک", ...).
