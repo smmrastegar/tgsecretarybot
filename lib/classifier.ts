@@ -1263,7 +1263,8 @@ Reply with STRICT JSON only, no prose, no code fences:
       "item_id": <number from items[].id>,
       "matched_alias": "<the alias / concept label that anchored the match, or null>",
       "quote": "<short verbatim phrase from message that triggered the match, in the original language, max 200 chars>",
-      "reason": "<one short Persian sentence saying WHY this concept matched>"
+      "reason": "<one short Persian sentence saying WHY this concept matched>",
+      "context_evidence": [<verbatim words/phrases LIFTED FROM THE MESSAGE that signal the configured context — NOT the concept/alias itself. e.g. for context "music": "آلبوم", "کنسرت", "آهنگ", "گوش دادم". If items[].context is null, leave this as []. If items[].context is set and you can't point to non-alias words in the message that signal the domain, EMIT NO MATCH for that item.>]
     }
   ]
 }
@@ -1437,6 +1438,66 @@ function validWatchlistMatch(args: {
     if (allTokensWholeWordPresent(a, args.message)) return true;
   }
   return false;
+}
+
+// When item.context is set, force the LLM's claim of "this is in the
+// domain" to be backed by something IN THE MESSAGE that isn't just
+// the alias/concept name. Catches "آرمان" alone or "آرمان کجاست؟"
+// being matched on a music-domain concept — the prompt keeps drifting
+// to "the alias is a singer" reasoning and we need a backstop.
+function passesContextGate(args: {
+  message: string;
+  concept: string;
+  aliases: string[];
+  context: string | null;
+  contextEvidence: string[];
+}): { ok: true } | { ok: false; reason: string } {
+  if (!args.context) return { ok: true };
+
+  // Build the set of alias/concept tokens (normalized).
+  const aliasTokens = new Set<string>();
+  for (const phrase of [args.concept, ...args.aliases]) {
+    const norm = normalizeForWatchMatch(phrase);
+    for (const tok of norm.split(/\s+/).filter(Boolean)) {
+      aliasTokens.add(tok);
+    }
+  }
+
+  // Strip alias tokens out of the message and see what's left.
+  const norm = normalizeForWatchMatch(args.message);
+  const remaining = norm
+    .split(/[\s\p{P}\p{S}]+/u)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 1 && !aliasTokens.has(t));
+
+  if (remaining.length < 2) {
+    return {
+      ok: false,
+      reason: `پیام منهای آلیاس‌ها فقط ${remaining.length} توکن معنادار داره — نمی‌شه ادعا کرد توی دامنه «${args.context}» هست`,
+    };
+  }
+
+  // If the LLM emitted context_evidence, every entry must contain at
+  // least one non-alias token (otherwise it's just repeating the alias
+  // and claiming it's domain evidence).
+  if (args.contextEvidence.length > 0) {
+    const evidenceHasNonAlias = args.contextEvidence.some((ev) => {
+      const evNorm = normalizeForWatchMatch(ev);
+      const evToks = evNorm
+        .split(/[\s\p{P}\p{S}]+/u)
+        .map((t) => t.trim())
+        .filter((t) => t.length > 1);
+      return evToks.some((t) => !aliasTokens.has(t));
+    });
+    if (!evidenceHasNonAlias) {
+      return {
+        ok: false,
+        reason: `context_evidence فقط شامل توکن‌های آلیاس هست (${args.contextEvidence.join(", ")}) — سیگنال دامنه نداره`,
+      };
+    }
+  }
+
+  return { ok: true };
 }
 
 export type WatchlistScanDebug = {
@@ -1642,6 +1703,13 @@ export async function scanForWatchlistConceptsDebug(input: {
       typeof r.matched_alias === "string" && r.matched_alias.trim()
         ? r.matched_alias.trim().slice(0, 120)
         : null;
+    const contextEvidence = Array.isArray(r.context_evidence)
+      ? r.context_evidence
+          .filter((x): x is string => typeof x === "string")
+          .map((x) => x.trim())
+          .filter(Boolean)
+          .slice(0, 10)
+      : [];
     if (!validIds.has(itemId) || !quote) continue;
     llmRaw.push({ itemId, matchedAlias, quote: quote.slice(0, 200), reason });
     const item = itemById.get(itemId);
@@ -1661,6 +1729,26 @@ export async function scanForWatchlistConceptsDebug(input: {
         matchedAlias,
         quote: quote.slice(0, 200),
         reason,
+      });
+      continue;
+    }
+    const gate = passesContextGate({
+      message: input.text,
+      concept: item.concept,
+      aliases: item.aliases ?? [],
+      context: item.context ?? null,
+      contextEvidence,
+    });
+    if (!gate.ok) {
+      console.log(
+        `[watchlist] dropping LLM match for concept="${item.concept}" — context gate failed: ${gate.reason}`,
+      );
+      dropped.push({
+        itemId,
+        concept: item.concept,
+        matchedAlias,
+        quote: quote.slice(0, 200),
+        reason: `${reason} — DROPPED: ${gate.reason}`,
       });
       continue;
     }
