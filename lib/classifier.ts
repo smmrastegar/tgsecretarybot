@@ -1415,6 +1415,104 @@ export type WatchlistScanDebug = {
 // LLM, same validator, but exposes every stage of the pipeline so the
 // "تست" button on /note-watchlist can show the operator exactly where
 // a match got accepted or dropped.
+// Operator wrote a free-form description of the concept (favorite
+// singer, band names, nicknames, etc.). This pulls every alternative
+// "way to refer to it" out so they can be added to the alias chip
+// list — concretely:
+//   "خواننده مورد علاقه من ... گروه‌های زیادی داره مثلاً ماخولا
+//    یا بالزن. بهش امیر بال هم می‌گن."
+//   → ["ماخولا", "بالزن", "امیر بال"]
+const EXTRACT_ALIASES_PROMPT = `You read a free-form description an operator wrote about
+ONE watched concept (a person, a topic, an event). Your job is to pull
+out every ALTERNATIVE NAME / NICKNAME / BAND NAME / ABBREVIATION /
+RELATED PROPER NOUN that someone might use in a message to refer to
+that same concept. These become "aliases" — exact strings the matcher
+will look for in incoming messages.
+
+Reply with STRICT JSON only, no prose, no code fences:
+{
+  "aliases": ["...", "...", ...]
+}
+
+Rules:
+- Each alias should be a STANDALONE proper noun or fixed phrase the
+  user might type. Single words are fine ("بالزن"), short phrases are
+  fine ("Amir Bal"), full sentences are NOT.
+- Do NOT include the concept label itself; the matcher already uses
+  that. Skip exact duplicates.
+- Do NOT include adjectives, descriptions, or generic words. e.g.
+  for a concept about a singer, "خواننده" (= singer) is NOT an alias
+  — anyone who uses that word in a message isn't necessarily referring
+  to this specific person.
+- Include the obvious orthographic variants when relevant: "Amir Bal"
+  + "امیر بال" (Latin + Persian) for the same nickname.
+- If the description mentions "no aliases" / nothing extra, return
+  {"aliases": []}.
+- Max 20 aliases.
+
+Examples:
+description: "خواننده مورد علاقه من. گروه‌هاش: ماخولا، بالزن.
+بهش امیر بال هم می‌گن."
+output: {"aliases": ["ماخولا", "بالزن", "امیر بال", "Amir Bal"]}
+
+description: "تیم فوتبال پرسپولیس. ٔ"
+output: {"aliases": ["پرسپولیس", "Persepolis", "سرخ‌پوشان"]}
+
+description: "سفارش جدید از یکی از مشتری‌ها"
+output: {"aliases": []}`;
+
+export async function extractWatchlistAliasesFromDescription(input: {
+  concept: string;
+  description: string;
+}): Promise<string[]> {
+  if (!input.description.trim()) return [];
+  const payload = {
+    concept: input.concept,
+    description: input.description.slice(0, 2000),
+  };
+  let raw = "";
+  try {
+    raw = await callOpenRouter(
+      [
+        { role: "system", content: EXTRACT_ALIASES_PROMPT },
+        { role: "user", content: JSON.stringify(payload) },
+      ],
+      {
+        maxTokens: 400,
+        jsonObject: true,
+        temperature: 0.2,
+        purpose: "watchlist_extract_aliases",
+        chatId: null,
+        businessConnectionId: null,
+      },
+    );
+  } catch (err) {
+    console.warn("[watchlist] extract-aliases LLM call failed:", err);
+    return [];
+  }
+  const json = extractJson(raw);
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json) as { aliases?: unknown };
+    if (!Array.isArray(parsed.aliases)) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const a of parsed.aliases) {
+      if (typeof a !== "string") continue;
+      const trimmed = a.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(trimmed.slice(0, 200));
+      if (out.length >= 20) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export async function scanForWatchlistConceptsDebug(input: {
   text: string;
   items: Array<{

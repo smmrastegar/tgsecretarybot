@@ -322,13 +322,26 @@ function ItemCard({
           const v = e.target.value;
           if (v !== (item.description ?? "")) onUpdate({ description: v || null });
         }}
-        placeholder="توضیح اختیاری برای AI"
-        rows={2}
-        className="w-full text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 mb-1.5"
+        onInput={(e) => {
+          // Auto-grow so the operator can read the full description
+          // they wrote — was clipped to 2 rows.
+          const ta = e.currentTarget;
+          ta.style.height = "auto";
+          ta.style.height = `${Math.min(ta.scrollHeight, 320)}px`;
+        }}
+        placeholder="توضیح اختیاری برای AI — مثلاً نام مستعار، اسم گروه‌ها، اصطلاحات مرتبط ..."
+        rows={4}
+        className="w-full text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 mb-1.5 leading-relaxed"
+        style={{ minHeight: "5rem" }}
       />
       <AliasEditor item={item} />
 
-      <div className="flex items-center gap-3 mb-1">
+      <div className="flex items-center gap-3 mb-1 flex-wrap">
+        <ExtractAliasesButton
+          itemId={item.id}
+          description={item.description}
+          existingAliases={item.aliases}
+        />
         <button
           onClick={() => setAdvanced((v) => !v)}
           className="text-[10px] text-[var(--color-accent)] hover:underline"
@@ -737,5 +750,80 @@ function ConceptTester({
         </div>
       )}
     </div>
+  );
+}
+
+function ExtractAliasesButton({
+  itemId,
+  description,
+  existingAliases,
+}: {
+  itemId: number;
+  description: string | null;
+  existingAliases: string[];
+}) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const disabled = !description || !description.trim();
+  const run = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await fetch(
+        `/api/note-watchlist/${itemId}/extract-aliases`,
+        { method: "POST" },
+      );
+      const j = (await r.json()) as {
+        ok: boolean;
+        added?: string[];
+        extracted?: string[];
+        skippedAsDuplicates?: string[];
+        error?: string;
+      };
+      if (!j.ok) {
+        setMsg(j.error ?? "ناموفق");
+      } else {
+        const added = j.added ?? [];
+        const extracted = j.extracted ?? [];
+        if (added.length === 0 && extracted.length === 0) {
+          setMsg("هیچ alias جدیدی پیدا نشد.");
+        } else if (added.length === 0) {
+          setMsg(`${extracted.length} alias پیدا شد ولی همه از قبل بودن.`);
+        } else {
+          setMsg(`✅ ${added.length} alias اضافه شد: ${added.join("، ")}`);
+        }
+        // Soft reload: the parent's load() refresh happens on the
+        // next "onUpdate" cycle. For an immediate visual update,
+        // ping the page reload.
+        setTimeout(() => {
+          if (typeof window !== "undefined") window.location.reload();
+        }, 1500);
+      }
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="inline-flex items-center gap-2">
+      <button
+        onClick={run}
+        disabled={busy || disabled}
+        title={
+          disabled
+            ? "اول یه توضیح برای این concept بنویس"
+            : `${existingAliases.length} alias الان توی لیست هست`
+        }
+        className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10 disabled:opacity-50"
+      >
+        {busy ? "..." : "🤖 استخراج alias از توضیح"}
+      </button>
+      {msg && (
+        <span className="text-[10px] text-[var(--color-text-dim)]">
+          {msg}
+        </span>
+      )}
+    </span>
   );
 }
