@@ -408,7 +408,10 @@ export async function ensureSchema(): Promise<void> {
     // The "🚩 گزارش خطا" button under a notes_inbox notice stamps
     // this column so the dashboard can flag the row + the scanner
     // can learn to be more conservative on similar text later.
+    // The "✅ تأیید" button stamps confirmed_at for the opposite
+    // signal — the operator says this match was correct.
     await q`ALTER TABLE note_watch_matches ADD COLUMN IF NOT EXISTS reported_wrong_at TIMESTAMPTZ`;
+    await q`ALTER TABLE note_watch_matches ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ`;
     // Dynamic per-concept aliases. One concept ("کنسرت امیر بال")
     // can have many alias rows ("Amir Bal", "اجرای امیر", "کنسرت
     // برج میلاد") — the LLM sees the full list when scanning so it
@@ -1502,6 +1505,12 @@ export async function markNoteWatchMatchWrong(id: number): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
   await sql()`UPDATE note_watch_matches SET reported_wrong_at = NOW() WHERE id = ${id}`;
+}
+
+export async function markNoteWatchMatchConfirmed(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`UPDATE note_watch_matches SET confirmed_at = NOW() WHERE id = ${id}`;
 }
 
 // Look up the full original message text by messages_log.id —

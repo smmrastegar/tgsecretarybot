@@ -87,6 +87,7 @@ import {
   getMessageFullText,
   getNoteWatchMatch,
   getSmsDedup,
+  markNoteWatchMatchConfirmed,
   markNoteWatchMatchWrong,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
@@ -452,12 +453,12 @@ async function handleNoteWatchCallback(
           appended,
           {
             parse_mode: "HTML",
-            // Keep the 🚩 گزارش خطا button alive after the edit —
-            // the operator might still want to flag it as wrong.
-            reply_markup: new InlineKeyboard().text(
-              "🚩 گزارش خطا",
-              `nw:wrong:${matchId}`,
-            ),
+            // Keep the ✅ تأیید + 🚩 گزارش خطا buttons alive after
+            // the edit — the operator might still want to confirm
+            // or flag after expanding the full text.
+            reply_markup: new InlineKeyboard()
+              .text("✅ تأیید", `nw:ok:${matchId}`)
+              .text("🚩 گزارش خطا", `nw:wrong:${matchId}`),
           },
         );
         await ctx
@@ -534,6 +535,43 @@ async function handleNoteWatchCallback(
         .catch(() => {});
     } catch (err) {
       console.warn("[nw_cb] mark-wrong failed:", err);
+      await ctx
+        .answerCallbackQuery({ text: "ثبت نشد." })
+        .catch(() => {});
+    }
+    return;
+  }
+  if (action === "ok") {
+    try {
+      await markNoteWatchMatchConfirmed(matchId);
+      // Replace the keyboard with a single "✅ تأیید شد" badge so the
+      // operator can't double-press it. The 📄 button is dropped
+      // since "ok" implies they've already inspected the message.
+      try {
+        const noticeMsg = ctx.callbackQuery?.message as
+          | { chat: { id: number }; message_id: number }
+          | undefined;
+        if (noticeMsg) {
+          await ctx.api.editMessageReplyMarkup(
+            noticeMsg.chat.id,
+            noticeMsg.message_id,
+            {
+              reply_markup: new InlineKeyboard().text(
+                "✅ تأیید شد",
+                `nw:noop:${matchId}`,
+              ),
+            },
+          );
+        }
+      } catch {
+        // Editing fails when the message was deleted or too old —
+        // the DB stamp is the thing that matters.
+      }
+      await ctx
+        .answerCallbackQuery({ text: "✅ ثبت شد." })
+        .catch(() => {});
+    } catch (err) {
+      console.warn("[nw_cb] mark-confirmed failed:", err);
       await ctx
         .answerCallbackQuery({ text: "ثبت نشد." })
         .catch(() => {});
@@ -2067,6 +2105,7 @@ export async function maybeApplyNoteWatch(args: {
         const keyboard = matchRow
           ? new InlineKeyboard()
               .text("📄 متن کامل", `nw:full:${matchRow.id}`)
+              .text("✅ تأیید", `nw:ok:${matchRow.id}`)
               .text("🚩 گزارش خطا", `nw:wrong:${matchRow.id}`)
           : undefined;
         await args.bot.api.sendMessage(inbox.chatId, text.slice(0, 4096), {
