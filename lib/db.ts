@@ -544,6 +544,25 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_last_ping_at TIMESTAMPTZ`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_last_ping_kind TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_acked_at TIMESTAMPTZ`;
+    // Reactions count as "the owner replied" for the follow-up cron.
+    // We can't store reactions in messages_log because logMessage dedupes
+    // on (bcId, chat_id, message_id) and that key already belongs to the
+    // customer's message that got reacted to. Keep them in their own
+    // table and UNION into the per-chat aggregation.
+    await q`
+      CREATE TABLE IF NOT EXISTS owner_reactions (
+        id                     BIGSERIAL PRIMARY KEY,
+        chat_id                BIGINT NOT NULL,
+        business_connection_id TEXT,
+        message_id             BIGINT NOT NULL,
+        emojis                 TEXT,
+        tenant_id              BIGINT,
+        reacted_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE UNIQUE INDEX IF NOT EXISTS owner_reactions_unique_idx
+      ON owner_reactions (chat_id, COALESCE(business_connection_id, ''), message_id)`;
+    await q`CREATE INDEX IF NOT EXISTS owner_reactions_chat_time_idx
+      ON owner_reactions (chat_id, reacted_at DESC)`;
     // Multi-role per chat. The legacy chat_rules.function_role is
     // kept for backwards compat; new code reads from chat_function_roles.
     // A chat can carry several roles at once — e.g. the same channel
@@ -1426,6 +1445,34 @@ export async function logMessage(m: LogMessage): Promise<number> {
       ${m.messageThreadId ?? null}, ${buttonsJson}::jsonb
     ) RETURNING id`;
   return Number((rows[0] as { id: string }).id);
+}
+
+// Record that the owner reacted to a customer message — counted as
+// a reply by listFollowUpCandidates. Upsert so re-reactions on the
+// same message just refresh the timestamp instead of duplicating.
+export async function recordOwnerReaction(args: {
+  chatId: number;
+  businessConnectionId: string | null;
+  messageId: number;
+  emojis: string | null;
+  tenantId: number | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO owner_reactions (
+      chat_id, business_connection_id, message_id, emojis, tenant_id
+    ) VALUES (
+      ${args.chatId}, ${args.businessConnectionId}, ${args.messageId},
+      ${args.emojis},
+      COALESCE(
+        ${args.tenantId}::bigint,
+        (SELECT tenant_id FROM business_connections
+          WHERE id = ${args.businessConnectionId} LIMIT 1)
+      )
+    )
+    ON CONFLICT (chat_id, COALESCE(business_connection_id, ''), message_id)
+    DO UPDATE SET emojis = EXCLUDED.emojis, reacted_at = NOW()`;
 }
 
 // --- Forum topics ---
@@ -3729,7 +3776,7 @@ export async function listFollowUpCandidates(args?: {
   await ensureSchema();
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
-    WITH per_chat AS (
+    WITH msg_per_chat AS (
       SELECT
         m.chat_id,
         MAX(CASE WHEN m.from_owner THEN m.created_at END) AS last_owner_at,
@@ -3740,6 +3787,21 @@ export async function listFollowUpCandidates(args?: {
         AND COALESCE(m.skipped_reason, '') <> 'muted'
         AND (${tenantId}::bigint IS NULL OR m.tenant_id = ${tenantId})
       GROUP BY m.chat_id
+    ),
+    rx_per_chat AS (
+      SELECT chat_id, MAX(reacted_at) AS last_reaction_at
+      FROM owner_reactions
+      WHERE reacted_at > NOW() - INTERVAL '365 days'
+        AND (${tenantId}::bigint IS NULL OR tenant_id = ${tenantId})
+      GROUP BY chat_id
+    ),
+    per_chat AS (
+      SELECT
+        m.chat_id,
+        GREATEST(m.last_owner_at, r.last_reaction_at) AS last_owner_at,
+        m.last_customer_at
+      FROM msg_per_chat m
+      LEFT JOIN rx_per_chat r ON r.chat_id = m.chat_id
     ),
     candidate AS (
       SELECT p.chat_id, p.last_owner_at, p.last_customer_at,
@@ -3861,7 +3923,7 @@ export async function debugFollowUpScan(args?: {
   await ensureSchema();
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
-    WITH per_chat AS (
+    WITH msg_per_chat AS (
       SELECT
         m.chat_id,
         MAX(CASE WHEN m.from_owner THEN m.created_at END) AS last_owner_at,
@@ -3872,6 +3934,21 @@ export async function debugFollowUpScan(args?: {
         AND COALESCE(m.skipped_reason, '') <> 'muted'
         AND (${tenantId}::bigint IS NULL OR m.tenant_id = ${tenantId})
       GROUP BY m.chat_id
+    ),
+    rx_per_chat AS (
+      SELECT chat_id, MAX(reacted_at) AS last_reaction_at
+      FROM owner_reactions
+      WHERE reacted_at > NOW() - INTERVAL '365 days'
+        AND (${tenantId}::bigint IS NULL OR tenant_id = ${tenantId})
+      GROUP BY chat_id
+    ),
+    per_chat AS (
+      SELECT
+        m.chat_id,
+        GREATEST(m.last_owner_at, r.last_reaction_at) AS last_owner_at,
+        m.last_customer_at
+      FROM msg_per_chat m
+      LEFT JOIN rx_per_chat r ON r.chat_id = m.chat_id
     )
     SELECT
       p.chat_id, p.last_owner_at, p.last_customer_at,

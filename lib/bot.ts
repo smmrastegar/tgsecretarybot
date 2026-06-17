@@ -90,6 +90,7 @@ import {
   getSmsDedup,
   markNoteWatchMatchConfirmed,
   markNoteWatchMatchWrong,
+  recordOwnerReaction,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -4921,6 +4922,36 @@ async function handleSecretaryReaction(
   if (!upd.user) return;
   if (!hasDb()) return;
 
+  // First: regardless of secretary config, if the owner reacted to a
+  // customer message in their own business chat, log it so the
+  // follow-up cron treats reactions as "you replied".
+  const bcIdRaw =
+    (upd as unknown as { business_connection_id?: string })
+      .business_connection_id ?? null;
+  if (bcIdRaw && upd.chat.type === "private") {
+    const owner = await resolveOwner(bcIdRaw, bot).catch(() => null);
+    if (owner && upd.user.id === owner.userId) {
+      const emojis = (upd.new_reaction ?? [])
+        .filter((r) => r.type === "emoji")
+        .map((r) => (r as { type: "emoji"; emoji: string }).emoji)
+        .join(" ");
+      // Only count ADDING a reaction. If old_reaction had entries and
+      // new_reaction is empty, the owner just removed — don't treat
+      // that as a reply.
+      if (emojis) {
+        await recordOwnerReaction({
+          chatId: upd.chat.id,
+          businessConnectionId: bcIdRaw,
+          messageId: upd.message_id,
+          emojis,
+          tenantId: null,
+        }).catch((err) =>
+          console.warn("[reaction] owner log failed:", err),
+        );
+      }
+    }
+  }
+
   const settings = await getSettings();
   if ((settings.secretaryEnabled ?? "false").toLowerCase() !== "true") return;
   const secList = getSecretaries(settings);
@@ -4930,9 +4961,7 @@ async function handleSecretaryReaction(
   // Direction A: reaction inside a business chat (the sender reacted to a
   // message). Relay it to the corresponding message in the secretary's chat
   // so the secretary can see what got reacted to.
-  const bcId =
-    (upd as unknown as { business_connection_id?: string })
-      .business_connection_id ?? null;
+  const bcId = bcIdRaw;
   if (bcId) {
     if (secIds.has(upd.user.id)) return;
     const link = await findSecretaryLinkForSenderMessage(
