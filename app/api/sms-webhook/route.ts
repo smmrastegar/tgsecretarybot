@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBot } from "@/lib/bot";
+import { getBot, maybeApplyNoteWatch } from "@/lib/bot";
 import {
   findSmsWebhookBySecret,
   hasDb,
@@ -169,6 +169,26 @@ async function handle(request: Request): Promise<NextResponse> {
       if (code) await saveOtpCode(logId, code);
     } catch (err) {
       console.warn("[sms-webhook] otp extract failed:", err);
+    }
+    // Watchlist scan on the SMS body too — concepts like "بانک
+    // ملت" / "اعلام رفع تعهد" / etc. now trigger the same
+    // chat_notes + notes_inbox forwarding the operator gets on
+    // Telegram messages. Awaited for the same reason as in bot.ts
+    // — Vercel kills void-dispatched promises before the LLM call
+    // returns.
+    try {
+      await maybeApplyNoteWatch({
+        logId,
+        text,
+        chatId,
+        chatTitle,
+        senderName,
+        messageId: Date.now() & 0x7fffffff,
+        businessConnectionId: null,
+        bot,
+      });
+    } catch (err) {
+      console.warn("[sms-webhook] watchlist scan failed:", err);
     }
   }
 

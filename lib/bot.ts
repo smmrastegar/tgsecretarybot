@@ -1738,7 +1738,9 @@ async function maybeExtractOtp(args: {
 // and (when notes_inbox is configured) forward the hit to that
 // channel so the operator notices in real time. Skip-on-failure —
 // nothing here can drop the original message.
-async function maybeApplyNoteWatch(args: {
+// Exported so /api/sms-webhook can run the same watchlist scan on
+// incoming SMS bodies — single source of truth.
+export async function maybeApplyNoteWatch(args: {
   logId: number;
   text: string;
   chatId: number;
@@ -2693,7 +2695,13 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         inlineButtons: extractInlineUrlButtons(msg),
       });
       void maybeExtractOtp({ logId, text });
-      void maybeApplyNoteWatch({
+      // AWAITED, not void — same Vercel-kills-the-promise problem
+      // as maybeApplyMessageRules. void'd here meant most Telegram
+      // messages never finished their watchlist scan before the
+      // request handler returned. Bounded by the LLM-call timeout
+      // in classifier.ts so the handler still completes well under
+      // maxDuration.
+      await maybeApplyNoteWatch({
         logId,
         text,
         chatId: msg.chat.id,
@@ -2702,7 +2710,9 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         messageId: msg.message_id,
         businessConnectionId: bcId,
         bot,
-      });
+      }).catch((err) =>
+        console.warn("[watchlist] apply failed:", err),
+      );
       void maybeDescribeMedia({
         mode,
         logId,
@@ -4385,7 +4395,8 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         inlineButtons: extractInlineUrlButtons(msg),
       });
       void maybeExtractOtp({ logId, text });
-      void maybeApplyNoteWatch({
+      // AWAITED — see the matching comment in handleBusinessMessage.
+      await maybeApplyNoteWatch({
         logId,
         text,
         chatId: msg.chat.id,
@@ -4394,7 +4405,9 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         messageId: msg.message_id,
         businessConnectionId: null,
         bot,
-      });
+      }).catch((err) =>
+        console.warn("[watchlist] apply failed:", err),
+      );
       void maybeDescribeMedia({
         mode,
         logId,
