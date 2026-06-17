@@ -531,6 +531,19 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_forward_photo BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_forward_location BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_extract_notes BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Follow-up reminders: when ON, a cron tick checks whether the
+    // owner has left this person hanging — if there's a non-owner
+    // message that's older than threshold_hours with no owner reply
+    // since, drop a notice into notes_inbox with a summary of the
+    // pending messages. Default ON for all chats (operator can opt
+    // out per-chat), default threshold 2h. A second ping fires after
+    // ESCALATE_HOURS more silence (default 12h).
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_enabled BOOLEAN NOT NULL DEFAULT TRUE`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_threshold_hours NUMERIC NOT NULL DEFAULT 2`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_escalate_hours NUMERIC NOT NULL DEFAULT 12`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_last_ping_at TIMESTAMPTZ`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_last_ping_kind TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_acked_at TIMESTAMPTZ`;
     // Multi-role per chat. The legacy chat_rules.function_role is
     // kept for backwards compat; new code reads from chat_function_roles.
     // A chat can carry several roles at once — e.g. the same channel
@@ -2253,6 +2266,14 @@ export type ChatRule = {
   // page. Operator generates/revokes via the Share button on
   // /groups/<chatId>.
   analyticsShareToken: string | null;
+  // Follow-up reminder fields — set per-chat, defaulted by the
+  // schema (enabled=TRUE, threshold=2h, escalate=12h).
+  followUpEnabled: boolean;
+  followUpThresholdHours: number;
+  followUpEscalateHours: number;
+  followUpLastPingAt: Date | null;
+  followUpLastPingKind: string | null;
+  followUpAckedAt: Date | null;
   updatedAt: Date;
 };
 
@@ -2325,6 +2346,19 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
         : null,
     lastSummaryRunAt: (r.last_summary_run_at as Date) ?? null,
     analyticsShareToken: (r.analytics_share_token as string) ?? null,
+    followUpEnabled:
+      r.follow_up_enabled == null ? true : Boolean(r.follow_up_enabled),
+    followUpThresholdHours:
+      r.follow_up_threshold_hours != null
+        ? Number(r.follow_up_threshold_hours)
+        : 2,
+    followUpEscalateHours:
+      r.follow_up_escalate_hours != null
+        ? Number(r.follow_up_escalate_hours)
+        : 12,
+    followUpLastPingAt: (r.follow_up_last_ping_at as Date) ?? null,
+    followUpLastPingKind: (r.follow_up_last_ping_kind as string) ?? null,
+    followUpAckedAt: (r.follow_up_acked_at as Date) ?? null,
     updatedAt: r.updated_at as Date,
   };
 }
@@ -2350,6 +2384,8 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            is_bot, ignored, phone_number,
            grace_skipped_at,
            summary_interval_hours, last_summary_run_at, analytics_share_token,
+           follow_up_enabled, follow_up_threshold_hours, follow_up_escalate_hours,
+           follow_up_last_ping_at, follow_up_last_ping_kind, follow_up_acked_at,
            updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -3598,6 +3634,198 @@ export async function findChatByAnalyticsShareToken(
     chatId: Number(r.chat_id),
     chatTitle: (r.chat_title as string) ?? null,
   };
+}
+
+// --- Follow-up reminders ---
+
+// Set per-chat follow-up settings. Each field is independently
+// patchable so the UI can toggle enabled, set threshold, or mark
+// the operator's acknowledgement without overwriting siblings.
+export async function setChatFollowUp(args: {
+  chatId: number;
+  enabled?: boolean;
+  thresholdHours?: number | null;
+  escalateHours?: number | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO chat_rules (
+      chat_id, chat_type, follow_up_enabled, follow_up_threshold_hours,
+      follow_up_escalate_hours
+    )
+    VALUES (
+      ${args.chatId}, 'private',
+      ${args.enabled ?? true},
+      ${args.thresholdHours ?? 2},
+      ${args.escalateHours ?? 12}
+    )
+    ON CONFLICT (chat_id) DO UPDATE SET
+      follow_up_enabled = COALESCE(${args.enabled ?? null}::boolean,
+                                   chat_rules.follow_up_enabled),
+      follow_up_threshold_hours = COALESCE(${args.thresholdHours ?? null}::numeric,
+                                           chat_rules.follow_up_threshold_hours),
+      follow_up_escalate_hours = COALESCE(${args.escalateHours ?? null}::numeric,
+                                          chat_rules.follow_up_escalate_hours),
+      updated_at = NOW()`;
+}
+
+// Mark this chat as "I'm aware" — bot stops sending more follow-up
+// pings until the customer messages again. Stamped by the "متوجه
+// شدم" button under each follow-up notice in notes_inbox.
+export async function ackChatFollowUp(chatId: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE chat_rules
+    SET follow_up_acked_at = NOW(), updated_at = NOW()
+    WHERE chat_id = ${chatId}`;
+}
+
+export async function recordChatFollowUpPing(args: {
+  chatId: number;
+  kind: "first" | "escalate";
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE chat_rules
+    SET follow_up_last_ping_at = NOW(),
+        follow_up_last_ping_kind = ${args.kind},
+        updated_at = NOW()
+    WHERE chat_id = ${args.chatId}`;
+}
+
+export type FollowUpCandidate = {
+  chatId: number;
+  chatTitle: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  nickname: string | null;
+  thresholdHours: number;
+  escalateHours: number;
+  lastPingAt: Date | null;
+  lastPingKind: string | null;
+  ackedAt: Date | null;
+  lastCustomerMessageAt: Date;
+  lastCustomerMessageText: string;
+  lastOwnerMessageAt: Date | null;
+  pendingCustomerMessageCount: number;
+};
+
+// Scan ALL private chats and return the ones that meet either of:
+//   - first ping condition: customer sent something more than
+//     threshold hours ago, owner hasn't replied since, AND we
+//     haven't already pinged for this stretch.
+//   - escalate condition: we already pinged "first" more than
+//     escalate hours ago and the owner is STILL silent.
+//
+// The follow-up cron walks this list each tick and posts to
+// notes_inbox.
+export async function listFollowUpCandidates(args?: {
+  tenantId?: number | null;
+}): Promise<FollowUpCandidate[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const tenantId = args?.tenantId ?? null;
+  const rows = await sql()`
+    WITH per_chat AS (
+      SELECT
+        m.chat_id,
+        MAX(CASE WHEN m.from_owner THEN m.created_at END) AS last_owner_at,
+        MAX(CASE WHEN NOT m.from_owner THEN m.created_at END) AS last_customer_at
+      FROM messages_log m
+      WHERE m.chat_type = 'private'
+        AND m.created_at > NOW() - INTERVAL '7 days'
+        AND COALESCE(m.skipped_reason, '') <> 'muted'
+        AND (${tenantId}::bigint IS NULL OR m.tenant_id = ${tenantId})
+      GROUP BY m.chat_id
+    ),
+    candidate AS (
+      SELECT p.chat_id, p.last_owner_at, p.last_customer_at,
+             r.first_name, r.last_name, r.nickname, r.chat_title,
+             r.follow_up_enabled, r.follow_up_threshold_hours,
+             r.follow_up_escalate_hours,
+             r.follow_up_last_ping_at, r.follow_up_last_ping_kind,
+             r.follow_up_acked_at
+      FROM per_chat p
+      LEFT JOIN chat_rules r ON r.chat_id = p.chat_id
+      WHERE p.last_customer_at IS NOT NULL
+        AND (p.last_owner_at IS NULL OR p.last_owner_at < p.last_customer_at)
+        AND COALESCE(r.follow_up_enabled, TRUE) = TRUE
+        AND COALESCE(r.muted, FALSE) = FALSE
+        AND COALESCE(r.ignored, FALSE) = FALSE
+        -- Don't bother chats where the bot is itself / is_bot
+        AND COALESCE(r.is_bot, FALSE) = FALSE
+        -- ack window: if the operator pressed "متوجه شدم" after the
+        -- last customer message, don't ping again until a NEW
+        -- customer message comes in (acked > last_customer = silence).
+        AND (
+          r.follow_up_acked_at IS NULL
+          OR r.follow_up_acked_at < p.last_customer_at
+        )
+    )
+    SELECT c.*,
+           EXTRACT(EPOCH FROM (NOW() - c.last_customer_at)) / 3600.0 AS hours_since_customer,
+           CASE
+             WHEN c.follow_up_last_ping_at IS NULL THEN NULL
+             ELSE EXTRACT(EPOCH FROM (NOW() - c.follow_up_last_ping_at)) / 3600.0
+           END AS hours_since_ping
+    FROM candidate c
+    WHERE
+      -- First ping not sent yet AND we're past the threshold.
+      (
+        c.follow_up_last_ping_at IS NULL
+        AND EXTRACT(EPOCH FROM (NOW() - c.last_customer_at)) / 3600.0
+            >= COALESCE(c.follow_up_threshold_hours, 2)
+      )
+      OR
+      -- First ping sent, owner still silent, escalate threshold elapsed.
+      (
+        c.follow_up_last_ping_at IS NOT NULL
+        AND c.follow_up_last_ping_kind = 'first'
+        AND EXTRACT(EPOCH FROM (NOW() - c.follow_up_last_ping_at)) / 3600.0
+            >= COALESCE(c.follow_up_escalate_hours, 12)
+      )
+    ORDER BY c.last_customer_at ASC
+    LIMIT 50`;
+  const out: FollowUpCandidate[] = [];
+  for (const r0 of rows as Array<Record<string, unknown>>) {
+    const chatId = Number(r0.chat_id);
+    // Pull a quick summary: count of customer messages since the
+    // owner's last reply, plus the latest customer text.
+    const lastOwnerAt = (r0.last_owner_at as Date) ?? null;
+    const summaryRows = await sql()`
+      SELECT COUNT(*)::int AS cnt,
+             (ARRAY_AGG(message_text ORDER BY created_at DESC))[1] AS last_text
+      FROM messages_log
+      WHERE chat_id = ${chatId}
+        AND from_owner = FALSE
+        AND COALESCE(skipped_reason, '') <> 'muted'
+        AND created_at > COALESCE(${
+          lastOwnerAt ? lastOwnerAt.toISOString() : null
+        }::timestamptz, NOW() - INTERVAL '7 days')`;
+    const s = summaryRows[0] as
+      | { cnt: number; last_text: string | null }
+      | undefined;
+    out.push({
+      chatId,
+      chatTitle: (r0.chat_title as string) ?? null,
+      firstName: (r0.first_name as string) ?? null,
+      lastName: (r0.last_name as string) ?? null,
+      nickname: (r0.nickname as string) ?? null,
+      thresholdHours: Number(r0.follow_up_threshold_hours ?? 2),
+      escalateHours: Number(r0.follow_up_escalate_hours ?? 12),
+      lastPingAt: (r0.follow_up_last_ping_at as Date) ?? null,
+      lastPingKind: (r0.follow_up_last_ping_kind as string) ?? null,
+      ackedAt: (r0.follow_up_acked_at as Date) ?? null,
+      lastCustomerMessageAt: r0.last_customer_at as Date,
+      lastCustomerMessageText: (s?.last_text as string) ?? "",
+      lastOwnerMessageAt: lastOwnerAt,
+      pendingCustomerMessageCount: Number(s?.cnt ?? 1),
+    });
+  }
+  return out;
 }
 
 export async function setChatSummaryIntervalHours(args: {

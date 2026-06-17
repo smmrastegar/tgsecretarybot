@@ -80,6 +80,7 @@ import {
   addChatNote,
   listChatsByFunction,
   upsertForumTopic,
+  ackChatFollowUp,
   addSmsAcceptSignature,
   createSmsBlockRule,
   deleteSmsDedup,
@@ -373,6 +374,56 @@ async function maybeDescribeMedia(args: {
 //   "insta:fetchnow:<account_id>"
 // Pushing the account's pending_fetch_at to NOW makes the next cron
 // tick (≤ 5 min) process it.
+// ✅ متوجه شدم button under each follow-up notice in notes_inbox.
+// Stamps chat_rules.follow_up_acked_at = NOW() so the cron stops
+// pinging this chat until a NEW customer message arrives.
+async function handleFollowUpCallback(
+  ctx: Context,
+  data: string,
+  _bot: Bot,
+): Promise<void> {
+  const parts = data.split(":");
+  if (parts.length < 3 || parts[1] !== "ack") {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  const chatId = Number(parts[2]);
+  if (!Number.isFinite(chatId)) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  try {
+    await ackChatFollowUp(chatId);
+    try {
+      const noticeMsg = ctx.callbackQuery?.message as
+        | { chat: { id: number }; message_id: number }
+        | undefined;
+      if (noticeMsg) {
+        await ctx.api.editMessageReplyMarkup(
+          noticeMsg.chat.id,
+          noticeMsg.message_id,
+          {
+            reply_markup: new InlineKeyboard().text(
+              "✅ متوجه شدم",
+              `fu:noop:${chatId}`,
+            ),
+          },
+        );
+      }
+    } catch {
+      // edit failures don't matter — the DB stamp is the source of truth.
+    }
+    await ctx
+      .answerCallbackQuery({ text: "✅ ثبت شد. تا پیام جدید پینگ نمی‌فرستم." })
+      .catch(() => {});
+  } catch (err) {
+    console.warn("[fu_cb] ack failed:", err);
+    await ctx
+      .answerCallbackQuery({ text: "ثبت نشد." })
+      .catch(() => {});
+  }
+}
+
 // 📄 متن کامل / 🚩 گزارش خطا buttons under each watchlist notice
 // in the notes_inbox channel. callback_data shapes:
 //   "nw:full:<match_id>"  → reply to the notice with the full
@@ -1615,6 +1666,12 @@ function buildBot(): Bot {
     if (data.startsWith("nw:")) {
       await handleNoteWatchCallback(ctx, data, bot).catch((err) =>
         console.error("[nw_callback] failed:", err),
+      );
+      return;
+    }
+    if (data.startsWith("fu:")) {
+      await handleFollowUpCallback(ctx, data, bot).catch((err) =>
+        console.error("[fu_callback] failed:", err),
       );
       return;
     }

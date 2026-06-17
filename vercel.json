@@ -12,6 +12,10 @@
     {
       "path": "/api/cron/instagram-stories",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/follow-up",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
