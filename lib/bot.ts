@@ -1885,11 +1885,17 @@ export async function maybeApplyNoteWatch(args: {
   businessConnectionId: string | null;
   bot: Bot;
 }): Promise<void> {
-  if (!args.text.trim()) return;
+  if (!args.text.trim()) {
+    console.log(`[watchlist] skip chat=${args.chatId}: empty text`);
+    return;
+  }
   if (!hasDb()) return;
   const settings = await getSettings();
   // Master switch.
   if ((settings.notesWatchlistEnabled ?? "true").toLowerCase() === "false") {
+    console.log(
+      `[watchlist] skip chat=${args.chatId}: master switch off`,
+    );
     return;
   }
   // Short-message gate to save LLM cost.
@@ -1897,7 +1903,12 @@ export async function maybeApplyNoteWatch(args: {
     Number(settings.notesWatchlistMinMessageLength) || 0,
     0,
   );
-  if (args.text.trim().length < minLen) return;
+  if (args.text.trim().length < minLen) {
+    console.log(
+      `[watchlist] skip chat=${args.chatId}: text len ${args.text.trim().length} < min ${minLen}`,
+    );
+    return;
+  }
   const globalCooldownMin = Math.max(
     Number(settings.notesWatchlistCooldownMinutes) || 0,
     0,
@@ -1908,7 +1919,12 @@ export async function maybeApplyNoteWatch(args: {
   const items = await listNoteWatchItemsWithAliases({
     enabledOnly: true,
   }).catch(() => []);
-  if (items.length === 0) return;
+  if (items.length === 0) {
+    console.log(
+      `[watchlist] skip chat=${args.chatId}: zero enabled concepts`,
+    );
+    return;
+  }
   let matches: Awaited<ReturnType<typeof scanForWatchlistConcepts>> = [];
   try {
     matches = await scanForWatchlistConcepts({
@@ -1928,6 +1944,9 @@ export async function maybeApplyNoteWatch(args: {
     console.warn("[watchlist] scan failed:", err);
     return;
   }
+  console.log(
+    `[watchlist] scan chat=${args.chatId} items=${items.length} matches=${matches.length} text="${args.text.trim().slice(0, 80)}"`,
+  );
   if (matches.length === 0) return;
   const esc = (s: string) =>
     s.replace(/[&<>]/g, (c) =>
@@ -1950,7 +1969,7 @@ export async function maybeApplyNoteWatch(args: {
       }).catch(() => false);
       if (recent) {
         console.log(
-          `[watchlist] cooldown active item=${item.id} chat=${args.chatId} — skipping`,
+          `[watchlist] cooldown ${effectiveCooldownMin}m active item=${item.id} ("${item.concept}") chat=${args.chatId} — skipping. Lower cooldown in /notes → تنظیمات if this is unintended.`,
         );
         continue;
       }

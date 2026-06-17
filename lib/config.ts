@@ -152,7 +152,9 @@ export const DEFAULT_SETTINGS = {
   // Minimum minutes between two matches of the SAME concept from
   // the SAME chat. Stops one busy chat from spamming the inbox.
   // Per-concept override lives on note_watch_items.cooldown_override_minutes.
-  notesWatchlistCooldownMinutes: "30",
+  // Default 0 = no cooldown (every match fires). Set this higher
+  // (e.g. 30) on chats where one concept can fire many times per hour.
+  notesWatchlistCooldownMinutes: "0",
   // Skip scanning messages shorter than this. Saves LLM cost on
   // "ok" / "👍" / etc.
   notesWatchlistMinMessageLength: "8",
