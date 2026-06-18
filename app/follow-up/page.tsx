@@ -173,13 +173,36 @@ export default function FollowUpDebugPage() {
       const r = await fetch("/api/cron/follow-up", { method: "POST" });
       if (r.ok) {
         const j = (await r.json()) as {
-          tenants: Array<{ pinged?: number; candidates?: number }>;
+          tenants: Array<{
+            pinged?: number;
+            candidates?: number;
+            skipped?: string;
+            errors?: Array<{ chatId: number; error: string }>;
+          }>;
         };
         const totalPinged = j.tenants.reduce(
           (s, t) => s + (t.pinged ?? 0),
           0,
         );
-        setLastRun(`✅ ${totalPinged} ping رفت`);
+        const totalCands = j.tenants.reduce(
+          (s, t) => s + (t.candidates ?? 0),
+          0,
+        );
+        const allErrors = j.tenants.flatMap((t) => t.errors ?? []);
+        const skipped = j.tenants
+          .filter((t) => t.skipped)
+          .map((t) => t.skipped);
+        let msg = `✅ ${totalPinged}/${totalCands} ping رفت`;
+        if (skipped.length) msg += ` · skipped: ${skipped.join(", ")}`;
+        if (allErrors.length) {
+          msg +=
+            ` · ❌ ${allErrors.length} خطا — ` +
+            allErrors
+              .slice(0, 3)
+              .map((e) => `chat ${e.chatId}: ${e.error}`)
+              .join(" | ");
+        }
+        setLastRun(msg);
         await load();
       } else {
         setLastRun(`❌ HTTP ${r.status}`);

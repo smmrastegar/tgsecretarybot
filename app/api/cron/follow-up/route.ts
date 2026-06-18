@@ -63,6 +63,7 @@ async function processTenant(tenantId: number) {
     const candidates = await listFollowUpCandidates({ tenantId });
     const bot = getBot();
     let pinged = 0;
+    const errors: Array<{ chatId: number; error: string }> = [];
     for (const c of candidates) {
       const kind: "first" | "escalate" =
         c.lastPingAt == null ? "first" : "escalate";
@@ -76,15 +77,21 @@ async function processTenant(tenantId: number) {
       const preview =
         c.lastCustomerMessageText.slice(0, 220).replace(/\s+/g, " ") ||
         "(پیام بدون متن)";
+      // Inline mention in the body — works without the user having
+      // privacy "allow link by id" enabled, and avoids the
+      // BUTTON_URL_INVALID error that tg://user?id=... URL buttons
+      // produce in inline keyboards for some accounts.
+      const nameLink = `<a href="tg://user?id=${c.chatId}">${escHtml(displayName(c))}</a>`;
       const text =
         `${headerEmoji} <b>${headerLabel}</b>\n` +
-        `👤 <b>${escHtml(displayName(c))}</b>` +
+        `👤 <b>${nameLink}</b>` +
         ` · ${c.pendingCustomerMessageCount} پیام منتظر جواب` +
         `\n⏱ ${Math.round(hoursSince)} ساعت پیش\n\n` +
         `💬 «${escHtml(preview)}»`;
-      const kb = new InlineKeyboard()
-        .url("📨 پیام", `tg://user?id=${c.chatId}`)
-        .text("✅ متوجه شدم", `fu:ack:${c.chatId}`);
+      const kb = new InlineKeyboard().text(
+        "✅ متوجه شدم",
+        `fu:ack:${c.chatId}`,
+      );
       try {
         await bot.api.sendMessage(inbox.chatId, text.slice(0, 4096), {
           parse_mode: "HTML",
@@ -93,13 +100,17 @@ async function processTenant(tenantId: number) {
         await recordChatFollowUpPing({ chatId: c.chatId, kind });
         pinged++;
       } catch (err) {
-        console.warn(
-          `[follow-up] notice send failed chat=${c.chatId}:`,
-          err,
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[follow-up] notice send failed chat=${c.chatId}:`, err);
+        errors.push({ chatId: c.chatId, error: msg.slice(0, 300) });
       }
     }
-    return { tenantId, pinged, candidates: candidates.length };
+    return {
+      tenantId,
+      pinged,
+      candidates: candidates.length,
+      ...(errors.length > 0 ? { errors } : {}),
+    };
   });
 }
 
