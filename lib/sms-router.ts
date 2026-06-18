@@ -663,7 +663,7 @@ function buildSmsActionKeyboard(dedupId: number): InlineKeyboard {
   // "don't ask me again" tick).
   return new InlineKeyboard()
     .text("✅ پذیرفتم", `sms:ok:${dedupId}`)
-    .text("🗑 پاک کن", `sms:rm:${dedupId}`)
+    .text("🗑", `sms:rm:${dedupId}`)
     .text("🚫 این مدل رو نیار", `sms:block:${dedupId}`);
 }
 
