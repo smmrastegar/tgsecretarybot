@@ -3417,6 +3417,45 @@ export async function setSmsDedupMessageId(
     WHERE id = ${dedupId}`;
 }
 
+// Highest telegram_message_id we've ever recorded for this inbox chat
+// across all sms_dedup rows. Used by routeSmsForward to decide whether
+// the existing dedup target is STILL the bottom of the chat or whether
+// a newer SMS has pushed it up — in which case we send a fresh message
+// instead of editing the scrolled-past original in place.
+export async function getMaxSmsMessageIdInInbox(
+  inboxChatId: number,
+): Promise<number | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT MAX(telegram_message_id) AS max_id
+    FROM sms_dedup
+    WHERE inbox_chat_id = ${inboxChatId}
+      AND telegram_message_id IS NOT NULL`;
+  const r = rows[0] as { max_id: string | number | null } | undefined;
+  return r?.max_id == null ? null : Number(r.max_id);
+}
+
+// Reset a dedup row's repeat counter (the user perceives a re-send
+// after other messages as a fresh occurrence, so the next "🔁 دفعه N"
+// should count from this fresh send, not from history).
+export async function resetSmsDedupCounter(args: {
+  dedupId: number;
+  telegramMessageId: number;
+  bodyPreview: string;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE sms_dedup
+       SET telegram_message_id = ${args.telegramMessageId},
+           body_preview = ${args.bodyPreview.slice(0, 400)},
+           repeat_count = 1,
+           first_sent_at = NOW(),
+           last_seen_at = NOW()
+     WHERE id = ${args.dedupId}`;
+}
+
 export async function getSmsDedup(
   dedupId: number,
 ): Promise<SmsDedupRow | null> {

@@ -12,10 +12,12 @@ import { InlineKeyboard, type Bot } from "grammy";
 import {
   findOwnerOfPhone,
   findSmsDedup,
+  getMaxSmsMessageIdInInbox,
   isSmsAcceptedSignature,
   listChatsByFunction,
   listSmsBlockRules,
   recordAiUsage,
+  resetSmsDedupCounter,
   smsBodySignature,
   setSmsDedupMessageId,
   touchSmsAcceptSignature,
@@ -554,12 +556,23 @@ export async function routeSmsForward(args: {
     const existing = await findSmsDedup(inbox.chatId, signature, 48).catch(
       () => null,
     );
-    if (existing && existing.telegramMessageId) {
-      // Same SMS again — edit the original to bump the count + the
-      // hh:mm clock of the latest arrival. The operator asked us to
-      // drop "اولین: <time>" — the original message's send time is
-      // already visible in Telegram, so we only carry the count and
-      // the latest clock time.
+    // Only edit-in-place if the existing dedup target is STILL the
+    // bottom of the chat. If any other SMS has landed between, the
+    // operator wouldn't see the silent edit — treat as a fresh
+    // occurrence and send a new message.
+    const maxInInbox = await getMaxSmsMessageIdInInbox(inbox.chatId).catch(
+      () => null,
+    );
+    const isStillLast =
+      existing != null &&
+      existing.telegramMessageId != null &&
+      maxInInbox != null &&
+      existing.telegramMessageId === maxInInbox;
+
+    if (isStillLast && existing && existing.telegramMessageId) {
+      // Same SMS again AND it's still the last message in the chat —
+      // edit the original to bump the count + the hh:mm clock of the
+      // latest arrival.
       const repeats = existing.repeatCount + 1;
       const augmented =
         outText +
@@ -595,9 +608,18 @@ export async function routeSmsForward(args: {
           err,
         );
       }
+    } else if (existing) {
+      console.log(
+        `[sms] dedup row exists but not last in chat ` +
+          `(existing msg=${existing.telegramMessageId}, max=${maxInInbox}) ` +
+          `— sending fresh, resetting counter`,
+      );
     }
-    // Fresh send. Insert/refresh the dedup row first to get an id
-    // for the action keyboard.
+
+    // Fresh send. If a dedup row already exists (re-occurrence after
+    // other SMS), upsert keeps the same id but increments counter; we
+    // reset the counter to 1 below so the next "🔁 دفعه N" starts
+    // from THIS fresh send, not from history.
     const dedup = await upsertSmsDedup({
       inboxChatId: inbox.chatId,
       bodySignature: signature,
@@ -611,7 +633,15 @@ export async function routeSmsForward(args: {
           ? undefined
           : buildSmsActionKeyboard(dedup.id),
       });
-      await setSmsDedupMessageId(dedup.id, sent.message_id);
+      if (existing) {
+        await resetSmsDedupCounter({
+          dedupId: dedup.id,
+          telegramMessageId: sent.message_id,
+          bodyPreview: sms.body.slice(0, 200),
+        });
+      } else {
+        await setSmsDedupMessageId(dedup.id, sent.message_id);
+      }
       delivered++;
       console.log(
         `[sms] forwarded phone=${sms.phone} owner="${owner?.name ?? "?"}" → inbox=${inbox.chatId} msg=${sent.message_id} dedup=${dedup.id} accepted=${accepted}`,
