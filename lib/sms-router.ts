@@ -662,10 +662,10 @@ function buildSmsActionKeyboard(dedupId: number): InlineKeyboard {
   // kind so future repeats arrive WITHOUT buttons (the operator's
   // "don't ask me again" tick).
   return new InlineKeyboard()
-    .text("✅ پذیرفتم", `sms:ok:${dedupId}`)
-    .text("🗑", `sms:rm:${dedupId}`)
+    .text("🗑 پاک کن", `sms:rm:${dedupId}`)
+    .text("🚫 این مدل رو نیار", `sms:block:${dedupId}`)
     .row()
-    .text("🚫 این مدل رو نیار", `sms:block:${dedupId}`);
+    .text("✅ پذیرفتم", `sms:ok:${dedupId}`);
 }
 
 function formatTehranTime(d: Date): string {
