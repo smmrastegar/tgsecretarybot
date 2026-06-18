@@ -664,6 +664,7 @@ function buildSmsActionKeyboard(dedupId: number): InlineKeyboard {
   return new InlineKeyboard()
     .text("✅ پذیرفتم", `sms:ok:${dedupId}`)
     .text("🗑", `sms:rm:${dedupId}`)
+    .row()
     .text("🚫 این مدل رو نیار", `sms:block:${dedupId}`);
 }
 
