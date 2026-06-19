@@ -1263,6 +1263,29 @@ export async function ensureSchema(): Promise<void> {
         await q`INSERT INTO settings (key, value) VALUES ('migration.tenants_bootstrap.v1', 'done')
                 ON CONFLICT (key) DO NOTHING`;
       }
+
+      // v2 backfill: between v1 and the logMessage fix, every new
+      // insert went in with tenant_id=NULL, so all messages from
+      // ~14d ago through the deploy date are invisible to the
+      // multi-tenant follow-up query. Re-run the same backfill once
+      // under a fresh flag to repair them.
+      const v2 = await q`SELECT value FROM settings WHERE key = 'migration.tenants_backfill.v2'`;
+      if ((v2 as Array<unknown>).length === 0) {
+        const defaultRows = await q`SELECT id FROM tenants WHERE name = 'Default' LIMIT 1`;
+        const defaultRow = (defaultRows as Array<{ id: string | number }>)[0];
+        if (defaultRow) {
+          const defaultId = Number(defaultRow.id);
+          await q`UPDATE messages_log AS m
+                  SET tenant_id = bc.tenant_id
+                  FROM business_connections bc
+                  WHERE m.tenant_id IS NULL
+                    AND m.business_connection_id = bc.id
+                    AND bc.tenant_id IS NOT NULL`;
+          await q`UPDATE messages_log SET tenant_id = ${defaultId} WHERE tenant_id IS NULL`;
+          await q`INSERT INTO settings (key, value) VALUES ('migration.tenants_backfill.v2', 'done')
+                  ON CONFLICT (key) DO NOTHING`;
+        }
+      }
     }
   })().catch((err) => {
     schemaPromise = null;
@@ -1429,20 +1452,45 @@ export async function logMessage(m: LogMessage): Promise<number> {
     m.inlineButtons && m.inlineButtons.length > 0
       ? JSON.stringify(m.inlineButtons)
       : null;
+  // Resolve tenant_id at INSERT so multi-tenant queries (like the
+  // follow-up cron) see new rows. Until this was added, new rows
+  // landed with tenant_id=NULL and the WHERE tenant_id = $X filter
+  // silently dropped them — making /follow-up show "18 days ago"
+  // even after fresh messages arrived.
+  let tenantId: number | null = null;
+  try {
+    const { getCurrentTenantId } = await import("./tenant-context");
+    tenantId = getCurrentTenantId() ?? null;
+  } catch {
+    // tenant-context isn't established in some background paths
+  }
+  if (tenantId == null && m.businessConnectionId) {
+    const bcRows = await sql()`
+      SELECT tenant_id FROM business_connections
+      WHERE id = ${m.businessConnectionId} LIMIT 1`;
+    const r = bcRows[0] as { tenant_id: string | null } | undefined;
+    if (r?.tenant_id != null) tenantId = Number(r.tenant_id);
+  }
+  if (tenantId == null) {
+    const dRows = await sql()`
+      SELECT id FROM tenants WHERE name = 'Default' LIMIT 1`;
+    const r = dRows[0] as { id: string | number } | undefined;
+    if (r?.id != null) tenantId = Number(r.id);
+  }
   const rows = await sql()`
     INSERT INTO messages_log (
       business_connection_id, owner_user_id, chat_id, chat_type, chat_title,
       sender_id, sender_username, sender_name, message_id, message_text,
       importance, urgent, concerns_owner, reason, alerted, auto_replied,
       from_owner, skipped_reason, media_file_id, media_kind, source,
-      message_thread_id, inline_buttons
+      message_thread_id, inline_buttons, tenant_id
     ) VALUES (
       ${m.businessConnectionId}, ${m.ownerUserId}, ${m.chatId}, ${m.chatType}, ${m.chatTitle},
       ${m.senderId}, ${m.senderUsername}, ${m.senderName}, ${m.messageId}, ${m.messageText},
       ${m.importance}, ${m.urgent}, ${m.concernsOwner}, ${m.reason}, ${m.alerted}, ${m.autoReplied},
       ${m.fromOwner ?? false}, ${m.skippedReason ?? null},
       ${m.mediaFileId ?? null}, ${m.mediaKind ?? null}, ${m.source ?? null},
-      ${m.messageThreadId ?? null}, ${buttonsJson}::jsonb
+      ${m.messageThreadId ?? null}, ${buttonsJson}::jsonb, ${tenantId}
     ) RETURNING id`;
   return Number((rows[0] as { id: string }).id);
 }
