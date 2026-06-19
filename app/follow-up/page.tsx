@@ -36,6 +36,7 @@ type ChatRow = {
   lastOwnerMessageAt: string | null;
   lastOwnerMsgOnlyAt: string | null;
   lastReactionAt: string | null;
+  reactionsTotal: number;
   lastAnyMessageAt: string | null;
   messagesLast24h: number;
   lastPingAt: string | null;
@@ -172,6 +173,17 @@ export default function FollowUpDebugPage() {
       else next.add(d);
       return next;
     });
+  };
+
+  const ackChat = async (chatId: number) => {
+    try {
+      const r = await fetch(`/api/chats/${chatId}/follow-up/ack`, {
+        method: "POST",
+      });
+      if (r.ok) await load();
+    } catch {
+      // surface via reload — silent failure is fine here
+    }
   };
 
   const triggerNow = async () => {
@@ -331,13 +343,14 @@ export default function FollowUpDebugPage() {
                 <th className="py-2 px-2">۲۴h</th>
                 <th className="py-2 px-2">آستانه</th>
                 <th className="py-2 px-2">آخرین ping</th>
+                <th className="py-2 px-2"></th>
               </tr>
             </thead>
             <tbody>
               {sorted.length === 0 && !loading && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="py-6 px-2 text-center text-[var(--color-text-dim)]"
                   >
                     چیزی برای نمایش نیست.
@@ -397,14 +410,22 @@ export default function FollowUpDebugPage() {
                           ? relTime(new Date(r.lastOwnerMessageAt))
                           : "—"}
                       </div>
-                      {r.lastReactionAt && (
+                      {r.lastReactionAt ? (
                         <div
                           className="text-[10px] mt-0.5"
-                          title={`ری‌اکشن آخر در ${r.lastReactionAt}`}
+                          title={`ری‌اکشن آخر در ${r.lastReactionAt} (کل: ${r.reactionsTotal})`}
                         >
                           🌜 ری‌اکشن: {relTime(new Date(r.lastReactionAt))}
+                          {r.reactionsTotal > 1 && ` (${r.reactionsTotal})`}
                         </div>
-                      )}
+                      ) : r.reactionsTotal === 0 ? (
+                        <div
+                          className="text-[10px] mt-0.5 text-red-300"
+                          title="هیچ ری‌اکشنی از این چت توی DB ثبت نشده — احتمالاً bot ری‌اکشن نمی‌گیره."
+                        >
+                          ❌ ۰ ری‌اکشن ثبت‌شده
+                        </div>
+                      ) : null}
                     </td>
                     <td className="py-2 px-2 text-[var(--color-text-dim)] text-center">
                       {r.messagesLast24h}
@@ -421,6 +442,15 @@ export default function FollowUpDebugPage() {
                       ) : (
                         "—"
                       )}
+                    </td>
+                    <td className="py-2 px-2">
+                      <button
+                        onClick={() => ackChat(r.chatId)}
+                        className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+                        title="مارک کن به‌عنوان «متوجه شدم» — تا پیام جدید بعدی، دیگه ping نمی‌شه"
+                      >
+                        👌 ack
+                      </button>
                     </td>
                   </tr>
                 );

@@ -4001,6 +4001,10 @@ export type FollowUpDebugRow = {
   lastOwnerMsgOnlyAt: Date | null;
   // Pure reaction-only last owner reaction.
   lastReactionAt: Date | null;
+  // Total owner reactions ever recorded for this chat (sanity check —
+  // if 0 even after the operator says they reacted, the message_reaction
+  // pipeline isn't reaching the bot for this chat).
+  reactionsTotal: number;
   // Last ANY message (owner or customer, ignoring from_owner). Helpful
   // when last_customer_at looks stale — if last_any_at is recent, the
   // missing customer rows are being logged as from_owner=TRUE.
@@ -4043,7 +4047,9 @@ export async function debugFollowUpScan(args?: {
       GROUP BY m.chat_id
     ),
     rx_per_chat AS (
-      SELECT chat_id, MAX(reacted_at) AS last_reaction_at
+      SELECT chat_id,
+             MAX(reacted_at) AS last_reaction_at,
+             COUNT(*)::int AS reactions_total
       FROM owner_reactions
       WHERE reacted_at > NOW() - INTERVAL '365 days'
         AND (${tenantId}::bigint IS NULL OR tenant_id = ${tenantId})
@@ -4054,6 +4060,7 @@ export async function debugFollowUpScan(args?: {
         m.chat_id,
         m.last_owner_at AS last_owner_msg_at,
         r.last_reaction_at,
+        COALESCE(r.reactions_total, 0) AS reactions_total,
         GREATEST(m.last_owner_at, r.last_reaction_at) AS last_owner_at,
         m.last_customer_at,
         m.last_any_at,
@@ -4063,7 +4070,7 @@ export async function debugFollowUpScan(args?: {
     )
     SELECT
       p.chat_id, p.last_owner_at, p.last_owner_msg_at,
-      p.last_reaction_at, p.last_customer_at, p.last_any_at,
+      p.last_reaction_at, p.reactions_total, p.last_customer_at, p.last_any_at,
       p.msgs_last_24h,
       r.first_name, r.last_name, r.nickname, r.chat_title,
       COALESCE(r.follow_up_enabled, TRUE) AS follow_up_enabled,
@@ -4116,6 +4123,7 @@ export async function debugFollowUpScan(args?: {
       lastOwnerMessageAt: (r0.last_owner_at as Date) ?? null,
       lastOwnerMsgOnlyAt: (r0.last_owner_msg_at as Date) ?? null,
       lastReactionAt: (r0.last_reaction_at as Date) ?? null,
+      reactionsTotal: Number(r0.reactions_total ?? 0),
       lastAnyMessageAt: (r0.last_any_at as Date) ?? null,
       messagesLast24h: Number(r0.msgs_last_24h ?? 0),
       hoursSinceCustomer:

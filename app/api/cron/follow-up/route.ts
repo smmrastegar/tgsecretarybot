@@ -158,6 +158,7 @@ async function run(request: Request): Promise<NextResponse> {
           lastOwnerMessageAt: r.lastOwnerMessageAt,
           lastOwnerMsgOnlyAt: r.lastOwnerMsgOnlyAt,
           lastReactionAt: r.lastReactionAt,
+          reactionsTotal: r.reactionsTotal,
           lastAnyMessageAt: r.lastAnyMessageAt,
           messagesLast24h: r.messagesLast24h,
           lastPingAt: r.lastPingAt,

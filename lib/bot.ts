@@ -1918,6 +1918,15 @@ function buildBot(): Bot {
   });
 
   bot.on("message_reaction", async (ctx) => {
+    const upd = ctx.update.message_reaction;
+    const bcId = (upd as unknown as { business_connection_id?: string })
+      .business_connection_id;
+    console.log(
+      `[reaction] received chat=${upd?.chat?.id} chat_type=${upd?.chat?.type} ` +
+        `user=${upd?.user?.id} bcId=${bcId ?? "(none)"} ` +
+        `new=${upd?.new_reaction?.length ?? 0} ` +
+        `types=${(upd?.new_reaction ?? []).map((r) => r.type).join(",")}`,
+    );
     await handleSecretaryReaction(ctx.update.message_reaction, bot).catch(
       (err) => console.error("[secretary] reaction error:", err),
     );
@@ -4930,7 +4939,13 @@ async function handleSecretaryReaction(
       .business_connection_id ?? null;
   if (bcIdRaw && upd.chat.type === "private") {
     const owner = await resolveOwner(bcIdRaw, bot).catch(() => null);
-    if (owner && upd.user.id === owner.userId) {
+    if (!owner) {
+      console.log(`[reaction] owner-log skip chat=${upd.chat.id}: resolveOwner returned null for bcId=${bcIdRaw}`);
+    } else if (upd.user.id !== owner.userId) {
+      console.log(
+        `[reaction] owner-log skip chat=${upd.chat.id}: reactor=${upd.user.id} != owner=${owner.userId}`,
+      );
+    } else {
       const emojis = (upd.new_reaction ?? [])
         .filter((r) => r.type === "emoji")
         .map((r) => (r as { type: "emoji"; emoji: string }).emoji)
@@ -4938,18 +4953,32 @@ async function handleSecretaryReaction(
       // Only count ADDING a reaction. If old_reaction had entries and
       // new_reaction is empty, the owner just removed — don't treat
       // that as a reply.
-      if (emojis) {
-        await recordOwnerReaction({
-          chatId: upd.chat.id,
-          businessConnectionId: bcIdRaw,
-          messageId: upd.message_id,
-          emojis,
-          tenantId: null,
-        }).catch((err) =>
-          console.warn("[reaction] owner log failed:", err),
+      if (!emojis) {
+        const allTypes = (upd.new_reaction ?? [])
+          .map((r) => r.type)
+          .join(",");
+        console.log(
+          `[reaction] owner-log skip chat=${upd.chat.id}: no plain emoji in new_reaction (types=${allTypes || "empty"})`,
         );
+      } else {
+        try {
+          await recordOwnerReaction({
+            chatId: upd.chat.id,
+            businessConnectionId: bcIdRaw,
+            messageId: upd.message_id,
+            emojis,
+            tenantId: null,
+          });
+          console.log(
+            `[reaction] owner-log OK chat=${upd.chat.id} emojis="${emojis}" bcId=${bcIdRaw}`,
+          );
+        } catch (err) {
+          console.warn(`[reaction] owner-log DB write failed chat=${upd.chat.id}:`, err);
+        }
       }
     }
+  } else if (!bcIdRaw) {
+    console.log(`[reaction] owner-log skip chat=${upd.chat.id}: no business_connection_id (not a business chat)`);
   }
 
   const settings = await getSettings();
