@@ -53,6 +53,12 @@ const TILES: Array<{
     desc: "مفاهیم global برای همه‌ی چت‌ها (با aliases) — جدا از auto_extract_notes هر چت. اگه پیامی به مفهومی اشاره کنه، توی Notes + کانال notes_inbox ثبت می‌شه.",
   },
   {
+    href: "/follow-up",
+    emoji: "⏰",
+    label: "Follow-up",
+    desc: "چت‌هایی که جوابشون رو ندادی — با فیلتر بر اساس وضعیت، جستجو، و دکمه اجرای فوری cron.",
+  },
+  {
     href: "/ask",
     emoji: "🔎",
     label: "Ask",
