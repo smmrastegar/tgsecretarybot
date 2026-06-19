@@ -554,6 +554,109 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_ai_needs_reply BOOLEAN`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_ai_reason TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_ai_urgency TEXT`;
+    // Per-chat opt-in to transcribe voice messages before sending the
+    // conversation to the AI follow-up judge. Costs an STT call per
+    // voice in the recent window — default OFF so it's only paid for
+    // chats the operator really cares about.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_transcribe_voices BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Chat profiles: shared template of follow-up settings. A chat
+    // can be assigned to a profile and inherit its values. Useful
+    // for batching "all my work contacts → ping after 1h, transcribe
+    // voices" without configuring each chat individually.
+    await q`
+      CREATE TABLE IF NOT EXISTS chat_profiles (
+        id                          SERIAL PRIMARY KEY,
+        slug                        TEXT NOT NULL,
+        name                        TEXT NOT NULL,
+        emoji                       TEXT,
+        description                 TEXT,
+        is_default                  BOOLEAN NOT NULL DEFAULT FALSE,
+        is_builtin                  BOOLEAN NOT NULL DEFAULT FALSE,
+        follow_up_enabled           BOOLEAN NOT NULL DEFAULT TRUE,
+        follow_up_threshold_hours   NUMERIC NOT NULL DEFAULT 2,
+        follow_up_escalate_hours    NUMERIC NOT NULL DEFAULT 12,
+        follow_up_transcribe_voices BOOLEAN NOT NULL DEFAULT FALSE,
+        tenant_id                   BIGINT,
+        created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (tenant_id, slug)
+      )`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS profile_id INTEGER`;
+    await q`CREATE INDEX IF NOT EXISTS chat_rules_profile_idx
+      ON chat_rules (profile_id) WHERE profile_id IS NOT NULL`;
+    // Seed builtin profiles per-tenant (idempotent — ON CONFLICT
+    // skips if the (tenant_id, slug) row already exists).
+    const tenantRows = await q`SELECT id FROM tenants`;
+    for (const tr of tenantRows as Array<{ id: string | number }>) {
+      const tid = Number(tr.id);
+      const seeds = [
+        {
+          slug: "default",
+          name: "پیش‌فرض",
+          emoji: "📋",
+          isDefault: true,
+          enabled: true,
+          threshold: 2,
+          escalate: 12,
+          transcribe: false,
+        },
+        {
+          slug: "work",
+          name: "کاری",
+          emoji: "💼",
+          isDefault: false,
+          enabled: true,
+          threshold: 1,
+          escalate: 4,
+          transcribe: true,
+        },
+        {
+          slug: "friend",
+          name: "دوستانه",
+          emoji: "😊",
+          isDefault: false,
+          enabled: true,
+          threshold: 4,
+          escalate: 24,
+          transcribe: false,
+        },
+        {
+          slug: "intimate",
+          name: "صمیمی",
+          emoji: "❤️",
+          isDefault: false,
+          enabled: true,
+          threshold: 0.5,
+          escalate: 2,
+          transcribe: true,
+        },
+        {
+          slug: "quick",
+          name: "پاسخ سریع",
+          emoji: "⚡",
+          isDefault: false,
+          enabled: true,
+          threshold: 0.25,
+          escalate: 1,
+          transcribe: true,
+        },
+      ];
+      for (const s of seeds) {
+        await q`
+          INSERT INTO chat_profiles (
+            slug, name, emoji, is_default, is_builtin,
+            follow_up_enabled, follow_up_threshold_hours,
+            follow_up_escalate_hours, follow_up_transcribe_voices,
+            tenant_id
+          )
+          VALUES (
+            ${s.slug}, ${s.name}, ${s.emoji}, ${s.isDefault}, TRUE,
+            ${s.enabled}, ${s.threshold}, ${s.escalate}, ${s.transcribe},
+            ${tid}
+          )
+          ON CONFLICT (tenant_id, slug) DO NOTHING`;
+      }
+    }
     // Reactions count as "the owner replied" for the follow-up cron.
     // We can't store reactions in messages_log because logMessage dedupes
     // on (bcId, chat_id, message_id) and that key already belongs to the
@@ -2573,6 +2676,7 @@ export type ChatRule = {
   followUpLastPingAt: Date | null;
   followUpLastPingKind: string | null;
   followUpAckedAt: Date | null;
+  profileId: number | null;
   updatedAt: Date;
 };
 
@@ -2658,6 +2762,7 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
     followUpLastPingAt: (r.follow_up_last_ping_at as Date) ?? null,
     followUpLastPingKind: (r.follow_up_last_ping_kind as string) ?? null,
     followUpAckedAt: (r.follow_up_acked_at as Date) ?? null,
+    profileId: r.profile_id == null ? null : Number(r.profile_id),
     updatedAt: r.updated_at as Date,
   };
 }
@@ -2685,7 +2790,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            summary_interval_hours, last_summary_run_at, analytics_share_token,
            follow_up_enabled, follow_up_threshold_hours, follow_up_escalate_hours,
            follow_up_last_ping_at, follow_up_last_ping_kind, follow_up_acked_at,
-           updated_at
+           profile_id, updated_at
     FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToChatRule(r) : null;
@@ -4011,6 +4116,193 @@ export async function setChatFollowUp(args: {
 // Mark this chat as "I'm aware" — bot stops sending more follow-up
 // pings until the customer messages again. Stamped by the "متوجه
 // شدم" button under each follow-up notice in notes_inbox.
+// --- Chat profiles ---
+
+export type ChatProfile = {
+  id: number;
+  slug: string;
+  name: string;
+  emoji: string | null;
+  description: string | null;
+  isDefault: boolean;
+  isBuiltin: boolean;
+  followUpEnabled: boolean;
+  followUpThresholdHours: number;
+  followUpEscalateHours: number;
+  followUpTranscribeVoices: boolean;
+  tenantId: number | null;
+  chatCount: number;
+};
+
+function rowToProfile(r: Record<string, unknown>): ChatProfile {
+  return {
+    id: Number(r.id),
+    slug: r.slug as string,
+    name: r.name as string,
+    emoji: (r.emoji as string) ?? null,
+    description: (r.description as string) ?? null,
+    isDefault: Boolean(r.is_default),
+    isBuiltin: Boolean(r.is_builtin),
+    followUpEnabled: Boolean(r.follow_up_enabled),
+    followUpThresholdHours: Number(r.follow_up_threshold_hours),
+    followUpEscalateHours: Number(r.follow_up_escalate_hours),
+    followUpTranscribeVoices: Boolean(r.follow_up_transcribe_voices),
+    tenantId: r.tenant_id == null ? null : Number(r.tenant_id),
+    chatCount: Number(r.chat_count ?? 0),
+  };
+}
+
+export async function listChatProfiles(args?: {
+  tenantId?: number | null;
+}): Promise<ChatProfile[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const tenantId = args?.tenantId ?? null;
+  const rows = await sql()`
+    SELECT p.id, p.slug, p.name, p.emoji, p.description, p.is_default,
+           p.is_builtin, p.follow_up_enabled, p.follow_up_threshold_hours,
+           p.follow_up_escalate_hours, p.follow_up_transcribe_voices,
+           p.tenant_id,
+           (SELECT COUNT(*)::int FROM chat_rules cr WHERE cr.profile_id = p.id) AS chat_count
+    FROM chat_profiles p
+    WHERE (${tenantId}::bigint IS NULL OR p.tenant_id = ${tenantId})
+    ORDER BY p.is_default DESC, p.is_builtin DESC, p.name ASC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToProfile);
+}
+
+export async function getChatProfile(
+  id: number,
+): Promise<ChatProfile | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, slug, name, emoji, description, is_default, is_builtin,
+           follow_up_enabled, follow_up_threshold_hours,
+           follow_up_escalate_hours, follow_up_transcribe_voices, tenant_id,
+           (SELECT COUNT(*)::int FROM chat_rules cr WHERE cr.profile_id = ${id}) AS chat_count
+    FROM chat_profiles WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToProfile(r) : null;
+}
+
+export async function createChatProfile(args: {
+  slug: string;
+  name: string;
+  emoji: string | null;
+  description: string | null;
+  followUpEnabled: boolean;
+  followUpThresholdHours: number;
+  followUpEscalateHours: number;
+  followUpTranscribeVoices: boolean;
+  tenantId: number | null;
+}): Promise<ChatProfile> {
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO chat_profiles (
+      slug, name, emoji, description, is_default, is_builtin,
+      follow_up_enabled, follow_up_threshold_hours,
+      follow_up_escalate_hours, follow_up_transcribe_voices, tenant_id
+    ) VALUES (
+      ${args.slug}, ${args.name}, ${args.emoji}, ${args.description},
+      FALSE, FALSE, ${args.followUpEnabled},
+      ${args.followUpThresholdHours}, ${args.followUpEscalateHours},
+      ${args.followUpTranscribeVoices}, ${args.tenantId}
+    )
+    RETURNING id, slug, name, emoji, description, is_default, is_builtin,
+              follow_up_enabled, follow_up_threshold_hours,
+              follow_up_escalate_hours, follow_up_transcribe_voices, tenant_id`;
+  return rowToProfile(rows[0] as Record<string, unknown>);
+}
+
+export async function updateChatProfile(args: {
+  id: number;
+  name?: string;
+  emoji?: string | null;
+  description?: string | null;
+  followUpEnabled?: boolean;
+  followUpThresholdHours?: number;
+  followUpEscalateHours?: number;
+  followUpTranscribeVoices?: boolean;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE chat_profiles SET
+      name = COALESCE(${args.name ?? null}::text, name),
+      emoji = COALESCE(${args.emoji === undefined ? null : args.emoji}::text, emoji),
+      description = COALESCE(${args.description === undefined ? null : args.description}::text, description),
+      follow_up_enabled = COALESCE(${args.followUpEnabled ?? null}::boolean, follow_up_enabled),
+      follow_up_threshold_hours = COALESCE(${args.followUpThresholdHours ?? null}::numeric, follow_up_threshold_hours),
+      follow_up_escalate_hours = COALESCE(${args.followUpEscalateHours ?? null}::numeric, follow_up_escalate_hours),
+      follow_up_transcribe_voices = COALESCE(${args.followUpTranscribeVoices ?? null}::boolean, follow_up_transcribe_voices),
+      updated_at = NOW()
+    WHERE id = ${args.id}`;
+}
+
+export async function deleteChatProfile(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  // Block deleting default / builtin profiles; clear chat assignments
+  // first then drop.
+  await sql()`UPDATE chat_rules SET profile_id = NULL WHERE profile_id = ${id}`;
+  await sql()`DELETE FROM chat_profiles
+    WHERE id = ${id} AND is_default = FALSE AND is_builtin = FALSE`;
+}
+
+export async function assignChatToProfile(
+  chatId: number,
+  profileId: number | null,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, profile_id)
+    VALUES (${chatId}, 'private', ${profileId})
+    ON CONFLICT (chat_id) DO UPDATE SET
+      profile_id = ${profileId},
+      updated_at = NOW()`;
+}
+
+export async function bulkAssignProfile(
+  chatIds: number[],
+  profileId: number | null,
+): Promise<number> {
+  if (!hasDb() || chatIds.length === 0) return 0;
+  await ensureSchema();
+  let n = 0;
+  for (const id of chatIds) {
+    await assignChatToProfile(id, profileId);
+    n++;
+  }
+  return n;
+}
+
+export async function listChatsInProfile(
+  profileId: number,
+): Promise<Array<{ chatId: number; name: string | null }>> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT chat_id, first_name, last_name, nickname, chat_title
+    FROM chat_rules
+    WHERE profile_id = ${profileId}
+    ORDER BY updated_at DESC
+    LIMIT 500`;
+  return (rows as Array<Record<string, unknown>>).map((r) => {
+    const name =
+      [r.first_name as string, r.last_name as string]
+        .filter(Boolean)
+        .join(" ")
+        .trim() ||
+      (r.nickname as string) ||
+      (r.chat_title as string) ||
+      null;
+    return { chatId: Number(r.chat_id), name };
+  });
+}
+
+// --- Follow-up AI verdict cache ---
+
 // Cache the AI verdict against the current customer message — so the
 // cron doesn't re-spend AI tokens on the same conversation state
 // every tick. When a new customer message arrives, the cache becomes
@@ -4078,6 +4370,8 @@ export type FollowUpCandidate = {
   lastCustomerMessageText: string;
   lastOwnerMessageAt: Date | null;
   pendingCustomerMessageCount: number;
+  // Effective per the assigned profile (or per-chat fallback).
+  transcribeVoices: boolean;
   // Cached AI verdict. Stale when aiForMessageAt < lastCustomerMessageAt.
   aiForMessageAt: Date | null;
   aiVerdictAt: Date | null;
@@ -4132,8 +4426,12 @@ export async function listFollowUpCandidates(args?: {
     candidate AS (
       SELECT p.chat_id, p.last_owner_at, p.last_customer_at,
              r.first_name, r.last_name, r.nickname, r.chat_title,
-             r.follow_up_enabled, r.follow_up_threshold_hours,
-             r.follow_up_escalate_hours,
+             -- Effective follow-up settings: profile wins when chat
+             -- is assigned to one; otherwise the per-chat fields.
+             COALESCE(prof.follow_up_enabled, r.follow_up_enabled, TRUE) AS follow_up_enabled,
+             COALESCE(prof.follow_up_threshold_hours, r.follow_up_threshold_hours, 2) AS follow_up_threshold_hours,
+             COALESCE(prof.follow_up_escalate_hours, r.follow_up_escalate_hours, 12) AS follow_up_escalate_hours,
+             COALESCE(prof.follow_up_transcribe_voices, r.follow_up_transcribe_voices, FALSE) AS follow_up_transcribe_voices,
              r.follow_up_last_ping_at, r.follow_up_last_ping_kind,
              r.follow_up_acked_at,
              r.follow_up_ai_for_message_at, r.follow_up_ai_verdict_at,
@@ -4141,10 +4439,11 @@ export async function listFollowUpCandidates(args?: {
              r.follow_up_ai_urgency
       FROM per_chat p
       LEFT JOIN chat_rules r ON r.chat_id = p.chat_id
+      LEFT JOIN chat_profiles prof ON prof.id = r.profile_id
       WHERE p.last_customer_at IS NOT NULL
         AND p.last_owner_at IS NOT NULL
         AND p.last_owner_at < p.last_customer_at
-        AND COALESCE(r.follow_up_enabled, TRUE) = TRUE
+        AND COALESCE(prof.follow_up_enabled, r.follow_up_enabled, TRUE) = TRUE
         AND COALESCE(r.muted, FALSE) = FALSE
         AND COALESCE(r.ignored, FALSE) = FALSE
         AND COALESCE(r.is_bot, FALSE) = FALSE
@@ -4212,6 +4511,7 @@ export async function listFollowUpCandidates(args?: {
       lastCustomerMessageText: (s?.last_text as string) ?? "",
       lastOwnerMessageAt: lastOwnerAt,
       pendingCustomerMessageCount: Number(s?.cnt ?? 1),
+      transcribeVoices: Boolean(r0.follow_up_transcribe_voices ?? false),
       aiForMessageAt: (r0.follow_up_ai_for_message_at as Date) ?? null,
       aiVerdictAt: (r0.follow_up_ai_verdict_at as Date) ?? null,
       aiNeedsReply:

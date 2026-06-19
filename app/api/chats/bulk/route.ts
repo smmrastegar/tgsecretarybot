@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import {
   audit,
+  bulkAssignProfile,
   bulkSetAutoSummarize,
   bulkSetChatAutomation,
   bulkSetChatFlag,
@@ -31,7 +32,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       | "function"
       | "auto_summarize"
       | "automation"
-      | "rule_recipient";
+      | "rule_recipient"
+      | "profile";
     chatIds?: number[];
     mode?: ChatMode;
     value?: boolean;
@@ -39,6 +41,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     gapMinutes?: number;
     smartTiming?: boolean;
     ruleId?: number;
+    profileId?: number | null;
     automation?: {
       autoForwardVoice?: boolean;
       autoForwardVideo?: boolean;
@@ -121,6 +124,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       });
     }
     affected = chatIds.length;
+  } else if (op === "profile") {
+    const pid =
+      body.profileId == null || body.profileId === 0
+        ? null
+        : Number(body.profileId);
+    affected = await bulkAssignProfile(chatIds, pid);
   } else {
     return NextResponse.json({ error: "unknown op" }, { status: 400 });
   }

@@ -3,6 +3,45 @@ import { InlineKeyboard } from "grammy";
 import { config } from "@/lib/config";
 import { getCurrentSession } from "@/lib/auth";
 import { getBot } from "@/lib/bot";
+
+const TRANSCRIBABLE_KINDS = ["voice", "audio", "video_note"] as const;
+
+// On-demand: find recent voice/audio in this chat without transcripts
+// and transcribe them. Used only when the follow-up profile/setting
+// opts in — it costs an STT call per untranscribed voice.
+async function transcribeRecentVoices(
+  chatId: number,
+  language: string,
+  limit = 10,
+): Promise<{ done: number; failed: number }> {
+  const rows = (await sql()`
+    SELECT id, media_file_id
+    FROM messages_log
+    WHERE chat_id = ${chatId}
+      AND media_file_id IS NOT NULL
+      AND media_kind = ANY(${TRANSCRIBABLE_KINDS as readonly string[]}::text[])
+      AND transcript IS NULL
+      AND created_at > NOW() - INTERVAL '7 days'
+    ORDER BY created_at DESC
+    LIMIT ${limit}`) as Array<{ id: string; media_file_id: string }>;
+  let done = 0;
+  let failed = 0;
+  for (const r of rows) {
+    try {
+      const result = await transcribeAudio({
+        botToken: config.telegramBotToken,
+        fileId: r.media_file_id,
+        language,
+      });
+      await saveTranscript(Number(r.id), result.text);
+      done++;
+    } catch (err) {
+      console.warn(`[follow-up] transcribe msg=${r.id} failed:`, err);
+      failed++;
+    }
+  }
+  return { done, failed };
+}
 import {
   debugFollowUpScan,
   hasDb,
@@ -10,9 +49,13 @@ import {
   listFollowUpCandidates,
   recentConversation,
   recordChatFollowUpPing,
+  saveTranscript,
   setFollowUpAiVerdict,
+  sql,
 } from "@/lib/db";
 import { analyzeFollowUpNeed } from "@/lib/classifier";
+import { transcribeAudio } from "@/lib/stt";
+import { getSettings } from "@/lib/settings";
 import { listTenants } from "@/lib/tenant";
 import { runWithTenant } from "@/lib/tenant-context";
 
@@ -85,6 +128,22 @@ async function processTenant(tenantId: number) {
         aiReason = c.aiReason ?? "(cached)";
         aiUrgency = c.aiUrgency ?? "normal";
       } else {
+        // Optionally transcribe untranscribed recent voices in this
+        // chat before we hand the conversation to the AI judge.
+        if (c.transcribeVoices) {
+          const settings = await getSettings();
+          const lang = settings.sttLanguage || "fa";
+          const { done, failed } = await transcribeRecentVoices(
+            c.chatId,
+            lang,
+            10,
+          );
+          if (done > 0 || failed > 0) {
+            console.log(
+              `[follow-up] transcribed chat=${c.chatId} done=${done} failed=${failed}`,
+            );
+          }
+        }
         const conversation = await recentConversation(c.chatId, 30).catch(
           () => [],
         );

@@ -144,7 +144,14 @@ type Rule = {
   followUpEnabled: boolean;
   followUpThresholdHours: number;
   followUpEscalateHours: number;
+  profileId: number | null;
   updatedAt: string;
+};
+
+type ProfileSummary = {
+  id: number;
+  name: string;
+  emoji: string | null;
 };
 
 const FUNCTION_ROLE_LABELS: Record<string, string> = {
@@ -334,6 +341,16 @@ export default function ChatDetailPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
+
+  useEffect(() => {
+    fetch("/api/chat-profiles")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { profiles?: ProfileSummary[] } | null) => {
+        if (d?.profiles) setProfiles(d.profiles);
+      })
+      .catch(() => {});
+  }, []);
 
   // Personal-info form (firstName / lastName / nickname / relationship).
   // Kept in a local draft so the owner can type freely; only commits on Save.
@@ -583,6 +600,20 @@ export default function ChatDetailPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
+      });
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function patchProfile(profileId: number | null) {
+    setSaving(true);
+    try {
+      await fetch(`/api/chats/${chatId}/profile`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileId }),
       });
       await load();
     } finally {
@@ -1490,6 +1521,39 @@ export default function ChatDetailPage() {
               <MediaRoutingLog chatId={chatId} />
             )}
             <ChatRulesPanel chatId={chatId} />
+            <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+              <div className="text-xs font-medium mb-1.5">👤 پروفایل چت</div>
+              <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+                با انتخاب پروفایل، تنظیمات follow-up از پروفایل ارث می‌برد
+                (آستانه، escalate، transcribe ویس‌ها). مدیریت پروفایل‌ها
+                توی{" "}
+                <Link
+                  href="/chat-profiles"
+                  className="text-[var(--color-accent)] hover:underline"
+                >
+                  /chat-profiles
+                </Link>
+                .
+              </p>
+              <select
+                value={rule?.profileId ?? ""}
+                disabled={saving}
+                onChange={(e) =>
+                  patchProfile(
+                    e.target.value === "" ? null : Number(e.target.value),
+                  )
+                }
+                className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 w-full"
+              >
+                <option value="">— بدون پروفایل (تنظیمات per-chat) —</option>
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.emoji ?? ""} {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
               <div className="text-xs font-medium mb-1.5">
                 ⏰ یادآور جواب‌ندادن

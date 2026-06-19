@@ -59,6 +59,12 @@ const TILES: Array<{
     desc: "چت‌هایی که جوابشون رو ندادی — با فیلتر بر اساس وضعیت، جستجو، و دکمه اجرای فوری cron.",
   },
   {
+    href: "/chat-profiles",
+    emoji: "👤",
+    label: "Chat Profiles",
+    desc: "قالب‌های تنظیمات follow-up (کاری / دوستانه / صمیمی / پاسخ سریع / ...). هر چت رو می‌تونی به یه پروفایل assign کنی.",
+  },
+  {
     href: "/debug-log",
     emoji: "🪵",
     label: "Debug Log",

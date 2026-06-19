@@ -143,12 +143,27 @@ export default function ChatsPage() {
   const [bulkRules, setBulkRules] = useState<{ id: number; name: string }[]>(
     [],
   );
+  const [bulkProfiles, setBulkProfiles] = useState<
+    { id: number; name: string; emoji: string | null }[]
+  >([]);
   useEffect(() => {
     fetch("/api/rules")
       .then((r) => (r.ok ? r.json() : null))
       .then((j: { rules?: { id: number; name: string }[] } | null) => {
         if (j?.rules) setBulkRules(j.rules);
       })
+      .catch(() => {});
+    fetch("/api/chat-profiles")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          j: {
+            profiles?: { id: number; name: string; emoji: string | null }[];
+          } | null,
+        ) => {
+          if (j?.profiles) setBulkProfiles(j.profiles);
+        },
+      )
       .catch(() => {});
   }, []);
 
@@ -259,13 +274,15 @@ export default function ChatsPage() {
       | "function"
       | "auto_summarize"
       | "automation"
-      | "rule_recipient",
+      | "rule_recipient"
+      | "profile",
     extra: {
       mode?: ChatMode;
       value?: boolean;
       role?: string | null;
       gapMinutes?: number;
       ruleId?: number;
+      profileId?: number | null;
       automation?: {
         autoForwardVoice?: boolean;
         autoForwardVideo?: boolean;
@@ -688,6 +705,27 @@ export default function ChatsPage() {
                   {bulkRules.map((r) => (
                     <option key={r.id} value={r.id}>
                       → {r.name}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  disabled={bulking}
+                  defaultValue=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    const pid = v === "none" ? null : Number(v);
+                    void runBulk("profile", { profileId: pid });
+                    e.currentTarget.value = "";
+                  }}
+                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
+                  title="پروفایل follow-up رو روی چت‌های انتخاب‌شده اعمال کن"
+                >
+                  <option value="">👤 assign profile…</option>
+                  <option value="none">— هیچ پروفایلی —</option>
+                  {bulkProfiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.emoji ?? ""} {p.name}
                     </option>
                   ))}
                 </select>
