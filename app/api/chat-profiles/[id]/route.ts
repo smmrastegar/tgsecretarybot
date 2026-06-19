@@ -6,6 +6,7 @@ import {
   hasDb,
   listChatsInProfile,
   updateChatProfile,
+  type ChatProfilePatch,
 } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -50,15 +51,7 @@ export async function PATCH(
   if (!Number.isFinite(id)) {
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
   }
-  const body = (await request.json().catch(() => ({}))) as {
-    name?: string;
-    emoji?: string | null;
-    description?: string | null;
-    followUpEnabled?: boolean;
-    followUpThresholdHours?: number;
-    followUpEscalateHours?: number;
-    followUpTranscribeVoices?: boolean;
-  };
+  const body = (await request.json().catch(() => ({}))) as ChatProfilePatch;
   await updateChatProfile({ id, ...body });
   const profile = await getChatProfile(id);
   return NextResponse.json({ ok: true, profile });

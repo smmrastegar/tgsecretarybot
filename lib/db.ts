@@ -594,6 +594,26 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS profile_id INTEGER`;
     await q`CREATE INDEX IF NOT EXISTS chat_rules_profile_idx
       ON chat_rules (profile_id) WHERE profile_id IS NOT NULL`;
+    // Expand chat_profiles to hold ALL of the per-chat settings the
+    // operator can edit on /chats/[id]. Each new column is nullable
+    // so existing rows keep working; resolution rule is COALESCE
+    // (profile, chat, fallback) wherever settings are read.
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS mode TEXT`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS vip BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS muted BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS auto_summarize_enabled BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS auto_summarize_gap_minutes INTEGER`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS auto_summarize_smart_timing BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS auto_forward_voice BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS auto_forward_video BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS auto_forward_photo BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS auto_forward_location BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS auto_extract_notes BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS ai_process_voice BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS ai_process_stickers BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS ai_process_gifs BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS ai_process_photos BOOLEAN`;
+    await q`ALTER TABLE chat_profiles ADD COLUMN IF NOT EXISTS ai_process_video_notes BOOLEAN`;
     // Seed builtin profiles per-tenant (idempotent — ON CONFLICT
     // skips if the (tenant_id, slug) row already exists).
     const tenantRows = await q`SELECT id FROM tenants`;
@@ -4192,13 +4212,45 @@ export type ChatProfile = {
   description: string | null;
   isDefault: boolean;
   isBuiltin: boolean;
+  // Follow-up
   followUpEnabled: boolean;
   followUpThresholdHours: number;
   followUpEscalateHours: number;
   followUpTranscribeVoices: boolean;
+  // General chat behaviour (null = profile doesn't override; chat
+  // keeps its own per-chat value).
+  mode: string | null;
+  vip: boolean | null;
+  muted: boolean | null;
+  // Auto-summarize (group digests)
+  autoSummarizeEnabled: boolean | null;
+  autoSummarizeGapMinutes: number | null;
+  autoSummarizeSmartTiming: boolean | null;
+  // Auto-forward media to storage
+  autoForwardVoice: boolean | null;
+  autoForwardVideo: boolean | null;
+  autoForwardPhoto: boolean | null;
+  autoForwardLocation: boolean | null;
+  autoExtractNotes: boolean | null;
+  // AI process media flags
+  aiProcessVoice: boolean | null;
+  aiProcessStickers: boolean | null;
+  aiProcessGifs: boolean | null;
+  aiProcessPhotos: boolean | null;
+  aiProcessVideoNotes: boolean | null;
   tenantId: number | null;
   chatCount: number;
 };
+
+function nullableBool(v: unknown): boolean | null {
+  return v == null ? null : Boolean(v);
+}
+function nullableNum(v: unknown): number | null {
+  return v == null ? null : Number(v);
+}
+function nullableStr(v: unknown): string | null {
+  return v == null ? null : String(v);
+}
 
 function rowToProfile(r: Record<string, unknown>): ChatProfile {
   return {
@@ -4213,6 +4265,22 @@ function rowToProfile(r: Record<string, unknown>): ChatProfile {
     followUpThresholdHours: Number(r.follow_up_threshold_hours),
     followUpEscalateHours: Number(r.follow_up_escalate_hours),
     followUpTranscribeVoices: Boolean(r.follow_up_transcribe_voices),
+    mode: nullableStr(r.mode),
+    vip: nullableBool(r.vip),
+    muted: nullableBool(r.muted),
+    autoSummarizeEnabled: nullableBool(r.auto_summarize_enabled),
+    autoSummarizeGapMinutes: nullableNum(r.auto_summarize_gap_minutes),
+    autoSummarizeSmartTiming: nullableBool(r.auto_summarize_smart_timing),
+    autoForwardVoice: nullableBool(r.auto_forward_voice),
+    autoForwardVideo: nullableBool(r.auto_forward_video),
+    autoForwardPhoto: nullableBool(r.auto_forward_photo),
+    autoForwardLocation: nullableBool(r.auto_forward_location),
+    autoExtractNotes: nullableBool(r.auto_extract_notes),
+    aiProcessVoice: nullableBool(r.ai_process_voice),
+    aiProcessStickers: nullableBool(r.ai_process_stickers),
+    aiProcessGifs: nullableBool(r.ai_process_gifs),
+    aiProcessPhotos: nullableBool(r.ai_process_photos),
+    aiProcessVideoNotes: nullableBool(r.ai_process_video_notes),
     tenantId: r.tenant_id == null ? null : Number(r.tenant_id),
     chatCount: Number(r.chat_count ?? 0),
   };
@@ -4225,10 +4293,7 @@ export async function listChatProfiles(args?: {
   await ensureSchema();
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
-    SELECT p.id, p.slug, p.name, p.emoji, p.description, p.is_default,
-           p.is_builtin, p.follow_up_enabled, p.follow_up_threshold_hours,
-           p.follow_up_escalate_hours, p.follow_up_transcribe_voices,
-           p.tenant_id,
+    SELECT p.*,
            (SELECT COUNT(*)::int FROM chat_rules cr WHERE cr.profile_id = p.id) AS chat_count
     FROM chat_profiles p
     WHERE (${tenantId}::bigint IS NULL OR p.tenant_id = ${tenantId})
@@ -4242,9 +4307,7 @@ export async function getChatProfile(
   if (!hasDb()) return null;
   await ensureSchema();
   const rows = await sql()`
-    SELECT id, slug, name, emoji, description, is_default, is_builtin,
-           follow_up_enabled, follow_up_threshold_hours,
-           follow_up_escalate_hours, follow_up_transcribe_voices, tenant_id,
+    SELECT *,
            (SELECT COUNT(*)::int FROM chat_rules cr WHERE cr.profile_id = ${id}) AS chat_count
     FROM chat_profiles WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -4274,14 +4337,11 @@ export async function createChatProfile(args: {
       ${args.followUpThresholdHours}, ${args.followUpEscalateHours},
       ${args.followUpTranscribeVoices}, ${args.tenantId}
     )
-    RETURNING id, slug, name, emoji, description, is_default, is_builtin,
-              follow_up_enabled, follow_up_threshold_hours,
-              follow_up_escalate_hours, follow_up_transcribe_voices, tenant_id`;
+    RETURNING *`;
   return rowToProfile(rows[0] as Record<string, unknown>);
 }
 
-export async function updateChatProfile(args: {
-  id: number;
+export type ChatProfilePatch = {
   name?: string;
   emoji?: string | null;
   description?: string | null;
@@ -4289,18 +4349,63 @@ export async function updateChatProfile(args: {
   followUpThresholdHours?: number;
   followUpEscalateHours?: number;
   followUpTranscribeVoices?: boolean;
-}): Promise<void> {
+  mode?: string | null;
+  vip?: boolean | null;
+  muted?: boolean | null;
+  autoSummarizeEnabled?: boolean | null;
+  autoSummarizeGapMinutes?: number | null;
+  autoSummarizeSmartTiming?: boolean | null;
+  autoForwardVoice?: boolean | null;
+  autoForwardVideo?: boolean | null;
+  autoForwardPhoto?: boolean | null;
+  autoForwardLocation?: boolean | null;
+  autoExtractNotes?: boolean | null;
+  aiProcessVoice?: boolean | null;
+  aiProcessStickers?: boolean | null;
+  aiProcessGifs?: boolean | null;
+  aiProcessPhotos?: boolean | null;
+  aiProcessVideoNotes?: boolean | null;
+};
+
+export async function updateChatProfile(args: {
+  id: number;
+} & ChatProfilePatch): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
+  // Sentinel pattern: undefined → keep existing; null → store NULL
+  // (= "this profile doesn't override this setting"). Booleans /
+  // numbers / strings get stored as-is.
+  const u = (v: unknown, key: "set" | "skip") =>
+    v === undefined ? "skip" : key;
+  // Build the update incrementally — sql() doesn't support dynamic
+  // SET lists cleanly, so use a single big COALESCE-with-sentinel
+  // approach: pass a flag column alongside the value.
+  void u;
   await sql()`
     UPDATE chat_profiles SET
-      name = COALESCE(${args.name ?? null}::text, name),
-      emoji = COALESCE(${args.emoji === undefined ? null : args.emoji}::text, emoji),
-      description = COALESCE(${args.description === undefined ? null : args.description}::text, description),
-      follow_up_enabled = COALESCE(${args.followUpEnabled ?? null}::boolean, follow_up_enabled),
-      follow_up_threshold_hours = COALESCE(${args.followUpThresholdHours ?? null}::numeric, follow_up_threshold_hours),
-      follow_up_escalate_hours = COALESCE(${args.followUpEscalateHours ?? null}::numeric, follow_up_escalate_hours),
-      follow_up_transcribe_voices = COALESCE(${args.followUpTranscribeVoices ?? null}::boolean, follow_up_transcribe_voices),
+      name = CASE WHEN ${args.name === undefined}::boolean THEN name ELSE ${args.name ?? null}::text END,
+      emoji = CASE WHEN ${args.emoji === undefined}::boolean THEN emoji ELSE ${args.emoji ?? null}::text END,
+      description = CASE WHEN ${args.description === undefined}::boolean THEN description ELSE ${args.description ?? null}::text END,
+      follow_up_enabled = CASE WHEN ${args.followUpEnabled === undefined}::boolean THEN follow_up_enabled ELSE ${args.followUpEnabled ?? null}::boolean END,
+      follow_up_threshold_hours = CASE WHEN ${args.followUpThresholdHours === undefined}::boolean THEN follow_up_threshold_hours ELSE ${args.followUpThresholdHours ?? null}::numeric END,
+      follow_up_escalate_hours = CASE WHEN ${args.followUpEscalateHours === undefined}::boolean THEN follow_up_escalate_hours ELSE ${args.followUpEscalateHours ?? null}::numeric END,
+      follow_up_transcribe_voices = CASE WHEN ${args.followUpTranscribeVoices === undefined}::boolean THEN follow_up_transcribe_voices ELSE ${args.followUpTranscribeVoices ?? null}::boolean END,
+      mode = CASE WHEN ${args.mode === undefined}::boolean THEN mode ELSE ${args.mode ?? null}::text END,
+      vip = CASE WHEN ${args.vip === undefined}::boolean THEN vip ELSE ${args.vip ?? null}::boolean END,
+      muted = CASE WHEN ${args.muted === undefined}::boolean THEN muted ELSE ${args.muted ?? null}::boolean END,
+      auto_summarize_enabled = CASE WHEN ${args.autoSummarizeEnabled === undefined}::boolean THEN auto_summarize_enabled ELSE ${args.autoSummarizeEnabled ?? null}::boolean END,
+      auto_summarize_gap_minutes = CASE WHEN ${args.autoSummarizeGapMinutes === undefined}::boolean THEN auto_summarize_gap_minutes ELSE ${args.autoSummarizeGapMinutes ?? null}::int END,
+      auto_summarize_smart_timing = CASE WHEN ${args.autoSummarizeSmartTiming === undefined}::boolean THEN auto_summarize_smart_timing ELSE ${args.autoSummarizeSmartTiming ?? null}::boolean END,
+      auto_forward_voice = CASE WHEN ${args.autoForwardVoice === undefined}::boolean THEN auto_forward_voice ELSE ${args.autoForwardVoice ?? null}::boolean END,
+      auto_forward_video = CASE WHEN ${args.autoForwardVideo === undefined}::boolean THEN auto_forward_video ELSE ${args.autoForwardVideo ?? null}::boolean END,
+      auto_forward_photo = CASE WHEN ${args.autoForwardPhoto === undefined}::boolean THEN auto_forward_photo ELSE ${args.autoForwardPhoto ?? null}::boolean END,
+      auto_forward_location = CASE WHEN ${args.autoForwardLocation === undefined}::boolean THEN auto_forward_location ELSE ${args.autoForwardLocation ?? null}::boolean END,
+      auto_extract_notes = CASE WHEN ${args.autoExtractNotes === undefined}::boolean THEN auto_extract_notes ELSE ${args.autoExtractNotes ?? null}::boolean END,
+      ai_process_voice = CASE WHEN ${args.aiProcessVoice === undefined}::boolean THEN ai_process_voice ELSE ${args.aiProcessVoice ?? null}::boolean END,
+      ai_process_stickers = CASE WHEN ${args.aiProcessStickers === undefined}::boolean THEN ai_process_stickers ELSE ${args.aiProcessStickers ?? null}::boolean END,
+      ai_process_gifs = CASE WHEN ${args.aiProcessGifs === undefined}::boolean THEN ai_process_gifs ELSE ${args.aiProcessGifs ?? null}::boolean END,
+      ai_process_photos = CASE WHEN ${args.aiProcessPhotos === undefined}::boolean THEN ai_process_photos ELSE ${args.aiProcessPhotos ?? null}::boolean END,
+      ai_process_video_notes = CASE WHEN ${args.aiProcessVideoNotes === undefined}::boolean THEN ai_process_video_notes ELSE ${args.aiProcessVideoNotes ?? null}::boolean END,
       updated_at = NOW()
     WHERE id = ${args.id}`;
 }
