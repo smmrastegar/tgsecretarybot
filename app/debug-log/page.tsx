@@ -37,6 +37,9 @@ export default function DebugLogPage() {
   const [q, setQ] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
+  const [refreshingWebhook, setRefreshingWebhook] = useState(false);
+  const [webhookMsg, setWebhookMsg] = useState<string | null>(null);
+
   const load = async () => {
     setLoading(true);
     setErr(null);
@@ -62,6 +65,29 @@ export default function DebugLogPage() {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeType]);
+
+  const refreshWebhook = async () => {
+    setRefreshingWebhook(true);
+    setWebhookMsg(null);
+    try {
+      const r = await fetch("/api/health/refresh-webhook", { method: "POST" });
+      const j = (await r.json()) as {
+        ok?: boolean;
+        info?: { allowed_updates?: string[] };
+        error?: string;
+      };
+      if (r.ok && j.ok) {
+        const list = (j.info?.allowed_updates ?? []).join(", ") || "(default)";
+        setWebhookMsg(`✅ webhook ست شد — allowed_updates: ${list}`);
+      } else {
+        setWebhookMsg(`❌ ${j.error ?? `HTTP ${r.status}`}`);
+      }
+    } catch (e) {
+      setWebhookMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRefreshingWebhook(false);
+    }
+  };
 
   const filtered = useMemo<Row[]>(() => {
     if (!data) return [];
@@ -102,9 +128,30 @@ export default function DebugLogPage() {
           >
             {loading ? "..." : "🔄 رفرش"}
           </button>
+          <button
+            onClick={refreshWebhook}
+            disabled={refreshingWebhook}
+            className="text-xs px-3 py-1.5 rounded-md bg-sky-500/10 border border-sky-500/30 text-sky-200 disabled:opacity-50"
+            title="setWebhook رو با ALLOWED_UPDATES فعلی صدا می‌زنه. لازم بعد از هر اضافه شدن نوع جدید update."
+          >
+            {refreshingWebhook ? "..." : "📡 webhook رو refresh کن"}
+          </button>
           <span className="text-xs text-[var(--color-text-dim)] mr-auto">
             {filtered.length} نمایش
           </span>
+        </div>
+        {webhookMsg && (
+          <div className="text-[11px] text-[var(--color-text-dim)] mb-3 px-1 break-all">
+            {webhookMsg}
+          </div>
+        )}
+        <div className="text-[10px] text-[var(--color-text-dim)] mb-3 px-1 leading-relaxed border-r-2 border-amber-500/40 pr-2">
+          🔍 <b>چرا ری‌اکشن نمی‌بینم؟</b> طبق Telegram Bot API:
+          <br />• توی <b>گروه/کانال</b>: بات باید <b>administrator</b> باشه (فقط عضو کافی نیست) تا
+          {" "}<code>message_reaction</code> فایر بشه.
+          <br />• توی <b>چت Business</b>: ری‌اکشن owner روی پیام مشتری اصلاً به bot نمی‌رسه — این محدودیت Telegram هست. باید از دکمه «👌 ack» توی Follow-up استفاده کنی.
+          <br />• <code>message_reaction_count</code> فقط برای <b>کانال‌ها</b> (anonymous aggregate) هست.
+          <br />• اگه نوع update جدید اضافه شده، باید webhook رو refresh کنی.
         </div>
 
         <div className="flex flex-wrap gap-1.5 mb-3">
