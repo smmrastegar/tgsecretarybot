@@ -3852,7 +3852,12 @@ export async function listFollowUpCandidates(args?: {
       FROM per_chat p
       LEFT JOIN chat_rules r ON r.chat_id = p.chat_id
       WHERE p.last_customer_at IS NOT NULL
-        AND (p.last_owner_at IS NULL OR p.last_owner_at < p.last_customer_at)
+        -- Only chats where there's been a real bidirectional
+        -- conversation (we've replied at least once in the past).
+        -- Random one-way contacts the operator never engaged with
+        -- shouldn't generate pings.
+        AND p.last_owner_at IS NOT NULL
+        AND p.last_owner_at < p.last_customer_at
         AND COALESCE(r.follow_up_enabled, TRUE) = TRUE
         AND COALESCE(r.muted, FALSE) = FALSE
         AND COALESCE(r.ignored, FALSE) = FALSE
@@ -3941,7 +3946,18 @@ export type FollowUpDebugRow = {
   lastName: string | null;
   nickname: string | null;
   lastCustomerMessageAt: Date | null;
+  // last_owner_at after GREATEST(owner_message, owner_reaction)
   lastOwnerMessageAt: Date | null;
+  // Pure message-only last owner message (no reactions). Used to
+  // explain whether a chat counted as "replied" due to a reaction.
+  lastOwnerMsgOnlyAt: Date | null;
+  // Pure reaction-only last owner reaction.
+  lastReactionAt: Date | null;
+  // Last ANY message (owner or customer, ignoring from_owner). Helpful
+  // when last_customer_at looks stale — if last_any_at is recent, the
+  // missing customer rows are being logged as from_owner=TRUE.
+  lastAnyMessageAt: Date | null;
+  messagesLast24h: number;
   hoursSinceCustomer: number | null;
   followUpEnabled: boolean;
   thresholdHours: number;
@@ -3966,7 +3982,11 @@ export async function debugFollowUpScan(args?: {
       SELECT
         m.chat_id,
         MAX(CASE WHEN m.from_owner THEN m.created_at END) AS last_owner_at,
-        MAX(CASE WHEN NOT m.from_owner THEN m.created_at END) AS last_customer_at
+        MAX(CASE WHEN NOT m.from_owner THEN m.created_at END) AS last_customer_at,
+        MAX(m.created_at) AS last_any_at,
+        COUNT(*) FILTER (
+          WHERE m.created_at > NOW() - INTERVAL '24 hours'
+        )::int AS msgs_last_24h
       FROM messages_log m
       WHERE m.chat_type = 'private'
         AND m.created_at > NOW() - INTERVAL '365 days'
@@ -3984,13 +4004,19 @@ export async function debugFollowUpScan(args?: {
     per_chat AS (
       SELECT
         m.chat_id,
+        m.last_owner_at AS last_owner_msg_at,
+        r.last_reaction_at,
         GREATEST(m.last_owner_at, r.last_reaction_at) AS last_owner_at,
-        m.last_customer_at
+        m.last_customer_at,
+        m.last_any_at,
+        m.msgs_last_24h
       FROM msg_per_chat m
       LEFT JOIN rx_per_chat r ON r.chat_id = m.chat_id
     )
     SELECT
-      p.chat_id, p.last_owner_at, p.last_customer_at,
+      p.chat_id, p.last_owner_at, p.last_owner_msg_at,
+      p.last_reaction_at, p.last_customer_at, p.last_any_at,
+      p.msgs_last_24h,
       r.first_name, r.last_name, r.nickname, r.chat_title,
       COALESCE(r.follow_up_enabled, TRUE) AS follow_up_enabled,
       COALESCE(r.follow_up_threshold_hours, 2) AS threshold_h,
@@ -4006,8 +4032,8 @@ export async function debugFollowUpScan(args?: {
       END AS hours_since_customer,
       CASE
         WHEN p.last_customer_at IS NULL THEN 'no_customer_message'
-        WHEN p.last_owner_at IS NOT NULL AND p.last_owner_at >= p.last_customer_at
-          THEN 'replied_by_owner'
+        WHEN p.last_owner_at IS NULL THEN 'never_engaged'
+        WHEN p.last_owner_at >= p.last_customer_at THEN 'replied_by_owner'
         WHEN COALESCE(r.follow_up_enabled, TRUE) = FALSE THEN 'follow_up_disabled'
         WHEN COALESCE(r.muted, FALSE) THEN 'chat_muted'
         WHEN COALESCE(r.ignored, FALSE) THEN 'chat_ignored'
@@ -4040,6 +4066,10 @@ export async function debugFollowUpScan(args?: {
       nickname: (r0.nickname as string) ?? null,
       lastCustomerMessageAt: (r0.last_customer_at as Date) ?? null,
       lastOwnerMessageAt: (r0.last_owner_at as Date) ?? null,
+      lastOwnerMsgOnlyAt: (r0.last_owner_msg_at as Date) ?? null,
+      lastReactionAt: (r0.last_reaction_at as Date) ?? null,
+      lastAnyMessageAt: (r0.last_any_at as Date) ?? null,
+      messagesLast24h: Number(r0.msgs_last_24h ?? 0),
       hoursSinceCustomer:
         r0.hours_since_customer == null
           ? null

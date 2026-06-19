@@ -8,6 +8,7 @@ import { relTime } from "@/lib/format";
 
 type Decided =
   | "no_customer_message"
+  | "never_engaged"
   | "replied_by_owner"
   | "follow_up_disabled"
   | "chat_muted"
@@ -33,6 +34,10 @@ type ChatRow = {
   isBot: boolean;
   lastCustomerMessageAt: string | null;
   lastOwnerMessageAt: string | null;
+  lastOwnerMsgOnlyAt: string | null;
+  lastReactionAt: string | null;
+  lastAnyMessageAt: string | null;
+  messagesLast24h: number;
   lastPingAt: string | null;
   lastPingKind: string | null;
   ackedAt: string | null;
@@ -59,6 +64,7 @@ const DECIDED_LABELS: Record<Decided, string> = {
   already_pinged_escalate: "✓ هر دو ping رفته",
   replied_by_owner: "✅ جواب دادی",
   acked: "👌 متوجه شدم زدی",
+  never_engaged: "🤷 یه‌بار هم جواب ندادی",
   is_bot: "🤖 بات",
   chat_muted: "🔇 muted",
   chat_ignored: "🙈 ignored",
@@ -77,6 +83,7 @@ const DECIDED_TONES: Record<
   already_pinged_escalate: "neutral",
   replied_by_owner: "answered",
   acked: "answered",
+  never_engaged: "dim",
   is_bot: "dim",
   chat_muted: "dim",
   chat_ignored: "dim",
@@ -222,6 +229,7 @@ export default function FollowUpDebugPage() {
     "already_pinged_escalate",
     "replied_by_owner",
     "acked",
+    "never_engaged",
     "is_bot",
     "chat_muted",
     "chat_ignored",
@@ -319,7 +327,8 @@ export default function FollowUpDebugPage() {
                 <th className="py-2 px-2">نام</th>
                 <th className="py-2 px-2">وضعیت</th>
                 <th className="py-2 px-2">آخرین پیام مشتری</th>
-                <th className="py-2 px-2">آخرین جواب تو</th>
+                <th className="py-2 px-2">آخرین فعالیت تو</th>
+                <th className="py-2 px-2">۲۴h</th>
                 <th className="py-2 px-2">آستانه</th>
                 <th className="py-2 px-2">آخرین ping</th>
               </tr>
@@ -328,7 +337,7 @@ export default function FollowUpDebugPage() {
               {sorted.length === 0 && !loading && (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="py-6 px-2 text-center text-[var(--color-text-dim)]"
                   >
                     چیزی برای نمایش نیست.
@@ -337,6 +346,12 @@ export default function FollowUpDebugPage() {
               )}
               {sorted.map((r) => {
                 const tone = DECIDED_TONES[r.decided];
+                const customerStale =
+                  r.lastAnyMessageAt &&
+                  r.lastCustomerMessageAt &&
+                  new Date(r.lastAnyMessageAt).getTime() -
+                    new Date(r.lastCustomerMessageAt).getTime() >
+                    3600_000;
                 return (
                   <tr
                     key={r.chatId}
@@ -367,11 +382,32 @@ export default function FollowUpDebugPage() {
                           {relTime(new Date(r.lastCustomerMessageAt))}
                         </div>
                       )}
+                      {customerStale && (
+                        <div
+                          className="text-[10px] text-amber-300 mt-0.5"
+                          title="یه پیام جدیدتر توی این چت لاگ شده ولی به‌عنوان «مشتری» شناخته نشده — احتمالاً from_owner اشتباه ست شده."
+                        >
+                          ⚠ آخرین پیام چت {relTime(new Date(r.lastAnyMessageAt!))} — ولی from_owner=customer نیست
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 px-2 text-[var(--color-text-dim)]">
-                      {r.lastOwnerMessageAt
-                        ? relTime(new Date(r.lastOwnerMessageAt))
-                        : "—"}
+                      <div>
+                        {r.lastOwnerMessageAt
+                          ? relTime(new Date(r.lastOwnerMessageAt))
+                          : "—"}
+                      </div>
+                      {r.lastReactionAt && (
+                        <div
+                          className="text-[10px] mt-0.5"
+                          title={`ری‌اکشن آخر در ${r.lastReactionAt}`}
+                        >
+                          🌜 ری‌اکشن: {relTime(new Date(r.lastReactionAt))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-2 px-2 text-[var(--color-text-dim)] text-center">
+                      {r.messagesLast24h}
                     </td>
                     <td className="py-2 px-2 text-[var(--color-text-dim)]">
                       {r.thresholdHours}h / {r.escalateHours}h
