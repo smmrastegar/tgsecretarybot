@@ -214,6 +214,15 @@ type MessageEdit = {
   editedAt: string;
 };
 
+function fmtFollowUpDuration(hours: number): string {
+  if (hours < 1) {
+    const minutes = Math.round(hours * 60);
+    return `${minutes} دقیقه`;
+  }
+  if (Number.isInteger(hours)) return `${hours} ساعت`;
+  return `${hours} ساعت`;
+}
+
 function EditHistoryToggle({
   messageId,
   count,
@@ -1486,10 +1495,12 @@ export default function ChatDetailPage() {
                 ⏰ یادآور جواب‌ندادن
               </div>
               <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-                وقتی این شخص پیام بده و شما بیشتر از {rule?.followUpThresholdHours ?? 2}{" "}
-                ساعت جواب ندید، توی کانال notes_inbox یه پینگ می‌فرسته با
-                خلاصه‌ی پیام‌ها. اگه بازم {rule?.followUpEscalateHours ?? 12}{" "}
-                ساعت بگذره و جواب ندید، escalate می‌کنه.
+                وقتی این شخص پیام بده و شما بیشتر از{" "}
+                {fmtFollowUpDuration(rule?.followUpThresholdHours ?? 2)} جواب
+                ندید، توی کانال notes_inbox یه پینگ می‌فرسته با خلاصه‌ی
+                پیام‌ها. اگه بازم{" "}
+                {fmtFollowUpDuration(rule?.followUpEscalateHours ?? 12)} بگذره
+                و جواب ندید، escalate می‌کنه.
               </p>
               <label className="flex items-center gap-2 cursor-pointer mb-2">
                 <input
@@ -1503,19 +1514,18 @@ export default function ChatDetailPage() {
                 <span className="text-xs">یادآور برای این چت فعال باشه</span>
               </label>
               <div className="grid grid-cols-2 gap-2 text-xs">
-                <label className="flex flex-col gap-1">
+                <div className="flex flex-col gap-1">
                   <span className="text-[10px] text-[var(--color-text-dim)]">
-                    آستانه‌ی اول (ساعت)
+                    آستانه‌ی اول
                   </span>
                   <input
                     type="number"
-                    min={0.5}
+                    min={0.25}
                     max={168}
-                    step={0.5}
+                    step={0.25}
                     defaultValue={rule?.followUpThresholdHours ?? 2}
-                    disabled={
-                      saving || !(rule?.followUpEnabled ?? true)
-                    }
+                    key={`th-${rule?.followUpThresholdHours ?? 2}`}
+                    disabled={saving || !(rule?.followUpEnabled ?? true)}
                     onBlur={(e) => {
                       const v = Number(e.target.value);
                       if (Number.isFinite(v) && v > 0) {
@@ -1524,20 +1534,46 @@ export default function ChatDetailPage() {
                     }}
                     className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
                   />
-                </label>
-                <label className="flex flex-col gap-1">
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {[
+                      { label: "۱۵ دقیقه", v: 0.25 },
+                      { label: "نیم ساعت", v: 0.5 },
+                      { label: "۱ ساعت", v: 1 },
+                      { label: "۲ ساعت", v: 2 },
+                      { label: "۴ ساعت", v: 4 },
+                    ].map((p) => (
+                      <button
+                        key={p.v}
+                        type="button"
+                        disabled={
+                          saving || !(rule?.followUpEnabled ?? true)
+                        }
+                        onClick={() =>
+                          patchFollowUp({ thresholdHours: p.v })
+                        }
+                        className={`text-[10px] px-1.5 py-0.5 rounded-md border ${
+                          (rule?.followUpThresholdHours ?? 2) === p.v
+                            ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                            : "bg-[var(--color-surface-2)] border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+                        } disabled:opacity-50`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
                   <span className="text-[10px] text-[var(--color-text-dim)]">
-                    escalate بعد از (ساعت)
+                    escalate بعد از
                   </span>
                   <input
                     type="number"
-                    min={1}
+                    min={0.25}
                     max={168}
-                    step={1}
+                    step={0.25}
                     defaultValue={rule?.followUpEscalateHours ?? 12}
-                    disabled={
-                      saving || !(rule?.followUpEnabled ?? true)
-                    }
+                    key={`esc-${rule?.followUpEscalateHours ?? 12}`}
+                    disabled={saving || !(rule?.followUpEnabled ?? true)}
                     onBlur={(e) => {
                       const v = Number(e.target.value);
                       if (Number.isFinite(v) && v > 0) {
@@ -1546,7 +1582,34 @@ export default function ChatDetailPage() {
                     }}
                     className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
                   />
-                </label>
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {[
+                      { label: "۱۵ دقیقه", v: 0.25 },
+                      { label: "نیم ساعت", v: 0.5 },
+                      { label: "۱ ساعت", v: 1 },
+                      { label: "۴ ساعت", v: 4 },
+                      { label: "۱۲ ساعت", v: 12 },
+                    ].map((p) => (
+                      <button
+                        key={p.v}
+                        type="button"
+                        disabled={
+                          saving || !(rule?.followUpEnabled ?? true)
+                        }
+                        onClick={() =>
+                          patchFollowUp({ escalateHours: p.v })
+                        }
+                        className={`text-[10px] px-1.5 py-0.5 rounded-md border ${
+                          (rule?.followUpEscalateHours ?? 12) === p.v
+                            ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                            : "bg-[var(--color-surface-2)] border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+                        } disabled:opacity-50`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
             <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
