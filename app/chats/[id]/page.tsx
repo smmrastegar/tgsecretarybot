@@ -1701,6 +1701,9 @@ export default function ChatDetailPage() {
               />
             </div>
             <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+              <ChatHistoryPurge chatId={chatId} />
+            </div>
+            <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
               <div className="text-xs font-medium mb-1.5">🚫 نادیده گرفتن کامل</div>
               <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
                 وقتی تیک می‌خوره، bot به‌صورت کامل این چت رو نادیده می‌گیره
@@ -2308,5 +2311,123 @@ function MediaRoutingLog({ chatId }: { chatId: number }) {
         </div>
       )}
     </div>
+  );
+}
+
+function ChatHistoryPurge({ chatId }: { chatId: number }) {
+  const [days, setDays] = useState(30);
+  const [preview, setPreview] = useState<{
+    messages: number;
+    reactions: number;
+    oldestAt: string | null;
+    newestAt: string | null;
+  } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [purging, setPurging] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const runPreview = async () => {
+    setPreviewLoading(true);
+    setResult(null);
+    try {
+      const r = await fetch(`/api/chats/${chatId}/history?days=${days}`);
+      if (r.ok) setPreview(await r.json());
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const purge = async () => {
+    if (!preview || preview.messages === 0) return;
+    if (
+      !confirm(
+        `${preview.messages} پیام + ${preview.reactions} ری‌اکشن قدیمی‌تر از ${days} روز برای همیشه پاک بشه؟ این عملیات قابل بازگشت نیست.`,
+      )
+    )
+      return;
+    setPurging(true);
+    setResult(null);
+    try {
+      const r = await fetch(`/api/chats/${chatId}/history?days=${days}`, {
+        method: "DELETE",
+      });
+      if (r.ok) {
+        const j = (await r.json()) as {
+          messages: number;
+          reactions: number;
+        };
+        setResult(
+          `✅ ${j.messages} پیام + ${j.reactions} ری‌اکشن پاک شد.`,
+        );
+        setPreview(null);
+      } else {
+        setResult(`❌ HTTP ${r.status}`);
+      }
+    } finally {
+      setPurging(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="text-xs font-medium mb-1.5">
+        🗑 پاک کردن تاریخچه قدیمی
+      </div>
+      <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+        پیام‌های قدیمی‌تر از این مدت رو از <code>messages_log</code> پاک
+        می‌کنه + ری‌اکشن‌های متناظر. این عملیات قابل بازگشت نیست — خوبه
+        قبل از حذف یه پیش‌نمایش بگیری.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={days}
+          onChange={(e) => {
+            setDays(Number(e.target.value));
+            setPreview(null);
+            setResult(null);
+          }}
+          disabled={previewLoading || purging}
+          className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+        >
+          <option value={7}>قدیمی‌تر از ۷ روز</option>
+          <option value={14}>قدیمی‌تر از ۱۴ روز</option>
+          <option value={30}>قدیمی‌تر از ۳۰ روز</option>
+          <option value={60}>قدیمی‌تر از ۶۰ روز</option>
+          <option value={90}>قدیمی‌تر از ۹۰ روز</option>
+          <option value={180}>قدیمی‌تر از ۶ ماه</option>
+          <option value={365}>قدیمی‌تر از ۱ سال</option>
+        </select>
+        <button
+          onClick={runPreview}
+          disabled={previewLoading || purging}
+          className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
+        >
+          {previewLoading ? "..." : "🔢 پیش‌نمایش"}
+        </button>
+        {preview && preview.messages > 0 && (
+          <button
+            onClick={purge}
+            disabled={purging}
+            className="text-xs px-3 py-1.5 rounded-md bg-rose-500/15 border border-rose-500/40 text-rose-200 hover:bg-rose-500/25 disabled:opacity-50"
+          >
+            {purging
+              ? "..."
+              : `🗑 پاک کن (${preview.messages} پیام)`}
+          </button>
+        )}
+      </div>
+      {preview && (
+        <div className="text-[10px] text-[var(--color-text-dim)] mt-2">
+          {preview.messages === 0
+            ? `هیچ پیامی قدیمی‌تر از ${days} روز نیست.`
+            : `${preview.messages} پیام + ${preview.reactions} ری‌اکشن. قدیمی‌ترین: ${preview.oldestAt ? new Date(preview.oldestAt).toLocaleDateString("fa-IR") : "—"}، جدیدترین: ${preview.newestAt ? new Date(preview.newestAt).toLocaleDateString("fa-IR") : "—"}`}
+        </div>
+      )}
+      {result && (
+        <div className="text-[10px] text-[var(--color-text-dim)] mt-2">
+          {result}
+        </div>
+      )}
+    </>
   );
 }

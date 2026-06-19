@@ -4423,6 +4423,73 @@ export async function deleteChatProfile(id: number): Promise<void> {
 // Resolve "what profile does this chat use" — never returns null
 // from the operator's perspective. If chat has no explicit profile_id,
 // fall back to the tenant's default profile.
+// --- Per-chat history cleanup ---
+//
+// "Delete every messages_log row for this chat older than X days +
+//  every owner_reaction tied to it." Returns the number of rows
+// actually removed so the operator sees the impact.
+
+export async function countChatHistoryOlderThan(args: {
+  chatId: number;
+  olderThanDays: number;
+}): Promise<{
+  messages: number;
+  reactions: number;
+  oldestAt: Date | null;
+  newestAt: Date | null;
+}> {
+  if (!hasDb()) return { messages: 0, reactions: 0, oldestAt: null, newestAt: null };
+  await ensureSchema();
+  const days = Math.max(1, Math.round(args.olderThanDays));
+  const mRows = await sql()`
+    SELECT COUNT(*)::int AS cnt,
+           MIN(created_at) AS oldest,
+           MAX(created_at) AS newest
+    FROM messages_log
+    WHERE chat_id = ${args.chatId}
+      AND created_at < NOW() - make_interval(days => ${days})`;
+  const m = mRows[0] as {
+    cnt: number;
+    oldest: Date | null;
+    newest: Date | null;
+  };
+  const rRows = await sql()`
+    SELECT COUNT(*)::int AS cnt
+    FROM owner_reactions
+    WHERE chat_id = ${args.chatId}
+      AND reacted_at < NOW() - make_interval(days => ${days})`;
+  const r = rRows[0] as { cnt: number };
+  return {
+    messages: Number(m.cnt),
+    reactions: Number(r.cnt),
+    oldestAt: m.oldest,
+    newestAt: m.newest,
+  };
+}
+
+export async function deleteChatHistoryOlderThan(args: {
+  chatId: number;
+  olderThanDays: number;
+}): Promise<{ messages: number; reactions: number }> {
+  if (!hasDb()) return { messages: 0, reactions: 0 };
+  await ensureSchema();
+  const days = Math.max(1, Math.round(args.olderThanDays));
+  const m = await sql()`
+    DELETE FROM messages_log
+    WHERE chat_id = ${args.chatId}
+      AND created_at < NOW() - make_interval(days => ${days})
+    RETURNING id`;
+  const r = await sql()`
+    DELETE FROM owner_reactions
+    WHERE chat_id = ${args.chatId}
+      AND reacted_at < NOW() - make_interval(days => ${days})
+    RETURNING id`;
+  return {
+    messages: (m as Array<unknown>).length,
+    reactions: (r as Array<unknown>).length,
+  };
+}
+
 export async function getEffectiveProfileId(
   chatId: number,
 ): Promise<number | null> {
