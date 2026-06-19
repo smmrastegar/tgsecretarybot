@@ -59,6 +59,12 @@ const TILES: Array<{
     desc: "چت‌هایی که جوابشون رو ندادی — با فیلتر بر اساس وضعیت، جستجو، و دکمه اجرای فوری cron.",
   },
   {
+    href: "/debug-log",
+    emoji: "🪵",
+    label: "Debug Log",
+    desc: "هر Update که Telegram به webhook فرستاده — با تایم، چت، نوع، payload کامل. مخصوصاً MessageReactionUpdated برای دیباگ ری‌اکشن.",
+  },
+  {
     href: "/ask",
     emoji: "🔎",
     label: "Ask",

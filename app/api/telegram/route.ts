@@ -1,7 +1,7 @@
 import { webhookCallback } from "grammy";
 import { config } from "@/lib/config";
 import { getBot } from "@/lib/bot";
-import { markUpdateProcessed } from "@/lib/db";
+import { logTelegramUpdate, markUpdateProcessed } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +33,7 @@ const TRACKED_UPDATE_KEYS = [
   "edited_business_message",
   "deleted_business_messages",
   "message_reaction",
+  "message_reaction_count",
   "callback_query",
   "my_chat_member",
   "chat_member",
@@ -42,7 +43,11 @@ function summariseUpdate(raw: string): {
   updateId: number | null;
   updateType: string | null;
   chatId: number | null;
+  chatType: string | null;
+  userId: number | null;
+  businessConnectionId: string | null;
   preview: string | null;
+  payload: unknown;
 } {
   try {
     const u = JSON.parse(raw) as Record<string, unknown> & {
@@ -59,24 +64,76 @@ function summariseUpdate(raw: string): {
       }
     }
     let chatId: number | null = null;
+    let chatType: string | null = null;
+    let userId: number | null = null;
+    let businessConnectionId: string | null = null;
     let preview: string | null = null;
     if (payload) {
-      const direct = payload.chat as { id?: number } | undefined;
+      const direct = payload.chat as { id?: number; type?: string } | undefined;
       const nestedMsg = payload.message as
-        | { chat?: { id?: number } }
+        | { chat?: { id?: number; type?: string } }
         | undefined;
       const chatIdRaw = direct?.id ?? nestedMsg?.chat?.id;
       if (typeof chatIdRaw === "number") chatId = chatIdRaw;
+      const chatTypeRaw = direct?.type ?? nestedMsg?.chat?.type;
+      if (typeof chatTypeRaw === "string") chatType = chatTypeRaw;
+      const from = payload.from as { id?: number } | undefined;
+      const user = payload.user as { id?: number } | undefined;
+      const userIdRaw = from?.id ?? user?.id;
+      if (typeof userIdRaw === "number") userId = userIdRaw;
+      const bcIdRaw = payload.business_connection_id as string | undefined;
+      if (typeof bcIdRaw === "string") businessConnectionId = bcIdRaw;
       const text =
         (payload.text as string | undefined) ??
         (payload.caption as string | undefined) ??
         (payload.data as string | undefined) ??
         null;
       if (text) preview = text.slice(0, 200);
+      // For reactions, render a useful preview like "❤️,🔥 → ❤️"
+      if (
+        (updateType === "message_reaction" ||
+          updateType === "message_reaction_count") &&
+        !preview
+      ) {
+        const reactions =
+          ((payload.new_reaction as Array<Record<string, unknown>>) ??
+            (payload.reactions as Array<Record<string, unknown>>) ??
+            []) as Array<Record<string, unknown>>;
+        const emojis = reactions
+          .map((r) => {
+            if (typeof r.emoji === "string") return r.emoji;
+            if (r.type && typeof r.type === "object") {
+              const t = r.type as { emoji?: string; type?: string };
+              return t.emoji ?? t.type ?? "?";
+            }
+            if (typeof r.type === "string") return r.type;
+            return "?";
+          })
+          .join(",");
+        preview = `reactions=${emojis || "(empty)"}`;
+      }
     }
-    return { updateId, updateType, chatId, preview };
+    return {
+      updateId,
+      updateType,
+      chatId,
+      chatType,
+      userId,
+      businessConnectionId,
+      preview,
+      payload,
+    };
   } catch {
-    return { updateId: null, updateType: null, chatId: null, preview: null };
+    return {
+      updateId: null,
+      updateType: null,
+      chatId: null,
+      chatType: null,
+      userId: null,
+      businessConnectionId: null,
+      preview: null,
+      payload: null,
+    };
   }
 }
 
@@ -101,6 +158,18 @@ export async function POST(request: Request): Promise<Response> {
   console.log(
     `[webhook] received type=${meta.updateType ?? "?"} chat=${meta.chatId ?? "?"} update_id=${meta.updateId ?? "?"}`,
   );
+  if (meta.updateType) {
+    void logTelegramUpdate({
+      updateId: meta.updateId,
+      updateType: meta.updateType,
+      chatId: meta.chatId,
+      chatType: meta.chatType,
+      userId: meta.userId,
+      businessConnectionId: meta.businessConnectionId,
+      preview: meta.preview,
+      payload: meta.payload,
+    });
+  }
   const cloned = new Request(request.url, {
     method: "POST",
     headers: request.headers,

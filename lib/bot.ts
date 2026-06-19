@@ -104,11 +104,13 @@ export function getBot(): Bot {
 
 export const ALLOWED_UPDATES = [
   "message",
+  "edited_message",
   "business_connection",
   "business_message",
   "edited_business_message",
   "deleted_business_messages",
   "message_reaction",
+  "message_reaction_count",
   "channel_post",
   "edited_channel_post",
   "callback_query",
