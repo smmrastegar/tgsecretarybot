@@ -95,6 +95,8 @@ type Message = {
   fromOwner: boolean;
   source: string | null;
   inlineButtons: Array<{ label: string; url: string }> | null;
+  isPrivateConversation: boolean;
+  privateRevealedAt: string | null;
   chatMode:
     | "off"
     | "secretary"
@@ -376,7 +378,11 @@ export default function MessagesPage() {
                   // [photo]/[sticker]/[GIF] placeholder (or caption) and
                   // the AI description renders as a separate block below
                   // — that's what the operator asked for.
-                  const visibleText = m.transcript ?? m.messageText;
+                  const redactedBody =
+                    m.isPrivateConversation && !m.privateRevealedAt;
+                  const visibleText = redactedBody
+                    ? "🔒 پیام خصوصی"
+                    : (m.transcript ?? m.messageText);
                   return (
                   <div
                     key={m.id}
@@ -576,13 +582,7 @@ export default function MessagesPage() {
                   ))}
                 </div>
               )}
-              <div
-                dir="auto"
-                style={{ unicodeBidi: "plaintext", textAlign: "start" }}
-                className="mt-2 text-sm break-words whitespace-pre-wrap"
-              >
-                {m.messageText}
-              </div>
+              <PrivateBody msg={m} />
               {m.transcript && (
                 <div className="mt-2 p-2 rounded-md bg-[var(--color-surface-2)] text-sm">
                   <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
@@ -661,5 +661,57 @@ export default function MessagesPage() {
         </div>
       )}
     </Shell>
+  );
+}
+
+function PrivateBody({ msg }: { msg: Message }) {
+  const [revealed, setRevealed] = useState(
+    !msg.isPrivateConversation || !!msg.privateRevealedAt,
+  );
+  const [body, setBody] = useState<string>(
+    msg.isPrivateConversation && !msg.privateRevealedAt ? "" : msg.messageText,
+  );
+  const [loading, setLoading] = useState(false);
+
+  const reveal = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/messages/${msg.id}/reveal`, {
+        method: "POST",
+      });
+      if (r.ok) {
+        const j = (await r.json()) as { body?: string };
+        if (j.body != null) setBody(j.body);
+        setRevealed(true);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!revealed) {
+    return (
+      <div className="mt-2 p-2 rounded-md bg-amber-500/5 border border-amber-500/30">
+        <div className="text-[10px] text-amber-200 mb-2">
+          🔒 پیام خصوصی — متن نمایش داده نمی‌شه تا روش کلیک نکنی
+        </div>
+        <button
+          onClick={reveal}
+          disabled={loading}
+          className="text-xs px-2 py-1 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+        >
+          {loading ? "..." : "👁 نمایش متن"}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div
+      dir="auto"
+      style={{ unicodeBidi: "plaintext", textAlign: "start" }}
+      className="mt-2 text-sm break-words whitespace-pre-wrap"
+    >
+      {body || msg.messageText}
+    </div>
   );
 }

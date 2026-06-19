@@ -2585,6 +2585,76 @@ export async function suggestChatSettings(input: {
   };
 }
 
+// --- SMS classifier: is this a personal one-to-one conversation? ---
+
+const PRIVATE_SMS_PROMPT = `You read a single incoming SMS and decide whether it looks like a PERSONAL ONE-TO-ONE conversation between two people that the recipient might want to keep visually private from anyone glancing at their screen.
+
+Mark is_private=true when ALL of these hold:
+  - The SMS is plainly a personal message from one human to another (greeting, asking how someone is, plans, emotional content, gossip, intimate or relationship content).
+  - There's NO sign of a service / business / bank / government / commercial sender.
+  - No OTP / verification code / 2FA code / login PIN / one-time code.
+  - No transaction / payment / balance / appointment / delivery notification.
+  - No service alert, monitoring alert, downtime notice, error report.
+  - No promotional, marketing, or mass-blast content.
+
+Otherwise mark is_private=false. Treat OTP, banking, government, appointment, service-monitoring, news, ads, and any auto-generated notification as NOT private even if the body is short.
+
+Be CONSERVATIVE: when uncertain, return false. A wrong "private" classification HIDES a message the operator needed to see immediately, which is much worse than redundantly showing a personal text.
+
+Reply with STRICT JSON only, no prose, no code fences:
+{
+  "is_private": <true|false>,
+  "reason": "<one short Persian sentence saying why>"
+}`;
+
+export type PrivateSmsVerdict = {
+  isPrivate: boolean;
+  reason: string;
+};
+
+export async function classifyPrivateSms(input: {
+  phone: string;
+  body: string;
+}): Promise<PrivateSmsVerdict | null> {
+  if (!input.body.trim()) return null;
+  let raw: string;
+  try {
+    raw = await callOpenRouter(
+      [
+        { role: "system", content: PRIVATE_SMS_PROMPT },
+        {
+          role: "user",
+          content: `From: ${input.phone}\n\n${input.body.slice(0, 2000)}`,
+        },
+      ],
+      {
+        maxTokens: 120,
+        jsonObject: true,
+        temperature: 0.1,
+        purpose: "sms_privacy",
+      },
+    );
+  } catch (err) {
+    console.warn("[sms-privacy] classifier failed:", err);
+    return null;
+  }
+  const json = extractJson(raw);
+  if (!json) return null;
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  return {
+    isPrivate: parsed.is_private === true,
+    reason:
+      typeof parsed.reason === "string"
+        ? parsed.reason.trim().slice(0, 240)
+        : "",
+  };
+}
+
 // --- Follow-up: AI judgment of "does the operator owe a reply?" ---
 
 const FOLLOW_UP_PROMPT = `You read a recent private-chat conversation between the operator and another person. The operator hasn't sent a NEW text message since the other person's last incoming message. Decide whether the operator OWES a reply.

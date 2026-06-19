@@ -408,6 +408,10 @@ export async function routeSmsForward(args: {
   // header shape. NEVER set this from bot.ts; we'd accidentally
   // forward every DM message into the sms_inbox.
   allowNoHeader?: boolean;
+  // When set, the body is replaced with a "🔒 پیام خصوصی" placeholder
+  // and a "👁 نمایش متن" button is added. The body comes from
+  // messages_log when the operator reveals.
+  privateConversation?: { logId: number; reason: string } | null;
 }): Promise<{ delivered: number; skipped?: string } | null> {
   // Try to parse a phone-or-name header. When that fails and the
   // caller didn't opt into the no-header fallback (i.e. we're being
@@ -531,9 +535,14 @@ export async function routeSmsForward(args: {
     s.replace(/[&<>]/g, (c) =>
       c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;",
     );
+  const isPrivate = !!args.privateConversation;
   const parts: string[] = [esc(headerPlain)];
   if (otp) parts.push("", `🔑 <code>${esc(otp)}</code>`);
-  if (sms.body) parts.push("", esc(sms.body));
+  if (isPrivate) {
+    parts.push("", `🔒 <i>پیام خصوصی — تا «👁 نمایش متن» رو نزدی، متن نشون داده نمی‌شه.</i>`);
+  } else if (sms.body) {
+    parts.push("", esc(sms.body));
+  }
   const outText = parts.join("\n");
 
   // Dedup signature for "same SMS arrived again" → edit-in-place
@@ -586,7 +595,10 @@ export async function routeSmsForward(args: {
             parse_mode: "HTML",
             reply_markup: accepted
               ? undefined
-              : buildSmsActionKeyboard(existing.id),
+              : buildSmsActionKeyboard(
+                  existing.id,
+                  args.privateConversation?.logId ?? null,
+                ),
           },
         );
         await upsertSmsDedup({
@@ -631,7 +643,10 @@ export async function routeSmsForward(args: {
         parse_mode: "HTML",
         reply_markup: accepted
           ? undefined
-          : buildSmsActionKeyboard(dedup.id),
+          : buildSmsActionKeyboard(
+              dedup.id,
+              args.privateConversation?.logId ?? null,
+            ),
       });
       if (existing) {
         await resetSmsDedupCounter({
@@ -656,16 +671,24 @@ export async function routeSmsForward(args: {
   return { delivered };
 }
 
-function buildSmsActionKeyboard(dedupId: number): InlineKeyboard {
+function buildSmsActionKeyboard(
+  dedupId: number,
+  privateLogId?: number | null,
+): InlineKeyboard {
   // Three actions per SMS: delete the Telegram copy, block this
   // kind so the AI gate filters similar messages, or accept this
   // kind so future repeats arrive WITHOUT buttons (the operator's
-  // "don't ask me again" tick).
-  return new InlineKeyboard()
-    .text("🗑 پاک کن", `sms:rm:${dedupId}`)
+  // "don't ask me again" tick). Plus an optional reveal button when
+  // the body is hidden behind a "🔒 پیام خصوصی" placeholder.
+  const kb = new InlineKeyboard();
+  if (privateLogId) {
+    kb.text("👁 نمایش متن", `sms:reveal:${privateLogId}`).row();
+  }
+  kb.text("🗑 پاک کن", `sms:rm:${dedupId}`)
     .text("🚫 این مدل رو نیار", `sms:block:${dedupId}`)
     .row()
     .text("✅ پذیرفتم", `sms:ok:${dedupId}`);
+  return kb;
 }
 
 function formatTehranTime(d: Date): string {

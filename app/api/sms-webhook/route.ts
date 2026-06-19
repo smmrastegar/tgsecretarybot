@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { getBot, maybeApplyNoteWatch } from "@/lib/bot";
+import { classifyPrivateSms } from "@/lib/classifier";
 import {
   findSmsWebhookBySecret,
   hasDb,
   logMessage,
+  markMessagePrivate,
   touchSmsWebhook,
 } from "@/lib/db";
 import { detectSmsForward, routeSmsForward } from "@/lib/sms-router";
@@ -142,6 +144,24 @@ async function handle(request: Request): Promise<NextResponse> {
   }
   await touchSmsWebhook(webhook.id).catch(() => {});
 
+  // Privacy classifier (only when the webhook has opted in). Runs
+  // BEFORE forwarding so the inbox copy starts redacted and the
+  // dashboard row knows to hide the body too.
+  let isPrivate = false;
+  let privacyReason = "";
+  if (webhook.redactPrivate && logId) {
+    const phoneForGate = parsed?.phone ?? senderName;
+    const verdict = await classifyPrivateSms({
+      phone: phoneForGate,
+      body: text,
+    }).catch(() => null);
+    if (verdict?.isPrivate) {
+      isPrivate = true;
+      privacyReason = verdict.reason;
+      await markMessagePrivate(logId).catch(() => {});
+    }
+  }
+
   const bot = getBot();
   try {
     await routeSmsForward({
@@ -149,14 +169,9 @@ async function handle(request: Request): Promise<NextResponse> {
       sourceChatId: chatId,
       sourceMessageId: logId || 0,
       text,
-      // Webhook name is the operator-chosen label for THIS source
-      // (e.g. "📱 پیامک مرضیه"). Used in the forward header when
-      // findOwnerOfPhone can't resolve the actual contact.
       sourceLabel: webhook.name,
-      // The text arrived through THIS SMS channel, so even when it
-      // doesn't carry a ☎️/📱 prefix we still want it routed into
-      // the sms_inbox — that's the whole point of the webhook.
       allowNoHeader: true,
+      privateConversation: isPrivate ? { logId, reason: privacyReason } : null,
     });
   } catch (err) {
     console.warn("[sms-webhook] route failed:", err);

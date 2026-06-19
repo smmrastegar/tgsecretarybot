@@ -266,6 +266,16 @@ export async function ensureSchema(): Promise<void> {
     // 'insta' (URL hit by an external Instagram change-detector;
     // shape is /api/insta-webhook?token=…&action=story&id=<username>).
     await q`ALTER TABLE sms_webhooks ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'sms'`;
+    // Per-webhook opt-in: AI classifies each incoming SMS; if it
+    // looks like a personal one-to-one conversation (not OTP / bank /
+    // promo / service), redact the body in the Telegram inbox + in
+    // the dashboard. Body becomes visible only after the operator
+    // hits "👁 نمایش متن".
+    await q`ALTER TABLE sms_webhooks ADD COLUMN IF NOT EXISTS redact_private BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Mirror flag on the logged message so the dashboard and
+    // dedup-edit code can render redacted without re-running AI.
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS is_private_conversation BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS private_revealed_at TIMESTAMPTZ`;
     // SMS dedup: when the same SMS body arrives repeatedly to the
     // same inbox we update one Telegram message in-place instead of
     // posting N copies. body_signature is a whitespace-normalised
@@ -2184,6 +2194,8 @@ export type MessageRow = {
   chatLastName: string | null;
   chatNickname: string | null;
   inlineButtons: Array<{ label: string; url: string }> | null;
+  isPrivateConversation: boolean;
+  privateRevealedAt: Date | null;
 };
 
 function rowToMessage(r: Record<string, unknown>): MessageRow {
@@ -2229,6 +2241,8 @@ function rowToMessage(r: Record<string, unknown>): MessageRow {
     chatLastName: (r.chat_rule_last_name as string) ?? null,
     chatNickname: (r.chat_rule_nickname as string) ?? null,
     inlineButtons: parseInlineButtons(r.inline_buttons),
+    isPrivateConversation: Boolean(r.is_private_conversation),
+    privateRevealedAt: (r.private_revealed_at as Date) ?? null,
   };
 }
 
@@ -3582,6 +3596,7 @@ export type SmsWebhook = {
   secret: string;
   enabled: boolean;
   kind: "sms" | "insta";
+  redactPrivate: boolean;
   lastUsedAt: Date | null;
   createdAt: Date;
 };
@@ -3594,6 +3609,7 @@ function rowToSmsWebhook(r: Record<string, unknown>): SmsWebhook {
     secret: r.secret as string,
     enabled: Boolean(r.enabled),
     kind: rawKind === "insta" ? "insta" : "sms",
+    redactPrivate: Boolean(r.redact_private ?? false),
     lastUsedAt: (r.last_used_at as Date) ?? null,
     createdAt: r.created_at as Date,
   };
@@ -3606,7 +3622,8 @@ export async function listSmsWebhooks(args?: {
   await ensureSchema();
   const kindFilter = args?.kind ?? null;
   const rows = await sql()`
-    SELECT id, name, secret, enabled, kind, last_used_at, created_at
+    SELECT id, name, secret, enabled, kind, redact_private,
+           last_used_at, created_at
     FROM sms_webhooks
     WHERE (${kindFilter}::text IS NULL OR kind = ${kindFilter}::text)
     ORDER BY created_at DESC`;
@@ -3624,22 +3641,25 @@ export async function createSmsWebhook(args: {
   const rows = await sql()`
     INSERT INTO sms_webhooks (name, secret, kind)
     VALUES (${args.name}, ${args.secret}, ${kind})
-    RETURNING id, name, secret, enabled, kind, last_used_at, created_at`;
+    RETURNING id, name, secret, enabled, kind, redact_private,
+              last_used_at, created_at`;
   return rowToSmsWebhook(rows[0] as Record<string, unknown>);
 }
 
 export async function updateSmsWebhook(
   id: number,
-  patch: Partial<{ name: string; enabled: boolean }>,
+  patch: Partial<{ name: string; enabled: boolean; redactPrivate: boolean }>,
 ): Promise<SmsWebhook | null> {
   if (!hasDb()) return null;
   await ensureSchema();
   const rows = await sql()`
     UPDATE sms_webhooks SET
       name = COALESCE(${patch.name ?? null}, name),
-      enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled)
+      enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
+      redact_private = COALESCE(${patch.redactPrivate ?? null}::boolean, redact_private)
     WHERE id = ${id}
-    RETURNING id, name, secret, enabled, kind, last_used_at, created_at`;
+    RETURNING id, name, secret, enabled, kind, redact_private,
+              last_used_at, created_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToSmsWebhook(r) : null;
 }
@@ -3658,13 +3678,59 @@ export async function findSmsWebhookBySecret(
   await ensureSchema();
   const kindFilter = kind ?? null;
   const rows = await sql()`
-    SELECT id, name, secret, enabled, kind, last_used_at, created_at
+    SELECT id, name, secret, enabled, kind, redact_private,
+           last_used_at, created_at
     FROM sms_webhooks
     WHERE secret = ${secret} AND enabled = TRUE
       AND (${kindFilter}::text IS NULL OR kind = ${kindFilter}::text)
     LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToSmsWebhook(r) : null;
+}
+
+// Mark a logged SMS as a private conversation so the dashboard +
+// notes_inbox card show "🔒 پیام خصوصی" until the operator reveals.
+export async function markMessagePrivate(logId: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE messages_log
+       SET is_private_conversation = TRUE
+     WHERE id = ${logId}`;
+}
+
+export async function revealPrivateMessage(logId: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE messages_log
+       SET private_revealed_at = NOW()
+     WHERE id = ${logId}`;
+}
+
+export async function getPrivateMessage(
+  logId: number,
+): Promise<{
+  id: number;
+  body: string;
+  senderName: string;
+  isPrivate: boolean;
+  revealedAt: Date | null;
+} | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, message_text, sender_name, is_private_conversation, private_revealed_at
+    FROM messages_log WHERE id = ${logId} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  if (!r) return null;
+  return {
+    id: Number(r.id),
+    body: (r.message_text as string) ?? "",
+    senderName: (r.sender_name as string) ?? "",
+    isPrivate: Boolean(r.is_private_conversation),
+    revealedAt: (r.private_revealed_at as Date) ?? null,
+  };
 }
 
 export async function touchSmsWebhook(id: number): Promise<void> {

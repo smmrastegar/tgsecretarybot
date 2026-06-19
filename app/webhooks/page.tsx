@@ -13,6 +13,7 @@ type Webhook = {
   secret: string;
   enabled: boolean;
   kind: WebhookKind;
+  redactPrivate: boolean;
   lastUsedAt: string | null;
   createdAt: string;
 };
@@ -83,6 +84,18 @@ export default function WebhooksPage() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
+      });
+      load();
+    },
+    [load],
+  );
+
+  const toggleRedact = useCallback(
+    async (id: number, redactPrivate: boolean) => {
+      await fetch(`/api/webhooks/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ redactPrivate }),
       });
       load();
     },
@@ -234,6 +247,16 @@ export default function WebhooksPage() {
                     </button>
                   </div>
                 </div>
+                {w.kind === "sms" && (
+                  <label className="flex items-center gap-2 cursor-pointer text-[10px] text-[var(--color-text-dim)] mb-2 -mt-1">
+                    <input
+                      type="checkbox"
+                      checked={w.redactPrivate}
+                      onChange={(e) => toggleRedact(w.id, e.target.checked)}
+                    />
+                    🔒 پیام‌های مکالمه خصوصی رو مخفی کن (AI تشخیص می‌ده — تا «نمایش متن» نزنی، متن نشون داده نمی‌شه)
+                  </label>
+                )}
                 <div className="flex items-center gap-2 flex-wrap">
                   <code
                     dir="ltr"

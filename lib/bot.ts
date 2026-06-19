@@ -1,4 +1,5 @@
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from "grammy";
+import type { InlineKeyboardMarkup } from "grammy/types";
 import type { Message } from "grammy/types";
 import { config } from "./config";
 import {
@@ -87,7 +88,9 @@ import {
   expediteMonitoredAccountFetch,
   getMessageFullText,
   getNoteWatchMatch,
+  getPrivateMessage,
   getSmsDedup,
+  revealPrivateMessage,
   markNoteWatchMatchConfirmed,
   markNoteWatchMatchWrong,
   recordOwnerReaction,
@@ -687,6 +690,17 @@ async function handleSmsCallback(
     return;
   }
   const action = parts[1];
+  // The reveal/hide actions are keyed on the messages_log id, not
+  // the sms_dedup id, so handle them BEFORE the dedup lookup below.
+  if (action === "reveal" || action === "hide") {
+    const logId = Number(parts[2]);
+    if (!Number.isFinite(logId)) {
+      await ctx.answerCallbackQuery().catch(() => {});
+      return;
+    }
+    await handleSmsReveal(ctx, action, logId);
+    return;
+  }
   const dedupId = Number(parts[2]);
   if (!Number.isFinite(dedupId)) {
     await ctx.answerCallbackQuery().catch(() => {});
@@ -781,6 +795,98 @@ async function handleSmsCallback(
     return;
   }
   await ctx.answerCallbackQuery().catch(() => {});
+}
+
+// Reveal / hide the body of a "🔒 پیام خصوصی" SMS card. Edits the
+// inbox message in-place to swap between the redacted placeholder
+// and the actual body, and toggles the keyboard button label.
+async function handleSmsReveal(
+  ctx: Context,
+  action: "reveal" | "hide",
+  logId: number,
+): Promise<void> {
+  const msg = ctx.callbackQuery?.message;
+  if (!msg) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  const row = await getPrivateMessage(logId).catch(() => null);
+  if (!row) {
+    await ctx
+      .answerCallbackQuery({ text: "پیام پیدا نشد." })
+      .catch(() => {});
+    return;
+  }
+  const esc = (s: string) =>
+    s.replace(/[&<>]/g, (c) =>
+      c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;",
+    );
+  // Take the current message text up to the body placeholder/body and
+  // splice in either the body or the placeholder. We rebuild around
+  // the first blank line to preserve the header (☎️ +98… — Name).
+  const oldText = msg.text ?? "";
+  const headerEnd = oldText.indexOf("\n\n");
+  const header = headerEnd > 0 ? oldText.slice(0, headerEnd) : oldText;
+  let newText: string;
+  let newKb: InlineKeyboard;
+  // Find dedup id from the existing keyboard so we can reconstruct
+  // the action row.
+  const buttons = (msg.reply_markup as InlineKeyboardMarkup | undefined)
+    ?.inline_keyboard;
+  let dedupId: number | null = null;
+  if (buttons) {
+    for (const row of buttons) {
+      for (const b of row) {
+        const d = (b as { callback_data?: string }).callback_data;
+        if (!d) continue;
+        const m = /^sms:(?:ok|rm|block):(\d+)$/.exec(d);
+        if (m) {
+          dedupId = Number(m[1]);
+          break;
+        }
+      }
+      if (dedupId != null) break;
+    }
+  }
+  if (action === "reveal") {
+    const body = row.body || "(پیام بدون متن)";
+    newText = `${header}\n\n${esc(body)}`;
+    newKb = new InlineKeyboard().text("🙈 مخفی کن", `sms:hide:${logId}`);
+    if (dedupId != null) {
+      newKb
+        .row()
+        .text("🗑 پاک کن", `sms:rm:${dedupId}`)
+        .text("🚫 این مدل رو نیار", `sms:block:${dedupId}`)
+        .row()
+        .text("✅ پذیرفتم", `sms:ok:${dedupId}`);
+    }
+    await revealPrivateMessage(logId).catch(() => {});
+  } else {
+    newText = `${header}\n\n🔒 <i>پیام خصوصی — تا «👁 نمایش متن» رو نزدی، متن نشون داده نمی‌شه.</i>`;
+    newKb = new InlineKeyboard().text("👁 نمایش متن", `sms:reveal:${logId}`);
+    if (dedupId != null) {
+      newKb
+        .row()
+        .text("🗑 پاک کن", `sms:rm:${dedupId}`)
+        .text("🚫 این مدل رو نیار", `sms:block:${dedupId}`)
+        .row()
+        .text("✅ پذیرفتم", `sms:ok:${dedupId}`);
+    }
+  }
+  try {
+    await ctx.api.editMessageText(msg.chat.id, msg.message_id, newText, {
+      parse_mode: "HTML",
+      reply_markup: newKb,
+    });
+    await ctx
+      .answerCallbackQuery({
+        text: action === "reveal" ? "نمایش داده شد." : "مخفی شد.",
+      })
+      .catch(() => {});
+  } catch (err) {
+    console.warn("[sms_cb] reveal/hide failed:", err);
+    await ctx.answerCallbackQuery({ text: "خطا." }).catch(() => {});
+  }
 }
 
 // 📝 Transcribe button on voice / video-note copies forwarded into

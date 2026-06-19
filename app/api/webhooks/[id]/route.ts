@@ -23,10 +23,13 @@ export async function PUT(
   const body = (await request.json().catch(() => ({}))) as {
     name?: string;
     enabled?: boolean;
+    redactPrivate?: boolean;
   };
   const patch: Parameters<typeof updateSmsWebhook>[1] = {};
   if (body.name != null) patch.name = body.name.trim();
   if (body.enabled != null) patch.enabled = Boolean(body.enabled);
+  if (body.redactPrivate != null)
+    patch.redactPrivate = Boolean(body.redactPrivate);
   const webhook = await updateSmsWebhook(idN, patch);
   await audit({
     actorId: session.userId,
