@@ -12,15 +12,6 @@ export async function GET(request: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  if (!redisEnabled()) {
-    return NextResponse.json({
-      ok: true,
-      rows: [],
-      buckets: [],
-      warning:
-        "Redis not configured (UPSTASH_REDIS_REST_URL / TOKEN). Debug log requires Redis.",
-    });
-  }
   const url = new URL(request.url);
   const updateType = url.searchParams.get("type");
   const chatIdRaw = url.searchParams.get("chatId");
@@ -36,5 +27,10 @@ export async function GET(request: Request): Promise<NextResponse> {
     }),
     debugLogTypeBuckets(),
   ]);
-  return NextResponse.json({ ok: true, rows, buckets });
+  return NextResponse.json({
+    ok: true,
+    rows,
+    buckets,
+    backend: redisEnabled() ? "redis" : "db-fallback",
+  });
 }

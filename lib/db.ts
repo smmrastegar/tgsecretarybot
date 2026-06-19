@@ -574,9 +574,24 @@ export async function ensureSchema(): Promise<void> {
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (chat_id, role)
       )`;
-    // Debug log moved off Postgres to Redis (1-hour rolling buffer).
-    // Drop the now-unused table; the page reads from redis instead.
-    await q`DROP TABLE IF EXISTS telegram_debug_log`;
+    // Debug log: prefers Redis (1-hour TTL list); when Redis isn't
+    // configured we fall back to this minimal table — same 1-hour
+    // window, opportunistic cleanup on every Nth write. No indexes
+    // beyond received_at since the table never grows past ~2k rows.
+    await q`
+      CREATE TABLE IF NOT EXISTS telegram_debug_log (
+        id           BIGSERIAL PRIMARY KEY,
+        received_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        update_type  TEXT NOT NULL,
+        chat_id      BIGINT,
+        chat_type    TEXT,
+        user_id      BIGINT,
+        bc_id        TEXT,
+        preview      TEXT,
+        payload      JSONB NOT NULL
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS telegram_debug_log_received_idx
+      ON telegram_debug_log (received_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS chat_function_roles_role_idx ON chat_function_roles (role)`;
     // Optional category per (chat_id, role) so operator can group
     // their function assignments into "personal", "work", "shared",
@@ -1523,6 +1538,10 @@ const DEBUG_LOG_KEY = "tgsb:debug-log";
 const DEBUG_LOG_MAX_ITEMS = 2000;
 const DEBUG_LOG_TTL_SECONDS = 60 * 60; // 1 hour
 
+// One-in-N opportunistic cleanup of the DB fallback table — keeps
+// the row count bounded without scheduling a separate job.
+let dbDebugLogWriteCounter = 0;
+
 export async function logTelegramUpdate(args: {
   updateId: number | null;
   updateType: string;
@@ -1534,25 +1553,48 @@ export async function logTelegramUpdate(args: {
   payload: unknown;
 }): Promise<void> {
   const { redisEnabled, redisListPush } = await import("./redis");
-  if (!redisEnabled()) return;
-  const entry = {
-    id: Date.now() * 1000 + Math.floor(Math.random() * 1000),
-    receivedAt: new Date().toISOString(),
-    updateId: args.updateId,
-    updateType: args.updateType,
-    chatId: args.chatId,
-    chatType: args.chatType,
-    userId: args.userId,
-    businessConnectionId: args.businessConnectionId,
-    preview: args.preview ? args.preview.slice(0, 500) : null,
-    payload: args.payload,
-  };
-  await redisListPush({
-    key: DEBUG_LOG_KEY,
-    value: entry,
-    maxLength: DEBUG_LOG_MAX_ITEMS,
-    ttlSeconds: DEBUG_LOG_TTL_SECONDS,
-  });
+  if (redisEnabled()) {
+    const entry = {
+      id: Date.now() * 1000 + Math.floor(Math.random() * 1000),
+      receivedAt: new Date().toISOString(),
+      updateId: args.updateId,
+      updateType: args.updateType,
+      chatId: args.chatId,
+      chatType: args.chatType,
+      userId: args.userId,
+      businessConnectionId: args.businessConnectionId,
+      preview: args.preview ? args.preview.slice(0, 500) : null,
+      payload: args.payload,
+    };
+    await redisListPush({
+      key: DEBUG_LOG_KEY,
+      value: entry,
+      maxLength: DEBUG_LOG_MAX_ITEMS,
+      ttlSeconds: DEBUG_LOG_TTL_SECONDS,
+    });
+    return;
+  }
+  // DB fallback.
+  if (!hasDb()) return;
+  await ensureSchema();
+  try {
+    await sql()`
+      INSERT INTO telegram_debug_log (
+        update_type, chat_id, chat_type, user_id, bc_id, preview, payload
+      ) VALUES (
+        ${args.updateType}, ${args.chatId}, ${args.chatType}, ${args.userId},
+        ${args.businessConnectionId},
+        ${args.preview ? args.preview.slice(0, 500) : null},
+        ${JSON.stringify(args.payload)}::jsonb
+      )`;
+    dbDebugLogWriteCounter++;
+    if (dbDebugLogWriteCounter % 50 === 0) {
+      await sql()`DELETE FROM telegram_debug_log
+        WHERE received_at < NOW() - INTERVAL '1 hour'`;
+    }
+  } catch (err) {
+    console.warn("[debug-log] DB fallback insert failed:", err);
+  }
 }
 
 export async function listDebugLog(args?: {
@@ -1562,28 +1604,59 @@ export async function listDebugLog(args?: {
   limit?: number;
 }): Promise<DebugLogRow[]> {
   const { redisEnabled, redisListRange } = await import("./redis");
-  if (!redisEnabled()) return [];
-  type Stored = Omit<DebugLogRow, "receivedAt"> & { receivedAt: string };
-  const raw = await redisListRange<Stored>(DEBUG_LOG_KEY, 0, -1);
-  const ql = args?.q?.trim().toLowerCase() || null;
-  const filtered = raw.filter((r) => {
-    if (args?.updateType && r.updateType !== args.updateType) return false;
-    if (args?.chatId != null && r.chatId !== args.chatId) return false;
-    if (ql) {
-      const hay =
-        (r.preview ?? "").toLowerCase() +
-        " " +
-        String(r.chatId ?? "") +
-        " " +
-        (r.businessConnectionId ?? "").toLowerCase();
-      if (!hay.includes(ql)) return false;
-    }
-    return true;
-  });
-  const out = filtered.slice(0, Math.min(args?.limit ?? 500, 2000));
-  return out.map((r) => ({
-    ...r,
-    receivedAt: new Date(r.receivedAt),
+  if (redisEnabled()) {
+    type Stored = Omit<DebugLogRow, "receivedAt"> & { receivedAt: string };
+    const raw = await redisListRange<Stored>(DEBUG_LOG_KEY, 0, -1);
+    const ql = args?.q?.trim().toLowerCase() || null;
+    const filtered = raw.filter((r) => {
+      if (args?.updateType && r.updateType !== args.updateType) return false;
+      if (args?.chatId != null && r.chatId !== args.chatId) return false;
+      if (ql) {
+        const hay =
+          (r.preview ?? "").toLowerCase() +
+          " " +
+          String(r.chatId ?? "") +
+          " " +
+          (r.businessConnectionId ?? "").toLowerCase();
+        if (!hay.includes(ql)) return false;
+      }
+      return true;
+    });
+    const out = filtered.slice(0, Math.min(args?.limit ?? 500, 2000));
+    return out.map((r) => ({
+      ...r,
+      receivedAt: new Date(r.receivedAt),
+      tenantId: null,
+    }));
+  }
+  // DB fallback.
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const limit = Math.min(args?.limit ?? 500, 2000);
+  const updateType = args?.updateType?.trim() || null;
+  const chatId = args?.chatId ?? null;
+  const q = args?.q?.trim() || null;
+  const rows = await sql()`
+    SELECT id, received_at, update_type, chat_id, chat_type, user_id,
+           bc_id, preview, payload
+    FROM telegram_debug_log
+    WHERE received_at > NOW() - INTERVAL '1 hour'
+      AND (${updateType}::text IS NULL OR update_type = ${updateType})
+      AND (${chatId}::bigint IS NULL OR chat_id = ${chatId})
+      AND (${q}::text IS NULL OR preview ILIKE '%' || ${q} || '%')
+    ORDER BY received_at DESC
+    LIMIT ${limit}`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    receivedAt: r.received_at as Date,
+    updateId: null,
+    updateType: r.update_type as string,
+    chatId: r.chat_id == null ? null : Number(r.chat_id),
+    chatType: (r.chat_type as string) ?? null,
+    userId: r.user_id == null ? null : Number(r.user_id),
+    businessConnectionId: (r.bc_id as string) ?? null,
+    preview: (r.preview as string) ?? null,
+    payload: r.payload,
     tenantId: null,
   }));
 }
@@ -1592,14 +1665,28 @@ export async function debugLogTypeBuckets(): Promise<
   Array<{ updateType: string; count: number }>
 > {
   const { redisEnabled, redisListRange } = await import("./redis");
-  if (!redisEnabled()) return [];
-  type Stored = { updateType: string };
-  const raw = await redisListRange<Stored>(DEBUG_LOG_KEY, 0, -1);
-  const counts: Record<string, number> = {};
-  for (const r of raw) counts[r.updateType] = (counts[r.updateType] ?? 0) + 1;
-  return Object.entries(counts)
-    .map(([updateType, count]) => ({ updateType, count }))
-    .sort((a, b) => b.count - a.count);
+  if (redisEnabled()) {
+    type Stored = { updateType: string };
+    const raw = await redisListRange<Stored>(DEBUG_LOG_KEY, 0, -1);
+    const counts: Record<string, number> = {};
+    for (const r of raw) counts[r.updateType] = (counts[r.updateType] ?? 0) + 1;
+    return Object.entries(counts)
+      .map(([updateType, count]) => ({ updateType, count }))
+      .sort((a, b) => b.count - a.count);
+  }
+  // DB fallback.
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT update_type, COUNT(*)::int AS cnt
+    FROM telegram_debug_log
+    WHERE received_at > NOW() - INTERVAL '1 hour'
+    GROUP BY update_type
+    ORDER BY cnt DESC`;
+  return (rows as Array<{ update_type: string; cnt: number }>).map((r) => ({
+    updateType: r.update_type,
+    count: Number(r.cnt),
+  }));
 }
 
 // Record that the owner reacted to a customer message — counted as

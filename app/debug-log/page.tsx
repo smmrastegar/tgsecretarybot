@@ -23,7 +23,7 @@ type Response = {
   ok: boolean;
   rows: Row[];
   buckets: Array<{ updateType: string; count: number }>;
-  warning?: string;
+  backend?: "redis" | "db-fallback";
 };
 
 const REACTION_TYPES = new Set(["message_reaction", "message_reaction_count"]);
@@ -88,14 +88,10 @@ export default function DebugLogPage() {
     <Shell>
       <PageTitle
         title="🪵 Debug Log"
-        subtitle="هر Update که آخرین یک ساعت به webhook رسیده — توی Redis (no DB). هر ۵ ثانیه auto-refresh."
+        subtitle={`هر Update که آخرین یک ساعت به webhook رسیده. هر ۵ ثانیه auto-refresh.${
+          data?.backend ? ` (storage: ${data.backend})` : ""
+        }`}
       />
-
-      {data?.warning && (
-        <Card className="mb-4">
-          <div className="text-xs text-amber-300">⚠ {data.warning}</div>
-        </Card>
-      )}
 
       <Card className="mb-4">
         <div className="flex flex-wrap items-center gap-2 mb-3">
