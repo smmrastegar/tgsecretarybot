@@ -152,6 +152,7 @@ type ProfileSummary = {
   id: number;
   name: string;
   emoji: string | null;
+  isDefault: boolean;
 };
 
 const FUNCTION_ROLE_LABELS: Record<string, string> = {
@@ -684,12 +685,23 @@ export default function ChatDetailPage() {
   return (
     <Shell>
       <div className="mb-3">
-        <Link
-          href="/chats"
+        <button
+          onClick={() => {
+            // Prefer browser-history back so the operator returns to
+            // wherever they came from (/follow-up / /messages /
+            // /functions / etc.) instead of always landing on /chats.
+            // Fall back to /chats when there's no history (direct
+            // entry point, e.g. a shared link).
+            if (typeof window !== "undefined" && window.history.length > 1) {
+              router.back();
+            } else {
+              router.push("/chats");
+            }
+          }}
           className="text-xs text-[var(--color-text-dim)] hover:text-white"
         >
-          ← Chats
-        </Link>
+          ← برگشت
+        </button>
       </div>
 
       {loading ? (
@@ -1524,9 +1536,8 @@ export default function ChatDetailPage() {
             <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
               <div className="text-xs font-medium mb-1.5">👤 پروفایل چت</div>
               <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-                با انتخاب پروفایل، تنظیمات follow-up از پروفایل ارث می‌برد
-                (آستانه، escalate، transcribe ویس‌ها). مدیریت پروفایل‌ها
-                توی{" "}
+                هر چت عضو یه پروفایله؛ اگه انتخاب نکنی، خودکار «پیش‌فرض» می‌شه.
+                مدیریت پروفایل‌ها توی{" "}
                 <Link
                   href="/chat-profiles"
                   className="text-[var(--color-accent)] hover:underline"
@@ -1536,19 +1547,19 @@ export default function ChatDetailPage() {
                 .
               </p>
               <select
-                value={rule?.profileId ?? ""}
-                disabled={saving}
-                onChange={(e) =>
-                  patchProfile(
-                    e.target.value === "" ? null : Number(e.target.value),
-                  )
+                value={
+                  rule?.profileId ??
+                  profiles.find((p) => p.isDefault)?.id ??
+                  ""
                 }
+                disabled={saving}
+                onChange={(e) => patchProfile(Number(e.target.value))}
                 className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 w-full"
               >
-                <option value="">— بدون پروفایل (تنظیمات per-chat) —</option>
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.emoji ?? ""} {p.name}
+                    {p.isDefault ? " (پیش‌فرض)" : ""}
                   </option>
                 ))}
               </select>

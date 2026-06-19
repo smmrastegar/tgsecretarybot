@@ -4420,6 +4420,36 @@ export async function deleteChatProfile(id: number): Promise<void> {
     WHERE id = ${id} AND is_default = FALSE AND is_builtin = FALSE`;
 }
 
+// Resolve "what profile does this chat use" — never returns null
+// from the operator's perspective. If chat has no explicit profile_id,
+// fall back to the tenant's default profile.
+export async function getEffectiveProfileId(
+  chatId: number,
+): Promise<number | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT
+      COALESCE(
+        cr.profile_id,
+        (SELECT id FROM chat_profiles
+          WHERE is_default = TRUE
+            AND (tenant_id IS NULL OR tenant_id = cr.tenant_id)
+          ORDER BY tenant_id NULLS LAST
+          LIMIT 1)
+      ) AS pid
+    FROM chat_rules cr
+    WHERE cr.chat_id = ${chatId} LIMIT 1`;
+  const r = rows[0] as { pid: string | number | null } | undefined;
+  if (!r) {
+    // No chat_rules row at all: just return the global default.
+    const def = await sql()`SELECT id FROM chat_profiles WHERE is_default = TRUE LIMIT 1`;
+    const d = def[0] as { id: string | number } | undefined;
+    return d ? Number(d.id) : null;
+  }
+  return r.pid == null ? null : Number(r.pid);
+}
+
 export async function assignChatToProfile(
   chatId: number,
   profileId: number | null,
@@ -4450,15 +4480,15 @@ export async function bulkAssignProfile(
 
 export async function listChatsInProfile(
   profileId: number,
-): Promise<Array<{ chatId: number; name: string | null }>> {
+): Promise<Array<{ chatId: number; name: string | null; chatType: string }>> {
   if (!hasDb()) return [];
   await ensureSchema();
   const rows = await sql()`
-    SELECT chat_id, first_name, last_name, nickname, chat_title
+    SELECT chat_id, chat_type, first_name, last_name, nickname, chat_title
     FROM chat_rules
     WHERE profile_id = ${profileId}
     ORDER BY updated_at DESC
-    LIMIT 500`;
+    LIMIT 1000`;
   return (rows as Array<Record<string, unknown>>).map((r) => {
     const name =
       [r.first_name as string, r.last_name as string]
@@ -4468,7 +4498,55 @@ export async function listChatsInProfile(
       (r.nickname as string) ||
       (r.chat_title as string) ||
       null;
-    return { chatId: Number(r.chat_id), name };
+    return {
+      chatId: Number(r.chat_id),
+      chatType: (r.chat_type as string) ?? "private",
+      name,
+    };
+  });
+}
+
+// Search for chats that aren't already in the given profile. Used by
+// the profile-membership picker.
+export async function searchChatsNotInProfile(args: {
+  profileId: number;
+  q?: string;
+  limit?: number;
+}): Promise<Array<{ chatId: number; name: string | null; chatType: string }>> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const q = (args.q ?? "").trim();
+  const like = q ? `%${q}%` : null;
+  const limit = Math.min(args.limit ?? 50, 200);
+  const rows = await sql()`
+    SELECT chat_id, chat_type, first_name, last_name, nickname, chat_title
+    FROM chat_rules
+    WHERE (profile_id IS NULL OR profile_id <> ${args.profileId})
+      AND COALESCE(ignored, FALSE) = FALSE
+      AND (
+        ${like}::text IS NULL
+        OR COALESCE(first_name, '') ILIKE ${like}
+        OR COALESCE(last_name, '') ILIKE ${like}
+        OR COALESCE(nickname, '') ILIKE ${like}
+        OR COALESCE(chat_title, '') ILIKE ${like}
+        OR CAST(chat_id AS TEXT) ILIKE ${like}
+      )
+    ORDER BY updated_at DESC
+    LIMIT ${limit}`;
+  return (rows as Array<Record<string, unknown>>).map((r) => {
+    const name =
+      [r.first_name as string, r.last_name as string]
+        .filter(Boolean)
+        .join(" ")
+        .trim() ||
+      (r.nickname as string) ||
+      (r.chat_title as string) ||
+      null;
+    return {
+      chatId: Number(r.chat_id),
+      chatType: (r.chat_type as string) ?? "private",
+      name,
+    };
   });
 }
 
@@ -4610,7 +4688,11 @@ export async function listFollowUpCandidates(args?: {
              r.follow_up_ai_urgency
       FROM per_chat p
       LEFT JOIN chat_rules r ON r.chat_id = p.chat_id
-      LEFT JOIN chat_profiles prof ON prof.id = r.profile_id
+      LEFT JOIN chat_profiles prof ON prof.id = COALESCE(
+        r.profile_id,
+        (SELECT id FROM chat_profiles WHERE is_default = TRUE
+          AND (tenant_id IS NULL OR tenant_id = ${tenantId}) LIMIT 1)
+      )
       WHERE p.last_customer_at IS NOT NULL
         AND p.last_owner_at IS NOT NULL
         AND p.last_owner_at < p.last_customer_at

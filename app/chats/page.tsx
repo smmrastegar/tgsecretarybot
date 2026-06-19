@@ -714,15 +714,13 @@ export default function ChatsPage() {
                   onChange={(e) => {
                     const v = e.target.value;
                     if (!v) return;
-                    const pid = v === "none" ? null : Number(v);
-                    void runBulk("profile", { profileId: pid });
+                    void runBulk("profile", { profileId: Number(v) });
                     e.currentTarget.value = "";
                   }}
                   className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
-                  title="پروفایل follow-up رو روی چت‌های انتخاب‌شده اعمال کن"
+                  title="پروفایل رو روی چت‌های انتخاب‌شده اعمال کن"
                 >
                   <option value="">👤 assign profile…</option>
-                  <option value="none">— هیچ پروفایلی —</option>
                   {bulkProfiles.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.emoji ?? ""} {p.name}

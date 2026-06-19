@@ -58,7 +58,6 @@ export default function ChatProfileDetailPage({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [chats, setChats] = useState<Array<{ chatId: number; name: string | null }>>([]);
 
   const load = async () => {
     setLoading(true);
@@ -66,13 +65,9 @@ export default function ChatProfileDetailPage({
     try {
       const r = await fetch(`/api/chat-profiles/${profileId}`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const j = (await r.json()) as {
-        profile: Profile;
-        chats: Array<{ chatId: number; name: string | null }>;
-      };
+      const j = (await r.json()) as { profile: Profile };
       setOriginal(j.profile);
       setDraft(j.profile);
-      setChats(j.chats);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -311,31 +306,24 @@ export default function ChatProfileDetailPage({
           </div>
         </Card>
 
-        {chats.length > 0 && (
-          <Card>
-            <div className="text-xs font-medium mb-2">
-              👥 چت‌های متصل به این پروفایل ({chats.length})
-            </div>
-            <ul className="divide-y divide-[var(--color-border)] text-xs">
-              {chats.slice(0, 50).map((c) => (
-                <li key={c.chatId}>
-                  <Link
-                    href={`/chats/${c.chatId}`}
-                    className="flex justify-between py-1.5 hover:text-[var(--color-accent)]"
-                  >
-                    <span>{c.name || `chat ${c.chatId}`}</span>
-                    <span className="text-[10px] text-[var(--color-text-dim)]">{c.chatId}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-            {chats.length > 50 && (
-              <div className="text-[10px] text-[var(--color-text-dim)] mt-2">
-                ...و {chats.length - 50} مورد دیگر
+        <Card>
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-medium mb-0.5">
+                👥 چت‌های متصل به این پروفایل ({draft.chatCount})
               </div>
-            )}
-          </Card>
-        )}
+              <p className="text-[10px] text-[var(--color-text-dim)]">
+                مدیریت اعضا (اضافه/حذف چت) توی یه صفحه‌ی جداگانه.
+              </p>
+            </div>
+            <Link
+              href={`/chat-profiles/${profileId}/chats`}
+              className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+            >
+              → مدیریت چت‌ها
+            </Link>
+          </div>
+        </Card>
       </div>
 
       <div className="fixed bottom-16 md:bottom-4 left-0 right-0 md:left-60 z-10 px-4">
