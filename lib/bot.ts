@@ -4946,19 +4946,28 @@ async function handleSecretaryReaction(
         `[reaction] owner-log skip chat=${upd.chat.id}: reactor=${upd.user.id} != owner=${owner.userId}`,
       );
     } else {
-      const emojis = (upd.new_reaction ?? [])
-        .filter((r) => r.type === "emoji")
-        .map((r) => (r as { type: "emoji"; emoji: string }).emoji)
+      // Accept any reaction type — plain emoji, custom_emoji (Telegram
+      // Premium), or paid. The earlier filter restricted to plain
+      // emoji which dropped premium users' custom-emoji reactions.
+      const newReactions = upd.new_reaction ?? [];
+      const emojis = newReactions
+        .map((r) => {
+          if (r.type === "emoji") {
+            return (r as { type: "emoji"; emoji: string }).emoji;
+          }
+          if (r.type === "custom_emoji") {
+            return "🌟"; // placeholder — we can't render custom emojis
+          }
+          if (r.type === "paid") return "⭐";
+          return "";
+        })
+        .filter(Boolean)
         .join(" ");
-      // Only count ADDING a reaction. If old_reaction had entries and
-      // new_reaction is empty, the owner just removed — don't treat
-      // that as a reply.
-      if (!emojis) {
-        const allTypes = (upd.new_reaction ?? [])
-          .map((r) => r.type)
-          .join(",");
+      // Only count ADDING a reaction. If new_reaction is empty (the
+      // owner removed all reactions), don't treat that as a reply.
+      if (newReactions.length === 0) {
         console.log(
-          `[reaction] owner-log skip chat=${upd.chat.id}: no plain emoji in new_reaction (types=${allTypes || "empty"})`,
+          `[reaction] owner-log skip chat=${upd.chat.id}: new_reaction empty (reaction removal, not a reply)`,
         );
       } else {
         try {
@@ -4966,11 +4975,11 @@ async function handleSecretaryReaction(
             chatId: upd.chat.id,
             businessConnectionId: bcIdRaw,
             messageId: upd.message_id,
-            emojis,
+            emojis: emojis || "(reaction)",
             tenantId: null,
           });
           console.log(
-            `[reaction] owner-log OK chat=${upd.chat.id} emojis="${emojis}" bcId=${bcIdRaw}`,
+            `[reaction] owner-log OK chat=${upd.chat.id} emojis="${emojis}" types=${newReactions.map((r) => r.type).join(",")} bcId=${bcIdRaw}`,
           );
         } catch (err) {
           console.warn(`[reaction] owner-log DB write failed chat=${upd.chat.id}:`, err);
