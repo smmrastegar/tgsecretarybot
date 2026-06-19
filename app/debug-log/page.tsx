@@ -23,6 +23,7 @@ type Response = {
   ok: boolean;
   rows: Row[];
   buckets: Array<{ updateType: string; count: number }>;
+  warning?: string;
 };
 
 const REACTION_TYPES = new Set(["message_reaction", "message_reaction_count"]);
@@ -35,8 +36,6 @@ export default function DebugLogPage() {
   const [chatIdFilter, setChatIdFilter] = useState("");
   const [q, setQ] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [pruning, setPruning] = useState(false);
-  const [pruneMsg, setPruneMsg] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -56,35 +55,13 @@ export default function DebugLogPage() {
     }
   };
 
-  // Initial load + reload on filter change
+  // Initial load + reload on filter change + auto-refresh every 5s
   useEffect(() => {
     load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeType]);
-
-  const prune = async () => {
-    if (!confirm("لاگ‌های قدیمی‌تر از 7 روز رو پاک کنم؟")) return;
-    setPruning(true);
-    try {
-      const r = await fetch("/api/debug-log?days=7&keep=10000", {
-        method: "DELETE",
-      });
-      if (r.ok) {
-        const j = (await r.json()) as {
-          deletedByAge: number;
-          deletedByCap: number;
-        };
-        setPruneMsg(
-          `✅ ${j.deletedByAge} رکورد قدیمی + ${j.deletedByCap} رکورد فراتر از سقف پاک شد`,
-        );
-        await load();
-      } else {
-        setPruneMsg(`❌ HTTP ${r.status}`);
-      }
-    } finally {
-      setPruning(false);
-    }
-  };
 
   const filtered = useMemo<Row[]>(() => {
     if (!data) return [];
@@ -111,8 +88,14 @@ export default function DebugLogPage() {
     <Shell>
       <PageTitle
         title="🪵 Debug Log"
-        subtitle="هر Update که از Telegram به webhook رسیده — با تایم، چت، نوع، payload کامل."
+        subtitle="هر Update که آخرین یک ساعت به webhook رسیده — توی Redis (no DB). هر ۵ ثانیه auto-refresh."
       />
+
+      {data?.warning && (
+        <Card className="mb-4">
+          <div className="text-xs text-amber-300">⚠ {data.warning}</div>
+        </Card>
+      )}
 
       <Card className="mb-4">
         <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -123,18 +106,6 @@ export default function DebugLogPage() {
           >
             {loading ? "..." : "🔄 رفرش"}
           </button>
-          <button
-            onClick={prune}
-            disabled={pruning}
-            className="text-xs px-3 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-rose-200 disabled:opacity-50"
-          >
-            {pruning ? "..." : "🗑 پاکسازی > 7 روز"}
-          </button>
-          {pruneMsg && (
-            <span className="text-xs text-[var(--color-text-dim)]">
-              {pruneMsg}
-            </span>
-          )}
           <span className="text-xs text-[var(--color-text-dim)] mr-auto">
             {filtered.length} نمایش
           </span>

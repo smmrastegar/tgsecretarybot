@@ -574,31 +574,9 @@ export async function ensureSchema(): Promise<void> {
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (chat_id, role)
       )`;
-    // Catch-all "every update Telegram sent us" log so the operator
-    // can debug behaviors like "I reacted but the bot didn't see it"
-    // without tailing Vercel logs. Bounded retention (see prune step
-    // below) keeps the table small.
-    await q`
-      CREATE TABLE IF NOT EXISTS telegram_debug_log (
-        id                     BIGSERIAL PRIMARY KEY,
-        received_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        update_id              BIGINT,
-        update_type            TEXT NOT NULL,
-        chat_id                BIGINT,
-        chat_type              TEXT,
-        user_id                BIGINT,
-        business_connection_id TEXT,
-        preview                TEXT,
-        payload                JSONB NOT NULL,
-        tenant_id              BIGINT
-      )`;
-    await q`CREATE INDEX IF NOT EXISTS telegram_debug_log_received_idx
-      ON telegram_debug_log (received_at DESC)`;
-    await q`CREATE INDEX IF NOT EXISTS telegram_debug_log_type_idx
-      ON telegram_debug_log (update_type, received_at DESC)`;
-    await q`CREATE INDEX IF NOT EXISTS telegram_debug_log_chat_idx
-      ON telegram_debug_log (chat_id, received_at DESC)
-      WHERE chat_id IS NOT NULL`;
+    // Debug log moved off Postgres to Redis (1-hour rolling buffer).
+    // Drop the now-unused table; the page reads from redis instead.
+    await q`DROP TABLE IF EXISTS telegram_debug_log`;
     await q`CREATE INDEX IF NOT EXISTS chat_function_roles_role_idx ON chat_function_roles (role)`;
     // Optional category per (chat_id, role) so operator can group
     // their function assignments into "personal", "work", "shared",
@@ -1521,6 +1499,11 @@ export async function logMessage(m: LogMessage): Promise<number> {
 }
 
 // --- Telegram debug log (every incoming update) ---
+//
+// Lives in Redis (1-hour TTL, capped at 2000 entries) — the webhook
+// hot path can't afford a DB round-trip per update, and the operator
+// only ever wants the last hour of activity to debug "did this event
+// fire?" questions. No prune step, no schema cost.
 
 export type DebugLogRow = {
   id: number;
@@ -1536,6 +1519,10 @@ export type DebugLogRow = {
   tenantId: number | null;
 };
 
+const DEBUG_LOG_KEY = "tgsb:debug-log";
+const DEBUG_LOG_MAX_ITEMS = 2000;
+const DEBUG_LOG_TTL_SECONDS = 60 * 60; // 1 hour
+
 export async function logTelegramUpdate(args: {
   updateId: number | null;
   updateType: string;
@@ -1546,30 +1533,26 @@ export async function logTelegramUpdate(args: {
   preview: string | null;
   payload: unknown;
 }): Promise<void> {
-  if (!hasDb()) return;
-  await ensureSchema();
-  let tenantId: number | null = null;
-  try {
-    const { getCurrentTenantId } = await import("./tenant-context");
-    tenantId = getCurrentTenantId() ?? null;
-  } catch {
-    // tenant context not always set in webhook entry
-  }
-  try {
-    await sql()`
-      INSERT INTO telegram_debug_log (
-        update_id, update_type, chat_id, chat_type, user_id,
-        business_connection_id, preview, payload, tenant_id
-      ) VALUES (
-        ${args.updateId}, ${args.updateType}, ${args.chatId}, ${args.chatType},
-        ${args.userId}, ${args.businessConnectionId},
-        ${args.preview ? args.preview.slice(0, 500) : null},
-        ${JSON.stringify(args.payload)}::jsonb, ${tenantId}
-      )`;
-  } catch (err) {
-    // Never let debug logging crash the webhook hot path.
-    console.warn("[debug-log] insert failed:", err);
-  }
+  const { redisEnabled, redisListPush } = await import("./redis");
+  if (!redisEnabled()) return;
+  const entry = {
+    id: Date.now() * 1000 + Math.floor(Math.random() * 1000),
+    receivedAt: new Date().toISOString(),
+    updateId: args.updateId,
+    updateType: args.updateType,
+    chatId: args.chatId,
+    chatType: args.chatType,
+    userId: args.userId,
+    businessConnectionId: args.businessConnectionId,
+    preview: args.preview ? args.preview.slice(0, 500) : null,
+    payload: args.payload,
+  };
+  await redisListPush({
+    key: DEBUG_LOG_KEY,
+    value: entry,
+    maxLength: DEBUG_LOG_MAX_ITEMS,
+    ttlSeconds: DEBUG_LOG_TTL_SECONDS,
+  });
 }
 
 export async function listDebugLog(args?: {
@@ -1578,76 +1561,45 @@ export async function listDebugLog(args?: {
   q?: string | null;
   limit?: number;
 }): Promise<DebugLogRow[]> {
-  if (!hasDb()) return [];
-  await ensureSchema();
-  const limit = Math.min(args?.limit ?? 200, 1000);
-  const updateType = args?.updateType?.trim() || null;
-  const chatId = args?.chatId ?? null;
-  const q = args?.q?.trim() || null;
-  const rows = await sql()`
-    SELECT id, received_at, update_id, update_type, chat_id, chat_type,
-           user_id, business_connection_id, preview, payload, tenant_id
-    FROM telegram_debug_log
-    WHERE (${updateType}::text IS NULL OR update_type = ${updateType})
-      AND (${chatId}::bigint IS NULL OR chat_id = ${chatId})
-      AND (${q}::text IS NULL OR preview ILIKE '%' || ${q} || '%')
-    ORDER BY received_at DESC
-    LIMIT ${limit}`;
-  return (rows as Array<Record<string, unknown>>).map((r) => ({
-    id: Number(r.id),
-    receivedAt: r.received_at as Date,
-    updateId: r.update_id == null ? null : Number(r.update_id),
-    updateType: r.update_type as string,
-    chatId: r.chat_id == null ? null : Number(r.chat_id),
-    chatType: (r.chat_type as string) ?? null,
-    userId: r.user_id == null ? null : Number(r.user_id),
-    businessConnectionId: (r.business_connection_id as string) ?? null,
-    preview: (r.preview as string) ?? null,
-    payload: r.payload,
-    tenantId: r.tenant_id == null ? null : Number(r.tenant_id),
+  const { redisEnabled, redisListRange } = await import("./redis");
+  if (!redisEnabled()) return [];
+  type Stored = Omit<DebugLogRow, "receivedAt"> & { receivedAt: string };
+  const raw = await redisListRange<Stored>(DEBUG_LOG_KEY, 0, -1);
+  const ql = args?.q?.trim().toLowerCase() || null;
+  const filtered = raw.filter((r) => {
+    if (args?.updateType && r.updateType !== args.updateType) return false;
+    if (args?.chatId != null && r.chatId !== args.chatId) return false;
+    if (ql) {
+      const hay =
+        (r.preview ?? "").toLowerCase() +
+        " " +
+        String(r.chatId ?? "") +
+        " " +
+        (r.businessConnectionId ?? "").toLowerCase();
+      if (!hay.includes(ql)) return false;
+    }
+    return true;
+  });
+  const out = filtered.slice(0, Math.min(args?.limit ?? 500, 2000));
+  return out.map((r) => ({
+    ...r,
+    receivedAt: new Date(r.receivedAt),
+    tenantId: null,
   }));
 }
 
 export async function debugLogTypeBuckets(): Promise<
   Array<{ updateType: string; count: number }>
 > {
-  if (!hasDb()) return [];
-  await ensureSchema();
-  const rows = await sql()`
-    SELECT update_type, COUNT(*)::int AS cnt
-    FROM telegram_debug_log
-    WHERE received_at > NOW() - INTERVAL '7 days'
-    GROUP BY update_type
-    ORDER BY cnt DESC`;
-  return (rows as Array<{ update_type: string; cnt: number }>).map((r) => ({
-    updateType: r.update_type,
-    count: Number(r.cnt),
-  }));
-}
-
-export async function pruneDebugLog(args?: {
-  olderThanDays?: number;
-  keepLastN?: number;
-}): Promise<{ deletedByAge: number; deletedByCap: number }> {
-  if (!hasDb()) return { deletedByAge: 0, deletedByCap: 0 };
-  await ensureSchema();
-  const days = args?.olderThanDays ?? 7;
-  const keepN = args?.keepLastN ?? 10000;
-  const ageRows = await sql()`
-    DELETE FROM telegram_debug_log
-    WHERE received_at < NOW() - make_interval(days => ${days})
-    RETURNING id`;
-  const capRows = await sql()`
-    DELETE FROM telegram_debug_log
-    WHERE id NOT IN (
-      SELECT id FROM telegram_debug_log
-      ORDER BY received_at DESC LIMIT ${keepN}
-    )
-    RETURNING id`;
-  return {
-    deletedByAge: (ageRows as Array<unknown>).length,
-    deletedByCap: (capRows as Array<unknown>).length,
-  };
+  const { redisEnabled, redisListRange } = await import("./redis");
+  if (!redisEnabled()) return [];
+  type Stored = { updateType: string };
+  const raw = await redisListRange<Stored>(DEBUG_LOG_KEY, 0, -1);
+  const counts: Record<string, number> = {};
+  for (const r of raw) counts[r.updateType] = (counts[r.updateType] ?? 0) + 1;
+  return Object.entries(counts)
+    .map(([updateType, count]) => ({ updateType, count }))
+    .sort((a, b) => b.count - a.count);
 }
 
 // Record that the owner reacted to a customer message — counted as

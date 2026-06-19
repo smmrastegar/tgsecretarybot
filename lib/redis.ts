@@ -56,3 +56,55 @@ export async function redisDelete(key: string): Promise<void> {
     console.error("[redis] del failed:", err);
   }
 }
+
+// Push a value to the head of a list, cap the list to maxLength, and
+// reset the key TTL. Used for short-lived ring buffers (debug log,
+// rate counters) where DB writes would be overkill.
+export async function redisListPush(args: {
+  key: string;
+  value: unknown;
+  maxLength?: number;
+  ttlSeconds?: number;
+}): Promise<void> {
+  const r = getRedis();
+  if (!r) return;
+  try {
+    await r.lpush(args.key, JSON.stringify(args.value));
+    if (args.maxLength && args.maxLength > 0) {
+      await r.ltrim(args.key, 0, args.maxLength - 1);
+    }
+    if (args.ttlSeconds && args.ttlSeconds > 0) {
+      await r.expire(args.key, args.ttlSeconds);
+    }
+  } catch (err) {
+    console.error("[redis] lpush failed:", err);
+  }
+}
+
+export async function redisListRange<T = unknown>(
+  key: string,
+  start = 0,
+  end = -1,
+): Promise<T[]> {
+  const r = getRedis();
+  if (!r) return [];
+  try {
+    const items = (await r.lrange(key, start, end)) as Array<string | T>;
+    const out: T[] = [];
+    for (const it of items) {
+      if (typeof it === "string") {
+        try {
+          out.push(JSON.parse(it) as T);
+        } catch {
+          // skip malformed
+        }
+      } else {
+        out.push(it as T);
+      }
+    }
+    return out;
+  } catch (err) {
+    console.error("[redis] lrange failed:", err);
+    return [];
+  }
+}
