@@ -186,6 +186,19 @@ export default function FollowUpDebugPage() {
     }
   };
 
+  const disableFollowUp = async (chatId: number) => {
+    try {
+      const r = await fetch(`/api/chats/${chatId}/follow-up`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: false }),
+      });
+      if (r.ok) await load();
+    } catch {
+      // ignored — reload will reflect persisted state
+    }
+  };
+
   const triggerNow = async () => {
     setTriggering(true);
     try {
@@ -444,13 +457,22 @@ export default function FollowUpDebugPage() {
                       )}
                     </td>
                     <td className="py-2 px-2">
-                      <button
-                        onClick={() => ackChat(r.chatId)}
-                        className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
-                        title="مارک کن به‌عنوان «متوجه شدم» — تا پیام جدید بعدی، دیگه ping نمی‌شه"
-                      >
-                        👌 ack
-                      </button>
+                      <div className="flex flex-col gap-1">
+                        <button
+                          onClick={() => ackChat(r.chatId)}
+                          className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+                          title="مارک کن به‌عنوان «متوجه شدم» — تا پیام جدید بعدی، دیگه ping نمی‌شه"
+                        >
+                          👌 ack
+                        </button>
+                        <button
+                          onClick={() => disableFollowUp(r.chatId)}
+                          className="text-[10px] px-2 py-1 rounded-md bg-rose-500/10 border border-rose-500/30 text-rose-200 hover:bg-rose-500/20"
+                          title="فالو‌آپ این چت رو خاموش کن — حتی برای پیام‌های بعدی، توی لاگ‌ها نمیاد"
+                        >
+                          🙈 بیخیال
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
