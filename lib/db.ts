@@ -5708,6 +5708,117 @@ export async function listChatsByFunction(
   return (rows as Array<Record<string, unknown>>).map(rowToChatRule);
 }
 
+// Chats assigned to a role, organized by their function category. Used
+// by the /functions page to render "Downloader bots → default group →
+// [chat A] / work group → [chat B]" without two round-trips per role.
+export type RoleChatWithCategory = {
+  chatId: number;
+  category: string;
+  chatTitle: string | null;
+  chatType: string;
+  firstName: string | null;
+  lastName: string | null;
+  nickname: string | null;
+};
+
+export async function listChatsByFunctionWithCategory(
+  role: FunctionRole,
+  tenantId?: number | null,
+): Promise<RoleChatWithCategory[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT cfr.chat_id,
+           COALESCE(NULLIF(cfr.category, ''), 'default') AS category,
+           r.chat_title, r.chat_type,
+           r.first_name, r.last_name, r.nickname
+    FROM chat_function_roles cfr
+    LEFT JOIN chat_rules r ON r.chat_id = cfr.chat_id
+    WHERE cfr.role = ${role}
+      AND (${tenantId ?? null}::bigint IS NULL OR r.tenant_id = ${tenantId ?? null})
+    ORDER BY category ASC, cfr.chat_id ASC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    chatId: Number(r.chat_id),
+    category: r.category as string,
+    chatTitle: (r.chat_title as string) ?? null,
+    chatType: (r.chat_type as string) ?? "private",
+    firstName: (r.first_name as string) ?? null,
+    lastName: (r.last_name as string) ?? null,
+    nickname: (r.nickname as string) ?? null,
+  }));
+}
+
+export type FunctionCategory = {
+  slug: string;
+  label: string;
+  emoji: string | null;
+  sortOrder: number;
+  isBuiltin: boolean;
+};
+
+export async function listFunctionCategories(): Promise<FunctionCategory[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT slug, label, emoji, sort_order, is_builtin
+    FROM function_categories
+    ORDER BY sort_order ASC, label ASC`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    slug: r.slug as string,
+    label: r.label as string,
+    emoji: (r.emoji as string) ?? null,
+    sortOrder: Number(r.sort_order ?? 100),
+    isBuiltin: Boolean(r.is_builtin),
+  }));
+}
+
+export async function createFunctionCategory(args: {
+  slug: string;
+  label: string;
+  emoji?: string | null;
+  sortOrder?: number;
+}): Promise<FunctionCategory> {
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO function_categories (slug, label, emoji, sort_order, is_builtin)
+    VALUES (${args.slug}, ${args.label}, ${args.emoji ?? null},
+            ${args.sortOrder ?? 100}, FALSE)
+    ON CONFLICT (slug) DO UPDATE SET
+      label = EXCLUDED.label,
+      emoji = EXCLUDED.emoji,
+      sort_order = EXCLUDED.sort_order
+    RETURNING slug, label, emoji, sort_order, is_builtin`;
+  const r = rows[0] as Record<string, unknown>;
+  return {
+    slug: r.slug as string,
+    label: r.label as string,
+    emoji: (r.emoji as string) ?? null,
+    sortOrder: Number(r.sort_order ?? 100),
+    isBuiltin: Boolean(r.is_builtin),
+  };
+}
+
+export async function deleteFunctionCategory(slug: string): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  // Move assignments to default before deleting.
+  await sql()`UPDATE chat_function_roles SET category = 'default' WHERE category = ${slug}`;
+  await sql()`DELETE FROM function_categories WHERE slug = ${slug} AND is_builtin = FALSE`;
+}
+
+export async function setChatFunctionCategory(args: {
+  chatId: number;
+  role: FunctionRole;
+  category: string;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE chat_function_roles
+    SET category = ${args.category}
+    WHERE chat_id = ${args.chatId} AND role = ${args.role}`;
+}
+
 // All function roles for a single chat, sorted alphabetically. New
 // code should read from here; the legacy ChatRule.functionRole single
 // value stays exposed for backwards compat with callers that haven't
