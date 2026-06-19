@@ -2584,3 +2584,95 @@ export async function suggestChatSettings(input: {
     reasoning: cleanStr(parsed.reasoning) ?? "(بدون توضیح)",
   };
 }
+
+// --- Follow-up: AI judgment of "does the operator owe a reply?" ---
+
+const FOLLOW_UP_PROMPT = `You read a recent private-chat conversation between the operator and another person. The operator hasn't sent a NEW text message since the other person's last incoming message. Decide whether the operator OWES a reply.
+
+A reply is OWED when the customer is in any of:
+  - Asked a direct question that's still unanswered
+  - Sent a request, complaint, or anything action-bearing
+  - Sent a "are you there?" / nudge after silence
+  - Shared something time-sensitive that needs acknowledgment
+  - Is mid-conversation and clearly waiting
+
+A reply is NOT owed when:
+  - The customer just said "thanks", "ok", "got it", a sticker / emoji, or otherwise CLOSED the loop
+  - The operator's last reply already answered everything; the customer's followup was acknowledgment ("perfect", "👌", "👍")
+  - The conversation organically ended (e.g. "ok talk later", "good night")
+  - The customer is in a long monologue that doesn't ask for response
+  - The bot's auto-reply or away message was the last "operator" turn and the customer responded with closure
+  - The message is spam, promotional, or otherwise not a real conversation
+
+Be CONSERVATIVE: when the customer's message is short ("ok"), reads like an acknowledgment, or doesn't carry an action, mark needs_reply=false. False alarms train the operator to ignore notifications.
+
+Urgency scale (only when needs_reply=true):
+  - high: explicit urgency markers ("urgent", "asap", "حالا", "زود"), real-time questions, problem reports
+  - normal: regular questions, requests, ongoing conversation
+  - low: casual chat, social pings, low-stakes question
+
+Reply with STRICT JSON only, no prose, no code fences:
+{
+  "needs_reply": <true|false>,
+  "reason": "<one short Persian sentence explaining why>",
+  "urgency": "<low|normal|high>"
+}`;
+
+export type FollowUpVerdict = {
+  needsReply: boolean;
+  reason: string;
+  urgency: "low" | "normal" | "high";
+};
+
+export async function analyzeFollowUpNeed(input: {
+  chatId: number;
+  contactName: string | null;
+  messages: Array<{ fromOwner: boolean; senderName: string; text: string; at: Date }>;
+}): Promise<FollowUpVerdict | null> {
+  if (input.messages.length === 0) return null;
+  const payload = {
+    chat_id: input.chatId,
+    contact_name: input.contactName,
+    messages: input.messages.slice(-30).map((m) => ({
+      from: m.fromOwner ? "operator" : "customer",
+      sender: m.senderName,
+      text: (m.text ?? "").slice(0, 400),
+      at: m.at.toISOString(),
+    })),
+  };
+  let raw: string;
+  try {
+    raw = await callOpenRouter(
+      [
+        { role: "system", content: FOLLOW_UP_PROMPT },
+        { role: "user", content: JSON.stringify(payload) },
+      ],
+      {
+        maxTokens: 200,
+        jsonObject: true,
+        temperature: 0.1,
+        purpose: "follow_up_judge",
+        chatId: input.chatId,
+      },
+    );
+  } catch (err) {
+    console.warn(`[follow-up] AI judge failed chat=${input.chatId}:`, err);
+    return null;
+  }
+  const json = extractJson(raw);
+  if (!json) return null;
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const needsReply = parsed.needs_reply === true;
+  const reason =
+    typeof parsed.reason === "string" ? parsed.reason.trim().slice(0, 400) : "";
+  const urgencyRaw =
+    typeof parsed.urgency === "string" ? parsed.urgency.trim().toLowerCase() : "normal";
+  const urgency: "low" | "normal" | "high" =
+    urgencyRaw === "high" || urgencyRaw === "low" ? urgencyRaw : "normal";
+  return { needsReply, reason: reason || "(بدون دلیل)", urgency };
+}

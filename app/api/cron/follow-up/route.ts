@@ -8,8 +8,11 @@ import {
   hasDb,
   listChatsByFunction,
   listFollowUpCandidates,
+  recentConversation,
   recordChatFollowUpPing,
+  setFollowUpAiVerdict,
 } from "@/lib/db";
+import { analyzeFollowUpNeed } from "@/lib/classifier";
 import { listTenants } from "@/lib/tenant";
 import { runWithTenant } from "@/lib/tenant-context";
 
@@ -60,33 +63,90 @@ async function processTenant(tenantId: number) {
     );
     const inbox = inboxes[0];
     if (!inbox) return { tenantId, pinged: 0, skipped: "no notes_inbox" };
+    // 10 oldest-waiting candidates that passed threshold + filters.
     const candidates = await listFollowUpCandidates({ tenantId });
     const bot = getBot();
     let pinged = 0;
+    let aiSkipped = 0;
+    let aiAnalyzed = 0;
     const errors: Array<{ chatId: number; error: string }> = [];
     for (const c of candidates) {
+      // AI verdict: cached against last_customer_message_at. Stale or
+      // missing → run AI on the conversation now.
+      let needsReply: boolean;
+      let aiReason: string;
+      let aiUrgency: "low" | "normal" | "high" = "normal";
+      const cacheFresh =
+        c.aiForMessageAt != null &&
+        c.aiNeedsReply != null &&
+        c.aiForMessageAt.getTime() >= c.lastCustomerMessageAt.getTime();
+      if (cacheFresh) {
+        needsReply = c.aiNeedsReply === true;
+        aiReason = c.aiReason ?? "(cached)";
+        aiUrgency = c.aiUrgency ?? "normal";
+      } else {
+        const conversation = await recentConversation(c.chatId, 30).catch(
+          () => [],
+        );
+        const verdict = await analyzeFollowUpNeed({
+          chatId: c.chatId,
+          contactName: displayName(c),
+          messages: conversation.map((m) => ({
+            fromOwner: m.from === "owner",
+            senderName: m.senderName,
+            text: m.text,
+            at: m.at,
+          })),
+        });
+        if (!verdict) {
+          // AI failed — fall back to "needs reply" (better to nudge
+          // than silently drop).
+          needsReply = true;
+          aiReason = "(تحلیل AI شکست خورد — fallback به needs_reply)";
+        } else {
+          needsReply = verdict.needsReply;
+          aiReason = verdict.reason;
+          aiUrgency = verdict.urgency;
+          await setFollowUpAiVerdict({
+            chatId: c.chatId,
+            forMessageAt: c.lastCustomerMessageAt,
+            needsReply: verdict.needsReply,
+            reason: verdict.reason,
+            urgency: verdict.urgency,
+          }).catch((err) =>
+            console.warn(`[follow-up] cache verdict failed:`, err),
+          );
+        }
+        aiAnalyzed++;
+      }
+      if (!needsReply) {
+        aiSkipped++;
+        console.log(
+          `[follow-up] ai_skip chat=${c.chatId} reason="${aiReason}"`,
+        );
+        continue;
+      }
       const kind: "first" | "escalate" =
         c.lastPingAt == null ? "first" : "escalate";
       const hoursSince =
         (Date.now() - c.lastCustomerMessageAt.getTime()) / 3600_000;
+      const urgencyEmoji =
+        aiUrgency === "high" ? "🔥" : aiUrgency === "low" ? "🟢" : "🟡";
       const headerEmoji = kind === "escalate" ? "🚨" : "⏰";
       const headerLabel =
         kind === "escalate"
-          ? `بیش از ${c.escalateHours.toFixed(0)} ساعت دیگه گذشته و هنوز جواب ندادی`
-          : `بیش از ${c.thresholdHours.toFixed(0)} ساعت هست جواب ندادی`;
+          ? `بیش از ${c.escalateHours.toFixed(0)} ساعت دیگه گذشته`
+          : `جواب می‌خواد`;
       const preview =
         c.lastCustomerMessageText.slice(0, 220).replace(/\s+/g, " ") ||
         "(پیام بدون متن)";
-      // Inline mention in the body — works without the user having
-      // privacy "allow link by id" enabled, and avoids the
-      // BUTTON_URL_INVALID error that tg://user?id=... URL buttons
-      // produce in inline keyboards for some accounts.
       const nameLink = `<a href="tg://user?id=${c.chatId}">${escHtml(displayName(c))}</a>`;
       const text =
-        `${headerEmoji} <b>${headerLabel}</b>\n` +
+        `${headerEmoji} <b>${headerLabel}</b> ${urgencyEmoji}\n` +
         `👤 <b>${nameLink}</b>` +
-        ` · ${c.pendingCustomerMessageCount} پیام منتظر جواب` +
-        `\n⏱ ${Math.round(hoursSince)} ساعت پیش\n\n` +
+        ` · ${c.pendingCustomerMessageCount} پیام منتظر\n` +
+        `⏱ ${Math.round(hoursSince)} ساعت پیش\n\n` +
+        `🤖 ${escHtml(aiReason)}\n\n` +
         `💬 «${escHtml(preview)}»`;
       const kb = new InlineKeyboard().text(
         "✅ متوجه شدم",
@@ -109,6 +169,8 @@ async function processTenant(tenantId: number) {
       tenantId,
       pinged,
       candidates: candidates.length,
+      aiAnalyzed,
+      aiSkipped,
       ...(errors.length > 0 ? { errors } : {}),
     };
   });
@@ -164,6 +226,11 @@ async function run(request: Request): Promise<NextResponse> {
           lastPingAt: r.lastPingAt,
           lastPingKind: r.lastPingKind,
           ackedAt: r.ackedAt,
+          aiForMessageAt: r.aiForMessageAt,
+          aiVerdictAt: r.aiVerdictAt,
+          aiNeedsReply: r.aiNeedsReply,
+          aiReason: r.aiReason,
+          aiUrgency: r.aiUrgency,
         })),
       });
     }

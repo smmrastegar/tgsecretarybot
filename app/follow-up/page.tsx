@@ -16,6 +16,8 @@ type Decided =
   | "is_bot"
   | "acked"
   | "below_threshold"
+  | "ai_pending"
+  | "ai_no_reply_needed"
   | "waiting_for_escalate"
   | "already_pinged_escalate"
   | "would_ping_first"
@@ -42,6 +44,11 @@ type ChatRow = {
   lastPingAt: string | null;
   lastPingKind: string | null;
   ackedAt: string | null;
+  aiForMessageAt: string | null;
+  aiVerdictAt: string | null;
+  aiNeedsReply: boolean | null;
+  aiReason: string | null;
+  aiUrgency: "low" | "normal" | "high" | null;
 };
 
 type TenantBlock = {
@@ -58,8 +65,10 @@ type Response = {
 };
 
 const DECIDED_LABELS: Record<Decided, string> = {
-  would_ping_first: "🔔 آماده ping اول",
-  would_ping_escalate: "🚨 آماده escalate",
+  would_ping_first: "🔔 نیاز به جواب",
+  would_ping_escalate: "🚨 escalate",
+  ai_pending: "🤖 در صف AI",
+  ai_no_reply_needed: "💤 جواب نمی‌خواد",
   below_threshold: "⏱ زیر آستانه",
   waiting_for_escalate: "⌛ منتظر escalate",
   already_pinged_escalate: "✓ هر دو ping رفته",
@@ -79,6 +88,8 @@ const DECIDED_TONES: Record<
 > = {
   would_ping_first: "candidate",
   would_ping_escalate: "candidate",
+  ai_pending: "neutral",
+  ai_no_reply_needed: "answered",
   below_threshold: "neutral",
   waiting_for_escalate: "neutral",
   already_pinged_escalate: "neutral",
@@ -249,6 +260,8 @@ export default function FollowUpDebugPage() {
   const orderedKeys: Decided[] = [
     "would_ping_first",
     "would_ping_escalate",
+    "ai_pending",
+    "ai_no_reply_needed",
     "waiting_for_escalate",
     "below_threshold",
     "already_pinged_escalate",
@@ -400,6 +413,19 @@ export default function FollowUpDebugPage() {
                       >
                         {DECIDED_LABELS[r.decided]}
                       </span>
+                      {r.aiReason && (
+                        <div
+                          className="text-[10px] text-[var(--color-text-dim)] mt-0.5 leading-snug max-w-[28ch]"
+                          title={r.aiReason}
+                        >
+                          {r.aiUrgency === "high"
+                            ? "🔥 "
+                            : r.aiUrgency === "low"
+                              ? "🟢 "
+                              : "🟡 "}
+                          {r.aiReason.slice(0, 80)}
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 px-2">
                       <div>{fmtHours(r.hoursSinceCustomer)}</div>

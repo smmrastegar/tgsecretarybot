@@ -544,6 +544,16 @@ export async function ensureSchema(): Promise<void> {
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_last_ping_at TIMESTAMPTZ`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_last_ping_kind TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_acked_at TIMESTAMPTZ`;
+    // Cached AI verdict. The cron uses AI to decide whether the
+    // operator needs to reply (vs. the customer's message is a natural
+    // conversation closer like "thanks" / "ok"). Cached against the
+    // last customer message timestamp — when a new customer message
+    // arrives, the cache is implicitly invalidated.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_ai_for_message_at TIMESTAMPTZ`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_ai_verdict_at TIMESTAMPTZ`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_ai_needs_reply BOOLEAN`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_ai_reason TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS follow_up_ai_urgency TEXT`;
     // Reactions count as "the owner replied" for the follow-up cron.
     // We can't store reactions in messages_log because logMessage dedupes
     // on (bcId, chat_id, message_id) and that key already belongs to the
@@ -4001,6 +4011,35 @@ export async function setChatFollowUp(args: {
 // Mark this chat as "I'm aware" — bot stops sending more follow-up
 // pings until the customer messages again. Stamped by the "متوجه
 // شدم" button under each follow-up notice in notes_inbox.
+// Cache the AI verdict against the current customer message — so the
+// cron doesn't re-spend AI tokens on the same conversation state
+// every tick. When a new customer message arrives, the cache becomes
+// stale (last_customer_at > follow_up_ai_for_message_at).
+export async function setFollowUpAiVerdict(args: {
+  chatId: number;
+  forMessageAt: Date;
+  needsReply: boolean;
+  reason: string;
+  urgency: "low" | "normal" | "high";
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO chat_rules (chat_id, chat_type, follow_up_ai_for_message_at,
+      follow_up_ai_verdict_at, follow_up_ai_needs_reply,
+      follow_up_ai_reason, follow_up_ai_urgency)
+    VALUES (${args.chatId}, 'private',
+      ${args.forMessageAt.toISOString()}::timestamptz, NOW(),
+      ${args.needsReply}, ${args.reason}, ${args.urgency})
+    ON CONFLICT (chat_id) DO UPDATE SET
+      follow_up_ai_for_message_at = EXCLUDED.follow_up_ai_for_message_at,
+      follow_up_ai_verdict_at = EXCLUDED.follow_up_ai_verdict_at,
+      follow_up_ai_needs_reply = EXCLUDED.follow_up_ai_needs_reply,
+      follow_up_ai_reason = EXCLUDED.follow_up_ai_reason,
+      follow_up_ai_urgency = EXCLUDED.follow_up_ai_urgency,
+      updated_at = NOW()`;
+}
+
 export async function ackChatFollowUp(chatId: number): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
@@ -4039,6 +4078,12 @@ export type FollowUpCandidate = {
   lastCustomerMessageText: string;
   lastOwnerMessageAt: Date | null;
   pendingCustomerMessageCount: number;
+  // Cached AI verdict. Stale when aiForMessageAt < lastCustomerMessageAt.
+  aiForMessageAt: Date | null;
+  aiVerdictAt: Date | null;
+  aiNeedsReply: boolean | null;
+  aiReason: string | null;
+  aiUrgency: "low" | "normal" | "high" | null;
 };
 
 // Scan ALL private chats and return the ones that meet either of:
@@ -4090,24 +4135,19 @@ export async function listFollowUpCandidates(args?: {
              r.follow_up_enabled, r.follow_up_threshold_hours,
              r.follow_up_escalate_hours,
              r.follow_up_last_ping_at, r.follow_up_last_ping_kind,
-             r.follow_up_acked_at
+             r.follow_up_acked_at,
+             r.follow_up_ai_for_message_at, r.follow_up_ai_verdict_at,
+             r.follow_up_ai_needs_reply, r.follow_up_ai_reason,
+             r.follow_up_ai_urgency
       FROM per_chat p
       LEFT JOIN chat_rules r ON r.chat_id = p.chat_id
       WHERE p.last_customer_at IS NOT NULL
-        -- Only chats where there's been a real bidirectional
-        -- conversation (we've replied at least once in the past).
-        -- Random one-way contacts the operator never engaged with
-        -- shouldn't generate pings.
         AND p.last_owner_at IS NOT NULL
         AND p.last_owner_at < p.last_customer_at
         AND COALESCE(r.follow_up_enabled, TRUE) = TRUE
         AND COALESCE(r.muted, FALSE) = FALSE
         AND COALESCE(r.ignored, FALSE) = FALSE
-        -- Don't bother chats where the bot is itself / is_bot
         AND COALESCE(r.is_bot, FALSE) = FALSE
-        -- ack window: if the operator pressed "متوجه شدم" after the
-        -- last customer message, don't ping again until a NEW
-        -- customer message comes in (acked > last_customer = silence).
         AND (
           r.follow_up_acked_at IS NULL
           OR r.follow_up_acked_at < p.last_customer_at
@@ -4136,7 +4176,7 @@ export async function listFollowUpCandidates(args?: {
             >= COALESCE(c.follow_up_escalate_hours, 12)
       )
     ORDER BY c.last_customer_at ASC
-    LIMIT 50`;
+    LIMIT 10`;
   const out: FollowUpCandidate[] = [];
   for (const r0 of rows as Array<Record<string, unknown>>) {
     const chatId = Number(r0.chat_id);
@@ -4156,6 +4196,7 @@ export async function listFollowUpCandidates(args?: {
     const s = summaryRows[0] as
       | { cnt: number; last_text: string | null }
       | undefined;
+    const urgencyRaw = (r0.follow_up_ai_urgency as string) ?? null;
     out.push({
       chatId,
       chatTitle: (r0.chat_title as string) ?? null,
@@ -4171,6 +4212,17 @@ export async function listFollowUpCandidates(args?: {
       lastCustomerMessageText: (s?.last_text as string) ?? "",
       lastOwnerMessageAt: lastOwnerAt,
       pendingCustomerMessageCount: Number(s?.cnt ?? 1),
+      aiForMessageAt: (r0.follow_up_ai_for_message_at as Date) ?? null,
+      aiVerdictAt: (r0.follow_up_ai_verdict_at as Date) ?? null,
+      aiNeedsReply:
+        r0.follow_up_ai_needs_reply == null
+          ? null
+          : Boolean(r0.follow_up_ai_needs_reply),
+      aiReason: (r0.follow_up_ai_reason as string) ?? null,
+      aiUrgency:
+        urgencyRaw === "low" || urgencyRaw === "normal" || urgencyRaw === "high"
+          ? urgencyRaw
+          : null,
     });
   }
   return out;
@@ -4199,6 +4251,12 @@ export type FollowUpDebugRow = {
   // if 0 even after the operator says they reacted, the message_reaction
   // pipeline isn't reaching the bot for this chat).
   reactionsTotal: number;
+  // Cached AI follow-up verdict (matches FollowUpCandidate fields).
+  aiForMessageAt: Date | null;
+  aiVerdictAt: Date | null;
+  aiNeedsReply: boolean | null;
+  aiReason: string | null;
+  aiUrgency: "low" | "normal" | "high" | null;
   // Last ANY message (owner or customer, ignoring from_owner). Helpful
   // when last_customer_at looks stale — if last_any_at is recent, the
   // missing customer rows are being logged as from_owner=TRUE.
@@ -4272,6 +4330,9 @@ export async function debugFollowUpScan(args?: {
       COALESCE(r.follow_up_escalate_hours, 12) AS escalate_h,
       r.follow_up_last_ping_at, r.follow_up_last_ping_kind,
       r.follow_up_acked_at,
+      r.follow_up_ai_for_message_at, r.follow_up_ai_verdict_at,
+      r.follow_up_ai_needs_reply, r.follow_up_ai_reason,
+      r.follow_up_ai_urgency,
       COALESCE(r.muted, FALSE) AS muted,
       COALESCE(r.ignored, FALSE) AS ignored,
       COALESCE(r.is_bot, FALSE) AS is_bot,
@@ -4293,6 +4354,11 @@ export async function debugFollowUpScan(args?: {
              AND EXTRACT(EPOCH FROM (NOW() - p.last_customer_at)) / 3600.0
                  < COALESCE(r.follow_up_threshold_hours, 2)
           THEN 'below_threshold'
+        -- AI verdict layer: only after threshold + filters pass.
+        WHEN r.follow_up_ai_for_message_at IS NULL
+             OR r.follow_up_ai_for_message_at < p.last_customer_at
+          THEN 'ai_pending'
+        WHEN r.follow_up_ai_needs_reply = FALSE THEN 'ai_no_reply_needed'
         WHEN r.follow_up_last_ping_at IS NULL THEN 'would_ping_first'
         WHEN r.follow_up_last_ping_kind = 'first'
              AND EXTRACT(EPOCH FROM (NOW() - r.follow_up_last_ping_at)) / 3600.0
@@ -4307,6 +4373,7 @@ export async function debugFollowUpScan(args?: {
     LIMIT 300`;
   const out: FollowUpDebugRow[] = [];
   for (const r0 of rows as Array<Record<string, unknown>>) {
+    const aiUrgencyRaw = (r0.follow_up_ai_urgency as string) ?? null;
     out.push({
       chatId: Number(r0.chat_id),
       chatTitle: (r0.chat_title as string) ?? null,
@@ -4317,6 +4384,19 @@ export async function debugFollowUpScan(args?: {
       lastOwnerMessageAt: (r0.last_owner_at as Date) ?? null,
       lastOwnerMsgOnlyAt: (r0.last_owner_msg_at as Date) ?? null,
       lastReactionAt: (r0.last_reaction_at as Date) ?? null,
+      aiForMessageAt: (r0.follow_up_ai_for_message_at as Date) ?? null,
+      aiVerdictAt: (r0.follow_up_ai_verdict_at as Date) ?? null,
+      aiNeedsReply:
+        r0.follow_up_ai_needs_reply == null
+          ? null
+          : Boolean(r0.follow_up_ai_needs_reply),
+      aiReason: (r0.follow_up_ai_reason as string) ?? null,
+      aiUrgency:
+        aiUrgencyRaw === "low" ||
+        aiUrgencyRaw === "normal" ||
+        aiUrgencyRaw === "high"
+          ? aiUrgencyRaw
+          : null,
       reactionsTotal: Number(r0.reactions_total ?? 0),
       lastAnyMessageAt: (r0.last_any_at as Date) ?? null,
       messagesLast24h: Number(r0.msgs_last_24h ?? 0),
