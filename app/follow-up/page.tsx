@@ -231,6 +231,24 @@ export default function FollowUpDebugPage() {
   const visible = sorted.slice(0, visibleCount);
   const hasMore = sorted.length > visibleCount;
 
+  const [analyzing, setAnalyzing] = useState<Set<number>>(new Set());
+
+  const analyzeChat = async (chatId: number) => {
+    setAnalyzing((cur) => new Set(cur).add(chatId));
+    try {
+      const r = await fetch(`/api/chats/${chatId}/follow-up/analyze`, {
+        method: "POST",
+      });
+      if (r.ok) await load();
+    } finally {
+      setAnalyzing((cur) => {
+        const next = new Set(cur);
+        next.delete(chatId);
+        return next;
+      });
+    }
+  };
+
   const ackChat = async (chatId: number) => {
     try {
       const r = await fetch(`/api/chats/${chatId}/follow-up/ack`, {
@@ -476,15 +494,39 @@ export default function FollowUpDebugPage() {
                   </span>
                 </div>
 
-                {/* AI reason — the WHY this chat needs (or doesn't) a reply */}
-                {r.aiReason && (
+                {/* AI reason — the WHY this chat needs (or doesn't) a reply.
+                    Cached reasons from before the "use کاربر" prompt
+                    change still say "مشتری" — rewrite at display time
+                    until they're naturally refreshed by a new customer
+                    message. */}
+                {r.aiReason ? (
                   <div className="text-xs leading-relaxed mb-2 p-2 rounded-md bg-amber-500/5 border border-amber-500/20">
                     <span className="text-[10px] text-amber-300 mr-1">
                       🤖 دلیل AI {urgencyEmoji}
                     </span>
-                    <span dir="auto">{r.aiReason}</span>
+                    <span dir="auto">
+                      {r.aiReason.replace(/مشتری/g, "کاربر")}
+                    </span>
                   </div>
-                )}
+                ) : r.decided === "ai_pending" ? (
+                  <div className="text-[10px] leading-relaxed mb-2 p-2 rounded-md bg-sky-500/5 border border-sky-500/20 flex items-center gap-2">
+                    <span className="text-sky-200 flex-1">
+                      🤖 هنوز AI این چت رو ارزیابی نکرده. cron هر ۳۰
+                      دقیقه ۱۰ تای قدیمی‌ترین رو می‌گیره — این چت
+                      احتمالاً توی صف‌های بعدیه. می‌تونی الان دستی
+                      اجرا کنی:
+                    </span>
+                    <button
+                      onClick={() => analyzeChat(r.chatId)}
+                      disabled={analyzing.has(r.chatId)}
+                      className="text-[10px] px-2 py-1 rounded-md bg-sky-500/15 border border-sky-500/40 text-sky-200 hover:bg-sky-500/25 disabled:opacity-50 shrink-0"
+                    >
+                      {analyzing.has(r.chatId)
+                        ? "..."
+                        : "🤖 الان تحلیل کن"}
+                    </button>
+                  </div>
+                ) : null}
 
                 {/* Compact stats row */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-1 text-[10px] text-[var(--color-text-dim)] mb-2">
