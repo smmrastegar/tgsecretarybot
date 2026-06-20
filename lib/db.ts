@@ -170,6 +170,25 @@ export async function ensureSchema(): Promise<void> {
         details     JSONB
       )`;
     await q`CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_log (created_at DESC)`;
+    // System errors — anything the bot / cron / webhook caught and
+    // wanted to surface in the dashboard. Source labels the
+    // subsystem ("cron:follow-up", "webhook:telegram", etc.), level
+    // is "warn" or "error", scope can be a chat id / message id for
+    // drill-down. Capped retention via opportunistic prune.
+    await q`
+      CREATE TABLE IF NOT EXISTS system_errors (
+        id          BIGSERIAL PRIMARY KEY,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        level       TEXT NOT NULL DEFAULT 'error',
+        source      TEXT NOT NULL,
+        message     TEXT NOT NULL,
+        stack       TEXT,
+        scope       TEXT,
+        details     JSONB
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS system_errors_created_idx ON system_errors (created_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS system_errors_source_idx ON system_errors (source, created_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS system_errors_level_idx ON system_errors (level, created_at DESC)`;
     await q`
       CREATE TABLE IF NOT EXISTS secretary_sessions (
         id                     BIGSERIAL PRIMARY KEY,
@@ -7313,6 +7332,144 @@ export async function listAudit(limit = 100): Promise<AuditRow[]> {
     action: r.action as string,
     target: (r.target as string) ?? null,
     details: r.details ?? null,
+  }));
+}
+
+// --- System errors (the "fire department" side of System Log) ---
+
+export type SystemErrorLevel = "warn" | "error";
+export type SystemErrorRow = {
+  id: number;
+  createdAt: Date;
+  level: SystemErrorLevel;
+  source: string;
+  message: string;
+  stack: string | null;
+  scope: string | null;
+  details: unknown;
+};
+
+let logSystemErrorWriteCounter = 0;
+
+export async function logSystemError(args: {
+  source: string;
+  message: string;
+  level?: SystemErrorLevel;
+  stack?: string | null;
+  scope?: string | null;
+  details?: unknown;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  try {
+    await sql()`
+      INSERT INTO system_errors (level, source, message, stack, scope, details)
+      VALUES (
+        ${args.level ?? "error"},
+        ${args.source.slice(0, 120)},
+        ${args.message.slice(0, 4000)},
+        ${args.stack ? args.stack.slice(0, 8000) : null},
+        ${args.scope ? args.scope.slice(0, 200) : null},
+        ${JSON.stringify(args.details ?? null)}::jsonb
+      )`;
+    logSystemErrorWriteCounter++;
+    // Opportunistic prune: every 200th write, drop rows older than 30 days.
+    if (logSystemErrorWriteCounter % 200 === 0) {
+      await sql()`DELETE FROM system_errors WHERE created_at < NOW() - INTERVAL '30 days'`;
+    }
+  } catch (err) {
+    // Never let logging crash the caller.
+    console.warn("[system_errors] insert failed:", err);
+  }
+}
+
+// Convenience helper: log an Error or unknown caught value. Pulls
+// message + stack automatically so callers can pass the raw caught
+// value without type-narrowing.
+export async function captureError(args: {
+  source: string;
+  error: unknown;
+  scope?: string | null;
+  details?: unknown;
+  level?: SystemErrorLevel;
+}): Promise<void> {
+  const e = args.error;
+  let message: string;
+  let stack: string | null = null;
+  if (e instanceof Error) {
+    message = e.message || e.name || "Unknown error";
+    stack = e.stack ?? null;
+  } else if (typeof e === "string") {
+    message = e;
+  } else {
+    try {
+      message = JSON.stringify(e);
+    } catch {
+      message = String(e);
+    }
+  }
+  await logSystemError({
+    source: args.source,
+    level: args.level ?? "error",
+    message,
+    stack,
+    scope: args.scope ?? null,
+    details: args.details ?? null,
+  });
+}
+
+export async function listSystemErrors(opts: {
+  limit?: number;
+  level?: SystemErrorLevel | null;
+  source?: string | null;
+  q?: string | null;
+  sinceDays?: number | null;
+} = {}): Promise<SystemErrorRow[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000);
+  const like = opts.q?.trim() ? `%${opts.q.trim()}%` : null;
+  const days = opts.sinceDays && opts.sinceDays > 0 ? opts.sinceDays : null;
+  const rows = await sql()`
+    SELECT id, created_at, level, source, message, stack, scope, details
+    FROM system_errors
+    WHERE (${opts.level ?? null}::text IS NULL OR level = ${opts.level ?? null})
+      AND (${opts.source ?? null}::text IS NULL OR source = ${opts.source ?? null})
+      AND (${days}::int IS NULL OR created_at > NOW() - make_interval(days => ${days}))
+      AND (
+        ${like}::text IS NULL
+        OR message ILIKE ${like}
+        OR COALESCE(stack, '') ILIKE ${like}
+        OR COALESCE(scope, '') ILIKE ${like}
+      )
+    ORDER BY created_at DESC
+    LIMIT ${limit}`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    id: Number(r.id),
+    createdAt: r.created_at as Date,
+    level: (r.level as SystemErrorLevel) ?? "error",
+    source: (r.source as string) ?? "",
+    message: (r.message as string) ?? "",
+    stack: (r.stack as string) ?? null,
+    scope: (r.scope as string) ?? null,
+    details: r.details ?? null,
+  }));
+}
+
+export async function systemErrorSourceBuckets(): Promise<
+  Array<{ source: string; count: number }>
+> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT source, COUNT(*)::int AS cnt
+    FROM system_errors
+    WHERE created_at > NOW() - INTERVAL '7 days'
+    GROUP BY source
+    ORDER BY cnt DESC`;
+  return (rows as Array<{ source: string; cnt: number }>).map((r) => ({
+    source: r.source,
+    count: Number(r.cnt),
   }));
 }
 

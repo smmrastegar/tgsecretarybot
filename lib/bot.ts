@@ -82,6 +82,7 @@ import {
   listChatsByFunction,
   upsertForumTopic,
   ackChatFollowUp,
+  captureError,
   addSmsAcceptSignature,
   createSmsBlockRule,
   deleteSmsDedup,
@@ -2042,13 +2043,29 @@ function buildBot(): Bot {
 
   bot.catch((err) => {
     const e = err.error;
+    let source = "bot:uncaught";
     if (e instanceof GrammyError) {
       console.error("[bot] Telegram API:", e.description);
+      source = "bot:telegram-api";
     } else if (e instanceof HttpError) {
       console.error("[bot] network:", e);
+      source = "bot:network";
     } else {
       console.error("[bot] uncaught:", e);
     }
+    // Fire-and-forget — captureError swallows its own DB failures
+    // so we never re-throw out of the grammy handler.
+    void captureError({
+      source,
+      error: e,
+      scope: err.ctx?.update?.update_id
+        ? `update=${err.ctx.update.update_id}`
+        : null,
+      details: {
+        chatId: err.ctx?.chat?.id ?? null,
+        userId: err.ctx?.from?.id ?? null,
+      },
+    });
   });
 
   return bot;

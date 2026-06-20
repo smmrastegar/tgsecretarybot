@@ -67,6 +67,13 @@ export async function GET(request: Request): Promise<NextResponse> {
       : null,
     q: url.searchParams.get("q"),
   };
+  // idsOnly mode: return EVERY chat_id matching the filter (capped
+  // at 5000) so the bulk "select all filtered" action can target the
+  // whole filtered set, not just the loaded page.
+  if (url.searchParams.get("idsOnly") === "1") {
+    const all = await listChats({ limit: 5000, offset: 0, filters });
+    return NextResponse.json({ chatIds: all.map((c) => c.chatId) });
+  }
   const chats = await listChats({ limit, offset, filters });
   return NextResponse.json({ chats });
 }

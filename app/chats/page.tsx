@@ -169,6 +169,7 @@ export default function ChatsPage() {
     flags: Record<string, number>;
   };
   const [facets, setFacets] = useState<Facets | null>(null);
+  const [totalMatching, setTotalMatching] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulking, setBulking] = useState(false);
   const [bulkRules, setBulkRules] = useState<{ id: number; name: string }[]>(
@@ -250,6 +251,21 @@ export default function ChatsPage() {
     setHasMore(j.chats.length === PAGE);
     setSelected(new Set());
     setLoading(false);
+    // Refresh the matching-total alongside so the "select all" label
+    // and the "X نمایش / Y کل" indicator stay accurate.
+    try {
+      const idsP = buildFilterQuery();
+      idsP.set("idsOnly", "1");
+      const idsR = await fetch(`/api/chats?${idsP}`);
+      if (idsR.ok) {
+        const idsJ = (await idsR.json()) as { chatIds: number[] };
+        setTotalMatching(idsJ.chatIds.length);
+      } else {
+        setTotalMatching(null);
+      }
+    } catch {
+      setTotalMatching(null);
+    }
   }, [buildFilterQuery]);
 
   const loadMore = useCallback(async () => {
@@ -345,7 +361,21 @@ export default function ChatsPage() {
   // references (selectAll, list rendering, bulk action) keep working.
   const filteredChats = chats;
 
-  function selectAll() {
+  async function selectAll() {
+    // Fetch every chat_id matching the current filter (not just the
+    // loaded page), so bulk actions target the whole filtered set.
+    try {
+      const p = buildFilterQuery();
+      p.set("idsOnly", "1");
+      const r = await fetch(`/api/chats?${p}`);
+      if (r.ok) {
+        const j = (await r.json()) as { chatIds: number[] };
+        setSelected(new Set(j.chatIds));
+        return;
+      }
+    } catch {
+      // fall through to local fallback
+    }
     setSelected(new Set(filteredChats.map((c) => c.chatId)));
   }
 
@@ -648,7 +678,12 @@ export default function ChatsPage() {
               )}
               <span className="text-[var(--color-text-dim)] ml-auto">
                 {filteredChats.length} نمایش
-                {facets ? ` / ${facets.total} کل` : ""} / {selected.size} انتخاب
+                {totalMatching != null
+                  ? ` / ${totalMatching} مطابقت`
+                  : ""}
+                {facets ? ` / ${facets.total} کل` : ""}
+                {" / "}
+                {selected.size} انتخاب
               </span>
             </div>
             {showAdvanced && (
@@ -889,7 +924,9 @@ export default function ChatsPage() {
                 onClick={selectAll}
                 className="self-start text-[10px] text-[var(--color-text-dim)] hover:text-white underline-offset-2 hover:underline"
               >
-                انتخاب همه‌ی {filteredChats.length} مورد فیلترشده
+                انتخاب همه‌ی{" "}
+                {totalMatching != null ? totalMatching : filteredChats.length}{" "}
+                مورد فیلترشده
               </button>
             )}
           </div>

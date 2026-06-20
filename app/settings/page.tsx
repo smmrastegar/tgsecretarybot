@@ -120,9 +120,9 @@ const TILES: Array<{
   },
   {
     href: "/audit",
-    emoji: "🕐",
-    label: "Audit",
-    desc: "لاگ تغییرات",
+    emoji: "🪵",
+    label: "System Log",
+    desc: "خطاهای سیستم + لاگ تغییرات audit. هر خطا دکمه کپی داره با stack trace کامل.",
   },
   {
     href: "/health",

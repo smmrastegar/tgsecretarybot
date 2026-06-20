@@ -43,6 +43,7 @@ async function transcribeRecentVoices(
   return { done, failed };
 }
 import {
+  captureError,
   debugFollowUpScan,
   hasDb,
   listChatsByFunction,
@@ -222,6 +223,16 @@ async function processTenant(tenantId: number) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[follow-up] notice send failed chat=${c.chatId}:`, err);
         errors.push({ chatId: c.chatId, error: msg.slice(0, 300) });
+        void captureError({
+          source: "cron:follow-up",
+          error: err,
+          scope: `chat=${c.chatId}`,
+          details: {
+            inboxChatId: inbox.chatId,
+            kind,
+            aiReason,
+          },
+        });
       }
     }
     return {
@@ -303,6 +314,11 @@ async function run(request: Request): Promise<NextResponse> {
       results.push({
         tenantId: t.id,
         error: err instanceof Error ? err.message : String(err),
+      });
+      void captureError({
+        source: "cron:follow-up",
+        error: err,
+        scope: `tenant=${t.id}`,
       });
     }
   }
