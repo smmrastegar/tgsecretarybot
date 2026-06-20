@@ -138,6 +138,37 @@ export default function ChatsPage() {
     "all",
   );
   const [flagFilter, setFlagFilter] = useState<"all" | "vip" | "muted">("all");
+  const [profileFilter, setProfileFilter] = useState<"all" | number>("all");
+  // Advanced toggles — undefined means "ignore this filter"; true = required ON, false = required OFF.
+  type AdvKey =
+    | "autoSummarize"
+    | "followUp"
+    | "followUpTranscribe"
+    | "autoForwardVoice"
+    | "autoForwardVideo"
+    | "autoForwardPhoto"
+    | "autoExtractNotes"
+    | "hasProfile"
+    | "hasPhone"
+    | "isBot";
+  const [advanced, setAdvanced] = useState<Partial<Record<AdvKey, boolean>>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  type Facets = {
+    total: number;
+    byMode: Record<string, number>;
+    byChatType: Record<string, number>;
+    byRelationship: Record<string, number>;
+    byFunctionRole: Record<string, number>;
+    byProfile: Array<{
+      profileId: number | null;
+      name: string;
+      emoji: string | null;
+      isDefault: boolean;
+      count: number;
+    }>;
+    flags: Record<string, number>;
+  };
+  const [facets, setFacets] = useState<Facets | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulking, setBulking] = useState(false);
   const [bulkRules, setBulkRules] = useState<{ id: number; name: string }[]>(
@@ -171,25 +202,95 @@ export default function ChatsPage() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  // Build the query string from current filter state. The "all" /
+  // "unset" sentinels stay client-side; "unset" maps to the
+  // server's __unset__ sentinel which means "no value set".
+  const buildFilterQuery = useCallback(() => {
+    const p = new URLSearchParams();
+    if (modeFilter !== "all") p.set("mode", modeFilter);
+    if (typeFilter !== "all") {
+      // The legacy "bot" pseudo-type maps to is_bot=true, otherwise pass through.
+      if (typeFilter === "bot") p.set("isBot", "1");
+      else p.set("chatType", typeFilter);
+    }
+    if (relationshipFilter === "unset") p.set("relationship", "__unset__");
+    else if (relationshipFilter !== "all")
+      p.set("relationship", relationshipFilter);
+    if (roleFilter === "unset") p.set("role", "__unset__");
+    else if (roleFilter !== "all") p.set("role", roleFilter);
+    if (flagFilter === "vip") p.set("vip", "1");
+    else if (flagFilter === "muted") p.set("muted", "1");
+    if (profileFilter !== "all") p.set("profileId", String(profileFilter));
+    if (search.trim()) p.set("q", search.trim());
+    for (const [k, v] of Object.entries(advanced)) {
+      if (v === undefined) continue;
+      p.set(k, v ? "1" : "0");
+    }
+    return p;
+  }, [
+    modeFilter,
+    typeFilter,
+    relationshipFilter,
+    roleFilter,
+    flagFilter,
+    profileFilter,
+    search,
+    advanced,
+  ]);
+
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await fetch(`/api/chats?limit=${PAGE}&offset=0`);
+    const p = buildFilterQuery();
+    p.set("limit", String(PAGE));
+    p.set("offset", "0");
+    const r = await fetch(`/api/chats?${p}`);
     const j = (await r.json()) as { chats: Chat[] };
     setChats(j.chats);
     setHasMore(j.chats.length === PAGE);
     setSelected(new Set());
     setLoading(false);
-  }, []);
+  }, [buildFilterQuery]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
-    const r = await fetch(`/api/chats?limit=${PAGE}&offset=${chats.length}`);
+    const p = buildFilterQuery();
+    p.set("limit", String(PAGE));
+    p.set("offset", String(chats.length));
+    const r = await fetch(`/api/chats?${p}`);
     const j = (await r.json()) as { chats: Chat[] };
     setChats((prev) => [...prev, ...j.chats]);
     setHasMore(j.chats.length === PAGE);
     setLoadingMore(false);
-  }, [loadingMore, hasMore, chats.length]);
+  }, [loadingMore, hasMore, chats.length, buildFilterQuery]);
+
+  // Pull global facet counts once + after every load so dropdown
+  // counts reflect the WHOLE system instead of the loaded subset.
+  useEffect(() => {
+    fetch("/api/chats?facets=1")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { facets?: Facets } | null) => {
+        if (j?.facets) setFacets(j.facets);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Re-fetch the list whenever any filter changes (with a tiny debounce
+  // on free-text search to avoid spamming the API).
+  useEffect(() => {
+    const t = setTimeout(load, search.trim() ? 300 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    modeFilter,
+    typeFilter,
+    relationshipFilter,
+    roleFilter,
+    flagFilter,
+    profileFilter,
+    search,
+    advanced,
+  ]);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -239,24 +340,9 @@ export default function ChatsPage() {
     return true;
   }
 
-  const filteredChats = chats.filter((c) => {
-    if (modeFilter !== "all" && c.mode !== modeFilter) return false;
-    if (!chatMatchesType(c, typeFilter)) return false;
-    if (relationshipFilter === "unset") {
-      if (c.relationship) return false;
-    } else if (relationshipFilter !== "all") {
-      if (c.relationship !== relationshipFilter) return false;
-    }
-    if (roleFilter === "unset") {
-      if (c.functionRole) return false;
-    } else if (roleFilter !== "all") {
-      if (c.functionRole !== roleFilter) return false;
-    }
-    if (flagFilter === "vip" && !c.vip) return false;
-    if (flagFilter === "muted" && !c.muted) return false;
-    if (!chatMatchesSearch(c, search.trim().toLowerCase())) return false;
-    return true;
-  });
+  // Server applies the filters now; pass-through so existing
+  // references (selectAll, list rendering, bulk action) keep working.
+  const filteredChats = chats;
 
   function selectAll() {
     setSelected(new Set(filteredChats.map((c) => c.chatId)));
@@ -412,9 +498,9 @@ export default function ChatsPage() {
                 }
                 className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
               >
-                <option value="all">همه ({chats.length})</option>
+                <option value="all">همه ({facets?.total ?? "…"})</option>
                 {(Object.keys(MODE_LABELS) as ChatMode[]).map((m) => {
-                  const n = chats.filter((c) => c.mode === m).length;
+                  const n = facets?.byMode[m] ?? 0;
                   return (
                     <option key={m} value={m}>
                       {MODE_LABELS[m]} ({n})
@@ -446,10 +532,10 @@ export default function ChatsPage() {
                     ["channel", "📰 کانال"],
                   ] as const
                 ).map(([k, label]) => {
-                  const n =
-                    k === "all"
-                      ? chats.length
-                      : chats.filter((c) => chatMatchesType(c, k)).length;
+                  let n: number;
+                  if (k === "all") n = facets?.total ?? chats.length;
+                  else if (k === "bot") n = facets?.flags.isBot ?? 0;
+                  else n = facets?.byChatType[k] ?? 0;
                   return (
                     <option key={k} value={k}>
                       {label} ({n})
@@ -467,13 +553,13 @@ export default function ChatsPage() {
                 }
                 className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
               >
-                <option value="all">همه ({chats.length})</option>
+                <option value="all">همه ({facets?.total ?? "…"})</option>
                 <option value="unset">
-                  بدون رابطه ({chats.filter((c) => !c.relationship).length})
+                  بدون رابطه ({facets?.byRelationship["__unset__"] ?? 0})
                 </option>
                 {(Object.keys(RELATIONSHIP_LABELS) as Relationship[]).map(
                   (r) => {
-                    const n = chats.filter((c) => c.relationship === r).length;
+                    const n = facets?.byRelationship[r] ?? 0;
                     if (n === 0) return null;
                     return (
                       <option key={r} value={r}>
@@ -483,18 +569,35 @@ export default function ChatsPage() {
                   },
                 )}
               </select>
+              <span className="text-[var(--color-text-dim)]">پروفایل:</span>
+              <select
+                value={profileFilter}
+                onChange={(e) =>
+                  setProfileFilter(
+                    e.target.value === "all" ? "all" : Number(e.target.value),
+                  )
+                }
+                className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+              >
+                <option value="all">همه ({facets?.total ?? "…"})</option>
+                {(facets?.byProfile ?? []).map((p) => (
+                  <option key={p.profileId ?? "x"} value={p.profileId ?? ""}>
+                    {p.emoji ?? "📋"} {p.name} ({p.count})
+                  </option>
+                ))}
+              </select>
               <span className="text-[var(--color-text-dim)]">نقش:</span>
               <select
                 value={roleFilter}
                 onChange={(e) => setRoleFilter(e.target.value)}
                 className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
               >
-                <option value="all">همه ({chats.length})</option>
+                <option value="all">همه ({facets?.total ?? "…"})</option>
                 <option value="unset">
-                  بدون نقش ({chats.filter((c) => !c.functionRole).length})
+                  بدون نقش ({facets?.byFunctionRole["__unset__"] ?? 0})
                 </option>
                 {Object.keys(FUNCTION_ROLE_BADGE).map((r) => {
-                  const n = chats.filter((c) => c.functionRole === r).length;
+                  const n = facets?.byFunctionRole[r] ?? 0;
                   if (n === 0) return null;
                   return (
                     <option key={r} value={r}>
@@ -512,18 +615,25 @@ export default function ChatsPage() {
                 className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
               >
                 <option value="all">همه</option>
-                <option value="vip">
-                  ⭐ VIP ({chats.filter((c) => c.vip).length})
-                </option>
+                <option value="vip">⭐ VIP ({facets?.flags.vip ?? 0})</option>
                 <option value="muted">
-                  🔇 Muted ({chats.filter((c) => c.muted).length})
+                  🔇 Muted ({facets?.flags.muted ?? 0})
                 </option>
               </select>
+              <button
+                type="button"
+                onClick={() => setShowAdvanced((v) => !v)}
+                className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)]"
+              >
+                {showAdvanced ? "▴ بستن پیشرفته" : "▾ فیلتر پیشرفته"}
+              </button>
               {(relationshipFilter !== "all" ||
                 roleFilter !== "all" ||
                 flagFilter !== "all" ||
                 modeFilter !== "all" ||
                 typeFilter !== "all" ||
+                profileFilter !== "all" ||
+                Object.values(advanced).some((v) => v !== undefined) ||
                 search.trim()) && (
                 <button
                   onClick={() => {
@@ -532,6 +642,8 @@ export default function ChatsPage() {
                     setFlagFilter("all");
                     setModeFilter("all");
                     setTypeFilter("all");
+                    setProfileFilter("all");
+                    setAdvanced({});
                     setSearch("");
                   }}
                   className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text-dim)]"
@@ -541,9 +653,58 @@ export default function ChatsPage() {
                 </button>
               )}
               <span className="text-[var(--color-text-dim)] ml-auto">
-                {filteredChats.length} نمایش / {selected.size} انتخاب
+                {filteredChats.length} نمایش
+                {facets ? ` / ${facets.total} کل` : ""} / {selected.size} انتخاب
               </span>
             </div>
+            {showAdvanced && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-2 border-t border-[var(--color-border)] text-xs">
+                {(
+                  [
+                    ["autoSummarize", "📊 auto-summarize روشن", facets?.flags.autoSummarizeOn ?? 0],
+                    ["followUp", "⏰ follow-up روشن", facets?.flags.followUpOn ?? 0],
+                    ["followUpTranscribe", "🎤 transcribe ویس در follow-up", facets?.flags.followUpTranscribeOn ?? 0],
+                    ["autoForwardVoice", "🎤 auto-forward ویس", facets?.flags.autoForwardVoiceOn ?? 0],
+                    ["autoForwardVideo", "🎥 auto-forward ویدئو", facets?.flags.autoForwardVideoOn ?? 0],
+                    ["autoForwardPhoto", "📸 auto-forward عکس", facets?.flags.autoForwardPhotoOn ?? 0],
+                    ["autoExtractNotes", "📒 استخراج خودکار Notes", facets?.flags.autoExtractNotesOn ?? 0],
+                    ["hasProfile", "👤 پروفایل صریح", facets?.flags.hasProfile ?? 0],
+                    ["hasPhone", "📱 شماره تلفن ست شده", facets?.flags.hasPhone ?? 0],
+                    ["isBot", "🤖 بات", facets?.flags.isBot ?? 0],
+                  ] as Array<[AdvKey, string, number]>
+                ).map(([k, label, n]) => {
+                  const v = advanced[k];
+                  return (
+                    <div
+                      key={k}
+                      className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/30"
+                    >
+                      <span>
+                        {label}{" "}
+                        <span className="text-[var(--color-text-dim)] text-[10px]">
+                          ({n})
+                        </span>
+                      </span>
+                      <select
+                        value={v === undefined ? "" : v ? "on" : "off"}
+                        onChange={(e) => {
+                          const nv = e.target.value;
+                          setAdvanced((cur) => ({
+                            ...cur,
+                            [k]: nv === "" ? undefined : nv === "on",
+                          }));
+                        }}
+                        className="text-[10px] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-1.5 py-1"
+                      >
+                        <option value="">— بی‌تأثیر</option>
+                        <option value="on">فقط روشن‌ها</option>
+                        <option value="off">فقط خاموش‌ها</option>
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {selected.size > 0 && (
               <div className="flex items-center gap-2 flex-wrap text-xs pt-2 border-t border-[var(--color-border)]">
                 <button

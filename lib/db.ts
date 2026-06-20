@@ -4328,7 +4328,14 @@ export async function listChatProfiles(args?: {
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
     SELECT p.*,
-           (SELECT COUNT(*)::int FROM chat_rules cr WHERE cr.profile_id = p.id) AS chat_count
+           CASE
+             WHEN p.is_default THEN
+               (SELECT COUNT(*)::int FROM chat_rules cr
+                 WHERE cr.profile_id = p.id OR cr.profile_id IS NULL)
+             ELSE
+               (SELECT COUNT(*)::int FROM chat_rules cr
+                 WHERE cr.profile_id = p.id)
+           END AS chat_count
     FROM chat_profiles p
     WHERE (${tenantId}::bigint IS NULL OR p.tenant_id = ${tenantId})
     ORDER BY p.is_default DESC, p.is_builtin DESC, p.name ASC`;
@@ -4342,7 +4349,14 @@ export async function getChatProfile(
   await ensureSchema();
   const rows = await sql()`
     SELECT *,
-           (SELECT COUNT(*)::int FROM chat_rules cr WHERE cr.profile_id = ${id}) AS chat_count
+           CASE
+             WHEN is_default THEN
+               (SELECT COUNT(*)::int FROM chat_rules cr
+                 WHERE cr.profile_id = ${id} OR cr.profile_id IS NULL)
+             ELSE
+               (SELECT COUNT(*)::int FROM chat_rules cr
+                 WHERE cr.profile_id = ${id})
+           END AS chat_count
     FROM chat_profiles WHERE id = ${id} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   return r ? rowToProfile(r) : null;
@@ -4584,10 +4598,18 @@ export async function listChatsInProfile(
 ): Promise<Array<{ chatId: number; name: string | null; chatType: string }>> {
   if (!hasDb()) return [];
   await ensureSchema();
+  // Find out if this is the default profile so we can include
+  // chats with NULL profile_id (which implicitly belong to default).
+  const defRows = await sql()`
+    SELECT is_default FROM chat_profiles WHERE id = ${profileId} LIMIT 1`;
+  const isDefault = Boolean(
+    (defRows[0] as { is_default?: boolean } | undefined)?.is_default,
+  );
   const rows = await sql()`
     SELECT chat_id, chat_type, first_name, last_name, nickname, chat_title
     FROM chat_rules
     WHERE profile_id = ${profileId}
+       OR (${isDefault}::boolean AND profile_id IS NULL)
     ORDER BY updated_at DESC
     LIMIT 1000`;
   return (rows as Array<Record<string, unknown>>).map((r) => {
@@ -6169,9 +6191,37 @@ export async function getChatMode(
   };
 }
 
+export type ChatListFilters = {
+  mode?: ChatMode | null;
+  // Telegram chat type: "private" | "group" | "supergroup" | "channel"
+  chatType?: string | null;
+  relationship?: Relationship | "__unset__" | null;
+  functionRole?: string | "__unset__" | null;
+  // Boolean toggles — undefined = ignore, true = require ON, false = require OFF.
+  vip?: boolean;
+  muted?: boolean;
+  isBot?: boolean;
+  hasProfile?: boolean;
+  autoSummarizeOn?: boolean;
+  followUpOn?: boolean;
+  followUpTranscribeOn?: boolean;
+  autoForwardVoiceOn?: boolean;
+  autoForwardVideoOn?: boolean;
+  autoForwardPhotoOn?: boolean;
+  autoExtractNotesOn?: boolean;
+  hasPhone?: boolean;
+  // profileId: include only chats explicitly assigned to this profile.
+  // When the profile is the tenant default, also include chats with
+  // NULL profile_id (they implicitly belong to the default profile).
+  profileId?: number | null;
+  // text search across first/last name / nickname / chat_title
+  q?: string | null;
+};
+
 export async function listChats(opts: {
   limit?: number;
   offset?: number;
+  filters?: ChatListFilters;
 } = {}): Promise<
   Array<{
     chatId: number;
@@ -6197,6 +6247,18 @@ export async function listChats(opts: {
   }>
 > {
   await ensureSchema();
+  const f = opts.filters ?? {};
+  const like = f.q?.trim() ? `%${f.q.trim()}%` : null;
+  // Resolve sentinel "__unset__" up-front so the SQL stays simple:
+  // relValue=null + relUnset=true means "filter to NULL relationship".
+  const relUnset = f.relationship === "__unset__";
+  const relValue: string | null = relUnset
+    ? null
+    : (f.relationship ?? null);
+  const roleUnset = f.functionRole === "__unset__";
+  const roleValue: string | null = roleUnset
+    ? null
+    : (f.functionRole ?? null);
   const rows = await sql()`
     SELECT
       m.chat_id,
@@ -6222,9 +6284,58 @@ export async function listChats(opts: {
     FROM messages_log m
     LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
     LEFT JOIN ai_usage  u ON u.chat_id = m.chat_id
+    WHERE
+      (${f.mode ?? null}::text IS NULL OR COALESCE(r.mode, 'off') = ${f.mode ?? null})
+      AND (${f.chatType ?? null}::text IS NULL OR m.chat_type = ${f.chatType ?? null})
+      AND (${relUnset}::boolean = FALSE OR r.relationship IS NULL)
+      AND (${relValue}::text IS NULL OR r.relationship = ${relValue})
+      AND (
+        ${roleUnset}::boolean = FALSE
+        OR (r.function_role IS NULL AND NOT EXISTS (
+              SELECT 1 FROM chat_function_roles fr WHERE fr.chat_id = m.chat_id
+           ))
+      )
+      AND (
+        ${roleValue}::text IS NULL
+        OR r.function_role = ${roleValue}
+        OR EXISTS (
+          SELECT 1 FROM chat_function_roles fr
+          WHERE fr.chat_id = m.chat_id AND fr.role = ${roleValue}
+        )
+      )
+      AND (${f.vip === undefined}::boolean OR COALESCE(r.vip, FALSE) = ${f.vip ?? false}::boolean)
+      AND (${f.muted === undefined}::boolean OR COALESCE(r.muted, FALSE) = ${f.muted ?? false}::boolean)
+      AND (${f.isBot === undefined}::boolean OR COALESCE(r.is_bot, FALSE) = ${f.isBot ?? false}::boolean)
+      AND (${f.hasProfile === undefined}::boolean OR (r.profile_id IS NOT NULL) = ${f.hasProfile ?? false}::boolean)
+      AND (${f.autoSummarizeOn === undefined}::boolean OR COALESCE(r.auto_summarize_enabled, FALSE) = ${f.autoSummarizeOn ?? false}::boolean)
+      AND (${f.followUpOn === undefined}::boolean OR COALESCE(r.follow_up_enabled, TRUE) = ${f.followUpOn ?? false}::boolean)
+      AND (${f.followUpTranscribeOn === undefined}::boolean OR COALESCE(r.follow_up_transcribe_voices, FALSE) = ${f.followUpTranscribeOn ?? false}::boolean)
+      AND (${f.autoForwardVoiceOn === undefined}::boolean OR COALESCE(r.auto_forward_voice, FALSE) = ${f.autoForwardVoiceOn ?? false}::boolean)
+      AND (${f.autoForwardVideoOn === undefined}::boolean OR COALESCE(r.auto_forward_video, FALSE) = ${f.autoForwardVideoOn ?? false}::boolean)
+      AND (${f.autoForwardPhotoOn === undefined}::boolean OR COALESCE(r.auto_forward_photo, FALSE) = ${f.autoForwardPhotoOn ?? false}::boolean)
+      AND (${f.autoExtractNotesOn === undefined}::boolean OR COALESCE(r.auto_extract_notes, FALSE) = ${f.autoExtractNotesOn ?? false}::boolean)
+      AND (${f.hasPhone === undefined}::boolean OR (r.phone_number IS NOT NULL AND r.phone_number <> '') = ${f.hasPhone ?? false}::boolean)
+      AND (
+        ${f.profileId ?? null}::int IS NULL
+        OR r.profile_id = ${f.profileId ?? null}
+        OR (
+          r.profile_id IS NULL AND EXISTS (
+            SELECT 1 FROM chat_profiles dp
+            WHERE dp.id = ${f.profileId ?? null} AND dp.is_default = TRUE
+          )
+        )
+      )
+      AND (
+        ${like}::text IS NULL
+        OR COALESCE(r.first_name, '') ILIKE ${like}
+        OR COALESCE(r.last_name, '') ILIKE ${like}
+        OR COALESCE(r.nickname, '') ILIKE ${like}
+        OR COALESCE(m.chat_title, '') ILIKE ${like}
+        OR CAST(m.chat_id AS TEXT) ILIKE ${like}
+      )
     GROUP BY m.chat_id
     ORDER BY last_seen DESC NULLS LAST
-    LIMIT ${Math.min(Math.max(opts.limit ?? 200, 1), 500)}
+    LIMIT ${Math.min(Math.max(opts.limit ?? 200, 1), 1000)}
     OFFSET ${Math.max(opts.offset ?? 0, 0)}`;
   return rows.map((r) => {
     const mode = (r.mode as string) ?? "off";
@@ -6256,6 +6367,191 @@ export async function listChats(opts: {
       aiTokens: Number(r.ai_tokens) || 0,
     };
   });
+}
+
+// Per-dimension counts across ALL chats in the system (post tenant
+// scope, pre other filters). Used to populate the /chats filter
+// dropdowns with global counts instead of "loaded-page" counts.
+export type ChatFacets = {
+  total: number;
+  byMode: Record<string, number>;
+  byChatType: Record<string, number>;
+  byRelationship: Record<string, number>;
+  byFunctionRole: Record<string, number>;
+  byProfile: Array<{
+    profileId: number | null;
+    name: string;
+    emoji: string | null;
+    isDefault: boolean;
+    count: number;
+  }>;
+  flags: {
+    vip: number;
+    muted: number;
+    isBot: number;
+    hasProfile: number;
+    hasPhone: number;
+    autoSummarizeOn: number;
+    followUpOn: number;
+    followUpTranscribeOn: number;
+    autoForwardVoiceOn: number;
+    autoForwardVideoOn: number;
+    autoForwardPhotoOn: number;
+    autoExtractNotesOn: number;
+  };
+};
+
+export async function chatFacets(): Promise<ChatFacets> {
+  await ensureSchema();
+  // Build a "distinct chat ids that have at least one logged message"
+  // CTE so the counts match listChats' universe (which JOINs from
+  // messages_log).
+  const rows = await sql()`
+    WITH chats AS (
+      SELECT DISTINCT m.chat_id
+      FROM messages_log m
+    ),
+    joined AS (
+      SELECT c.chat_id,
+             MAX(m.chat_type) AS chat_type,
+             r.*
+      FROM chats c
+      LEFT JOIN chat_rules r ON r.chat_id = c.chat_id
+      LEFT JOIN messages_log m ON m.chat_id = c.chat_id
+      GROUP BY c.chat_id, r.chat_id, r.chat_type, r.chat_title, r.vip,
+               r.muted, r.custom_reply, r.notes, r.mode, r.mode_changed_at,
+               r.secretary_user_id, r.first_name, r.last_name, r.nickname,
+               r.relationship, r.relationship_notes, r.talk_style_notes,
+               r.tone_profile, r.tone_profile_at, r.flood_cooldown_until,
+               r.flood_deflected_at, r.ai_process_voice, r.ai_process_stickers,
+               r.ai_process_gifs, r.ai_process_photos, r.ai_process_video_notes,
+               r.ai_generate_photo, r.function_role, r.function_config,
+               r.auto_summarize_enabled, r.auto_summarize_gap_minutes,
+               r.auto_summarize_smart_timing, r.last_auto_summary_at,
+               r.auto_forward_voice, r.auto_forward_video, r.auto_forward_photo,
+               r.auto_forward_location, r.auto_extract_notes, r.is_bot,
+               r.ignored, r.phone_number, r.grace_skipped_at,
+               r.summary_interval_hours, r.last_summary_run_at,
+               r.analytics_share_token, r.follow_up_enabled,
+               r.follow_up_threshold_hours, r.follow_up_escalate_hours,
+               r.follow_up_last_ping_at, r.follow_up_last_ping_kind,
+               r.follow_up_acked_at, r.follow_up_transcribe_voices,
+               r.follow_up_ai_for_message_at, r.follow_up_ai_verdict_at,
+               r.follow_up_ai_needs_reply, r.follow_up_ai_reason,
+               r.follow_up_ai_urgency, r.tenant_id, r.created_at, r.updated_at,
+               r.profile_id
+    )
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE COALESCE(mode, 'off') = 'off')::int AS m_off,
+      COUNT(*) FILTER (WHERE mode = 'secretary')::int AS m_secretary,
+      COUNT(*) FILTER (WHERE mode = 'auto_reply')::int AS m_auto_reply,
+      COUNT(*) FILTER (WHERE mode = 'friendly_reply')::int AS m_friendly_reply,
+      COUNT(*) FILTER (WHERE mode = 'ai_chat')::int AS m_ai_chat,
+      COUNT(*) FILTER (WHERE mode = 'ai_listen')::int AS m_ai_listen,
+      COUNT(*) FILTER (WHERE chat_type = 'private')::int AS t_private,
+      COUNT(*) FILTER (WHERE chat_type = 'group')::int AS t_group,
+      COUNT(*) FILTER (WHERE chat_type = 'supergroup')::int AS t_supergroup,
+      COUNT(*) FILTER (WHERE chat_type = 'channel')::int AS t_channel,
+      COUNT(*) FILTER (WHERE COALESCE(vip, FALSE))::int AS f_vip,
+      COUNT(*) FILTER (WHERE COALESCE(muted, FALSE))::int AS f_muted,
+      COUNT(*) FILTER (WHERE COALESCE(is_bot, FALSE))::int AS f_bot,
+      COUNT(*) FILTER (WHERE profile_id IS NOT NULL)::int AS f_profile,
+      COUNT(*) FILTER (WHERE phone_number IS NOT NULL AND phone_number <> '')::int AS f_phone,
+      COUNT(*) FILTER (WHERE COALESCE(auto_summarize_enabled, FALSE))::int AS f_autosum,
+      COUNT(*) FILTER (WHERE COALESCE(follow_up_enabled, TRUE))::int AS f_followup,
+      COUNT(*) FILTER (WHERE COALESCE(follow_up_transcribe_voices, FALSE))::int AS f_transcribe,
+      COUNT(*) FILTER (WHERE COALESCE(auto_forward_voice, FALSE))::int AS f_fwd_voice,
+      COUNT(*) FILTER (WHERE COALESCE(auto_forward_video, FALSE))::int AS f_fwd_video,
+      COUNT(*) FILTER (WHERE COALESCE(auto_forward_photo, FALSE))::int AS f_fwd_photo,
+      COUNT(*) FILTER (WHERE COALESCE(auto_extract_notes, FALSE))::int AS f_extract
+    FROM joined`;
+  const r = rows[0] as Record<string, number | string>;
+
+  const relRows = await sql()`
+    SELECT COALESCE(r.relationship, '') AS rel, COUNT(*)::int AS cnt
+    FROM (SELECT DISTINCT chat_id FROM messages_log) m
+    LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
+    GROUP BY rel`;
+  const byRelationship: Record<string, number> = {};
+  for (const x of relRows as Array<{ rel: string; cnt: number }>) {
+    byRelationship[x.rel || "__unset__"] = Number(x.cnt);
+  }
+
+  const roleRows = await sql()`
+    SELECT COALESCE(role, '') AS role, COUNT(*)::int AS cnt FROM (
+      SELECT DISTINCT m.chat_id,
+             COALESCE(
+               (SELECT role FROM chat_function_roles f
+                  WHERE f.chat_id = m.chat_id LIMIT 1),
+               r.function_role
+             ) AS role
+      FROM (SELECT DISTINCT chat_id FROM messages_log) m
+      LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
+    ) x
+    GROUP BY role`;
+  const byFunctionRole: Record<string, number> = {};
+  for (const x of roleRows as Array<{ role: string; cnt: number }>) {
+    byFunctionRole[x.role || "__unset__"] = Number(x.cnt);
+  }
+
+  const profRows = await sql()`
+    SELECT p.id AS profile_id, p.name, p.emoji, p.is_default,
+           CASE
+             WHEN p.is_default THEN
+               (SELECT COUNT(*)::int FROM (
+                  SELECT DISTINCT m.chat_id FROM messages_log m
+                ) c
+                LEFT JOIN chat_rules cr ON cr.chat_id = c.chat_id
+                WHERE cr.profile_id = p.id OR cr.profile_id IS NULL)
+             ELSE
+               (SELECT COUNT(*)::int FROM chat_rules cr
+                 WHERE cr.profile_id = p.id)
+           END AS cnt
+    FROM chat_profiles p
+    ORDER BY p.is_default DESC, p.is_builtin DESC, p.name ASC`;
+  const byProfile = (profRows as Array<Record<string, unknown>>).map((x) => ({
+    profileId: Number(x.profile_id),
+    name: x.name as string,
+    emoji: (x.emoji as string) ?? null,
+    isDefault: Boolean(x.is_default),
+    count: Number(x.cnt),
+  }));
+
+  return {
+    total: Number(r.total),
+    byMode: {
+      off: Number(r.m_off),
+      secretary: Number(r.m_secretary),
+      auto_reply: Number(r.m_auto_reply),
+      friendly_reply: Number(r.m_friendly_reply),
+      ai_chat: Number(r.m_ai_chat),
+      ai_listen: Number(r.m_ai_listen),
+    },
+    byChatType: {
+      private: Number(r.t_private),
+      group: Number(r.t_group),
+      supergroup: Number(r.t_supergroup),
+      channel: Number(r.t_channel),
+    },
+    byRelationship,
+    byFunctionRole,
+    byProfile,
+    flags: {
+      vip: Number(r.f_vip),
+      muted: Number(r.f_muted),
+      isBot: Number(r.f_bot),
+      hasProfile: Number(r.f_profile),
+      hasPhone: Number(r.f_phone),
+      autoSummarizeOn: Number(r.f_autosum),
+      followUpOn: Number(r.f_followup),
+      followUpTranscribeOn: Number(r.f_transcribe),
+      autoForwardVoiceOn: Number(r.f_fwd_voice),
+      autoForwardVideoOn: Number(r.f_fwd_video),
+      autoForwardPhotoOn: Number(r.f_fwd_photo),
+      autoExtractNotesOn: Number(r.f_extract),
+    },
+  };
 }
 
 // --- AI usage tracking ---

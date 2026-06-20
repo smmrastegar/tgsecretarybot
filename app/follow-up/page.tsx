@@ -115,9 +115,15 @@ const TONE_CLASSES: Record<string, string> = {
 // decided bucket.
 type FilterKey = "all" | "needs_reply" | Decided;
 const DEFAULT_FILTER: FilterKey = "needs_reply";
+// "نیاز به جواب" includes chats with a fresh AI verdict saying yes,
+// PLUS chats whose verdict hasn't been computed yet (ai_pending) —
+// those are pending evaluation but they ARE the same pool of chats
+// that may need a reply, just waiting on the next cron tick to be
+// judged. Operator asked for these to be visible alongside.
 const NEEDS_REPLY_DECIDED: Decided[] = [
   "would_ping_first",
   "would_ping_escalate",
+  "ai_pending",
 ];
 
 function fmtHours(h: number | null): string {
