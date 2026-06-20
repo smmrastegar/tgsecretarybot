@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Shell from "@/components/Shell";
-import { Card, PageTitle, TableWrap } from "@/components/Card";
+import { Card, PageTitle } from "@/components/Card";
 import { relTime } from "@/lib/format";
 
 type Decided =
@@ -110,7 +110,15 @@ const TONE_CLASSES: Record<string, string> = {
   dim: "text-[var(--color-text-dim)] bg-[var(--color-surface-2)] border-[var(--color-border)]",
 };
 
-const DEFAULT_FILTER: Decided[] = ["would_ping_first", "would_ping_escalate"];
+// Single-select filter — either "all" (show every row), a preset
+// like "needs_reply" (any AI-needs-reply candidate), or one specific
+// decided bucket.
+type FilterKey = "all" | "needs_reply" | Decided;
+const DEFAULT_FILTER: FilterKey = "needs_reply";
+const NEEDS_REPLY_DECIDED: Decided[] = [
+  "would_ping_first",
+  "would_ping_escalate",
+];
 
 function fmtHours(h: number | null): string {
   if (h == null) return "—";
@@ -119,14 +127,18 @@ function fmtHours(h: number | null): string {
   return `${(h / 24).toFixed(1)} روز`;
 }
 
+const PAGE_SIZE = 25;
+
 export default function FollowUpDebugPage() {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [active, setActive] = useState<Set<Decided>>(new Set(DEFAULT_FILTER));
+  const [active, setActive] = useState<FilterKey>(DEFAULT_FILTER);
   const [q, setQ] = useState("");
   const [triggering, setTriggering] = useState(false);
   const [lastRun, setLastRun] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -160,9 +172,19 @@ export default function FollowUpDebugPage() {
   const filtered = useMemo<ChatRow[]>(() => {
     const ql = q.trim().toLowerCase();
     return allRows.filter((r) => {
-      if (active.size > 0 && !active.has(r.decided)) return false;
+      // Single-select filter: all / needs_reply preset / specific decided.
+      if (active === "needs_reply") {
+        if (!NEEDS_REPLY_DECIDED.includes(r.decided)) return false;
+      } else if (active !== "all") {
+        if (r.decided !== active) return false;
+      }
       if (ql) {
-        const hay = (r.name ?? "").toLowerCase() + " " + String(r.chatId);
+        const hay =
+          (r.name ?? "").toLowerCase() +
+          " " +
+          String(r.chatId) +
+          " " +
+          (r.aiReason ?? "").toLowerCase();
         if (!hay.includes(ql)) return false;
       }
       return true;
@@ -177,14 +199,31 @@ export default function FollowUpDebugPage() {
     });
   }, [filtered]);
 
-  const toggle = (d: Decided) => {
-    setActive((cur) => {
-      const next = new Set(cur);
-      if (next.has(d)) next.delete(d);
-      else next.add(d);
-      return next;
-    });
-  };
+  // Reset visible window whenever the filter or query changes so the
+  // infinite-scroll counter doesn't drift past the new result set.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [active, q, allRows.length]);
+
+  // IntersectionObserver: when the bottom sentinel scrolls into view,
+  // expand the slice by another page until everything is rendered.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((c) => Math.min(c + PAGE_SIZE, sorted.length));
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [sorted.length]);
+
+  const visible = sorted.slice(0, visibleCount);
+  const hasMore = sorted.length > visibleCount;
 
   const ackChat = async (chatId: number) => {
     try {
@@ -309,16 +348,58 @@ export default function FollowUpDebugPage() {
         </div>
 
         <div className="flex flex-wrap gap-1.5 mb-3">
+          {(() => {
+            const needsReplyCount = NEEDS_REPLY_DECIDED.reduce(
+              (n, k) => n + (aggBuckets[k] ?? 0),
+              0,
+            );
+            const presets: Array<{
+              key: FilterKey;
+              label: string;
+              count: number;
+              toneClass: string;
+            }> = [
+              {
+                key: "needs_reply",
+                label: "🔔 نیاز به جواب",
+                count: needsReplyCount,
+                toneClass: TONE_CLASSES.candidate ?? "",
+              },
+              {
+                key: "all",
+                label: "🌐 همه",
+                count: allRows.length,
+                toneClass: TONE_CLASSES.neutral ?? "",
+              },
+            ];
+            return presets.map((p) => {
+              const isOn = active === p.key;
+              return (
+                <button
+                  key={p.key}
+                  onClick={() => setActive(p.key)}
+                  className={`text-[11px] px-2 py-1 rounded-md border font-medium ${
+                    isOn
+                      ? p.toneClass
+                      : "text-[var(--color-text-dim)] bg-transparent border-[var(--color-border)] opacity-60"
+                  }`}
+                >
+                  {p.label} · {p.count}
+                </button>
+              );
+            });
+          })()}
+          <div className="w-full" />
           {orderedKeys.map((k) => {
             const cnt = aggBuckets[k] ?? 0;
             if (cnt === 0) return null;
-            const isOn = active.has(k);
+            const isOn = active === k;
             const tone = DECIDED_TONES[k];
             return (
               <button
                 key={k}
-                onClick={() => toggle(k)}
-                className={`text-[11px] px-2 py-1 rounded-md border transition ${
+                onClick={() => setActive(k)}
+                className={`text-[10px] px-2 py-1 rounded-md border transition ${
                   isOn
                     ? TONE_CLASSES[tone]
                     : "text-[var(--color-text-dim)] bg-transparent border-[var(--color-border)] opacity-60"
@@ -328,18 +409,6 @@ export default function FollowUpDebugPage() {
               </button>
             );
           })}
-          <button
-            onClick={() => setActive(new Set())}
-            className="text-[11px] px-2 py-1 rounded-md text-[var(--color-text-dim)] hover:underline"
-          >
-            (همه)
-          </button>
-          <button
-            onClick={() => setActive(new Set(DEFAULT_FILTER))}
-            className="text-[11px] px-2 py-1 rounded-md text-[var(--color-text-dim)] hover:underline"
-          >
-            (فقط کاندیدها)
-          </button>
         </div>
 
         <input
@@ -357,156 +426,157 @@ export default function FollowUpDebugPage() {
         </Card>
       )}
 
-      <Card>
-        <TableWrap>
-          <table className="w-full text-xs">
-            <thead className="text-[var(--color-text-dim)]">
-              <tr className="text-right border-b border-[var(--color-border)]">
-                <th className="py-2 px-2">نام</th>
-                <th className="py-2 px-2">وضعیت</th>
-                <th className="py-2 px-2">آخرین پیام مشتری</th>
-                <th className="py-2 px-2">آخرین فعالیت تو</th>
-                <th className="py-2 px-2">۲۴h</th>
-                <th className="py-2 px-2">آستانه</th>
-                <th className="py-2 px-2">آخرین ping</th>
-                <th className="py-2 px-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.length === 0 && !loading && (
-                <tr>
-                  <td
-                    colSpan={8}
-                    className="py-6 px-2 text-center text-[var(--color-text-dim)]"
+      {sorted.length === 0 && !loading ? (
+        <Card>
+          <div className="text-xs text-center text-[var(--color-text-dim)] py-4">
+            چیزی برای نمایش نیست.
+          </div>
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {visible.map((r) => {
+            const tone = DECIDED_TONES[r.decided];
+            const customerStale =
+              r.lastAnyMessageAt &&
+              r.lastCustomerMessageAt &&
+              new Date(r.lastAnyMessageAt).getTime() -
+                new Date(r.lastCustomerMessageAt).getTime() >
+                3600_000;
+            const urgencyEmoji =
+              r.aiUrgency === "high"
+                ? "🔥"
+                : r.aiUrgency === "low"
+                  ? "🟢"
+                  : "🟡";
+            return (
+              <Card key={r.chatId} className="p-3">
+                {/* Top row: name + status + actions */}
+                <div className="flex items-start justify-between gap-2 mb-1.5">
+                  <div className="min-w-0">
+                    <Link
+                      href={`/chats/${r.chatId}`}
+                      className="text-sm font-medium text-[var(--color-accent)] hover:underline"
+                    >
+                      {r.name || `chat ${r.chatId}`}
+                    </Link>
+                    <div className="text-[10px] text-[var(--color-text-dim)]">
+                      {r.chatId}
+                    </div>
+                  </div>
+                  <span
+                    className={`inline-block text-[10px] px-1.5 py-0.5 rounded-md border ${TONE_CLASSES[tone]} shrink-0`}
                   >
-                    چیزی برای نمایش نیست.
-                  </td>
-                </tr>
-              )}
-              {sorted.map((r) => {
-                const tone = DECIDED_TONES[r.decided];
-                const customerStale =
-                  r.lastAnyMessageAt &&
-                  r.lastCustomerMessageAt &&
-                  new Date(r.lastAnyMessageAt).getTime() -
-                    new Date(r.lastCustomerMessageAt).getTime() >
-                    3600_000;
-                return (
-                  <tr
-                    key={r.chatId}
-                    className="border-b border-[var(--color-border)]/40 hover:bg-[var(--color-surface-2)]/50"
-                  >
-                    <td className="py-2 px-2">
-                      <Link
-                        href={`/chats/${r.chatId}`}
-                        className="text-[var(--color-accent)] hover:underline"
-                      >
-                        {r.name || `chat ${r.chatId}`}
-                      </Link>
-                      <div className="text-[10px] text-[var(--color-text-dim)]">
-                        {r.chatId}
-                      </div>
-                    </td>
-                    <td className="py-2 px-2">
-                      <span
-                        className={`inline-block text-[10px] px-1.5 py-0.5 rounded-md border ${TONE_CLASSES[tone]}`}
-                      >
-                        {DECIDED_LABELS[r.decided]}
+                    {DECIDED_LABELS[r.decided]}
+                  </span>
+                </div>
+
+                {/* AI reason — the WHY this chat needs (or doesn't) a reply */}
+                {r.aiReason && (
+                  <div className="text-xs leading-relaxed mb-2 p-2 rounded-md bg-amber-500/5 border border-amber-500/20">
+                    <span className="text-[10px] text-amber-300 mr-1">
+                      🤖 دلیل AI {urgencyEmoji}
+                    </span>
+                    <span dir="auto">{r.aiReason}</span>
+                  </div>
+                )}
+
+                {/* Compact stats row */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-1 text-[10px] text-[var(--color-text-dim)] mb-2">
+                  <div>
+                    <span className="opacity-70">آخرین پیام: </span>
+                    <span className="text-white">
+                      {fmtHours(r.hoursSinceCustomer)}
+                    </span>
+                    {r.lastCustomerMessageAt && (
+                      <span className="opacity-60">
+                        {" "}
+                        ({relTime(new Date(r.lastCustomerMessageAt))})
                       </span>
-                      {r.aiReason && (
-                        <div
-                          className="text-[10px] text-[var(--color-text-dim)] mt-0.5 leading-snug max-w-[28ch]"
-                          title={r.aiReason}
-                        >
-                          {r.aiUrgency === "high"
-                            ? "🔥 "
-                            : r.aiUrgency === "low"
-                              ? "🟢 "
-                              : "🟡 "}
-                          {r.aiReason.slice(0, 80)}
-                        </div>
-                      )}
-                    </td>
-                    <td className="py-2 px-2">
-                      <div>{fmtHours(r.hoursSinceCustomer)}</div>
-                      {r.lastCustomerMessageAt && (
-                        <div className="text-[10px] text-[var(--color-text-dim)]">
-                          {relTime(new Date(r.lastCustomerMessageAt))}
-                        </div>
-                      )}
-                      {customerStale && (
-                        <div
-                          className="text-[10px] text-amber-300 mt-0.5"
-                          title="یه پیام جدیدتر توی این چت لاگ شده ولی به‌عنوان «مشتری» شناخته نشده — احتمالاً from_owner اشتباه ست شده."
-                        >
-                          ⚠ آخرین پیام چت {relTime(new Date(r.lastAnyMessageAt!))} — ولی from_owner=customer نیست
-                        </div>
-                      )}
-                    </td>
-                    <td className="py-2 px-2 text-[var(--color-text-dim)]">
-                      <div>
-                        {r.lastOwnerMessageAt
-                          ? relTime(new Date(r.lastOwnerMessageAt))
-                          : "—"}
-                      </div>
-                      {r.lastReactionAt ? (
-                        <div
-                          className="text-[10px] mt-0.5"
-                          title={`ری‌اکشن آخر در ${r.lastReactionAt} (کل: ${r.reactionsTotal})`}
-                        >
-                          🌜 ری‌اکشن: {relTime(new Date(r.lastReactionAt))}
-                          {r.reactionsTotal > 1 && ` (${r.reactionsTotal})`}
-                        </div>
-                      ) : r.reactionsTotal === 0 ? (
-                        <div
-                          className="text-[10px] mt-0.5 text-red-300"
-                          title="هیچ ری‌اکشنی از این چت توی DB ثبت نشده — احتمالاً bot ری‌اکشن نمی‌گیره."
-                        >
-                          ❌ ۰ ری‌اکشن ثبت‌شده
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="py-2 px-2 text-[var(--color-text-dim)] text-center">
-                      {r.messagesLast24h}
-                    </td>
-                    <td className="py-2 px-2 text-[var(--color-text-dim)]">
+                    )}
+                  </div>
+                  <div>
+                    <span className="opacity-70">جواب تو: </span>
+                    <span className="text-white">
+                      {r.lastOwnerMessageAt
+                        ? relTime(new Date(r.lastOwnerMessageAt))
+                        : "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="opacity-70">پیام‌های ۲۴h: </span>
+                    <span className="text-white">{r.messagesLast24h}</span>
+                  </div>
+                  <div>
+                    <span className="opacity-70">آستانه: </span>
+                    <span className="text-white">
                       {r.thresholdHours}h / {r.escalateHours}h
-                    </td>
-                    <td className="py-2 px-2 text-[var(--color-text-dim)]">
-                      {r.lastPingAt ? (
-                        <>
-                          {relTime(new Date(r.lastPingAt))}
-                          <div className="text-[10px]">{r.lastPingKind}</div>
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="py-2 px-2">
-                      <div className="flex flex-col gap-1">
-                        <button
-                          onClick={() => ackChat(r.chatId)}
-                          className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
-                          title="مارک کن به‌عنوان «متوجه شدم» — تا پیام جدید بعدی، دیگه ping نمی‌شه"
-                        >
-                          👌 ack
-                        </button>
-                        <button
-                          onClick={() => disableFollowUp(r.chatId)}
-                          className="text-[10px] px-2 py-1 rounded-md bg-rose-500/10 border border-rose-500/30 text-rose-200 hover:bg-rose-500/20"
-                          title="فالو‌آپ این چت رو خاموش کن — حتی برای پیام‌های بعدی، توی لاگ‌ها نمیاد"
-                        >
-                          🙈 بیخیال
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </TableWrap>
-      </Card>
+                    </span>
+                  </div>
+                  {r.lastPingAt && (
+                    <div>
+                      <span className="opacity-70">آخرین ping: </span>
+                      <span className="text-white">
+                        {relTime(new Date(r.lastPingAt))} (
+                        {r.lastPingKind})
+                      </span>
+                    </div>
+                  )}
+                  {r.lastReactionAt && (
+                    <div>
+                      <span className="opacity-70">🌜 ری‌اکشن: </span>
+                      <span className="text-white">
+                        {relTime(new Date(r.lastReactionAt))}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {customerStale && (
+                  <div
+                    className="text-[10px] text-amber-300 mb-2"
+                    title="یه پیام جدیدتر توی این چت لاگ شده ولی به‌عنوان «مشتری» شناخته نشده — احتمالاً from_owner اشتباه ست شده."
+                  >
+                    ⚠ آخرین پیام چت {relTime(new Date(r.lastAnyMessageAt!))} — ولی
+                    from_owner=customer نیست
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => ackChat(r.chatId)}
+                    className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+                    title="مارک کن به‌عنوان «متوجه شدم» — تا پیام جدید بعدی، دیگه ping نمی‌شه"
+                  >
+                    👌 ack
+                  </button>
+                  <button
+                    onClick={() => disableFollowUp(r.chatId)}
+                    className="text-[10px] px-2 py-1 rounded-md bg-rose-500/10 border border-rose-500/30 text-rose-200 hover:bg-rose-500/20"
+                    title="فالو‌آپ این چت رو خاموش کن — حتی برای پیام‌های بعدی، توی لاگ‌ها نمیاد"
+                  >
+                    🙈 بیخیال
+                  </button>
+                </div>
+              </Card>
+            );
+          })}
+
+          {hasMore && (
+            <div
+              ref={sentinelRef}
+              className="text-[10px] text-center text-[var(--color-text-dim)] py-3"
+            >
+              ...
+            </div>
+          )}
+          {!hasMore && sorted.length > PAGE_SIZE && (
+            <div className="text-[10px] text-center text-[var(--color-text-dim)] py-3">
+              · پایان لیست ({sorted.length} مورد) ·
+            </div>
+          )}
+        </div>
+      )}
     </Shell>
   );
 }
