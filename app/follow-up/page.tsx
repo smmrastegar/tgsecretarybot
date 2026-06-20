@@ -324,7 +324,7 @@ export default function FollowUpDebugPage() {
     <Shell>
       <PageTitle
         title="⏰ دیباگ یادآور جواب‌ندادن"
-        subtitle="هر چتی که این لحظه پیامش از طرف مشتری بدون جواب مونده — با فیلتر، جستجو، و trigger دستی."
+        subtitle="هر چتی که این لحظه پیامش از طرف کاربر بدون جواب مونده — با فیلتر، جستجو، و trigger دستی."
       />
 
       <Card className="mb-4">
@@ -540,7 +540,7 @@ export default function FollowUpDebugPage() {
                 {customerStale && (
                   <div
                     className="text-[10px] text-amber-300 mb-2"
-                    title="یه پیام جدیدتر توی این چت لاگ شده ولی به‌عنوان «مشتری» شناخته نشده — احتمالاً from_owner اشتباه ست شده."
+                    title="یه پیام جدیدتر توی این چت لاگ شده ولی به‌عنوان «کاربر» شناخته نشده — احتمالاً from_owner اشتباه ست شده."
                   >
                     ⚠ آخرین پیام چت {relTime(new Date(r.lastAnyMessageAt!))} — ولی
                     from_owner=customer نیست

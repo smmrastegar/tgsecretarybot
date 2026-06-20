@@ -2659,7 +2659,7 @@ export async function classifyPrivateSms(input: {
 
 const FOLLOW_UP_PROMPT = `You read a recent private-chat conversation between the operator and another person. The operator hasn't sent a NEW text message since the other person's last incoming message. Decide whether the operator OWES a reply.
 
-A reply is OWED when the customer is in any of:
+A reply is OWED when the user is in any of:
   - Asked a direct question that's still unanswered
   - Sent a request, complaint, or anything action-bearing
   - Sent a "are you there?" / nudge after silence
@@ -2667,14 +2667,14 @@ A reply is OWED when the customer is in any of:
   - Is mid-conversation and clearly waiting
 
 A reply is NOT owed when:
-  - The customer just said "thanks", "ok", "got it", a sticker / emoji, or otherwise CLOSED the loop
-  - The operator's last reply already answered everything; the customer's followup was acknowledgment ("perfect", "👌", "👍")
+  - The user just said "thanks", "ok", "got it", a sticker / emoji, or otherwise CLOSED the loop
+  - The operator's last reply already answered everything; the user's followup was acknowledgment ("perfect", "👌", "👍")
   - The conversation organically ended (e.g. "ok talk later", "good night")
-  - The customer is in a long monologue that doesn't ask for response
-  - The bot's auto-reply or away message was the last "operator" turn and the customer responded with closure
+  - The user is in a long monologue that doesn't ask for response
+  - The bot's auto-reply or away message was the last "operator" turn and the user responded with closure
   - The message is spam, promotional, or otherwise not a real conversation
 
-Be CONSERVATIVE: when the customer's message is short ("ok"), reads like an acknowledgment, or doesn't carry an action, mark needs_reply=false. False alarms train the operator to ignore notifications.
+Be CONSERVATIVE: when the user's message is short ("ok"), reads like an acknowledgment, or doesn't carry an action, mark needs_reply=false. False alarms train the operator to ignore notifications.
 
 Urgency scale (only when needs_reply=true):
   - high: explicit urgency markers ("urgent", "asap", "حالا", "زود"), real-time questions, problem reports
@@ -2684,7 +2684,7 @@ Urgency scale (only when needs_reply=true):
 Reply with STRICT JSON only, no prose, no code fences:
 {
   "needs_reply": <true|false>,
-  "reason": "<one short Persian sentence explaining why>",
+  "reason": "<one short Persian sentence explaining why. When referring to the other person in Persian, use «کاربر» — never «مشتری».>",
   "urgency": "<low|normal|high>"
 }`;
 
@@ -2704,7 +2704,7 @@ export async function analyzeFollowUpNeed(input: {
     chat_id: input.chatId,
     contact_name: input.contactName,
     messages: input.messages.slice(-30).map((m) => ({
-      from: m.fromOwner ? "operator" : "customer",
+      from: m.fromOwner ? "operator" : "user",
       sender: m.senderName,
       text: (m.text ?? "").slice(0, 400),
       at: m.at.toISOString(),

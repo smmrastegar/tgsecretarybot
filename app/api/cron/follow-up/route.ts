@@ -223,16 +223,48 @@ async function processTenant(tenantId: number) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[follow-up] notice send failed chat=${c.chatId}:`, err);
         errors.push({ chatId: c.chatId, error: msg.slice(0, 300) });
-        void captureError({
+
+        // Detect inbox-level failures (bot can't post to notes_inbox
+        // at all) and short-circuit the rest of the loop — otherwise
+        // we'd log the SAME error N more times for every remaining
+        // candidate in this tick.
+        const inboxBroken =
+          /bot can't initiate conversation/i.test(msg) ||
+          /bot was blocked by the user/i.test(msg) ||
+          /chat not found/i.test(msg) ||
+          /not enough rights/i.test(msg) ||
+          /forbidden/i.test(msg);
+
+        await captureError({
           source: "cron:follow-up",
           error: err,
           scope: `chat=${c.chatId}`,
           details: {
             inboxChatId: inbox.chatId,
+            inboxBroken,
             kind,
             aiReason,
+            hint: inboxBroken
+              ? "notes_inbox chat is not reachable. اگه DM شخصی هست، باید bot رو توی یه channel/group اضافه کنی و notes_inbox رو روی همون ست کنی — bot نمی‌تونه به DM کاربری که قبلاً باهاش حرف نزده پیام بفرسته."
+              : undefined,
           },
         });
+
+        if (inboxBroken) {
+          await captureError({
+            source: "cron:follow-up",
+            level: "error",
+            error: new Error(
+              `notes_inbox chat ${inbox.chatId} not reachable — skipping remaining ${candidates.length - pinged - errors.length} candidates this tick. ${msg}`,
+            ),
+            scope: `tenant=${tenantId}`,
+            details: {
+              inboxChatId: inbox.chatId,
+              hint: "channel/group بسازید و bot رو توش admin کنید، notes_inbox رو روی همون ست کنید.",
+            },
+          });
+          break;
+        }
       }
     }
     return {
