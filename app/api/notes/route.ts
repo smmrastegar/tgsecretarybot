@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/auth";
 import {
   addChatNote,
   audit,
+  chatNoteKindCounts,
   chatNoteSummaryByChat,
   listChatNotes,
 } from "@/lib/db";
@@ -10,9 +11,9 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// GET /api/notes              → per-chat summary (counts, by-kind, last-note-at)
-// GET /api/notes?chatId=<id>  → notes for one chat
-// GET /api/notes?kind=address → notes of a single kind, all chats
+// GET /api/notes                 → per-chat summary + kind buckets
+// GET /api/notes?view=flat       → flat list of notes with filters
+// GET /api/notes?chatId=…&kind=… → filtered notes
 export async function GET(request: Request): Promise<NextResponse> {
   try {
     await requireSession();
@@ -22,21 +23,41 @@ export async function GET(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const chatIdRaw = url.searchParams.get("chatId");
   const kindRaw = url.searchParams.get("kind");
+  const q = url.searchParams.get("q");
+  const sinceDaysRaw = url.searchParams.get("days");
+  const view = url.searchParams.get("view");
   const includeArchived =
     url.searchParams.get("archived") === "1" ||
     url.searchParams.get("archived") === "true";
-  if (chatIdRaw || kindRaw) {
+  const limit = Math.min(
+    Math.max(Number(url.searchParams.get("limit") ?? "100"), 1),
+    500,
+  );
+  const offset = Math.max(Number(url.searchParams.get("offset") ?? "0"), 0);
+
+  if (view === "flat" || chatIdRaw || kindRaw || q || sinceDaysRaw) {
     const chatId = chatIdRaw ? Number(chatIdRaw) : undefined;
-    const notes = await listChatNotes({
-      chatId,
-      kind: kindRaw ?? undefined,
-      includeArchived,
-      limit: 500,
-    });
-    return NextResponse.json({ ok: true, notes });
+    const sinceDays = sinceDaysRaw ? Number(sinceDaysRaw) : undefined;
+    const [notes, kinds] = await Promise.all([
+      listChatNotes({
+        chatId: Number.isFinite(chatId) ? chatId : undefined,
+        kind: kindRaw ?? undefined,
+        q: q ?? undefined,
+        sinceDays:
+          Number.isFinite(sinceDays) && sinceDays! > 0 ? sinceDays : undefined,
+        includeArchived,
+        limit,
+        offset,
+      }),
+      chatNoteKindCounts(),
+    ]);
+    return NextResponse.json({ ok: true, notes, kinds });
   }
-  const summary = await chatNoteSummaryByChat();
-  return NextResponse.json({ ok: true, summary });
+  const [summary, kinds] = await Promise.all([
+    chatNoteSummaryByChat(),
+    chatNoteKindCounts(),
+  ]);
+  return NextResponse.json({ ok: true, summary, kinds });
 }
 
 // Manual add (the auto-extract pipeline calls this internally via

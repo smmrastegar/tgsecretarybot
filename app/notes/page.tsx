@@ -114,214 +114,237 @@ function TabButton({
 }
 
 function NotesViewerTab() {
-  const [summary, setSummary] = useState<SummaryRow[]>([]);
-  const [openChat, setOpenChat] = useState<number | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
-  const [kindFilter, setKindFilter] = useState<string>("");
+  const [kinds, setKinds] = useState<Array<{ kind: string; count: number }>>([]);
+  const [activeKind, setActiveKind] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [chatIdFilter, setChatIdFilter] = useState("");
+  const [sinceDays, setSinceDays] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const [notesLoading, setNotesLoading] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const PAGE = 100;
+  const [hasMore, setHasMore] = useState(true);
 
-  const loadSummary = useCallback(async () => {
+  const buildQuery = useCallback(
+    (offsetOverride?: number) => {
+      const p = new URLSearchParams({ view: "flat", limit: String(PAGE) });
+      p.set("offset", String(offsetOverride ?? offset));
+      if (activeKind) p.set("kind", activeKind);
+      if (q.trim()) p.set("q", q.trim());
+      if (chatIdFilter.trim()) p.set("chatId", chatIdFilter.trim());
+      if (sinceDays && sinceDays > 0) p.set("days", String(sinceDays));
+      return p.toString();
+    },
+    [activeKind, q, chatIdFilter, sinceDays, offset],
+  );
+
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch("/api/notes");
+      const r = await fetch(`/api/notes?${buildQuery(0)}`);
       if (r.ok) {
-        const j = (await r.json()) as { summary: SummaryRow[] };
-        setSummary(j.summary);
+        const j = (await r.json()) as {
+          notes: Note[];
+          kinds: Array<{ kind: string; count: number }>;
+        };
+        setNotes(j.notes);
+        setKinds(j.kinds ?? []);
+        setHasMore(j.notes.length === PAGE);
+        setOffset(j.notes.length);
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [buildQuery]);
 
-  const loadNotes = useCallback(async () => {
-    if (openChat == null) return;
-    setNotesLoading(true);
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loading) return;
+    setLoading(true);
     try {
-      const params = new URLSearchParams({ chatId: String(openChat) });
-      if (kindFilter) params.set("kind", kindFilter);
-      const r = await fetch(`/api/notes?${params.toString()}`);
+      const r = await fetch(`/api/notes?${buildQuery(offset)}`);
       if (r.ok) {
         const j = (await r.json()) as { notes: Note[] };
-        setNotes(j.notes);
+        setNotes((cur) => [...cur, ...j.notes]);
+        setHasMore(j.notes.length === PAGE);
+        setOffset((cur) => cur + j.notes.length);
       }
     } finally {
-      setNotesLoading(false);
+      setLoading(false);
     }
-  }, [openChat, kindFilter]);
+  }, [hasMore, loading, buildQuery, offset]);
 
+  // Re-fetch when filters change (debounced for q).
   useEffect(() => {
-    loadSummary();
-  }, [loadSummary]);
-  useEffect(() => {
-    loadNotes();
-  }, [loadNotes]);
+    const t = setTimeout(load, q.trim() || chatIdFilter.trim() ? 250 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeKind, q, chatIdFilter, sinceDays]);
 
   async function deleteNote(id: number) {
     if (!confirm("این note حذف بشه؟")) return;
     const r = await fetch(`/api/notes/${id}`, { method: "DELETE" });
-    if (r.ok) {
-      await loadNotes();
-      await loadSummary();
-    }
+    if (r.ok) await load();
   }
 
-  const kinds = useMemo(() => {
-    const out = new Set<string>();
-    for (const row of summary) for (const k of Object.keys(row.byKind)) out.add(k);
-    return Array.from(out).sort();
-  }, [summary]);
-
-  if (loading) return <Card>Loading…</Card>;
-  if (summary.length === 0) {
-    return (
-      <Card>
-        <p className="text-sm text-[var(--color-text-dim)]">
-          هنوز note ای ثبت نشده. می‌تونی توی تب «مفاهیم Watchlist» یه concept
-          تعریف کنی، یا توی صفحه‌ی هر چت گزینه‌ی «📒 auto-extract notes» رو
-          روشن کنی.
-        </p>
-      </Card>
-    );
-  }
+  const total = kinds.reduce((a, k) => a + k.count, 0);
 
   return (
     <>
       <Card className="mb-3">
-        <div className="text-xs text-[var(--color-text-dim)] mb-2">
-          {summary.length} چت · {summary.reduce((a, s) => a + s.total, 0)}{" "}
-          note مجموعاً
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+          <div className="text-xs text-[var(--color-text-dim)]">
+            {total} نوت کل · {notes.length} نمایش
+          </div>
+          <button
+            onClick={load}
+            disabled={loading}
+            className="text-xs px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
+          >
+            🔄
+          </button>
         </div>
-        <div className="flex flex-col gap-1.5">
-          {summary.map((row) => (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          <button
+            onClick={() => setActiveKind(null)}
+            className={`text-[11px] px-2 py-1 rounded-md border ${
+              activeKind == null
+                ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
+            }`}
+          >
+            همه ({total})
+          </button>
+          {kinds.map((k) => (
             <button
-              key={row.chatId}
-              onClick={() =>
-                setOpenChat(openChat === row.chatId ? null : row.chatId)
-              }
-              className={`text-right p-2 rounded-md border transition-colors ${
-                openChat === row.chatId
-                  ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10"
-                  : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]/40"
+              key={k.kind}
+              onClick={() => setActiveKind(k.kind)}
+              className={`text-[11px] px-2 py-1 rounded-md border ${
+                activeKind === k.kind
+                  ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                  : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
               }`}
             >
-              <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
-                <Link
-                  href={`/chats/${row.chatId}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="font-medium hover:underline"
-                >
-                  chat {row.chatId}
-                </Link>
-                <div className="flex items-center gap-1 flex-wrap">
-                  {Object.entries(row.byKind).map(([k, n]) => (
-                    <Badge key={k} tone="info">
-                      {KIND_EMOJI[k] ?? "📝"} {k} · {n}
-                    </Badge>
-                  ))}
-                  <span className="text-[10px] text-[var(--color-text-dim)]">
-                    {relTime(row.lastNoteAt)}
-                  </span>
-                </div>
-              </div>
+              {KIND_EMOJI[k.kind] ?? "📝"} {k.kind} · {k.count}
             </button>
           ))}
         </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <input
+            type="text"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="🔍 جستجو در متن / عنوان / فرستنده"
+            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+          />
+          <input
+            type="text"
+            value={chatIdFilter}
+            onChange={(e) => setChatIdFilter(e.target.value)}
+            placeholder="فیلتر chat ID"
+            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+          />
+          <select
+            value={sinceDays ?? ""}
+            onChange={(e) =>
+              setSinceDays(e.target.value === "" ? null : Number(e.target.value))
+            }
+            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+          >
+            <option value="">از همیشه</option>
+            <option value="1">۲۴ ساعت اخیر</option>
+            <option value="3">۳ روز اخیر</option>
+            <option value="7">۷ روز اخیر</option>
+            <option value="30">۳۰ روز اخیر</option>
+            <option value="90">۹۰ روز اخیر</option>
+          </select>
+        </div>
       </Card>
 
-      {openChat != null && (
+      {loading && notes.length === 0 ? (
         <Card>
-          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-            <div className="text-sm font-medium">📒 Notes · chat {openChat}</div>
-            <div className="flex items-center gap-2">
-              <select
-                value={kindFilter}
-                onChange={(e) => setKindFilter(e.target.value)}
-                className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-xs"
-              >
-                <option value="">همه</option>
-                {kinds.map((k) => (
-                  <option key={k} value={k}>
-                    {KIND_EMOJI[k] ?? "📝"} {k}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => setOpenChat(null)}
-                className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-          {notesLoading ? (
-            <div className="text-[11px] text-[var(--color-text-dim)]">…</div>
-          ) : notes.length === 0 ? (
-            <div className="text-[11px] text-[var(--color-text-dim)]">
-              note ای نیست
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {notes.map((n) => {
-                const gmaps = (n.metadata?.gmaps as string | undefined) ?? null;
-                const url = (n.metadata?.url as string | undefined) ?? null;
-                return (
-                  <div
-                    key={n.id}
-                    className="text-xs p-2 rounded-md border border-[var(--color-border)]"
-                  >
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <Badge tone="info">
-                        {KIND_EMOJI[n.kind] ?? "📝"} {n.kind}
-                      </Badge>
-                      {n.title && (
-                        <span className="font-medium">{n.title}</span>
-                      )}
-                      <span className="text-[10px] text-[var(--color-text-dim)] mr-auto">
-                        {relTime(n.createdAt)}
-                        {n.senderName ? ` · ${n.senderName}` : ""}
-                      </span>
-                      <button
-                        onClick={() => deleteNote(n.id)}
-                        className="text-[10px] px-1.5 py-0.5 rounded-md border border-red-700 text-red-300 hover:bg-red-900/30"
-                      >
-                        🗑
-                      </button>
-                    </div>
-                    <div
-                      dir="auto"
-                      className="whitespace-pre-wrap break-words"
-                    >
-                      {n.content}
-                    </div>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap text-[10px]">
-                      {gmaps && (
-                        <a
-                          href={gmaps}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-400 underline"
-                        >
-                          🗺 Google Maps
-                        </a>
-                      )}
-                      {url && (
-                        <a
-                          href={url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-400 underline break-all"
-                        >
-                          {url}
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <div className="text-xs text-[var(--color-text-dim)]">...</div>
         </Card>
+      ) : notes.length === 0 ? (
+        <Card>
+          <p className="text-sm text-[var(--color-text-dim)]">
+            هیچ نوتی با این فیلتر نیست. می‌تونی توی تب «مفاهیم Watchlist»
+            concept تعریف کنی، یا توی هر چت «📒 auto-extract notes» رو روشن کنی.
+          </p>
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {notes.map((n) => {
+            const gmaps = (n.metadata?.gmaps as string | undefined) ?? null;
+            const url = (n.metadata?.url as string | undefined) ?? null;
+            return (
+              <Card key={n.id} className="p-3">
+                <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                  <Badge tone="info">
+                    {KIND_EMOJI[n.kind] ?? "📝"} {n.kind}
+                  </Badge>
+                  {n.title && (
+                    <span className="text-xs font-medium">{n.title}</span>
+                  )}
+                  <Link
+                    href={`/chats/${n.chatId}`}
+                    className="text-[10px] text-[var(--color-accent)] hover:underline"
+                  >
+                    chat {n.chatId}
+                  </Link>
+                  <span className="text-[10px] text-[var(--color-text-dim)] mr-auto">
+                    {relTime(n.createdAt)}
+                    {n.senderName ? ` · ${n.senderName}` : ""}
+                  </span>
+                  <button
+                    onClick={() => deleteNote(n.id)}
+                    className="text-[10px] px-1.5 py-0.5 rounded-md border border-red-700 text-red-300 hover:bg-red-900/30"
+                  >
+                    🗑
+                  </button>
+                </div>
+                <div
+                  dir="auto"
+                  className="text-xs whitespace-pre-wrap break-words"
+                >
+                  {n.content}
+                </div>
+                {(gmaps || url) && (
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap text-[10px]">
+                    {gmaps && (
+                      <a
+                        href={gmaps}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 underline"
+                      >
+                        🗺 Google Maps
+                      </a>
+                    )}
+                    {url && (
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 underline break-all"
+                      >
+                        {url}
+                      </a>
+                    )}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+          {hasMore && (
+            <button
+              onClick={loadMore}
+              disabled={loading}
+              className="text-xs px-3 py-2 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
+            >
+              {loading ? "..." : `📜 نمایش ${PAGE} مورد بعدی`}
+            </button>
+          )}
+        </div>
       )}
     </>
   );

@@ -3289,11 +3289,16 @@ export async function listChatNotes(opts: {
   chatId?: number;
   tenantId?: number | null;
   kind?: string;
+  q?: string;
+  sinceDays?: number;
   includeArchived?: boolean;
   limit?: number;
+  offset?: number;
 }): Promise<ChatNote[]> {
   if (!hasDb()) return [];
   await ensureSchema();
+  const like = opts.q?.trim() ? `%${opts.q.trim()}%` : null;
+  const sinceDays = opts.sinceDays && opts.sinceDays > 0 ? opts.sinceDays : null;
   const rows = await sql()`
     SELECT id, chat_id, tenant_id, source_message_id, kind, title, content,
            metadata, sender_name, archived_at, created_at
@@ -3302,9 +3307,38 @@ export async function listChatNotes(opts: {
       AND (${opts.tenantId ?? null}::bigint IS NULL OR tenant_id = ${opts.tenantId ?? null})
       AND (${opts.kind ?? null}::text IS NULL OR kind = ${opts.kind ?? null})
       AND (${opts.includeArchived ?? false}::boolean OR archived_at IS NULL)
+      AND (${sinceDays}::int IS NULL OR created_at > NOW() - make_interval(days => ${sinceDays}))
+      AND (
+        ${like}::text IS NULL
+        OR content ILIKE ${like}
+        OR COALESCE(title, '') ILIKE ${like}
+        OR COALESCE(sender_name, '') ILIKE ${like}
+      )
     ORDER BY created_at DESC
-    LIMIT ${opts.limit ?? 200}`;
+    LIMIT ${opts.limit ?? 200}
+    OFFSET ${opts.offset ?? 0}`;
   return (rows as Array<Record<string, unknown>>).map(rowToChatNote);
+}
+
+// Distinct list of (kind, count) across the WHOLE table — used by
+// the /notes filter chips so we don't recompute from the per-chat
+// summary every render.
+export async function chatNoteKindCounts(
+  tenantId?: number | null,
+): Promise<Array<{ kind: string; count: number }>> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT kind, COUNT(*)::int AS cnt
+    FROM chat_notes
+    WHERE archived_at IS NULL
+      AND (${tenantId ?? null}::bigint IS NULL OR tenant_id = ${tenantId ?? null})
+    GROUP BY kind
+    ORDER BY cnt DESC`;
+  return (rows as Array<{ kind: string; cnt: number }>).map((r) => ({
+    kind: r.kind,
+    count: Number(r.cnt),
+  }));
 }
 
 // Per-chat aggregate counts — used by the /notes index ("X notes from
