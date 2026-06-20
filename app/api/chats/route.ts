@@ -25,8 +25,16 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
   const url = new URL(request.url);
   if (url.searchParams.get("facets") === "1") {
-    const facets = await chatFacets();
-    return NextResponse.json({ facets });
+    try {
+      const facets = await chatFacets();
+      return NextResponse.json({ facets });
+    } catch (err) {
+      console.error("[chats] facets failed:", err);
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        { status: 500 },
+      );
+    }
   }
   const limit = url.searchParams.get("limit")
     ? Number(url.searchParams.get("limit"))

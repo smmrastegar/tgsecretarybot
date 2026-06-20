@@ -209,9 +209,10 @@ export default function ChatsPage() {
     const p = new URLSearchParams();
     if (modeFilter !== "all") p.set("mode", modeFilter);
     if (typeFilter !== "all") {
-      // The legacy "bot" pseudo-type maps to is_bot=true, otherwise pass through.
-      if (typeFilter === "bot") p.set("isBot", "1");
-      else p.set("chatType", typeFilter);
+      // Server interprets "private" / "bot" / "group" / "channel" as
+      // composite filters (private excludes bots, group includes
+      // supergroup, etc.) — pass-through.
+      p.set("chatType", typeFilter);
     }
     if (relationshipFilter === "unset") p.set("relationship", "__unset__");
     else if (relationshipFilter !== "all")
@@ -528,7 +529,6 @@ export default function ChatsPage() {
                 ).map(([k, label]) => {
                   let n: number;
                   if (k === "all") n = facets?.total ?? chats.length;
-                  else if (k === "bot") n = facets?.flags.isBot ?? 0;
                   else n = facets?.byChatType[k] ?? 0;
                   return (
                     <option key={k} value={k}>

@@ -6286,7 +6286,31 @@ export async function listChats(opts: {
     LEFT JOIN ai_usage  u ON u.chat_id = m.chat_id
     WHERE
       (${f.mode ?? null}::text IS NULL OR COALESCE(r.mode, 'off') = ${f.mode ?? null})
-      AND (${f.chatType ?? null}::text IS NULL OR m.chat_type = ${f.chatType ?? null})
+      AND (
+        ${f.chatType ?? null}::text IS NULL
+        OR (
+          ${f.chatType ?? null}::text = 'private'
+            AND m.chat_type = 'private'
+            AND NOT COALESCE(r.is_bot, FALSE)
+        )
+        OR (
+          ${f.chatType ?? null}::text = 'bot'
+            AND m.chat_type = 'private'
+            AND COALESCE(r.is_bot, FALSE)
+        )
+        OR (
+          ${f.chatType ?? null}::text = 'group'
+            AND m.chat_type IN ('group', 'supergroup')
+        )
+        OR (
+          ${f.chatType ?? null}::text = 'channel'
+            AND m.chat_type = 'channel'
+        )
+        OR (
+          ${f.chatType ?? null}::text NOT IN ('private', 'bot', 'group', 'channel')
+            AND m.chat_type = ${f.chatType ?? null}
+        )
+      )
       AND (${relUnset}::boolean = FALSE OR r.relationship IS NULL)
       AND (${relValue}::text IS NULL OR r.relationship = ${relValue})
       AND (
@@ -6403,43 +6427,26 @@ export type ChatFacets = {
 
 export async function chatFacets(): Promise<ChatFacets> {
   await ensureSchema();
-  // Build a "distinct chat ids that have at least one logged message"
-  // CTE so the counts match listChats' universe (which JOINs from
-  // messages_log).
+  // Universe = every chat that has at least one logged message.
+  // Pick the latest chat_type per chat (messages_log can have the
+  // same chat under multiple types over time — pick the most recent).
   const rows = await sql()`
     WITH chats AS (
-      SELECT DISTINCT m.chat_id
+      SELECT m.chat_id,
+             (ARRAY_AGG(m.chat_type ORDER BY m.created_at DESC))[1] AS chat_type
       FROM messages_log m
+      GROUP BY m.chat_id
     ),
     joined AS (
-      SELECT c.chat_id,
-             MAX(m.chat_type) AS chat_type,
-             r.*
+      SELECT c.chat_id, c.chat_type,
+             r.mode, r.relationship, r.function_role,
+             r.vip, r.muted, r.is_bot, r.phone_number, r.profile_id,
+             r.auto_summarize_enabled, r.follow_up_enabled,
+             r.follow_up_transcribe_voices, r.auto_forward_voice,
+             r.auto_forward_video, r.auto_forward_photo,
+             r.auto_extract_notes
       FROM chats c
       LEFT JOIN chat_rules r ON r.chat_id = c.chat_id
-      LEFT JOIN messages_log m ON m.chat_id = c.chat_id
-      GROUP BY c.chat_id, r.chat_id, r.chat_type, r.chat_title, r.vip,
-               r.muted, r.custom_reply, r.notes, r.mode, r.mode_changed_at,
-               r.secretary_user_id, r.first_name, r.last_name, r.nickname,
-               r.relationship, r.relationship_notes, r.talk_style_notes,
-               r.tone_profile, r.tone_profile_at, r.flood_cooldown_until,
-               r.flood_deflected_at, r.ai_process_voice, r.ai_process_stickers,
-               r.ai_process_gifs, r.ai_process_photos, r.ai_process_video_notes,
-               r.ai_generate_photo, r.function_role, r.function_config,
-               r.auto_summarize_enabled, r.auto_summarize_gap_minutes,
-               r.auto_summarize_smart_timing, r.last_auto_summary_at,
-               r.auto_forward_voice, r.auto_forward_video, r.auto_forward_photo,
-               r.auto_forward_location, r.auto_extract_notes, r.is_bot,
-               r.ignored, r.phone_number, r.grace_skipped_at,
-               r.summary_interval_hours, r.last_summary_run_at,
-               r.analytics_share_token, r.follow_up_enabled,
-               r.follow_up_threshold_hours, r.follow_up_escalate_hours,
-               r.follow_up_last_ping_at, r.follow_up_last_ping_kind,
-               r.follow_up_acked_at, r.follow_up_transcribe_voices,
-               r.follow_up_ai_for_message_at, r.follow_up_ai_verdict_at,
-               r.follow_up_ai_needs_reply, r.follow_up_ai_reason,
-               r.follow_up_ai_urgency, r.tenant_id, r.created_at, r.updated_at,
-               r.profile_id
     )
     SELECT
       COUNT(*)::int AS total,
@@ -6449,9 +6456,9 @@ export async function chatFacets(): Promise<ChatFacets> {
       COUNT(*) FILTER (WHERE mode = 'friendly_reply')::int AS m_friendly_reply,
       COUNT(*) FILTER (WHERE mode = 'ai_chat')::int AS m_ai_chat,
       COUNT(*) FILTER (WHERE mode = 'ai_listen')::int AS m_ai_listen,
-      COUNT(*) FILTER (WHERE chat_type = 'private')::int AS t_private,
-      COUNT(*) FILTER (WHERE chat_type = 'group')::int AS t_group,
-      COUNT(*) FILTER (WHERE chat_type = 'supergroup')::int AS t_supergroup,
+      COUNT(*) FILTER (WHERE chat_type = 'private' AND NOT COALESCE(is_bot, FALSE))::int AS t_private,
+      COUNT(*) FILTER (WHERE chat_type = 'private' AND COALESCE(is_bot, FALSE))::int AS t_bot,
+      COUNT(*) FILTER (WHERE chat_type IN ('group', 'supergroup'))::int AS t_group,
       COUNT(*) FILTER (WHERE chat_type = 'channel')::int AS t_channel,
       COUNT(*) FILTER (WHERE COALESCE(vip, FALSE))::int AS f_vip,
       COUNT(*) FILTER (WHERE COALESCE(muted, FALSE))::int AS f_muted,
@@ -6466,12 +6473,15 @@ export async function chatFacets(): Promise<ChatFacets> {
       COUNT(*) FILTER (WHERE COALESCE(auto_forward_photo, FALSE))::int AS f_fwd_photo,
       COUNT(*) FILTER (WHERE COALESCE(auto_extract_notes, FALSE))::int AS f_extract
     FROM joined`;
-  const r = rows[0] as Record<string, number | string>;
+  const r = (rows[0] as Record<string, number | string>) ?? {};
 
   const relRows = await sql()`
+    WITH chats AS (
+      SELECT DISTINCT m.chat_id FROM messages_log m
+    )
     SELECT COALESCE(r.relationship, '') AS rel, COUNT(*)::int AS cnt
-    FROM (SELECT DISTINCT chat_id FROM messages_log) m
-    LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
+    FROM chats c
+    LEFT JOIN chat_rules r ON r.chat_id = c.chat_id
     GROUP BY rel`;
   const byRelationship: Record<string, number> = {};
   for (const x of relRows as Array<{ rel: string; cnt: number }>) {
@@ -6479,16 +6489,21 @@ export async function chatFacets(): Promise<ChatFacets> {
   }
 
   const roleRows = await sql()`
-    SELECT COALESCE(role, '') AS role, COUNT(*)::int AS cnt FROM (
-      SELECT DISTINCT m.chat_id,
+    WITH chats AS (
+      SELECT DISTINCT m.chat_id FROM messages_log m
+    ),
+    role_of AS (
+      SELECT c.chat_id,
              COALESCE(
-               (SELECT role FROM chat_function_roles f
-                  WHERE f.chat_id = m.chat_id LIMIT 1),
+               (SELECT f.role FROM chat_function_roles f
+                  WHERE f.chat_id = c.chat_id LIMIT 1),
                r.function_role
              ) AS role
-      FROM (SELECT DISTINCT chat_id FROM messages_log) m
-      LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
-    ) x
+      FROM chats c
+      LEFT JOIN chat_rules r ON r.chat_id = c.chat_id
+    )
+    SELECT COALESCE(role, '') AS role, COUNT(*)::int AS cnt
+    FROM role_of
     GROUP BY role`;
   const byFunctionRole: Record<string, number> = {};
   for (const x of roleRows as Array<{ role: string; cnt: number }>) {
@@ -6496,17 +6511,21 @@ export async function chatFacets(): Promise<ChatFacets> {
   }
 
   const profRows = await sql()`
+    WITH chats AS (
+      SELECT DISTINCT m.chat_id FROM messages_log m
+    ),
+    pid_of AS (
+      SELECT c.chat_id, r.profile_id
+      FROM chats c
+      LEFT JOIN chat_rules r ON r.chat_id = c.chat_id
+    )
     SELECT p.id AS profile_id, p.name, p.emoji, p.is_default,
            CASE
              WHEN p.is_default THEN
-               (SELECT COUNT(*)::int FROM (
-                  SELECT DISTINCT m.chat_id FROM messages_log m
-                ) c
-                LEFT JOIN chat_rules cr ON cr.chat_id = c.chat_id
-                WHERE cr.profile_id = p.id OR cr.profile_id IS NULL)
+               (SELECT COUNT(*)::int FROM pid_of
+                 WHERE profile_id = p.id OR profile_id IS NULL)
              ELSE
-               (SELECT COUNT(*)::int FROM chat_rules cr
-                 WHERE cr.profile_id = p.id)
+               (SELECT COUNT(*)::int FROM pid_of WHERE profile_id = p.id)
            END AS cnt
     FROM chat_profiles p
     ORDER BY p.is_default DESC, p.is_builtin DESC, p.name ASC`;
@@ -6519,37 +6538,37 @@ export async function chatFacets(): Promise<ChatFacets> {
   }));
 
   return {
-    total: Number(r.total),
+    total: Number(r.total ?? 0),
     byMode: {
-      off: Number(r.m_off),
-      secretary: Number(r.m_secretary),
-      auto_reply: Number(r.m_auto_reply),
-      friendly_reply: Number(r.m_friendly_reply),
-      ai_chat: Number(r.m_ai_chat),
-      ai_listen: Number(r.m_ai_listen),
+      off: Number(r.m_off ?? 0),
+      secretary: Number(r.m_secretary ?? 0),
+      auto_reply: Number(r.m_auto_reply ?? 0),
+      friendly_reply: Number(r.m_friendly_reply ?? 0),
+      ai_chat: Number(r.m_ai_chat ?? 0),
+      ai_listen: Number(r.m_ai_listen ?? 0),
     },
     byChatType: {
-      private: Number(r.t_private),
-      group: Number(r.t_group),
-      supergroup: Number(r.t_supergroup),
-      channel: Number(r.t_channel),
+      private: Number(r.t_private ?? 0),
+      bot: Number(r.t_bot ?? 0),
+      group: Number(r.t_group ?? 0),
+      channel: Number(r.t_channel ?? 0),
     },
     byRelationship,
     byFunctionRole,
     byProfile,
     flags: {
-      vip: Number(r.f_vip),
-      muted: Number(r.f_muted),
-      isBot: Number(r.f_bot),
-      hasProfile: Number(r.f_profile),
-      hasPhone: Number(r.f_phone),
-      autoSummarizeOn: Number(r.f_autosum),
-      followUpOn: Number(r.f_followup),
-      followUpTranscribeOn: Number(r.f_transcribe),
-      autoForwardVoiceOn: Number(r.f_fwd_voice),
-      autoForwardVideoOn: Number(r.f_fwd_video),
-      autoForwardPhotoOn: Number(r.f_fwd_photo),
-      autoExtractNotesOn: Number(r.f_extract),
+      vip: Number(r.f_vip ?? 0),
+      muted: Number(r.f_muted ?? 0),
+      isBot: Number(r.f_bot ?? 0),
+      hasProfile: Number(r.f_profile ?? 0),
+      hasPhone: Number(r.f_phone ?? 0),
+      autoSummarizeOn: Number(r.f_autosum ?? 0),
+      followUpOn: Number(r.f_followup ?? 0),
+      followUpTranscribeOn: Number(r.f_transcribe ?? 0),
+      autoForwardVoiceOn: Number(r.f_fwd_voice ?? 0),
+      autoForwardVideoOn: Number(r.f_fwd_video ?? 0),
+      autoForwardPhotoOn: Number(r.f_fwd_photo ?? 0),
+      autoExtractNotesOn: Number(r.f_extract ?? 0),
     },
   };
 }
