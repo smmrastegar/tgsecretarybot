@@ -469,14 +469,8 @@ export default function ChatsPage() {
         subtitle="Tune per-chat behavior. VIP = always alert. Muted = ignore entirely."
       />
 
-      {loading ? (
+      {loading && chats.length === 0 ? (
         <Card>Loading…</Card>
-      ) : chats.length === 0 ? (
-        <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">
-            No chats yet. Once messages arrive they'll appear here.
-          </p>
-        </Card>
       ) : (
         <>
         <Card className="mb-3 !p-3">
