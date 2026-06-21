@@ -160,11 +160,42 @@ export default function GroupAnalyticsPage({
                 </button>
               ))}
               <button
+                onClick={() => setDays(0)}
+                disabled={running}
+                className={`text-xs px-3 py-1.5 rounded-md border ${
+                  days === 0
+                    ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
+                    : "bg-amber-500/5 border-amber-500/30 text-amber-200 hover:bg-amber-500/15"
+                } disabled:opacity-50`}
+                title="پردازش تمام تاریخچه‌ی گروه از ابتدا. سقف ۵۰۰۰ پیام."
+              >
+                🗂 از ابتدا
+              </button>
+              <button
                 onClick={() => load(days, true)}
                 disabled={running}
                 className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
               >
                 {running ? "در حال پردازش…" : "↻ پردازش مجدد"}
+              </button>
+              <button
+                onClick={async () => {
+                  if (
+                    !confirm(
+                      "همه گزارش‌های کش‌شده این گروه (همه بازه‌ها) پاک بشن؟ گزارش بعدی از اول ساخته می‌شه.",
+                    )
+                  )
+                    return;
+                  await fetch(`/api/groups/${chatId}/analytics`, {
+                    method: "DELETE",
+                  });
+                  load(days, true);
+                }}
+                disabled={running}
+                className="text-xs px-3 py-1.5 rounded-md border border-rose-500/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20 disabled:opacity-50"
+                title="پاک کردن همه گزارش‌های کش‌شده تا گزارش بعدی از صفر ساخته بشه"
+              >
+                🗑 پاکسازی گزارش‌ها
               </button>
               <Link
                 href="/groups"

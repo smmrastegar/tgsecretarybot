@@ -698,6 +698,7 @@ Reply with STRICT JSON only, no prose, no code fences. All free-text fields MUST
       "announced_at": "<ISO 8601 of the announcing message>",
       "due_at": "<ISO 8601 یا null — اگر مهلتی توی پیام‌ها مطرح شده>",
       "status": "announced" | "in_progress" | "done" | "stalled",
+      "priority": "high" | "normal" | "low",
       "is_overdue": <true|false>,
       "stale_days": <number یا null>,
       "completed_at": "<ISO 8601 یا null>",
@@ -752,6 +753,9 @@ Reply with STRICT JSON only, no prose, no code fences. All free-text fields MUST
 Rules:
 - IMPORTANT: all ISO timestamps must come EXACTLY from the message list provided in the payload
   (the "at" field). Do not invent dates.
+- priority: read the conversation tone — "urgent" / "asap" / "blocker" / "هرچه سریعتر" / "ضروری"
+  / explicit deadline within 24h → "high"; explicit "low priority" / "هر وقت تونستی" / "بعداً" /
+  background → "low"; everything else → "normal". Independent of is_overdue.
 - duration_hours = (completed_at - announced_at) in hours, rounded to 1 decimal. null if status != "done".
 - stale_days = (now - last_relevant_message_at) in days. Set high (>3) for stalled tasks.
 - is_overdue = true when status != "done" AND due_at is in the past, OR when stale_days >= 5 with no
@@ -821,6 +825,10 @@ export type GroupTaskRecord = {
   announcedAt: string;
   dueAt: string | null;
   status: "announced" | "in_progress" | "done" | "stalled";
+  // AI-judged urgency for the operator. Independent of "isOverdue":
+  // a task with a far-out due date can still be high-priority if
+  // the conversation framed it that way ("urgent", "asap", "blocker").
+  priority: "high" | "normal" | "low";
   isOverdue: boolean;
   staleDays: number | null;
   completedAt: string | null;
@@ -1018,6 +1026,10 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
         announcedAt: asStr(r.announced_at).trim(),
         dueAt: r.due_at ? asStr(r.due_at).trim() || null : null,
         status: status as GroupTaskRecord["status"],
+        priority:
+          r.priority === "high" || r.priority === "low"
+            ? (r.priority as "high" | "low")
+            : "normal",
         isOverdue: r.is_overdue === true,
         staleDays: asNumOrNull(r.stale_days),
         completedAt: r.completed_at

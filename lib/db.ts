@@ -4137,6 +4137,14 @@ function rowToGroupAnalyticsCache(
   };
 }
 
+export async function deleteGroupAnalytics(chatId: number): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    DELETE FROM group_analytics WHERE chat_id = ${chatId} RETURNING id`;
+  return (rows as Array<unknown>).length;
+}
+
 export async function getCachedGroupAnalytics(
   chatId: number,
   windowDays: number,

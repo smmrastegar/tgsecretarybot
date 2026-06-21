@@ -22,6 +22,7 @@ export type Task = {
   announcedAt: string;
   dueAt: string | null;
   status: TaskStatus;
+  priority?: "high" | "normal" | "low";
   isOverdue: boolean;
   staleDays: number | null;
   completedAt: string | null;
@@ -466,6 +467,10 @@ function TaskRow({ task, emphasize }: { task: Task; emphasize?: boolean }) {
           )}
         </div>
         <div className="flex items-center gap-1 flex-wrap">
+          {task.priority === "high" && (
+            <Badge tone="danger">🔥 اولویت بالا</Badge>
+          )}
+          {task.priority === "low" && <Badge tone="neutral">🟢 کم‌اولویت</Badge>}
           {task.isOverdue && <Badge tone="danger">⏰ معوق</Badge>}
           <Badge tone={STATUS_TONES[task.status]}>
             {STATUS_LABELS[task.status]}

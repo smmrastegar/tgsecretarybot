@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import {
   addChatNote,
+  deleteGroupAnalytics,
   getCachedGroupAnalytics,
   getChatRule,
   getGroupAnalyticsShareToken,
@@ -36,6 +37,27 @@ export async function GET(
   return handle(request, ctx, { allowCompute: true, preferCache: true });
 }
 
+// Operator-triggered cleanup: drop every cached window for this chat
+// so the next compute starts fresh (no stale "from beginning" mixed
+// with newer bounded windows showing conflicting task states).
+export async function DELETE(
+  _request: Request,
+  ctx: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  try {
+    await requireSession();
+  } catch {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  const { id } = await ctx.params;
+  const chatId = Number(id);
+  if (!Number.isFinite(chatId)) {
+    return NextResponse.json({ error: "invalid chat id" }, { status: 400 });
+  }
+  const deleted = await deleteGroupAnalytics(chatId);
+  return NextResponse.json({ ok: true, deleted });
+}
+
 async function handle(
   request: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -52,10 +74,14 @@ async function handle(
     return NextResponse.json({ error: "invalid chat id" }, { status: 400 });
   }
   const url = new URL(request.url);
-  const days = Math.min(
-    Math.max(Number(url.searchParams.get("days") ?? "7"), 1),
-    90,
-  );
+  // days=0 means "all-time": no time floor on the message scan, cached
+  // separately under window_days=0 so it doesn't overwrite the bounded
+  // windows. The operator hits "از ابتدا" to opt into it.
+  const daysRaw = url.searchParams.get("days") ?? "7";
+  const allTime = daysRaw === "0" || daysRaw === "all";
+  const days = allTime
+    ? 0
+    : Math.min(Math.max(Number(daysRaw), 1), 90);
   const force = url.searchParams.get("force") === "1";
 
   // Cache hit: serve unless ?force=1.
@@ -88,11 +114,15 @@ async function handle(
     }
   }
 
-  const since = new Date(Date.now() - days * 86400_000);
+  // All-time = epoch start + bump the message cap. Bounded windows
+  // keep the existing 1500-message cap which is fine for ≤30 days.
+  const since = allTime
+    ? new Date(0)
+    : new Date(Date.now() - days * 86400_000);
   const { chatTitle, messages } = await listChatMessagesForAnalysis({
     chatId,
     since,
-    limit: 1500,
+    limit: allTime ? 5000 : 1500,
   });
   const token = await getGroupAnalyticsShareToken(chatId).catch(() => null);
   if (messages.length === 0) {
