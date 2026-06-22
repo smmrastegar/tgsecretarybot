@@ -2758,3 +2758,74 @@ export async function analyzeFollowUpNeed(input: {
     urgencyRaw === "high" || urgencyRaw === "low" ? urgencyRaw : "normal";
   return { needsReply, reason: reason || "(بدون دلیل)", urgency };
 }
+
+// --- Rule gate paraphrases ---
+//
+// Operator wrote a one-line description of the request that should
+// open the gate ("کد بده"). Generate ~10 natural paraphrases so the
+// rule matches when other people ask the same thing differently
+// ("میشه کد رو بخونی", "کد چیه", "the verification code please",
+// "OTP رو بفرست", …).
+
+const REQUEST_PARAPHRASE_PROMPT = `You're helping the operator widen a Telegram-rule gate. They wrote a short description of the kind of incoming message that should open the gate. Generate 10 natural-language paraphrases of that REQUEST — short, varied phrasings real people would actually type when asking for the same thing.
+
+Rules:
+  - Output the PARAPHRASES themselves (full messages a real human would send), NOT abstract descriptions.
+  - Mix Persian + a couple of English / mixed-language variants when the topic is OTP / code / verification — Iranian users often switch.
+  - Include both polite long forms ("لطفاً اگه ممکنه کد رو برام بفرست") and curt short forms ("کد").
+  - Vary surface form: question / imperative / plea / shorthand. Avoid duplicates that differ only in punctuation.
+  - 6-12 paraphrases.
+  - Each on its own line. NO bullets, numbering, or extra prose.
+  - Do NOT wrap in quotes.
+
+Reply with STRICT JSON only:
+{"paraphrases": ["...", "...", ...]}`;
+
+export async function generateRequestTriggerVariations(input: {
+  trigger: string;
+}): Promise<string[]> {
+  if (!input.trigger.trim()) return [];
+  let raw: string;
+  try {
+    raw = await callOpenRouter(
+      [
+        { role: "system", content: REQUEST_PARAPHRASE_PROMPT },
+        {
+          role: "user",
+          content: `request description:\n${input.trigger.slice(0, 600)}`,
+        },
+      ],
+      {
+        maxTokens: 400,
+        jsonObject: true,
+        temperature: 0.7,
+        purpose: "rule_paraphrase",
+      },
+    );
+  } catch (err) {
+    console.warn("[rule-paraphrase] generation failed:", err);
+    return [];
+  }
+  const json = extractJson(raw);
+  if (!json) return [];
+  let parsed: { paraphrases?: unknown } = {};
+  try {
+    parsed = JSON.parse(json) as { paraphrases?: unknown };
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed.paraphrases)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of parsed.paraphrases) {
+    if (typeof p !== "string") continue;
+    const t = p.trim().replace(/^["«»']+|["«»']+$/g, "").trim();
+    if (!t) continue;
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t.slice(0, 400));
+    if (out.length >= 12) break;
+  }
+  return out;
+}

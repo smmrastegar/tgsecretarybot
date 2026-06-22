@@ -79,6 +79,8 @@ export default function RuleDetailPage() {
   const [format, setFormat] = useState("");
   const [requestTrigger, setRequestTrigger] = useState("");
   const [requestWindow, setRequestWindow] = useState<number | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [variationStatus, setVariationStatus] = useState<string | null>(null);
   const [showRulePrefix, setShowRulePrefix] = useState(true);
   const [formatAsOtp, setFormatAsOtp] = useState(false);
 
@@ -318,6 +320,37 @@ export default function RuleDetailPage() {
     [id, load],
   );
 
+  const generateVariations = useCallback(async () => {
+    if (!requestTrigger.trim()) return;
+    setGenerating(true);
+    setVariationStatus(null);
+    try {
+      const r = await fetch(`/api/rules/${id}/generate-variations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trigger: requestTrigger, insert: true }),
+      });
+      if (r.ok) {
+        const j = (await r.json()) as {
+          variations: string[];
+          inserted: number[];
+        };
+        setVariationStatus(
+          `✅ ${j.inserted.length} نمونه از AI ساخته و اضافه شد`,
+        );
+        load();
+      } else {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        setVariationStatus(`❌ ${j.error ?? `HTTP ${r.status}`}`);
+      }
+    } catch (e) {
+      setVariationStatus(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setGenerating(false);
+      setTimeout(() => setVariationStatus(null), 6000);
+    }
+  }, [id, requestTrigger, load]);
+
   const addExample = useCallback(async () => {
     if (!newExampleText.trim()) return;
     await fetch(`/api/rules/${id}/examples`, {
@@ -463,6 +496,21 @@ export default function RuleDetailPage() {
               rows={2}
               className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 mb-2"
             />
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+              <button
+                onClick={generateVariations}
+                disabled={generating || !requestTrigger.trim()}
+                className="text-[11px] px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/40 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+                title="با AI پاراف‌رازهای متن بالا رو بساز و به عنوان نمونه اضافه کن"
+              >
+                {generating ? "..." : "🤖 ساخت پاراف‌راز با AI"}
+              </button>
+              {variationStatus && (
+                <span className="text-[10px] text-[var(--color-text-dim)]">
+                  {variationStatus}
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2 text-[11px]">
               <span className="text-[var(--color-text-dim)]">پنجره:</span>
               <select
