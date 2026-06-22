@@ -3304,6 +3304,23 @@ async function maybeApplyMessageRules(args: {
         const { extractOtpCodeAi } = await import("./rules");
         otpCode = await extractOtpCodeAi(body).catch(() => null);
       }
+      // OTP mode + no extractable code = the matched message wasn't
+      // actually an OTP carrier (it was probably someone asking for
+      // the code). Skip the forward rather than ship "🔑 کد بده" —
+      // that just trains the recipient to ignore the channel.
+      if (rule.formatAsOtp && !otpCode) {
+        console.log(
+          `[rule] skip forward — formatAsOtp=true but no code extracted ` +
+            `from message; rule=${ruleId} chat=${args.chatId}`,
+        );
+        await recordRuleMatch({
+          ruleId,
+          messageLogId: args.logId,
+          formattedText: null,
+          forwardedTo: [],
+        }).catch(() => {});
+        continue;
+      }
       const built = buildRuleForwardText({
         ruleName: rule.name,
         senderName: args.senderName,
@@ -3451,6 +3468,16 @@ async function maybeReleaseGatedRules(args: {
         const otpCode = rule.formatAsOtp
           ? await extractOtpCodeAi(body).catch(() => null)
           : null;
+        // OTP mode without an extractable code: the held message
+        // was a false positive (asker, not OTP carrier). Drop it
+        // silently instead of releasing "🔑 <raw text>".
+        if (rule.formatAsOtp && !otpCode) {
+          console.log(
+            `[rule] gate-release skip — formatAsOtp=true but no code ` +
+              `extractable; rule=${rule.id} match=${p.matchId}`,
+          );
+          continue;
+        }
         const built = buildRuleForwardText({
           ruleName: rule.name,
           senderName: p.senderName,

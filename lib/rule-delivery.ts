@@ -110,6 +110,15 @@ export function buildRuleForwardText(args: {
   otpCode?: string | null;
 }): { text: string; parseMode?: "HTML" } {
   if (args.formatAsOtp) {
+    // No extractable OTP = the matched message wasn't actually an
+    // OTP carrier. Returning empty signals the caller to SKIP the
+    // forward; the old behavior of "wrap raw body in 🔑 <code>"
+    // produced \"🔑 کد بده\" replies that just confused the
+    // recipient. Callers already check rule.formatAsOtp && !otpCode
+    // and `continue` — this is a final safety net.
+    if (!args.otpCode) {
+      return { text: "" };
+    }
     const lines: string[] = [];
     if (args.showRulePrefix) {
       lines.push(
@@ -117,15 +126,9 @@ export function buildRuleForwardText(args: {
       );
       lines.push("");
     }
-    if (args.otpCode) {
-      // Telegram renders <code>…</code> as monospace; tapping copies
-      // the content. This is the canonical "OTP" UX.
-      lines.push(`🔑 <code>${escapeHtml(args.otpCode)}</code>`);
-    } else {
-      // AI didn't return a code — show the raw body in a <code> block
-      // so it still copies on tap.
-      lines.push(`🔑 <code>${escapeHtml(args.body.slice(0, 200))}</code>`);
-    }
+    // Telegram renders <code>…</code> as monospace; tapping copies
+    // the content. This is the canonical "OTP" UX.
+    lines.push(`🔑 <code>${escapeHtml(args.otpCode)}</code>`);
     return { text: lines.join("\n"), parseMode: "HTML" };
   }
   // Default: plain text. Prefix optional.

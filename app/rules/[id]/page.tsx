@@ -328,15 +328,23 @@ export default function RuleDetailPage() {
       const r = await fetch(`/api/rules/${id}/generate-variations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trigger: requestTrigger, insert: true }),
+        body: JSON.stringify({ trigger: requestTrigger }),
       });
       if (r.ok) {
         const j = (await r.json()) as {
           variations: string[];
-          inserted: number[];
+          cleanedExamples: number[];
+          newTrigger: string;
         };
+        // The server appended the paraphrases to request_trigger
+        // (not as rule examples — see the route comment for why).
+        setRequestTrigger(j.newTrigger);
+        const cleanup =
+          j.cleanedExamples.length > 0
+            ? ` · ${j.cleanedExamples.length} نمونه اشتباه قبلی پاک شد`
+            : "";
         setVariationStatus(
-          `✅ ${j.inserted.length} نمونه از AI ساخته و اضافه شد`,
+          `✅ ${j.variations.length} پاراف‌راز به Gate اضافه شد${cleanup}`,
         );
         load();
       } else {
@@ -347,7 +355,7 @@ export default function RuleDetailPage() {
       setVariationStatus(`❌ ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setGenerating(false);
-      setTimeout(() => setVariationStatus(null), 6000);
+      setTimeout(() => setVariationStatus(null), 8000);
     }
   }, [id, requestTrigger, load]);
 

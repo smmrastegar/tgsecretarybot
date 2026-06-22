@@ -1,17 +1,32 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { generateRequestTriggerVariations } from "@/lib/classifier";
-import { addRuleExample, audit, getMessageRule } from "@/lib/db";
+import {
+  audit,
+  deleteRuleExample,
+  getMessageRule,
+  listRuleExamples,
+  updateMessageRule,
+} from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // POST /api/rules/[id]/generate-variations
-//   body: { trigger?: string; insert?: boolean }
-// Generates AI paraphrases of the gate trigger. If insert=true (default
-// false), each paraphrase is also written into rule_examples so the
-// operator doesn't have to add them by hand.
+//   body: { trigger?: string }
+// Generates AI paraphrases of the gate trigger and APPENDS them to
+// the rule's request_trigger description (newline-separated so the
+// gate LLM sees them as additional examples of what to recognise).
+//
+// IMPORTANT: paraphrases must NOT be inserted as rule_examples —
+// rule_examples matches OTP-carrier messages (the messages we want
+// to FORWARD). Adding "کد بده" as a rule_example caused the bot to
+// match the OPERATOR'S own asking message and forward it back as a
+// fake OTP. The current run also cleans up any examples that earlier
+// labeled themselves "🤖 ساخته‌ی AI" so the rule recovers.
+const AI_EXAMPLE_LABEL = "🤖 ساخته‌ی AI";
+
 export async function POST(
   request: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -29,13 +44,10 @@ export async function POST(
   }
   const body = (await request.json().catch(() => ({}))) as {
     trigger?: string;
-    insert?: boolean;
   };
-  // Fall back to the rule's stored request_trigger if the caller
-  // didn't pass one explicitly.
   let trigger = (body.trigger ?? "").trim();
+  const rule = await getMessageRule(ruleId).catch(() => null);
   if (!trigger) {
-    const rule = await getMessageRule(ruleId).catch(() => null);
     trigger = (rule?.requestTrigger ?? "").trim();
   }
   if (!trigger) {
@@ -44,6 +56,21 @@ export async function POST(
       { status: 400 },
     );
   }
+  // Clean up old mistakenly-added rule examples (from the previous
+  // version of this endpoint).
+  const existing = await listRuleExamples(ruleId).catch(() => []);
+  const cleanedExamples: number[] = [];
+  for (const ex of existing) {
+    if (ex.label === AI_EXAMPLE_LABEL) {
+      try {
+        await deleteRuleExample(ex.id);
+        cleanedExamples.push(ex.id);
+      } catch (err) {
+        console.warn("[rule-paraphrase] cleanup delete failed:", err);
+      }
+    }
+  }
+
   const variations = await generateRequestTriggerVariations({ trigger });
   if (variations.length === 0) {
     return NextResponse.json(
@@ -51,32 +78,32 @@ export async function POST(
       { status: 500 },
     );
   }
-  const insert = body.insert !== false; // default ON
-  const inserted: number[] = [];
-  if (insert) {
-    for (const v of variations) {
-      try {
-        const ex = await addRuleExample({
-          ruleId,
-          text: v,
-          label: "🤖 ساخته‌ی AI",
-        });
-        inserted.push(ex.id);
-      } catch (err) {
-        console.warn("[rule-paraphrase] insert failed:", err);
-      }
-    }
-    await audit({
-      actorId: session.userId,
-      actorName: session.username ?? null,
-      action: "rule.paraphrase",
-      target: String(ruleId),
-      details: { trigger, count: inserted.length },
-    });
-  }
+
+  // Build the new trigger text: original description (without
+  // previous AI block) + newline-separated paraphrases under a
+  // marker so the operator can see / re-edit them.
+  const MARKER = "\n\n--- مثال‌های AI ---\n";
+  const trimmedTrigger = trigger.split(MARKER)[0]!.trim();
+  const newTrigger =
+    trimmedTrigger + MARKER + variations.map((v) => `- ${v}`).join("\n");
+
+  await updateMessageRule(ruleId, { requestTrigger: newTrigger });
+
+  await audit({
+    actorId: session.userId,
+    actorName: session.username ?? null,
+    action: "rule.paraphrase",
+    target: String(ruleId),
+    details: {
+      count: variations.length,
+      cleanedExamples: cleanedExamples.length,
+    },
+  });
+
   return NextResponse.json({
     ok: true,
     variations,
-    inserted,
+    cleanedExamples,
+    newTrigger,
   });
 }
