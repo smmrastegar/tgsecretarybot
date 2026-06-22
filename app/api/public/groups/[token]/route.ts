@@ -26,10 +26,13 @@ export async function GET(
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
   const url = new URL(request.url);
-  const days = Math.min(
-    Math.max(Number(url.searchParams.get("days") ?? "7"), 1),
-    90,
-  );
+  // days=0 / days=all → operator's "از ابتدا" cache (window_days=0).
+  // Anything else gets clamped to 1..90.
+  const daysRaw = url.searchParams.get("days") ?? "0";
+  const days =
+    daysRaw === "0" || daysRaw === "all"
+      ? 0
+      : Math.min(Math.max(Number(daysRaw), 1), 90);
   const cached = await getCachedGroupAnalytics(chat.chatId, days).catch(
     () => null,
   );

@@ -84,12 +84,15 @@ async function handle(
     : Math.min(Math.max(Number(daysRaw), 1), 90);
   const force = url.searchParams.get("force") === "1";
 
-  // Cache hit: serve unless ?force=1.
+  // Cache hit: serve unless ?force=1 OR the cached row has zero
+  // messages (poisoned by an earlier failed compute / empty chat).
+  // Re-running gives the operator a chance to recover without
+  // needing to hit "↻ پردازش مجدد" manually.
   if (opts.preferCache && !force) {
     const cached = await getCachedGroupAnalytics(chatId, days).catch(
       () => null,
     );
-    if (cached) {
+    if (cached && cached.messageCount > 0) {
       const token = await getGroupAnalyticsShareToken(chatId).catch(() => null);
       return NextResponse.json({
         ok: true,

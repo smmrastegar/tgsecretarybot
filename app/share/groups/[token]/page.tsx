@@ -31,7 +31,15 @@ export default function PublicGroupAnalyticsPage({
 }) {
   const { token } = use(params);
   const sp = use(searchParams);
-  const initialDays = Number(sp.days) || 7;
+  // sp.days is a string; "0" / "all" both mean "از ابتدا".
+  // Default when the URL has no ?days= is also 0 to match the
+  // operator's dashboard preference.
+  const initialDays =
+    sp.days === "0" || sp.days === "all"
+      ? 0
+      : sp.days
+        ? Number(sp.days) || 0
+        : 0;
   const [days, setDays] = useState(initialDays);
   const [data, setData] = useState<PublicResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,6 +93,16 @@ export default function PublicGroupAnalyticsPage({
                   {w.label}
                 </button>
               ))}
+              <button
+                onClick={() => setDays(0)}
+                className={`text-xs px-3 py-1.5 rounded-md border ${
+                  days === 0
+                    ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
+                    : "bg-amber-500/5 border-amber-500/30 text-amber-200 hover:bg-amber-500/15"
+                }`}
+              >
+                🗂 از ابتدا
+              </button>
             </div>
           }
         />

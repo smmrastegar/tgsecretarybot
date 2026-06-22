@@ -45,7 +45,9 @@ export default function GroupAnalyticsPage({
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [days, setDays] = useState(7);
+  // Default to "از ابتدا" — operator wants the full history first,
+  // then can drill into bounded windows.
+  const [days, setDays] = useState(0);
   const [intervalHours, setIntervalHours] = useState<number | null>(null);
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
