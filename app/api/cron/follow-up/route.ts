@@ -226,30 +226,14 @@ async function processTenant(tenantId: number) {
         errors.push({ chatId: c.chatId, error: msg.slice(0, 300) });
 
         // Detect inbox-level failures (bot can't post to notes_inbox
-        // at all) and short-circuit the rest of the loop — otherwise
-        // we'd log the SAME error N more times for every remaining
-        // candidate in this tick.
+        // at all). Catching this FIRST avoids spamming a per-chat
+        // error log when the real issue is a misconfigured inbox.
         const inboxBroken =
           /bot can't initiate conversation/i.test(msg) ||
           /bot was blocked by the user/i.test(msg) ||
           /chat not found/i.test(msg) ||
           /not enough rights/i.test(msg) ||
           /forbidden/i.test(msg);
-
-        await captureError({
-          source: "cron:follow-up",
-          error: err,
-          scope: `chat=${c.chatId}`,
-          details: {
-            inboxChatId: inbox.chatId,
-            inboxBroken,
-            kind,
-            aiReason,
-            hint: inboxBroken
-              ? "notes_inbox chat is not reachable. اگه DM شخصی هست، باید bot رو توی یه channel/group اضافه کنی و notes_inbox رو روی همون ست کنی — bot نمی‌تونه به DM کاربری که قبلاً باهاش حرف نزده پیام بفرسته."
-              : undefined,
-          },
-        });
 
         if (inboxBroken) {
           // One-shot self-heal: drop the broken inbox's notes_inbox
@@ -275,6 +259,20 @@ async function processTenant(tenantId: number) {
           });
           break;
         }
+
+        // Real per-chat failure (chat-specific permission, rate
+        // limit, ...) — log it so the operator can investigate the
+        // individual chat without the noise of inbox-level errors.
+        await captureError({
+          source: "cron:follow-up",
+          error: err,
+          scope: `chat=${c.chatId}`,
+          details: {
+            inboxChatId: inbox.chatId,
+            kind,
+            aiReason,
+          },
+        });
       }
     }
     return {
