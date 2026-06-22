@@ -50,6 +50,7 @@ import {
   listFollowUpCandidates,
   recentConversation,
   recordChatFollowUpPing,
+  removeChatFunctionRole,
   saveTranscript,
   setFollowUpAiVerdict,
   sql,
@@ -251,16 +252,25 @@ async function processTenant(tenantId: number) {
         });
 
         if (inboxBroken) {
+          // One-shot self-heal: drop the broken inbox's notes_inbox
+          // role so subsequent ticks don't re-spam the system log.
+          // Operator gets a SINGLE persistent error pointing them
+          // at how to reconfigure (channel/group + admin bot).
+          const removed = await removeChatFunctionRole(
+            inbox.chatId,
+            "notes_inbox",
+          ).catch(() => 0);
           await captureError({
             source: "cron:follow-up",
             level: "error",
             error: new Error(
-              `notes_inbox chat ${inbox.chatId} not reachable — skipping remaining ${candidates.length - pinged - errors.length} candidates this tick. ${msg}`,
+              `notes_inbox chat ${inbox.chatId} not reachable — auto-removed from notes_inbox role (${removed} rows). Remaining ${candidates.length - pinged - errors.length} candidates skipped this tick. Original error: ${msg}`,
             ),
             scope: `tenant=${tenantId}`,
             details: {
               inboxChatId: inbox.chatId,
-              hint: "channel/group بسازید و bot رو توش admin کنید، notes_inbox رو روی همون ست کنید.",
+              autoRemoved: removed > 0,
+              hint: "channel/group بساز، bot رو توش admin کن، بعد توی /functions اون چت رو به‌عنوان notes_inbox ست کن.",
             },
           });
           break;

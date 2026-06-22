@@ -6071,6 +6071,27 @@ export async function getChatFunctionRoles(
     );
 }
 
+// Drop a single role assignment from a chat. Used by self-healing
+// paths (e.g. when the follow-up cron detects the notes_inbox chat
+// is unreachable and wants to stop retrying forever).
+export async function removeChatFunctionRole(
+  chatId: number,
+  role: FunctionRole,
+): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    DELETE FROM chat_function_roles
+     WHERE chat_id = ${chatId} AND role = ${role}
+     RETURNING chat_id`;
+  // Also clear the legacy single-role mirror if this was the value
+  // stored there.
+  await sql()`
+    UPDATE chat_rules SET function_role = NULL, updated_at = NOW()
+     WHERE chat_id = ${chatId} AND function_role = ${role}`;
+  return (rows as Array<unknown>).length;
+}
+
 export async function setChatFunctionRoles(
   chatId: number,
   roles: FunctionRole[],
