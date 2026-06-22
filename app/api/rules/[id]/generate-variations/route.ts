@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { generateRequestTriggerVariations } from "@/lib/classifier";
 import {
+  addRuleExample,
   audit,
   deleteRuleExample,
   getMessageRule,
   listRuleExamples,
-  updateMessageRule,
 } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -14,17 +14,14 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // POST /api/rules/[id]/generate-variations
-//   body: { trigger?: string }
-// Generates AI paraphrases of the gate trigger and APPENDS them to
-// the rule's request_trigger description (newline-separated so the
-// gate LLM sees them as additional examples of what to recognise).
+//   body: { trigger?: string; mode?: "append" | "replace" }
+// Generates AI paraphrases of the gate trigger description and inserts
+// each as a rule_example with purpose='gate_match' so they show up in
+// the Gate-side example list (not the OTP-carrier list).
 //
-// IMPORTANT: paraphrases must NOT be inserted as rule_examples —
-// rule_examples matches OTP-carrier messages (the messages we want
-// to FORWARD). Adding "کد بده" as a rule_example caused the bot to
-// match the OPERATOR'S own asking message and forward it back as a
-// fake OTP. The current run also cleans up any examples that earlier
-// labeled themselves "🤖 ساخته‌ی AI" so the rule recovers.
+// mode=replace (default): delete existing AI-labeled gate examples
+// first, then insert the new batch — keeps the list from snowballing
+// each click. mode=append: keep existing, just add the new ones.
 const AI_EXAMPLE_LABEL = "🤖 ساخته‌ی AI";
 
 export async function POST(
@@ -44,10 +41,13 @@ export async function POST(
   }
   const body = (await request.json().catch(() => ({}))) as {
     trigger?: string;
+    mode?: "append" | "replace";
   };
+  const mode = body.mode === "append" ? "append" : "replace";
+
   let trigger = (body.trigger ?? "").trim();
-  const rule = await getMessageRule(ruleId).catch(() => null);
   if (!trigger) {
+    const rule = await getMessageRule(ruleId).catch(() => null);
     trigger = (rule?.requestTrigger ?? "").trim();
   }
   if (!trigger) {
@@ -56,17 +56,40 @@ export async function POST(
       { status: 400 },
     );
   }
-  // Clean up old mistakenly-added rule examples (from the previous
-  // version of this endpoint).
-  const existing = await listRuleExamples(ruleId).catch(() => []);
-  const cleanedExamples: number[] = [];
-  for (const ex of existing) {
+
+  // Cleanup: delete misplaced rule_match-labeled AI rows from the old
+  // implementation. Always runs, even on mode=append, because those
+  // rows cause false OTP matches that break the rule entirely.
+  const oldMatchRows = await listRuleExamples(ruleId, "rule_match").catch(
+    () => [],
+  );
+  const cleanedMisplaced: number[] = [];
+  for (const ex of oldMatchRows) {
     if (ex.label === AI_EXAMPLE_LABEL) {
       try {
         await deleteRuleExample(ex.id);
-        cleanedExamples.push(ex.id);
+        cleanedMisplaced.push(ex.id);
       } catch (err) {
-        console.warn("[rule-paraphrase] cleanup delete failed:", err);
+        console.warn("[rule-paraphrase] misplaced cleanup failed:", err);
+      }
+    }
+  }
+
+  // On replace mode, also drop existing AI-labeled gate_match rows so
+  // we don't accumulate duplicates across clicks.
+  const replacedIds: number[] = [];
+  if (mode === "replace") {
+    const existing = await listRuleExamples(ruleId, "gate_match").catch(
+      () => [],
+    );
+    for (const ex of existing) {
+      if (ex.label === AI_EXAMPLE_LABEL) {
+        try {
+          await deleteRuleExample(ex.id);
+          replacedIds.push(ex.id);
+        } catch (err) {
+          console.warn("[rule-paraphrase] replace cleanup failed:", err);
+        }
       }
     }
   }
@@ -79,15 +102,20 @@ export async function POST(
     );
   }
 
-  // Build the new trigger text: original description (without
-  // previous AI block) + newline-separated paraphrases under a
-  // marker so the operator can see / re-edit them.
-  const MARKER = "\n\n--- مثال‌های AI ---\n";
-  const trimmedTrigger = trigger.split(MARKER)[0]!.trim();
-  const newTrigger =
-    trimmedTrigger + MARKER + variations.map((v) => `- ${v}`).join("\n");
-
-  await updateMessageRule(ruleId, { requestTrigger: newTrigger });
+  const inserted: number[] = [];
+  for (const v of variations) {
+    try {
+      const ex = await addRuleExample({
+        ruleId,
+        text: v,
+        label: AI_EXAMPLE_LABEL,
+        purpose: "gate_match",
+      });
+      inserted.push(ex.id);
+    } catch (err) {
+      console.warn("[rule-paraphrase] gate insert failed:", err);
+    }
+  }
 
   await audit({
     actorId: session.userId,
@@ -95,15 +123,18 @@ export async function POST(
     action: "rule.paraphrase",
     target: String(ruleId),
     details: {
-      count: variations.length,
-      cleanedExamples: cleanedExamples.length,
+      mode,
+      inserted: inserted.length,
+      replaced: replacedIds.length,
+      cleanedMisplaced: cleanedMisplaced.length,
     },
   });
 
   return NextResponse.json({
     ok: true,
     variations,
-    cleanedExamples,
-    newTrigger,
+    inserted,
+    replaced: replacedIds,
+    cleanedMisplaced,
   });
 }

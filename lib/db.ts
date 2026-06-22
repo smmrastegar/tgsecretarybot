@@ -1303,6 +1303,29 @@ export async function ensureSchema(): Promise<void> {
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await q`CREATE INDEX IF NOT EXISTS message_rule_examples_rule_idx ON message_rule_examples (rule_id)`;
+    // purpose distinguishes Gate paraphrases (gate_match — phrasings
+    // that should OPEN the request gate) from OTP-carrier examples
+    // (rule_match — messages we want to FORWARD when they arrive).
+    // Default 'rule_match' to keep legacy rows behaving as before.
+    await q`ALTER TABLE message_rule_examples
+      ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'rule_match'`;
+    // One-shot backfill: previous AI paraphrase tool stuffed gate
+    // examples into rule_match. Move anything labeled "🤖 ساخته‌ی AI"
+    // to its proper purpose so the new UI shows them in the right
+    // place AND OTP-extraction stops false-matching the operator's
+    // own asking message.
+    {
+      const flag = await q`SELECT value FROM settings WHERE key = 'migration.gate_examples_purpose.v1'`;
+      if ((flag as unknown[]).length === 0) {
+        await q`UPDATE message_rule_examples
+          SET purpose = 'gate_match'
+          WHERE label = '🤖 ساخته‌ی AI' AND purpose = 'rule_match'`;
+        await q`INSERT INTO settings (key, value) VALUES ('migration.gate_examples_purpose.v1', 'done')
+                ON CONFLICT (key) DO NOTHING`;
+      }
+    }
+    await q`CREATE INDEX IF NOT EXISTS message_rule_examples_purpose_idx
+      ON message_rule_examples (rule_id, purpose)`;
     // Request-gate: optionally hold forwarding until the recipient
     // sends a message matching `request_trigger` within the last
     // `request_window_seconds` seconds. NULL window = "always" (no gate).
@@ -9320,27 +9343,36 @@ export async function listRuleMatches(args: {
   }));
 }
 
+export type RuleExamplePurpose = "rule_match" | "gate_match";
+
 export type RuleExample = {
   id: number;
   ruleId: number;
   text: string;
   label: string | null;
+  purpose: RuleExamplePurpose;
   createdAt: Date;
 };
 
-export async function listRuleExamples(ruleId: number): Promise<RuleExample[]> {
+export async function listRuleExamples(
+  ruleId: number,
+  purpose: RuleExamplePurpose | "all" = "rule_match",
+): Promise<RuleExample[]> {
   if (!hasDb()) return [];
   await ensureSchema();
+  const purposeFilter = purpose === "all" ? null : purpose;
   const rows = await sql()`
-    SELECT id, rule_id, text, label, created_at
+    SELECT id, rule_id, text, label, purpose, created_at
     FROM message_rule_examples
     WHERE rule_id = ${ruleId}
+      AND (${purposeFilter}::text IS NULL OR purpose = ${purposeFilter})
     ORDER BY created_at ASC`;
   return (rows as Array<Record<string, unknown>>).map((r) => ({
     id: Number(r.id),
     ruleId: Number(r.rule_id),
     text: r.text as string,
     label: (r.label as string) ?? null,
+    purpose: ((r.purpose as string) ?? "rule_match") as RuleExamplePurpose,
     createdAt: r.created_at as Date,
   }));
 }
@@ -9349,19 +9381,22 @@ export async function addRuleExample(args: {
   ruleId: number;
   text: string;
   label?: string | null;
+  purpose?: RuleExamplePurpose;
 }): Promise<RuleExample> {
   if (!hasDb()) throw new Error("DATABASE_URL not set");
   await ensureSchema();
+  const purpose = args.purpose ?? "rule_match";
   const rows = await sql()`
-    INSERT INTO message_rule_examples (rule_id, text, label)
-    VALUES (${args.ruleId}, ${args.text}, ${args.label ?? null})
-    RETURNING id, rule_id, text, label, created_at`;
+    INSERT INTO message_rule_examples (rule_id, text, label, purpose)
+    VALUES (${args.ruleId}, ${args.text}, ${args.label ?? null}, ${purpose})
+    RETURNING id, rule_id, text, label, purpose, created_at`;
   const r = rows[0] as Record<string, unknown>;
   return {
     id: Number(r.id),
     ruleId: Number(r.rule_id),
     text: r.text as string,
     label: (r.label as string) ?? null,
+    purpose: ((r.purpose as string) ?? "rule_match") as RuleExamplePurpose,
     createdAt: r.created_at as Date,
   };
 }

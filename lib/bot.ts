@@ -3435,10 +3435,18 @@ async function maybeReleaseGatedRules(args: {
         r.requestWindowSeconds > 0,
     );
     if (gated.length === 0) return;
+    const { listRuleExamples } = await import("./db");
     for (const rule of gated) {
+      // Gate-side example phrasings (the "🤖 ساخت پاراف‌راز با AI"
+      // output) widen the gate's understanding beyond the one-line
+      // description.
+      const gateExamples = await listRuleExamples(rule.id, "gate_match")
+        .then((rows) => rows.map((r) => r.text))
+        .catch(() => []);
       const isTrigger = await checkRequestTriggerMatch(
         args.messageText,
         rule.requestTrigger ?? "",
+        gateExamples,
       );
       if (!isTrigger) continue;
       // Stamp the trigger so any FUTURE match within the window

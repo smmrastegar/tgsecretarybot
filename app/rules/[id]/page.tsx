@@ -38,6 +38,7 @@ type Example = {
   id: number;
   text: string;
   label: string | null;
+  purpose?: "rule_match" | "gate_match";
   createdAt: string;
 };
 type Match = {
@@ -69,6 +70,7 @@ export default function RuleDetailPage() {
   const [rule, setRule] = useState<Rule | null>(null);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [examples, setExamples] = useState<Example[]>([]);
+  const [gateExamples, setGateExamples] = useState<Example[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -106,10 +108,11 @@ export default function RuleDetailPage() {
     if (!Number.isFinite(id)) return;
     setLoading(true);
     try {
-      const [r1, r2, r3] = await Promise.all([
+      const [r1, r2, r3, r4] = await Promise.all([
         fetch(`/api/rules/${id}`),
         fetch(`/api/rules/${id}/matches?limit=${MATCH_PAGE}&offset=0`),
-        fetch(`/api/rules/${id}/examples`),
+        fetch(`/api/rules/${id}/examples?purpose=rule_match`),
+        fetch(`/api/rules/${id}/examples?purpose=gate_match`),
       ]);
       if (r1.ok) {
         const j = (await r1.json()) as { rule: Rule; recipients: Recipient[] };
@@ -131,6 +134,10 @@ export default function RuleDetailPage() {
       if (r3.ok) {
         const j = (await r3.json()) as { examples: Example[] };
         setExamples(j.examples ?? []);
+      }
+      if (r4.ok) {
+        const j = (await r4.json()) as { examples: Example[] };
+        setGateExamples(j.examples ?? []);
       }
     } finally {
       setLoading(false);
@@ -328,23 +335,25 @@ export default function RuleDetailPage() {
       const r = await fetch(`/api/rules/${id}/generate-variations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trigger: requestTrigger }),
+        body: JSON.stringify({ trigger: requestTrigger, mode: "replace" }),
       });
       if (r.ok) {
         const j = (await r.json()) as {
           variations: string[];
-          cleanedExamples: number[];
-          newTrigger: string;
+          inserted: number[];
+          replaced: number[];
+          cleanedMisplaced: number[];
         };
-        // The server appended the paraphrases to request_trigger
-        // (not as rule examples — see the route comment for why).
-        setRequestTrigger(j.newTrigger);
         const cleanup =
-          j.cleanedExamples.length > 0
-            ? ` · ${j.cleanedExamples.length} نمونه اشتباه قبلی پاک شد`
+          j.cleanedMisplaced.length > 0
+            ? ` · ${j.cleanedMisplaced.length} نمونه اشتباه قبلی از rule examples پاک شد`
+            : "";
+        const replaced =
+          j.replaced.length > 0
+            ? ` · ${j.replaced.length} نمونه قبلی Gate جایگزین شد`
             : "";
         setVariationStatus(
-          `✅ ${j.variations.length} پاراف‌راز به Gate اضافه شد${cleanup}`,
+          `✅ ${j.inserted.length} نمونه Gate ساخته شد${replaced}${cleanup}`,
         );
         load();
       } else {
@@ -509,9 +518,9 @@ export default function RuleDetailPage() {
                 onClick={generateVariations}
                 disabled={generating || !requestTrigger.trim()}
                 className="text-[11px] px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/40 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                title="با AI پاراف‌رازهای متن بالا رو بساز و به عنوان نمونه اضافه کن"
+                title="با AI پاراف‌رازهای متن بالا رو به‌عنوان نمونه‌ی Gate ذخیره کن"
               >
-                {generating ? "..." : "🤖 ساخت پاراف‌راز با AI"}
+                {generating ? "..." : "🤖 ساخت نمونه‌های Gate با AI"}
               </button>
               {variationStatus && (
                 <span className="text-[10px] text-[var(--color-text-dim)]">
@@ -519,6 +528,49 @@ export default function RuleDetailPage() {
                 </span>
               )}
             </div>
+            {gateExamples.length > 0 && (
+              <div className="mb-2">
+                <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
+                  📋 نمونه‌های Gate ({gateExamples.length}) — پیام ورودی
+                  باید با توصیف بالا <i>یا</i> یکی از این‌ها بخوره
+                </div>
+                <div className="flex flex-col gap-1">
+                  {gateExamples.map((g) => (
+                    <div
+                      key={g.id}
+                      className="flex items-start gap-2 p-1.5 rounded-md bg-amber-500/5 border border-amber-500/20 text-xs"
+                    >
+                      <div className="flex-1 min-w-0">
+                        {g.label && (
+                          <div className="text-[9px] text-amber-300 mb-0.5">
+                            {g.label}
+                          </div>
+                        )}
+                        <div
+                          dir="auto"
+                          style={{ unicodeBidi: "plaintext" }}
+                          className="break-words"
+                        >
+                          {g.text}
+                        </div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          await fetch(
+                            `/api/rules/${id}/examples?exampleId=${g.id}`,
+                            { method: "DELETE" },
+                          );
+                          load();
+                        }}
+                        className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-2 text-[11px]">
               <span className="text-[var(--color-text-dim)]">پنجره:</span>
               <select

@@ -496,19 +496,30 @@ output: CODE: 738261`;
   return code;
 }
 
-// Returns true iff `text` looks like it's asking for whatever
+// Returns true iff `text` looks like it's asking for whatever the
+// operator described. `gateExamples` are stored phrasings (AI- or
+// human-authored) that act as additional match seeds.
 export async function checkRequestTriggerMatch(
   text: string,
   requestTrigger: string,
+  gateExamples: string[] = [],
 ): Promise<boolean> {
-  if (!text.trim() || !requestTrigger.trim()) return false;
-  const systemPrompt = `You decide whether a single incoming message is a REQUEST that fits the operator's description.
+  if (!text.trim()) return false;
+  if (!requestTrigger.trim() && gateExamples.length === 0) return false;
+  const systemPrompt = `You decide whether a single incoming message is a REQUEST that fits the operator's description and example phrasings.
 
 Reply with EXACTLY one word on one line: YES or NO. No explanation, no punctuation, no markdown.
 
-Be conservative — only answer YES when the message clearly asks for what the description describes.`;
+Be conservative — only answer YES when the message clearly asks for what the description / examples describe.`;
+  const examplesBlock =
+    gateExamples.length > 0
+      ? `\n\nExample phrasings the operator has saved (treat each as a match seed):\n${gateExamples
+          .slice(0, 20)
+          .map((e) => `- ${e.slice(0, 200)}`)
+          .join("\n")}`
+      : "";
   const userPrompt = `Request description from operator:
-${requestTrigger.slice(0, 400)}
+${requestTrigger.slice(0, 400)}${examplesBlock}
 
 Incoming message:
 ${text.slice(0, 1500)}`;
