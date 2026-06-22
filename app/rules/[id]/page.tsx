@@ -180,17 +180,56 @@ export default function RuleDetailPage() {
     return () => obs.disconnect();
   }, [loadMoreMatches]);
 
+  const [forceStatus, setForceStatus] = useState<{
+    matchId: number;
+    msg: string;
+    ok: boolean;
+  } | null>(null);
+
   const forceSend = useCallback(
     async (matchId: number) => {
-      const r = await fetch(
-        `/api/rules/${id}/matches/${matchId}/force-send`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        },
-      );
-      if (r.ok) load();
+      setForceStatus(null);
+      try {
+        const r = await fetch(
+          `/api/rules/${id}/matches/${matchId}/force-send`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          },
+        );
+        const j = (await r.json().catch(() => ({}))) as {
+          ok?: boolean;
+          delivered?: number;
+          failed?: number;
+          error?: string;
+          note?: string;
+        };
+        if (r.ok && j.ok) {
+          setForceStatus({
+            matchId,
+            ok: true,
+            msg:
+              j.note ??
+              `✅ ${j.delivered ?? 0} ارسال شد${j.failed ? ` · ${j.failed} ناموفق` : ""}`,
+          });
+          load();
+        } else {
+          setForceStatus({
+            matchId,
+            ok: false,
+            msg: `❌ ${j.error ?? `HTTP ${r.status}`}`,
+          });
+        }
+      } catch (e) {
+        setForceStatus({
+          matchId,
+          ok: false,
+          msg: `❌ ${e instanceof Error ? e.message : String(e)}`,
+        });
+      } finally {
+        setTimeout(() => setForceStatus(null), 9000);
+      }
     },
     [id, load],
   );
@@ -940,13 +979,24 @@ export default function RuleDetailPage() {
                       </div>
                     )}
                     {!allDelivered && (
-                      <div className="mt-2">
+                      <div className="mt-2 flex flex-col gap-1.5">
                         <button
                           onClick={() => forceSend(m.id)}
-                          className="text-[10px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+                          className="text-[10px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)] self-start"
                         >
                           🚀 ارسال اجباری به نگرفته‌ها
                         </button>
+                        {forceStatus && forceStatus.matchId === m.id && (
+                          <div
+                            className={`text-[10px] leading-relaxed p-2 rounded-md ${
+                              forceStatus.ok
+                                ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-200"
+                                : "bg-rose-500/10 border border-rose-500/30 text-rose-200"
+                            }`}
+                          >
+                            {forceStatus.msg}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

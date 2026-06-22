@@ -98,6 +98,20 @@ export async function POST(
   const otpCode = rule.formatAsOtp
     ? await extractOtpCodeAi(body_text).catch(() => null)
     : null;
+  // OTP mode + no extractable code = the matched message wasn't an
+  // actual OTP carrier (it was probably the recipient asking "کد
+  // بده?"). Refuse with a clear message instead of silently sending
+  // an empty Telegram message.
+  if (rule.formatAsOtp && !otpCode) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "این match کدی نداره (یه درخواست بوده، نه پیام حامل OTP) — ارسال اجباری معنی نمی‌ده. این rule روی حالت OTP هست و فقط پیام‌هایی که عدد کد توشون استخراج می‌شه قابل ارسالن.",
+      },
+      { status: 400 },
+    );
+  }
   const built = buildRuleForwardText({
     ruleName: rule.name,
     senderName: m.sender_name ?? "?",
@@ -107,6 +121,15 @@ export async function POST(
     otpCode,
   });
   const outText = built.text;
+  if (!outText || !outText.trim()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "متن خروجی بعد از format خالی شد — چیزی برای ارسال نیست.",
+      },
+      { status: 400 },
+    );
+  }
 
   const bot = getBot();
   let delivered = 0;
