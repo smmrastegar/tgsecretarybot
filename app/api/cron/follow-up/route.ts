@@ -238,15 +238,18 @@ async function processTenant(tenantId: number) {
         if (inboxBroken) {
           // One-shot self-heal: drop the broken inbox's notes_inbox
           // role so subsequent ticks don't re-spam the system log.
-          // Operator gets a SINGLE persistent error pointing them
+          // Operator gets a SINGLE persistent warning pointing them
           // at how to reconfigure (channel/group + admin bot).
+          // Logged at "warn" level — the system handled it without
+          // losing data; the only thing the operator needs to do is
+          // pick a real channel.
           const removed = await removeChatFunctionRole(
             inbox.chatId,
             "notes_inbox",
           ).catch(() => 0);
           await captureError({
             source: "cron:follow-up",
-            level: "error",
+            level: "warn",
             error: new Error(
               `notes_inbox chat ${inbox.chatId} not reachable — auto-removed from notes_inbox role (${removed} rows). Remaining ${candidates.length - pinged - errors.length} candidates skipped this tick. Original error: ${msg}`,
             ),

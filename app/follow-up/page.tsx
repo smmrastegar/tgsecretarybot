@@ -145,6 +145,41 @@ export default function FollowUpDebugPage() {
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // notes_inbox health check: if no chat carries the role, the cron
+  // can't deliver pings and silently returns skipped. Surface a
+  // banner so the operator knows what's wrong without having to dig
+  // through System Log.
+  const [notesInboxMissing, setNotesInboxMissing] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/functions")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          j: {
+            byRole?: Record<string, Record<string, unknown[]> | unknown[]>;
+          } | null,
+        ) => {
+          if (cancelled || !j?.byRole) return;
+          const ni = j.byRole.notes_inbox;
+          if (!ni) {
+            setNotesInboxMissing(true);
+            return;
+          }
+          const total = Array.isArray(ni)
+            ? ni.length
+            : Object.values(ni).reduce(
+                (n, arr) => n + (Array.isArray(arr) ? arr.length : 0),
+                0,
+              );
+          setNotesInboxMissing(total === 0);
+        },
+      )
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const load = async () => {
     setLoading(true);
@@ -344,6 +379,23 @@ export default function FollowUpDebugPage() {
         title="⏰ دیباگ یادآور جواب‌ندادن"
         subtitle="هر چتی که این لحظه پیامش از طرف کاربر بدون جواب مونده — با فیلتر، جستجو، و trigger دستی."
       />
+
+      {notesInboxMissing && (
+        <Card className="mb-3 !p-3 bg-amber-500/5 border border-amber-500/40">
+          <div className="text-xs text-amber-200 leading-relaxed">
+            ⚠ <b>notes_inbox تنظیم نیست.</b> cron بدون این، هیچ ping
+            ای ارسال نمی‌کنه و در سکوت skip می‌شه. یه channel یا
+            group بساز، bot رو توش admin کن، بعد توی{" "}
+            <Link
+              href="/functions"
+              className="underline text-amber-100 hover:text-white"
+            >
+              /functions
+            </Link>{" "}
+            اون چت رو به‌عنوان notes_inbox ست کن.
+          </div>
+        </Card>
+      )}
 
       <Card className="mb-4">
         <div className="flex flex-wrap items-center gap-2 mb-3">
