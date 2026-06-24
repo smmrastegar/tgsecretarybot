@@ -665,13 +665,19 @@ export default function MessagesPage() {
 }
 
 function PrivateBody({ msg }: { msg: Message }) {
-  const [revealed, setRevealed] = useState(
-    !msg.isPrivateConversation || !!msg.privateRevealedAt,
+  const [isPrivate, setIsPrivate] = useState<boolean>(
+    msg.isPrivateConversation,
+  );
+  const [hasRevealed, setHasRevealed] = useState<boolean>(
+    !!msg.privateRevealedAt,
   );
   const [body, setBody] = useState<string>(
     msg.isPrivateConversation && !msg.privateRevealedAt ? "" : msg.messageText,
   );
   const [loading, setLoading] = useState(false);
+
+  // Hidden = AI/operator marked it private AND it hasn't been revealed.
+  const hidden = isPrivate && !hasRevealed;
 
   const reveal = async () => {
     setLoading(true);
@@ -682,36 +688,110 @@ function PrivateBody({ msg }: { msg: Message }) {
       if (r.ok) {
         const j = (await r.json()) as { body?: string };
         if (j.body != null) setBody(j.body);
-        setRevealed(true);
+        setHasRevealed(true);
       }
     } finally {
       setLoading(false);
     }
   };
 
-  if (!revealed) {
+  // Toggle the private flag (operator override when AI got it wrong).
+  // When marking private, also re-hide an already-revealed body.
+  const togglePrivate = async () => {
+    setLoading(true);
+    try {
+      const next = !isPrivate;
+      const r = await fetch(`/api/messages/${msg.id}/privacy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ private: next }),
+      });
+      if (r.ok) {
+        setIsPrivate(next);
+        setHasRevealed(false);
+        if (next) setBody(""); // hide
+        else setBody(msg.messageText); // show
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Re-hide a private message that was already revealed (clears the
+  // revealedAt timestamp; flag stays private).
+  const rehide = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/messages/${msg.id}/privacy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ revealed: false }),
+      });
+      if (r.ok) {
+        setHasRevealed(false);
+        setBody("");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (hidden) {
     return (
       <div className="mt-2 p-2 rounded-md bg-amber-500/5 border border-amber-500/30">
         <div className="text-[10px] text-amber-200 mb-2">
           🔒 پیام خصوصی — متن نمایش داده نمی‌شه تا روش کلیک نکنی
         </div>
-        <button
-          onClick={reveal}
-          disabled={loading}
-          className="text-xs px-2 py-1 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
-        >
-          {loading ? "..." : "👁 نمایش متن"}
-        </button>
+        <div className="flex gap-1.5 flex-wrap">
+          <button
+            onClick={reveal}
+            disabled={loading}
+            className="text-xs px-2 py-1 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+          >
+            {loading ? "..." : "👁 نمایش متن"}
+          </button>
+          <button
+            onClick={togglePrivate}
+            disabled={loading}
+            className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-50"
+            title="خصوصی نیست — همیشه باز نشون بده"
+          >
+            🔓 خصوصی نیست
+          </button>
+        </div>
       </div>
     );
   }
   return (
-    <div
-      dir="auto"
-      style={{ unicodeBidi: "plaintext", textAlign: "start" }}
-      className="mt-2 text-sm break-words whitespace-pre-wrap"
-    >
-      {body || msg.messageText}
-    </div>
+    <>
+      <div
+        dir="auto"
+        style={{ unicodeBidi: "plaintext", textAlign: "start" }}
+        className="mt-2 text-sm break-words whitespace-pre-wrap"
+      >
+        {body || msg.messageText}
+      </div>
+      <div className="mt-1 flex gap-1.5">
+        {isPrivate && hasRevealed ? (
+          <button
+            onClick={rehide}
+            disabled={loading}
+            className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+            title="دوباره مخفی کن — تا کلیک بعدی روی «نمایش متن» متن دیده نمی‌شه"
+          >
+            🙈 دوباره مخفی کن
+          </button>
+        ) : (
+          <button
+            onClick={togglePrivate}
+            disabled={loading}
+            className="text-[10px] px-2 py-0.5 rounded-md text-[var(--color-text-dim)] hover:text-amber-200 hover:bg-amber-500/10"
+            title="این پیام رو خصوصی علامت بزن — متن مخفی می‌شه تا کلیک کنی"
+          >
+            🔒 خصوصی کن
+          </button>
+        )}
+      </div>
+    </>
   );
 }
