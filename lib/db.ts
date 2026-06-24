@@ -6350,11 +6350,16 @@ export async function listChats(opts: {
       MAX(r.secretary_user_id) AS secretary_user_id,
       MAX(r.function_role) AS function_role,
       BOOL_OR(COALESCE(r.is_bot, FALSE)) AS is_bot,
-      COALESCE(SUM(u.cost_usd), 0)::float8 AS ai_cost,
-      COALESCE(SUM(u.total_tokens), 0)::int AS ai_tokens
+      -- Scalar subqueries instead of LEFT JOIN ai_usage — the JOIN
+      -- exploded every messages_log row by every ai_usage row for the
+      -- same chat (Cartesian product within each GROUP BY group),
+      -- which dragged the page out to 30 seconds on tenants with
+      -- modest AI history. Subquery runs once per chat, hits the
+      -- ai_usage_chat_idx index, and stays cheap.
+      COALESCE((SELECT SUM(cost_usd)::float8 FROM ai_usage WHERE chat_id = m.chat_id), 0) AS ai_cost,
+      COALESCE((SELECT SUM(total_tokens)::int FROM ai_usage WHERE chat_id = m.chat_id), 0) AS ai_tokens
     FROM messages_log m
     LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
-    LEFT JOIN ai_usage  u ON u.chat_id = m.chat_id
     WHERE
       (${f.mode ?? null}::text IS NULL OR COALESCE(r.mode, 'off') = ${f.mode ?? null})
       AND (
@@ -6464,6 +6469,99 @@ export async function listChats(opts: {
   });
 }
 
+// Light version of listChats — returns only chat_ids matching the
+// filters, with no GROUP BY / aggregates / joins to ai_usage. Used by
+// the /chats "select all filtered" path which needs only ids.
+export async function listChatIds(opts: {
+  limit?: number;
+  filters?: ChatListFilters;
+} = {}): Promise<number[]> {
+  await ensureSchema();
+  const f = opts.filters ?? {};
+  const like = f.q?.trim() ? `%${f.q.trim()}%` : null;
+  const relUnset = f.relationship === "__unset__";
+  const relValue: string | null = relUnset ? null : (f.relationship ?? null);
+  const roleUnset = f.functionRole === "__unset__";
+  const roleValue: string | null = roleUnset ? null : (f.functionRole ?? null);
+  const rows = await sql()`
+    SELECT m.chat_id
+    FROM (SELECT DISTINCT chat_id FROM messages_log) m
+    LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
+    WHERE
+      (${f.mode ?? null}::text IS NULL OR COALESCE(r.mode, 'off') = ${f.mode ?? null})
+      AND (
+        ${f.chatType ?? null}::text IS NULL
+        OR (
+          ${f.chatType ?? null}::text = 'private'
+            AND COALESCE(r.chat_type, 'private') = 'private'
+            AND NOT COALESCE(r.is_bot, FALSE)
+        )
+        OR (
+          ${f.chatType ?? null}::text = 'bot'
+            AND COALESCE(r.chat_type, 'private') = 'private'
+            AND COALESCE(r.is_bot, FALSE)
+        )
+        OR (
+          ${f.chatType ?? null}::text = 'group'
+            AND r.chat_type IN ('group', 'supergroup')
+        )
+        OR (
+          ${f.chatType ?? null}::text = 'channel'
+            AND r.chat_type = 'channel'
+        )
+      )
+      AND (${relUnset}::boolean = FALSE OR r.relationship IS NULL)
+      AND (${relValue}::text IS NULL OR r.relationship = ${relValue})
+      AND (
+        ${roleUnset}::boolean = FALSE
+        OR (r.function_role IS NULL AND NOT EXISTS (
+              SELECT 1 FROM chat_function_roles fr WHERE fr.chat_id = m.chat_id
+           ))
+      )
+      AND (
+        ${roleValue}::text IS NULL
+        OR r.function_role = ${roleValue}
+        OR EXISTS (
+          SELECT 1 FROM chat_function_roles fr
+          WHERE fr.chat_id = m.chat_id AND fr.role = ${roleValue}
+        )
+      )
+      AND (${f.vip === undefined}::boolean OR COALESCE(r.vip, FALSE) = ${f.vip ?? false}::boolean)
+      AND (${f.muted === undefined}::boolean OR COALESCE(r.muted, FALSE) = ${f.muted ?? false}::boolean)
+      AND (${f.isBot === undefined}::boolean OR COALESCE(r.is_bot, FALSE) = ${f.isBot ?? false}::boolean)
+      AND (${f.hasProfile === undefined}::boolean OR (r.profile_id IS NOT NULL) = ${f.hasProfile ?? false}::boolean)
+      AND (${f.autoSummarizeOn === undefined}::boolean OR COALESCE(r.auto_summarize_enabled, FALSE) = ${f.autoSummarizeOn ?? false}::boolean)
+      AND (${f.followUpOn === undefined}::boolean OR COALESCE(r.follow_up_enabled, TRUE) = ${f.followUpOn ?? false}::boolean)
+      AND (${f.followUpTranscribeOn === undefined}::boolean OR COALESCE(r.follow_up_transcribe_voices, FALSE) = ${f.followUpTranscribeOn ?? false}::boolean)
+      AND (${f.autoForwardVoiceOn === undefined}::boolean OR COALESCE(r.auto_forward_voice, FALSE) = ${f.autoForwardVoiceOn ?? false}::boolean)
+      AND (${f.autoForwardVideoOn === undefined}::boolean OR COALESCE(r.auto_forward_video, FALSE) = ${f.autoForwardVideoOn ?? false}::boolean)
+      AND (${f.autoForwardPhotoOn === undefined}::boolean OR COALESCE(r.auto_forward_photo, FALSE) = ${f.autoForwardPhotoOn ?? false}::boolean)
+      AND (${f.autoExtractNotesOn === undefined}::boolean OR COALESCE(r.auto_extract_notes, FALSE) = ${f.autoExtractNotesOn ?? false}::boolean)
+      AND (${f.hasPhone === undefined}::boolean OR (r.phone_number IS NOT NULL AND r.phone_number <> '') = ${f.hasPhone ?? false}::boolean)
+      AND (
+        ${f.profileId ?? null}::int IS NULL
+        OR r.profile_id = ${f.profileId ?? null}
+        OR (
+          r.profile_id IS NULL AND EXISTS (
+            SELECT 1 FROM chat_profiles dp
+            WHERE dp.id = ${f.profileId ?? null} AND dp.is_default = TRUE
+          )
+        )
+      )
+      AND (
+        ${like}::text IS NULL
+        OR COALESCE(r.first_name, '') ILIKE ${like}
+        OR COALESCE(r.last_name, '') ILIKE ${like}
+        OR COALESCE(r.nickname, '') ILIKE ${like}
+        OR COALESCE(r.chat_title, '') ILIKE ${like}
+        OR CAST(m.chat_id AS TEXT) ILIKE ${like}
+      )
+    LIMIT ${Math.min(Math.max(opts.limit ?? 5000, 1), 10000)}`;
+  return (rows as Array<{ chat_id: string | number }>).map((r) =>
+    Number(r.chat_id),
+  );
+}
+
 // Per-dimension counts across ALL chats in the system (post tenant
 // scope, pre other filters). Used to populate the /chats filter
 // dropdowns with global counts instead of "loaded-page" counts.
@@ -6503,13 +6601,15 @@ export async function chatFacets(): Promise<ChatFacets> {
   // same chat under multiple types over time — pick the most recent).
   const rows = await sql()`
     WITH chats AS (
-      SELECT m.chat_id,
-             (ARRAY_AGG(m.chat_type ORDER BY m.created_at DESC))[1] AS chat_type
+      -- Plain MAX(chat_type) per chat instead of an ORDER BY-driven
+      -- ARRAY_AGG — same result in practice (chat_type rarely
+      -- changes for a chat), at a fraction of the per-row cost.
+      SELECT m.chat_id, MAX(m.chat_type) AS chat_type
       FROM messages_log m
       GROUP BY m.chat_id
     ),
     joined AS (
-      SELECT c.chat_id, c.chat_type,
+      SELECT c.chat_id, COALESCE(r.chat_type, c.chat_type) AS chat_type,
              r.mode, r.relationship, r.function_role,
              r.vip, r.muted, r.is_bot, r.phone_number, r.profile_id,
              r.auto_summarize_enabled, r.follow_up_enabled,
