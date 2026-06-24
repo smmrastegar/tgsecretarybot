@@ -85,14 +85,22 @@ async function handle(
   const force = url.searchParams.get("force") === "1";
 
   // Cache hit: serve unless ?force=1 OR the cached row has zero
-  // messages (poisoned by an earlier failed compute / empty chat).
-  // Re-running gives the operator a chance to recover without
+  // messages (poisoned by an earlier failed compute / empty chat) OR
+  // the cached analysis came back with zero tasks despite there being
+  // a meaningful number of messages — that's almost always an LLM hiccup
+  // and re-running gives the operator a chance to recover without
   // needing to hit "↻ پردازش مجدد" manually.
   if (opts.preferCache && !force) {
     const cached = await getCachedGroupAnalytics(chatId, days).catch(
       () => null,
     );
-    if (cached && cached.messageCount > 0) {
+    const cachedTasks =
+      cached && typeof cached.analysis === "object" && cached.analysis !== null
+        ? ((cached.analysis as { tasks?: unknown[] }).tasks ?? [])
+        : [];
+    const looksStale =
+      cached != null && cached.messageCount >= 30 && cachedTasks.length === 0;
+    if (cached && cached.messageCount > 0 && !looksStale) {
       const token = await getGroupAnalyticsShareToken(chatId).catch(() => null);
       return NextResponse.json({
         ok: true,
