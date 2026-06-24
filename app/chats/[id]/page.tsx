@@ -2249,6 +2249,36 @@ function ChatHistoryPurge({ chatId }: { chatId: number }) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [purging, setPurging] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [dedupeBusy, setDedupeBusy] = useState(false);
+  const [dedupeMsg, setDedupeMsg] = useState<string | null>(null);
+
+  const dedupeSms = async () => {
+    if (
+      !confirm(
+        "دوبل‌های SMS رو پاک کنم؟ از هر گروه پیام مشابه (در فاصله ۵ دقیقه) فقط قدیمی‌ترین می‌مونه.",
+      )
+    )
+      return;
+    setDedupeBusy(true);
+    setDedupeMsg(null);
+    try {
+      const r = await fetch(`/api/chats/${chatId}/dedupe-sms`, {
+        method: "POST",
+      });
+      if (r.ok) {
+        const j = (await r.json()) as { removed: number; reactions: number };
+        setDedupeMsg(
+          j.removed === 0
+            ? "هیچ دوبل‌ی پیدا نشد."
+            : `✅ ${j.removed} دوبل پاک شد. صفحه رو رفرش کن.`,
+        );
+      } else {
+        setDedupeMsg(`❌ HTTP ${r.status}`);
+      }
+    } finally {
+      setDedupeBusy(false);
+    }
+  };
 
   const runPreview = async () => {
     setPreviewLoading(true);
@@ -2352,6 +2382,21 @@ function ChatHistoryPurge({ chatId }: { chatId: number }) {
           {result}
         </div>
       )}
+      <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex flex-wrap items-center gap-2">
+        <button
+          onClick={dedupeSms}
+          disabled={dedupeBusy}
+          className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-50"
+          title="پیام‌های SMS که در فاصله کوتاه با متن یکسان چند بار لاگ شدن رو پاک می‌کنه"
+        >
+          {dedupeBusy ? "..." : "🧹 پاک کردن دوبل‌های SMS"}
+        </button>
+        {dedupeMsg && (
+          <span className="text-[10px] text-[var(--color-text-dim)]">
+            {dedupeMsg}
+          </span>
+        )}
+      </div>
     </>
   );
 }

@@ -6,6 +6,7 @@ import {
   hasDb,
   logMessage,
   markMessagePrivate,
+  recentSmsLogId,
   touchSmsWebhook,
 } from "@/lib/db";
 import { detectSmsForward, routeSmsForward } from "@/lib/sms-router";
@@ -114,6 +115,32 @@ async function handle(request: Request): Promise<NextResponse> {
 
   const parsed = detectSmsForward(text);
   const senderName = parsed ? parsed.phone : "SMS";
+
+  // Dedupe: the SMS-Forwarder app retries on slow/failed responses and
+  // some carriers re-deliver the same SMS, so a single user-visible
+  // message can hit this webhook 2-4 times within seconds. logMessage's
+  // own dedup keys off (chat_id, message_id) and we mint a fresh
+  // message_id per call — so it never catches these. Here we check for
+  // an identical body from the same webhook chat in the last 2 minutes
+  // and short-circuit if so (returning 200+duplicate so the app stops
+  // retrying).
+  if (hasDb()) {
+    const dupId = await recentSmsLogId({
+      chatId,
+      text,
+      sourceLike: `sms_webhook:${webhook.id}`,
+      withinSeconds: 120,
+    }).catch(() => 0);
+    if (dupId) {
+      await touchSmsWebhook(webhook.id).catch(() => {});
+      return NextResponse.json({
+        ok: true,
+        duplicate: true,
+        logId: dupId,
+        webhook: { id: webhook.id, name: webhook.name },
+      });
+    }
+  }
 
   let logId = 0;
   if (hasDb()) {

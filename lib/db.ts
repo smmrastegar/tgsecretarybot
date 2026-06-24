@@ -3784,6 +3784,71 @@ export async function findSmsWebhookBySecret(
   return r ? rowToSmsWebhook(r) : null;
 }
 
+// Clean up duplicate SMS rows already stored in messages_log. For each
+// (chat_id, message_text) group of source LIKE 'sms_webhook:%' rows
+// that landed within `windowSeconds` of each other, keep the earliest
+// and delete the rest along with their owner_reactions.
+export async function dedupeSmsMessages(opts: {
+  chatId: number;
+  windowSeconds: number;
+}): Promise<{ removed: number; reactions: number }> {
+  if (!hasDb()) return { removed: 0, reactions: 0 };
+  await ensureSchema();
+  const dup = await sql()`
+    WITH ranked AS (
+      SELECT id, message_text, created_at,
+             LAG(id)         OVER w AS prev_id,
+             LAG(created_at) OVER w AS prev_at
+      FROM messages_log
+      WHERE chat_id = ${opts.chatId}
+        AND source LIKE 'sms_webhook:%'
+      WINDOW w AS (PARTITION BY message_text ORDER BY created_at, id)
+    )
+    SELECT id FROM ranked
+    WHERE prev_id IS NOT NULL
+      AND created_at - prev_at < (${opts.windowSeconds} || ' seconds')::interval
+  `;
+  const ids = dup.map((r) => Number((r as { id: string | number }).id));
+  if (ids.length === 0) return { removed: 0, reactions: 0 };
+  // Best-effort: drop owner_reactions tied to these rows first.
+  let reactions = 0;
+  try {
+    const reactionRows = await sql()`
+      DELETE FROM owner_reactions
+      WHERE message_log_id = ANY(${ids}::bigint[])
+      RETURNING id`;
+    reactions = reactionRows.length;
+  } catch {}
+  const removedRows = await sql()`
+    DELETE FROM messages_log WHERE id = ANY(${ids}::bigint[]) RETURNING id`;
+  return { removed: removedRows.length, reactions };
+}
+
+// SMS-webhook dedupe lookup. The Android forwarder retries on slow /
+// failed responses and some carriers re-deliver, so a single user-
+// visible SMS can hit the webhook multiple times. We short-circuit if
+// an identical body from the same source landed in the last few
+// seconds.
+export async function recentSmsLogId(opts: {
+  chatId: number;
+  text: string;
+  sourceLike: string;
+  withinSeconds: number;
+}): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id FROM messages_log
+    WHERE chat_id = ${opts.chatId}
+      AND message_text = ${opts.text}
+      AND source = ${opts.sourceLike}
+      AND created_at > NOW() - (${opts.withinSeconds} || ' seconds')::interval
+    ORDER BY id DESC
+    LIMIT 1`;
+  const r = rows[0] as { id: string | number } | undefined;
+  return r ? Number(r.id) : 0;
+}
+
 // Mark a logged SMS as a private conversation so the dashboard +
 // notes_inbox card show "🔒 پیام خصوصی" until the operator reveals.
 export async function markMessagePrivate(logId: number): Promise<void> {
