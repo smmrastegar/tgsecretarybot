@@ -891,6 +891,12 @@ export type GroupTaskAnalysis = {
   highlights: GroupHighlight[];
   topicBreakdown: GroupTopicBreakdown[];
   criticalForInbox: GroupCriticalItem[];
+  // Diagnostics: when parsing fails or yields no tasks the operator
+  // needs to see what the model actually said. Always populated.
+  debug?: {
+    rawResponse: string;
+    parseStatus: "ok" | "empty_response" | "no_json" | "parse_error";
+  };
 };
 
 export async function analyzeGroupTasks(input: {
@@ -940,7 +946,24 @@ export async function analyzeGroupTasks(input: {
       chatId: input.chatId ?? null,
     },
   );
-  return parseTaskAnalysis(content);
+  const parsed = parseTaskAnalysis(content);
+  // Always carry the raw response on the result so the UI can show it
+  // when the operator wonders «AI ۱۳۲ پیام رو پردازش کرد ولی هیچی نگفت
+  // — یعنی چی؟».
+  let parseStatus: NonNullable<GroupTaskAnalysis["debug"]>["parseStatus"] =
+    "ok";
+  if (!content || !content.trim()) parseStatus = "empty_response";
+  else if (!/\{[\s\S]*\}/.test(content)) parseStatus = "no_json";
+  else if (parsed.tasks.length === 0 && !parsed.overview.trim()) {
+    parseStatus = "parse_error";
+  }
+  parsed.debug = { rawResponse: content.slice(0, 8000), parseStatus };
+  if (parsed.tasks.length === 0) {
+    console.warn(
+      `[ai] group_task_analysis returned 0 tasks (status=${parseStatus}, content_len=${content.length})`,
+    );
+  }
+  return parsed;
 }
 
 function parseTaskAnalysis(raw: string): GroupTaskAnalysis {

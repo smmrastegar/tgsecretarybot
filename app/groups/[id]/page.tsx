@@ -300,34 +300,18 @@ export default function GroupAnalyticsPage({
               </div>
             )}
             {data.analysis.tasks.length === 0 && data.messageCount > 0 && (
-              <Card className="mb-3 border-amber-500/40 bg-amber-500/5">
-                <p className="text-xs text-amber-200 mb-2">
-                  ⚠️ {data.messageCount} پیام پردازش شد ولی AI هیچ تسکی استخراج
-                  نکرد. معمولاً یعنی پاسخ مدل ناقص برگشته — یه بار «پردازش
-                  مجدد» بزن یا «پاکسازی گزارش‌ها» کن.
-                </p>
-                <div className="flex gap-2 flex-wrap">
-                  <button
-                    onClick={() => load(days, true)}
-                    disabled={running}
-                    className="text-xs px-3 py-1.5 rounded-md bg-amber-500/20 border border-amber-500/50 text-amber-100 hover:bg-amber-500/30 disabled:opacity-50"
-                  >
-                    {running ? "..." : "↻ پردازش مجدد"}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      await fetch(`/api/groups/${chatId}/analytics`, {
-                        method: "DELETE",
-                      });
-                      load(days, true);
-                    }}
-                    disabled={running}
-                    className="text-xs px-3 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/40 text-rose-200 hover:bg-rose-500/20 disabled:opacity-50"
-                  >
-                    🗑 پاک کن و از نو
-                  </button>
-                </div>
-              </Card>
+              <EmptyAnalysisBanner
+                messageCount={data.messageCount}
+                debug={data.analysis.debug}
+                running={running}
+                onReprocess={() => load(days, true)}
+                onClear={async () => {
+                  await fetch(`/api/groups/${chatId}/analytics`, {
+                    method: "DELETE",
+                  });
+                  load(days, true);
+                }}
+              />
             )}
             <GroupAnalyticsView
               analysis={data.analysis}
@@ -338,5 +322,78 @@ export default function GroupAnalyticsPage({
         )}
       </div>
     </Shell>
+  );
+}
+
+function EmptyAnalysisBanner({
+  messageCount,
+  debug,
+  running,
+  onReprocess,
+  onClear,
+}: {
+  messageCount: number;
+  debug: Analysis["debug"];
+  running: boolean;
+  onReprocess: () => void;
+  onClear: () => void;
+}) {
+  const [showRaw, setShowRaw] = useState(false);
+  const statusHint = (() => {
+    if (!debug) return null;
+    switch (debug.parseStatus) {
+      case "empty_response":
+        return "AI پاسخی برنگردوند — احتمالاً مدل time-out یا rate-limit خورده.";
+      case "no_json":
+        return "AI پاسخ داد ولی JSON معتبر نبود — احتمالاً پاسخ توی نیمه قطع شده.";
+      case "parse_error":
+        return "AI پاسخ JSON داد ولی هیچ task/overview معتبری توش نبود — احتمالاً مدل سوال رو بد فهمیده.";
+      default:
+        return "AI پاسخ معتبر داد ولی تشخیص داد هیچ task واضحی توی پیام‌ها نیست.";
+    }
+  })();
+  return (
+    <Card className="mb-3 border-amber-500/40 bg-amber-500/5">
+      <p className="text-xs text-amber-200 mb-1">
+        ⚠️ {messageCount} پیام پردازش شد ولی AI هیچ تسکی استخراج نکرد.
+      </p>
+      {statusHint && (
+        <p className="text-[11px] text-[var(--color-text-dim)] mb-2">
+          {statusHint}
+        </p>
+      )}
+      <div className="flex gap-2 flex-wrap mb-2">
+        <button
+          onClick={onReprocess}
+          disabled={running}
+          className="text-xs px-3 py-1.5 rounded-md bg-amber-500/20 border border-amber-500/50 text-amber-100 hover:bg-amber-500/30 disabled:opacity-50"
+        >
+          {running ? "..." : "↻ پردازش مجدد"}
+        </button>
+        <button
+          onClick={onClear}
+          disabled={running}
+          className="text-xs px-3 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/40 text-rose-200 hover:bg-rose-500/20 disabled:opacity-50"
+        >
+          🗑 پاک کن و از نو
+        </button>
+        {debug?.rawResponse && (
+          <button
+            onClick={() => setShowRaw((v) => !v)}
+            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+          >
+            {showRaw ? "بستن" : "🔧 پاسخ خام AI"}
+          </button>
+        )}
+      </div>
+      {showRaw && debug?.rawResponse && (
+        <pre
+          dir="ltr"
+          className="text-[10px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-words max-h-80"
+        >
+          {debug.rawResponse}
+        </pre>
+      )}
+    </Card>
   );
 }

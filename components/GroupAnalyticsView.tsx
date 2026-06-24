@@ -85,6 +85,10 @@ export type Analysis = {
   highlights: Highlight[];
   topicBreakdown: TopicBreakdown[];
   criticalForInbox: CriticalItem[];
+  debug?: {
+    rawResponse: string;
+    parseStatus: "ok" | "empty_response" | "no_json" | "parse_error";
+  };
 };
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
