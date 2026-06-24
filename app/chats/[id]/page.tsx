@@ -86,6 +86,8 @@ type Message = {
   editedAt: string | null;
   editCount: number;
   fromOwner: boolean;
+  isPrivateConversation: boolean;
+  privateRevealedAt: string | null;
 };
 
 type Rule = {
@@ -1972,108 +1974,30 @@ export default function ChatDetailPage() {
             </Card>
           ) : (
             <div className="flex flex-col gap-2">
-              {[...messages].reverse().map((m) => {
-                const mine = m.fromOwner;
-                return (
-                  <div
-                    key={m.id}
-                    className={`flex flex-col gap-1 max-w-[90%] min-w-0 ${
-                      mine ? "self-end items-end" : "self-start items-start"
-                    }`}
-                  >
-                    <div className="text-[10px] text-[var(--color-text-dim)] px-1">
-                      {mine ? "You" : m.senderName} · {relTime(m.createdAt)}
-                    </div>
-                    <div
-                      dir="auto"
-                      style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
-                      className={`p-3 rounded-2xl text-sm whitespace-pre-wrap max-w-full ${
-                        m.deletedAt
-                          ? "bg-red-900/20 border border-red-900/40 text-[var(--color-text-dim)] rounded-md"
-                          : mine
-                            ? "bg-[var(--color-accent)] text-white rounded-br-md"
-                            : "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-bl-md"
-                      }`}
-                    >
-                      {m.otpCode && (
-                        <div className="mb-2">
-                          <OtpChip code={m.otpCode} />
-                        </div>
-                      )}
-                      {m.messageText}
-                      {m.transcript && (
-                        <div
-                          dir="auto"
-                          className="mt-2 pt-2 border-t border-white/10 text-[12px]"
-                        >
-                          <span className="opacity-70 text-[10px] uppercase">
-                            transcript
-                          </span>
-                          <div
-                            dir="auto"
-                            style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
-                            className="mt-1 whitespace-pre-wrap"
-                          >
-                            {truncate(m.transcript, 400)}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    {m.mediaKind && !m.deletedAt && (
-                      <MediaView messageId={m.id} kind={m.mediaKind} />
-                    )}
-                    {m.mediaDescription && !m.deletedAt && (
-                      <div
-                        dir="auto"
-                        style={{
-                          unicodeBidi: "plaintext",
-                          textAlign: "start",
-                          overflowWrap: "anywhere",
-                          wordBreak: "break-word",
-                        }}
-                        className="text-[11px] text-[var(--color-text-dim)] max-w-full whitespace-pre-wrap border-l-2 border-[var(--color-border)] pl-2 mt-1"
-                      >
-                        🖼 {m.mediaDescription}
-                      </div>
-                    )}
-                    <div className="flex gap-1 flex-wrap text-[10px] px-1">
-                      {m.deletedAt && (
-                        <Badge tone="danger">
-                          🗑 Deleted {relTime(m.deletedAt)}
-                        </Badge>
-                      )}
-                      {m.editCount > 0 && (
-                        <EditHistoryToggle
-                          messageId={m.id}
-                          count={m.editCount}
-                          editedAt={m.editedAt}
-                        />
-                      )}
-                      {m.urgent && <Badge tone="danger">urgent</Badge>}
-                      {m.alerted && <Badge tone="warn">alert</Badge>}
-                      {m.autoReplied && <Badge tone="info">replied</Badge>}
-                      {m.mediaKind && (
-                        <Badge tone="neutral">{m.mediaKind}</Badge>
-                      )}
-                      {!mine && (
-                        <span className="text-[var(--color-text-dim)]">
-                          imp {m.importance}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-
               {hasMore && (
                 <button
                   onClick={loadMore}
                   disabled={loadingMore}
-                  className="self-center text-xs px-4 py-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 mt-3"
+                  className="self-center text-xs px-4 py-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 mb-2"
                 >
-                  {loadingMore ? "Loading…" : "Load 10 more older messages"}
+                  {loadingMore ? "Loading…" : "↑ Load 10 more older messages"}
                 </button>
               )}
+              {[...messages].reverse().map((m) => {
+                const mine = m.fromOwner;
+                return (
+                  <ChatBubble
+                    key={m.id}
+                    m={m}
+                    mine={mine}
+                    onPrivacyChange={(next) => {
+                      setMessages((prev) =>
+                        prev.map((mm) => (mm.id === m.id ? next : mm)),
+                      );
+                    }}
+                  />
+                );
+              })}
             </div>
           )}
         </>
@@ -2429,5 +2353,217 @@ function ChatHistoryPurge({ chatId }: { chatId: number }) {
         </div>
       )}
     </>
+  );
+}
+
+function ChatBubble({
+  m,
+  mine,
+  onPrivacyChange,
+}: {
+  m: Message;
+  mine: boolean;
+  onPrivacyChange: (next: Message) => void;
+}) {
+  const [isPrivate, setIsPrivate] = useState<boolean>(m.isPrivateConversation);
+  const [hasRevealed, setHasRevealed] = useState<boolean>(
+    !!m.privateRevealedAt,
+  );
+  const [body, setBody] = useState<string>(
+    m.isPrivateConversation && !m.privateRevealedAt ? "" : m.messageText,
+  );
+  const [busy, setBusy] = useState(false);
+
+  const hidden = isPrivate && !hasRevealed;
+
+  async function reveal() {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/messages/${m.id}/reveal`, { method: "POST" });
+      if (r.ok) {
+        const j = (await r.json()) as { body?: string };
+        if (j.body != null) setBody(j.body);
+        setHasRevealed(true);
+        onPrivacyChange({
+          ...m,
+          privateRevealedAt: new Date().toISOString(),
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function togglePrivate() {
+    setBusy(true);
+    try {
+      const next = !isPrivate;
+      const r = await fetch(`/api/messages/${m.id}/privacy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ private: next }),
+      });
+      if (r.ok) {
+        setIsPrivate(next);
+        setHasRevealed(false);
+        if (next) setBody("");
+        else setBody(m.messageText);
+        onPrivacyChange({
+          ...m,
+          isPrivateConversation: next,
+          privateRevealedAt: null,
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rehide() {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/messages/${m.id}/privacy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ revealed: false }),
+      });
+      if (r.ok) {
+        setHasRevealed(false);
+        setBody("");
+        onPrivacyChange({ ...m, privateRevealedAt: null });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className={`flex flex-col gap-1 max-w-[90%] min-w-0 ${
+        mine ? "self-end items-end" : "self-start items-start"
+      }`}
+    >
+      <div className="text-[10px] text-[var(--color-text-dim)] px-1">
+        {mine ? "You" : m.senderName} · {relTime(m.createdAt)}
+      </div>
+      {hidden ? (
+        <div className="p-3 rounded-2xl text-sm bg-amber-500/5 border border-amber-500/30 max-w-full">
+          <div className="text-amber-200 text-xs mb-2">
+            🔒 پیام خصوصی — متن نمایش داده نمی‌شه تا روش کلیک نکنی
+          </div>
+          <div className="flex gap-1.5 flex-wrap">
+            <button
+              onClick={reveal}
+              disabled={busy}
+              className="text-xs px-2 py-1 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+            >
+              {busy ? "..." : "👁 نمایش متن"}
+            </button>
+            <button
+              onClick={togglePrivate}
+              disabled={busy}
+              className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-50"
+              title="خصوصی نیست — همیشه باز نشون بده"
+            >
+              🔓 خصوصی نیست
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div
+          dir="auto"
+          style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+          className={`p-3 rounded-2xl text-sm whitespace-pre-wrap max-w-full ${
+            m.deletedAt
+              ? "bg-red-900/20 border border-red-900/40 text-[var(--color-text-dim)] rounded-md"
+              : mine
+                ? "bg-[var(--color-accent)] text-white rounded-br-md"
+                : "bg-[var(--color-surface)] border border-[var(--color-border)] rounded-bl-md"
+          }`}
+        >
+          {m.otpCode && (
+            <div className="mb-2">
+              <OtpChip code={m.otpCode} />
+            </div>
+          )}
+          {body || m.messageText}
+          {m.transcript && (
+            <div
+              dir="auto"
+              className="mt-2 pt-2 border-t border-white/10 text-[12px]"
+            >
+              <span className="opacity-70 text-[10px] uppercase">
+                transcript
+              </span>
+              <div
+                dir="auto"
+                style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+                className="mt-1 whitespace-pre-wrap"
+              >
+                {truncate(m.transcript, 400)}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {m.mediaKind && !m.deletedAt && (
+        <MediaView messageId={m.id} kind={m.mediaKind} />
+      )}
+      {m.mediaDescription && !m.deletedAt && (
+        <div
+          dir="auto"
+          style={{
+            unicodeBidi: "plaintext",
+            textAlign: "start",
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
+          }}
+          className="text-[11px] text-[var(--color-text-dim)] max-w-full whitespace-pre-wrap border-l-2 border-[var(--color-border)] pl-2 mt-1"
+        >
+          🖼 {m.mediaDescription}
+        </div>
+      )}
+      <div className="flex gap-1 flex-wrap text-[10px] px-1 items-center">
+        {m.deletedAt && (
+          <Badge tone="danger">🗑 Deleted {relTime(m.deletedAt)}</Badge>
+        )}
+        {m.editCount > 0 && (
+          <EditHistoryToggle
+            messageId={m.id}
+            count={m.editCount}
+            editedAt={m.editedAt}
+          />
+        )}
+        {m.urgent && <Badge tone="danger">urgent</Badge>}
+        {m.alerted && <Badge tone="warn">alert</Badge>}
+        {m.autoReplied && <Badge tone="info">replied</Badge>}
+        {m.mediaKind && <Badge tone="neutral">{m.mediaKind}</Badge>}
+        {!mine && (
+          <span className="text-[var(--color-text-dim)]">
+            imp {m.importance}
+          </span>
+        )}
+        {!hidden &&
+          (isPrivate && hasRevealed ? (
+            <button
+              onClick={rehide}
+              disabled={busy}
+              className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+              title="دوباره مخفی کن"
+            >
+              🙈 دوباره مخفی کن
+            </button>
+          ) : (
+            <button
+              onClick={togglePrivate}
+              disabled={busy}
+              className="text-[10px] px-1.5 py-0.5 rounded-md text-[var(--color-text-dim)] hover:text-amber-200 hover:bg-amber-500/10 disabled:opacity-50"
+              title="این پیام رو خصوصی علامت بزن"
+            >
+              🔒
+            </button>
+          ))}
+      </div>
+    </div>
   );
 }
