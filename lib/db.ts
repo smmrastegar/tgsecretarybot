@@ -1955,6 +1955,57 @@ export async function upsertForumTopic(args: {
       observed_at = NOW()`;
 }
 
+// Aggregate distinct senders ever observed in this chat. Used by the
+// group page «📋 خروجی اعضا» button — pulls every (sender_id,
+// sender_name, sender_username) the bot has ever logged for this chat
+// and counts how many messages each one sent + first/last seen.
+export async function listGroupMembersFromMessages(
+  chatId: number,
+): Promise<
+  Array<{
+    senderId: number;
+    senderName: string;
+    senderUsername: string | null;
+    messageCount: number;
+    firstSeenAt: Date;
+    lastSeenAt: Date;
+  }>
+> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT
+      sender_id::bigint AS sender_id,
+      -- Use the most recently observed name + username for each sender
+      -- (people change display names; we want the current one).
+      (
+        ARRAY_AGG(sender_name      ORDER BY created_at DESC) FILTER (WHERE sender_name IS NOT NULL)
+      )[1] AS sender_name,
+      (
+        ARRAY_AGG(sender_username  ORDER BY created_at DESC) FILTER (WHERE sender_username IS NOT NULL)
+      )[1] AS sender_username,
+      COUNT(*)::int         AS msg_count,
+      MIN(created_at)       AS first_seen,
+      MAX(created_at)       AS last_seen
+    FROM messages_log
+    WHERE chat_id = ${chatId}
+      AND sender_id IS NOT NULL
+      AND COALESCE(from_owner, FALSE) = FALSE
+    GROUP BY sender_id
+    ORDER BY msg_count DESC, sender_name ASC NULLS LAST`;
+  return rows.map((r) => {
+    const o = r as Record<string, unknown>;
+    return {
+      senderId: Number(o.sender_id),
+      senderName: (o.sender_name as string) ?? "",
+      senderUsername: (o.sender_username as string) ?? null,
+      messageCount: Number(o.msg_count),
+      firstSeenAt: o.first_seen as Date,
+      lastSeenAt: o.last_seen as Date,
+    };
+  });
+}
+
 export async function listForumTopics(
   chatId: number,
   opts?: { includeArchived?: boolean },

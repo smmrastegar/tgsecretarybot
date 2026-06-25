@@ -196,6 +196,14 @@ export default function GroupAnalyticsPage({
               >
                 👀 نمایش پیام‌ها به تفکیک تاپیک
               </button>
+              <a
+                href={`/api/groups/${chatId}/members?format=csv`}
+                download={`group-${chatId}-members.csv`}
+                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                title="فایل CSV با ID عددی، @username و اسم همه افرادی که توی این گروه پیام دادن"
+              >
+                👥 خروجی اعضا (CSV)
+              </a>
               <button
                 onClick={async () => {
                   if (
