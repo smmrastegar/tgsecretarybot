@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { hasDb, sql } from "@/lib/db";
+import { hasDb, setForumTopicArchived, sql } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// PUT /api/groups/[id]/topics/[threadId]  body: { name: string | null }
+// PUT /api/groups/[id]/topics/[threadId]
+//   body: { name?: string | null, archived?: boolean }
 // Telegram Bot API can't fetch the topic list retroactively — the bot
 // only learns a topic_name from forum_topic_created/edited updates.
-// When the bot joined after a topic was created, the name is null and
-// the dashboard shows «Topic #N». This endpoint lets the operator
-// rename it manually so the analyzer and topic viewer have the real
-// label.
+// This endpoint lets the operator rename a topic manually OR archive
+// it («دیگه مهم نیست / پاک شده»). Archived topics are excluded from
+// analytics + the per-topic viewer unless includeArchived is set.
 export async function PUT(
   request: Request,
   ctx: { params: Promise<{ id: string; threadId: string }> },
@@ -30,18 +30,33 @@ export async function PUT(
   if (!Number.isFinite(chatId) || !Number.isFinite(tid)) {
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
   }
-  const body = (await request.json().catch(() => ({}))) as { name?: string };
-  const name =
-    typeof body.name === "string" && body.name.trim()
-      ? body.name.trim().slice(0, 128)
-      : null;
-  // Insert if the row didn't exist (bot may have seen messages from
-  // this topic but missed the forum_topic_created event).
-  await sql()`
-    INSERT INTO forum_topics (chat_id, message_thread_id, name)
-    VALUES (${chatId}, ${tid}, ${name})
-    ON CONFLICT (chat_id, message_thread_id) DO UPDATE SET
-      name = ${name},
-      observed_at = NOW()`;
-  return NextResponse.json({ ok: true, name });
+  const body = (await request.json().catch(() => ({}))) as {
+    name?: string;
+    archived?: boolean;
+  };
+  if (typeof body.archived === "boolean") {
+    await setForumTopicArchived({
+      chatId,
+      messageThreadId: tid,
+      archived: body.archived,
+    });
+    return NextResponse.json({ ok: true, archived: body.archived });
+  }
+  if ("name" in body) {
+    const name =
+      typeof body.name === "string" && body.name.trim()
+        ? body.name.trim().slice(0, 128)
+        : null;
+    await sql()`
+      INSERT INTO forum_topics (chat_id, message_thread_id, name)
+      VALUES (${chatId}, ${tid}, ${name})
+      ON CONFLICT (chat_id, message_thread_id) DO UPDATE SET
+        name = ${name},
+        observed_at = NOW()`;
+    return NextResponse.json({ ok: true, name });
+  }
+  return NextResponse.json(
+    { error: "send {name: ...} or {archived: true|false}" },
+    { status: 400 },
+  );
 }

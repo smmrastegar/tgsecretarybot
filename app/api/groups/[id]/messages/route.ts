@@ -32,6 +32,7 @@ export async function GET(
   const daysRaw = url.searchParams.get("days") ?? "0";
   const allTime = daysRaw === "0" || daysRaw === "all";
   const days = allTime ? 0 : Math.min(Math.max(Number(daysRaw), 1), 90);
+  const includeArchived = url.searchParams.get("includeArchived") === "1";
   const since = allTime
     ? new Date(0)
     : new Date(Date.now() - days * 86400_000);
@@ -39,9 +40,12 @@ export async function GET(
 
   const [{ chatTitle, messages }, topics] = await Promise.all([
     listChatMessagesForAnalysis({ chatId, since, limit }),
-    listForumTopics(chatId).catch(() => []),
+    listForumTopics(chatId, { includeArchived: true }).catch(() => []),
   ]);
 
+  const archivedThreadIds = new Set(
+    topics.filter((t) => t.archivedAt != null).map((t) => t.messageThreadId),
+  );
   const topicNameByThread = new Map<number, string>();
   for (const t of topics) {
     topicNameByThread.set(
@@ -54,6 +58,7 @@ export async function GET(
   type TopicBucket = {
     name: string;
     messageThreadId: number | null;
+    archived: boolean;
     messages: {
       sender: string;
       text: string;
@@ -73,7 +78,14 @@ export async function GET(
           ? "General"
           : (topicNameByThread.get(m.messageThreadId) ??
             `Topic #${m.messageThreadId}`);
-      bucket = { name, messageThreadId: m.messageThreadId, messages: [] };
+      const archived =
+        m.messageThreadId != null && archivedThreadIds.has(m.messageThreadId);
+      bucket = {
+        name,
+        messageThreadId: m.messageThreadId,
+        archived,
+        messages: [],
+      };
       buckets.set(k, bucket);
     }
     bucket.messages.push({
@@ -92,18 +104,28 @@ export async function GET(
         name:
           t.name && t.name.trim() ? t.name : `Topic #${t.messageThreadId}`,
         messageThreadId: t.messageThreadId,
+        archived: t.archivedAt != null,
         messages: [],
       });
     }
   }
-  const bucketArr = [...buckets.values()].sort(
-    (a, b) => b.messages.length - a.messages.length,
-  );
+  let bucketArr = [...buckets.values()];
+  if (!includeArchived) {
+    bucketArr = bucketArr.filter((b) => !b.archived);
+  }
+  bucketArr.sort((a, b) => {
+    // Archived buckets sink to the bottom, otherwise by message count.
+    if (a.archived !== b.archived) return a.archived ? 1 : -1;
+    return b.messages.length - a.messages.length;
+  });
   return NextResponse.json({
     ok: true,
     chatTitle,
     sinceIso: since.toISOString(),
-    totalMessages: messages.length,
+    totalMessages: bucketArr.reduce((s, b) => s + b.messages.length, 0),
+    archivedHidden: !includeArchived
+      ? topics.filter((t) => t.archivedAt != null).length
+      : 0,
     topics: bucketArr,
   });
 }

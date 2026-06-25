@@ -295,6 +295,11 @@ export async function ensureSchema(): Promise<void> {
     // dedup-edit code can render redacted without re-running AI.
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS is_private_conversation BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE messages_log ADD COLUMN IF NOT EXISTS private_revealed_at TIMESTAMPTZ`;
+    // Operator-archived topics: when set, the topic is excluded from
+    // group analytics + the per-topic viewer by default. Distinct from
+    // Telegram's is_hidden flag (which mirrors what the Telegram client
+    // shows) — this one is for «این تاپیک دیگه مهم نیست / پاک شده».
+    await q`ALTER TABLE forum_topics ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`;
     // SMS dedup: when the same SMS body arrives repeatedly to the
     // same inbox we update one Telegram message in-place instead of
     // posting N copies. body_signature is a whitespace-normalised
@@ -1912,6 +1917,7 @@ export type ForumTopic = {
   iconEmoji: string | null;
   isClosed: boolean;
   isHidden: boolean;
+  archivedAt: Date | null;
   observedAt: Date;
 };
 
@@ -1943,14 +1949,19 @@ export async function upsertForumTopic(args: {
       observed_at = NOW()`;
 }
 
-export async function listForumTopics(chatId: number): Promise<ForumTopic[]> {
+export async function listForumTopics(
+  chatId: number,
+  opts?: { includeArchived?: boolean },
+): Promise<ForumTopic[]> {
   if (!hasDb()) return [];
   await ensureSchema();
+  const includeArchived = opts?.includeArchived ?? false;
   const rows = await sql()`
     SELECT chat_id, message_thread_id, name, icon_color, icon_emoji,
-           is_closed, is_hidden, observed_at
+           is_closed, is_hidden, archived_at, observed_at
     FROM forum_topics
     WHERE chat_id = ${chatId}
+      AND (${includeArchived}::boolean = TRUE OR archived_at IS NULL)
     ORDER BY message_thread_id ASC`;
   return (rows as Array<Record<string, unknown>>).map((r) => ({
     chatId: Number(r.chat_id),
@@ -1960,8 +1971,36 @@ export async function listForumTopics(chatId: number): Promise<ForumTopic[]> {
     iconEmoji: (r.icon_emoji as string) ?? null,
     isClosed: Boolean(r.is_closed),
     isHidden: Boolean(r.is_hidden),
+    archivedAt: (r.archived_at as Date) ?? null,
     observedAt: r.observed_at as Date,
   }));
+}
+
+// Operator marks a topic as archived («دیگه مهم نیست / پاک شده»). When
+// archived, the analyzer + per-topic viewer skip it by default. Pass
+// archived=false to restore.
+export async function setForumTopicArchived(opts: {
+  chatId: number;
+  messageThreadId: number;
+  archived: boolean;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  if (opts.archived) {
+    await sql()`
+      INSERT INTO forum_topics (chat_id, message_thread_id, archived_at)
+      VALUES (${opts.chatId}, ${opts.messageThreadId}, NOW())
+      ON CONFLICT (chat_id, message_thread_id) DO UPDATE SET
+        archived_at = NOW(),
+        observed_at = NOW()`;
+  } else {
+    await sql()`
+      UPDATE forum_topics
+         SET archived_at = NULL,
+             observed_at = NOW()
+       WHERE chat_id = ${opts.chatId}
+         AND message_thread_id = ${opts.messageThreadId}`;
+  }
 }
 
 // Pull just the inline_buttons column for a single message — used by
@@ -7218,6 +7257,15 @@ export async function listChatMessagesForAnalysis(args: {
     WHERE chat_id = ${args.chatId}
       AND created_at >= ${args.since.toISOString()}
       AND COALESCE(skipped_reason, '') <> 'muted'
+      AND (
+        message_thread_id IS NULL
+        OR NOT EXISTS (
+          SELECT 1 FROM forum_topics ft
+          WHERE ft.chat_id = ${args.chatId}
+            AND ft.message_thread_id = messages_log.message_thread_id
+            AND ft.archived_at IS NOT NULL
+        )
+      )
     ORDER BY created_at ASC
     LIMIT ${limit}`;
   let chatTitle: string | null = null;

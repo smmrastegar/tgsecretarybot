@@ -425,6 +425,7 @@ function EmptyAnalysisBanner({
 type TopicBucket = {
   name: string;
   messageThreadId: number | null;
+  archived: boolean;
   messages: { sender: string; text: string; at: string; fromOwner: boolean }[];
 };
 
@@ -445,17 +446,24 @@ function RawMessagesModal({
   const [err, setErr] = useState<string | null>(null);
   const [topics, setTopics] = useState<TopicBucket[]>([]);
   const [totalMessages, setTotalMessages] = useState(0);
+  const [archivedHidden, setArchivedHidden] = useState(0);
+  const [showArchived, setShowArchived] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setErr(null);
-    fetch(`/api/groups/${chatId}/messages?days=${days}`)
+    fetch(
+      `/api/groups/${chatId}/messages?days=${days}${
+        showArchived ? "&includeArchived=1" : ""
+      }`,
+    )
       .then(async (r) => {
         const j = (await r.json()) as {
           ok: boolean;
           totalMessages?: number;
+          archivedHidden?: number;
           topics?: TopicBucket[];
           error?: string;
         };
@@ -463,9 +471,10 @@ function RawMessagesModal({
         if (!r.ok) throw new Error(j.error ?? "failed");
         setTopics(j.topics ?? []);
         setTotalMessages(j.totalMessages ?? 0);
+        setArchivedHidden(j.archivedHidden ?? 0);
         // Auto-expand the first (largest) topic so the operator sees
         // content immediately without an extra click.
-        const first = (j.topics ?? [])[0];
+        const first = (j.topics ?? []).find((t) => !t.archived);
         if (first) {
           setExpanded(new Set([keyOf(first)]));
         }
@@ -479,7 +488,7 @@ function RawMessagesModal({
     return () => {
       alive = false;
     };
-  }, [chatId, days]);
+  }, [chatId, days, showArchived]);
 
   const keyOf = (t: TopicBucket): string =>
     t.messageThreadId == null ? "general" : String(t.messageThreadId);
@@ -536,6 +545,19 @@ function RawMessagesModal({
           >
             ببند همه
           </button>
+          <label className="text-[11px] flex items-center gap-1.5 px-2 py-1 rounded-md border border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-surface-2)]">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+            />
+            آرشیوشده‌ها
+            {archivedHidden > 0 && !showArchived && (
+              <span className="text-[var(--color-text-dim)]">
+                ({archivedHidden})
+              </span>
+            )}
+          </label>
           <div className="flex-1" />
           <button
             onClick={onAnalyze}
@@ -576,18 +598,40 @@ function RawMessagesModal({
             return (
               <div
                 key={k}
-                className="mb-2 border border-[var(--color-border)] rounded-md overflow-hidden"
+                className={`mb-2 border rounded-md overflow-hidden ${
+                  t.archived
+                    ? "border-[var(--color-border)] opacity-50"
+                    : "border-[var(--color-border)]"
+                }`}
               >
                 <div className="flex items-center gap-2 px-3 py-2 bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)]">
                   <TopicNameEditor
                     chatId={chatId}
                     threadId={t.messageThreadId}
                     initialName={t.name}
+                    archived={t.archived}
                     onRenamed={(newName) => {
                       setTopics((prev) =>
                         prev.map((tt) =>
                           keyOf(tt) === k ? { ...tt, name: newName } : tt,
                         ),
+                      );
+                    }}
+                    onArchivedToggle={(archived) => {
+                      setTopics((prev) => {
+                        const next = prev.map((tt) =>
+                          keyOf(tt) === k ? { ...tt, archived } : tt,
+                        );
+                        // When hiding archived topics is on and we
+                        // just archived, drop it from view immediately.
+                        return showArchived
+                          ? next
+                          : next.filter((tt) => !tt.archived);
+                      });
+                      // Bump the archived count so the toggle label
+                      // stays accurate without a full reload.
+                      setArchivedHidden((n) =>
+                        Math.max(0, n + (archived ? 1 : -1)),
                       );
                     }}
                   />
@@ -645,17 +689,42 @@ function TopicNameEditor({
   chatId,
   threadId,
   initialName,
+  archived,
   onRenamed,
+  onArchivedToggle,
 }: {
   chatId: number;
   threadId: number | null;
   initialName: string;
+  archived: boolean;
   onRenamed: (next: string) => void;
+  onArchivedToggle: (archived: boolean) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(initialName);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const archive = async (next: boolean) => {
+    setSaving(true);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/groups/${chatId}/topics/${threadId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: next }),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${r.status}`);
+      }
+      onArchivedToggle(next);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // The "General" pseudo-topic has no real thread id — Telegram's
   // bot API doesn't expose a rename hook for it. Show it read-only.
@@ -737,12 +806,38 @@ function TopicNameEditor({
     );
   }
   return (
-    <button
-      onClick={() => setEditing(true)}
-      className="text-sm font-medium truncate flex-1 text-right hover:text-amber-200"
-      title="کلیک کن تا اسم تاپیک رو دستی ویرایش کنی"
-    >
-      🧵 {initialName} <span className="text-[10px] opacity-50">✎</span>
-    </button>
+    <div className="flex-1 flex items-center gap-1 min-w-0">
+      <button
+        onClick={() => setEditing(true)}
+        className={`text-sm font-medium truncate flex-1 text-right hover:text-amber-200 ${
+          archived ? "line-through opacity-60" : ""
+        }`}
+        title="کلیک کن تا اسم تاپیک رو دستی ویرایش کنی"
+      >
+        🧵 {initialName} <span className="text-[10px] opacity-50">✎</span>
+      </button>
+      {archived ? (
+        <button
+          onClick={() => archive(false)}
+          disabled={saving}
+          className="text-[10px] px-1.5 py-0.5 rounded-md text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50 shrink-0"
+          title="از آرشیو دربیار — دوباره توی تحلیل میاد"
+        >
+          ↩ بازگردانی
+        </button>
+      ) : (
+        <button
+          onClick={() => archive(true)}
+          disabled={saving}
+          className="text-[10px] px-1.5 py-0.5 rounded-md text-[var(--color-text-dim)] hover:text-rose-300 hover:bg-rose-500/10 disabled:opacity-50 shrink-0"
+          title="این تاپیک رو آرشیو کن — از تحلیل و این نمایش حذف می‌شه"
+        >
+          🗑 آرشیو
+        </button>
+      )}
+      {err && (
+        <span className="text-[10px] text-red-300 shrink-0">{err}</span>
+      )}
+    </div>
   );
 }
