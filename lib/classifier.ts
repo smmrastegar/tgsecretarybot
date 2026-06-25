@@ -1205,6 +1205,8 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
 
 const TASK_EVENTS_PROMPT = `You read a CHUNK of group chat messages. For EVERY message that touches a task, work item, deliverable, commitment, order, request, promise, deadline, or status update — output one JSON row. Be GENEROUS: include product orders, requests for help, status reports, completions, blockers. SKIP pure smalltalk, jokes, greetings, reactions.
 
+The input MAY also include a "topic_contexts" object — operator-written one-line descriptions of what each forum topic is FOR (e.g. {"Bugs": "این تاپیک فقط برای bug-report ها", "LM Requests": "سفارش‌های مشتری لیموم — هر پیام معمولاً یک تسک ایجاد می‌کنه"}). Use it to interpret each topic's messages correctly — if the operator says a topic is "هر پیام = یک تسک" then treat every concrete request there as a task; if a topic is "discussion only" then be stricter.
+
 Return STRICT JSON ARRAY only, no prose, no code fences:
 [
   {
@@ -1249,15 +1251,33 @@ async function extractTaskEventsBatch(
   batch: AnalyzerMessage[],
   globalOffset: number,
   chatId?: number,
+  topicNotes?: Record<string, string>,
 ): Promise<TaskEvent[]> {
   if (batch.length === 0) return [];
-  const payload = batch.map((m, i) => ({
-    idx: i,
-    sender: m.sender,
-    at: m.at.toISOString(),
-    topic: m.topicName ?? null,
-    text: m.text.slice(0, 500),
-  }));
+  // Restrict topic_contexts to topics that actually appear in this
+  // batch — keeps the prompt tight.
+  const topicsInBatch = new Set<string>();
+  for (const m of batch) {
+    if (m.topicName && m.topicName.trim()) topicsInBatch.add(m.topicName);
+  }
+  const ctxEntries = topicNotes
+    ? Object.entries(topicNotes).filter(
+        ([k, v]) => topicsInBatch.has(k) && v.trim(),
+      )
+    : [];
+  const payload = {
+    topic_contexts:
+      ctxEntries.length > 0
+        ? Object.fromEntries(ctxEntries.map(([k, v]) => [k, v.slice(0, 1000)]))
+        : undefined,
+    messages: batch.map((m, i) => ({
+      idx: i,
+      sender: m.sender,
+      at: m.at.toISOString(),
+      topic: m.topicName ?? null,
+      text: m.text.slice(0, 500),
+    })),
+  };
   let content: string;
   try {
     content = await callOpenRouter(
@@ -1504,7 +1524,11 @@ export async function analyzeGroupTasksV2(input: {
   ownerContext: string;
   chatNotes?: string | null;
   messages: AnalyzerMessage[];
-  topics?: Array<{ name: string; messageThreadId: number }>;
+  topics?: Array<{
+    name: string;
+    messageThreadId: number;
+    notes?: string | null;
+  }>;
   chatId?: number;
 }): Promise<GroupTaskAnalysis> {
   const messages = input.messages;
@@ -1536,8 +1560,15 @@ export async function analyzeGroupTasksV2(input: {
   for (let i = 0; i < messages.length; i += BATCH) {
     batches.push(messages.slice(i, i + BATCH));
   }
+  // Build topic_name → operator-written notes map once, reuse per batch.
+  const topicNotesByName: Record<string, string> = {};
+  for (const t of input.topics ?? []) {
+    if (t.notes && t.notes.trim()) topicNotesByName[t.name] = t.notes.trim();
+  }
   const settled = await Promise.allSettled(
-    batches.map((b, bi) => extractTaskEventsBatch(b, bi * BATCH, input.chatId)),
+    batches.map((b, bi) =>
+      extractTaskEventsBatch(b, bi * BATCH, input.chatId, topicNotesByName),
+    ),
   );
   let successfulBatches = 0;
   const events: TaskEvent[] = [];

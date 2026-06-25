@@ -426,6 +426,7 @@ type TopicBucket = {
   name: string;
   messageThreadId: number | null;
   archived: boolean;
+  notes: string | null;
   messages: { sender: string; text: string; at: string; fromOwner: boolean }[];
 };
 
@@ -642,6 +643,20 @@ function RawMessagesModal({
                     {t.messages.length} پیام {open ? "▾" : "▸"}
                   </button>
                 </div>
+                {open && t.messageThreadId != null && (
+                  <TopicNotesEditor
+                    chatId={chatId}
+                    threadId={t.messageThreadId}
+                    initialNotes={t.notes}
+                    onSaved={(notes) => {
+                      setTopics((prev) =>
+                        prev.map((tt) =>
+                          keyOf(tt) === k ? { ...tt, notes } : tt,
+                        ),
+                      );
+                    }}
+                  />
+                )}
                 {open && t.messages.length === 0 && (
                   <p className="text-[11px] text-[var(--color-text-dim)] p-3">
                     این تاپیک توی این بازه پیامی نداشت.
@@ -838,6 +853,127 @@ function TopicNameEditor({
       {err && (
         <span className="text-[10px] text-red-300 shrink-0">{err}</span>
       )}
+    </div>
+  );
+}
+
+function TopicNotesEditor({
+  chatId,
+  threadId,
+  initialNotes,
+  onSaved,
+}: {
+  chatId: number;
+  threadId: number;
+  initialNotes: string | null;
+  onSaved: (notes: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(initialNotes ?? "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/groups/${chatId}/topics/${threadId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: value }),
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${r.status}`);
+      }
+      const j = (await r.json()) as { notes: string | null };
+      onSaved(j.notes);
+      setEditing(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing && !initialNotes) {
+    return (
+      <div className="px-3 py-2 border-b border-[var(--color-border)]">
+        <button
+          onClick={() => setEditing(true)}
+          className="text-[11px] text-[var(--color-text-dim)] hover:text-amber-200"
+          title="یه توضیح کوتاه بنویس تا AI موقع تحلیل این تاپیک متن رو بهتر بفهمه"
+        >
+          📝 شرح این تاپیک رو بنویس <span className="opacity-50">(کمک‌کننده برای AI)</span>
+        </button>
+      </div>
+    );
+  }
+  if (!editing && initialNotes) {
+    return (
+      <div className="px-3 py-2 border-b border-[var(--color-border)] bg-amber-500/5">
+        <div className="flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] text-amber-200/70 mb-1">
+              📝 شرح برای AI:
+            </div>
+            <p
+              dir="auto"
+              style={{ unicodeBidi: "plaintext", textAlign: "start" }}
+              className="text-[12px] whitespace-pre-wrap break-words"
+            >
+              {initialNotes}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setValue(initialNotes);
+              setEditing(true);
+            }}
+            className="text-[10px] px-1.5 py-0.5 rounded-md text-[var(--color-text-dim)] hover:text-amber-200 shrink-0"
+          >
+            ✎ ویرایش
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="px-3 py-2 border-b border-[var(--color-border)] bg-amber-500/5">
+      <div className="text-[10px] text-amber-200/70 mb-1">
+        📝 شرح برای AI — مثلاً «این تاپیک فقط برای bug report هست» یا
+        «هر پیام مشتری توی این تاپیک یک سفارش جدید است»
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        disabled={saving}
+        rows={3}
+        dir="auto"
+        style={{ unicodeBidi: "plaintext", textAlign: "start" }}
+        className="w-full text-[12px] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+      />
+      <div className="flex items-center gap-1.5 mt-1.5">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="text-[11px] px-2 py-1 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+        >
+          {saving ? "..." : "ذخیره"}
+        </button>
+        <button
+          onClick={() => {
+            setValue(initialNotes ?? "");
+            setEditing(false);
+            setErr(null);
+          }}
+          disabled={saving}
+          className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)]"
+        >
+          لغو
+        </button>
+        {err && <span className="text-[10px] text-red-300">{err}</span>}
+      </div>
     </div>
   );
 }

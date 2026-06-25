@@ -1,17 +1,22 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { hasDb, setForumTopicArchived, sql } from "@/lib/db";
+import {
+  hasDb,
+  setForumTopicArchived,
+  setForumTopicNotes,
+  sql,
+} from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // PUT /api/groups/[id]/topics/[threadId]
-//   body: { name?: string | null, archived?: boolean }
+//   body: { name?: string | null, archived?: boolean, notes?: string | null }
 // Telegram Bot API can't fetch the topic list retroactively — the bot
 // only learns a topic_name from forum_topic_created/edited updates.
-// This endpoint lets the operator rename a topic manually OR archive
-// it («دیگه مهم نیست / پاک شده»). Archived topics are excluded from
-// analytics + the per-topic viewer unless includeArchived is set.
+// This endpoint lets the operator rename a topic manually, archive
+// it («دیگه مهم نیست»), OR write a description that the v2 analyzer
+// passes to the LLM for better context per topic.
 export async function PUT(
   request: Request,
   ctx: { params: Promise<{ id: string; threadId: string }> },
@@ -33,6 +38,7 @@ export async function PUT(
   const body = (await request.json().catch(() => ({}))) as {
     name?: string;
     archived?: boolean;
+    notes?: string | null;
   };
   if (typeof body.archived === "boolean") {
     await setForumTopicArchived({
@@ -41,6 +47,16 @@ export async function PUT(
       archived: body.archived,
     });
     return NextResponse.json({ ok: true, archived: body.archived });
+  }
+  if ("notes" in body) {
+    const notes =
+      typeof body.notes === "string" ? body.notes.slice(0, 2000) : null;
+    await setForumTopicNotes({
+      chatId,
+      messageThreadId: tid,
+      notes,
+    });
+    return NextResponse.json({ ok: true, notes: notes?.trim() || null });
   }
   if ("name" in body) {
     const name =
@@ -56,7 +72,10 @@ export async function PUT(
     return NextResponse.json({ ok: true, name });
   }
   return NextResponse.json(
-    { error: "send {name: ...} or {archived: true|false}" },
+    {
+      error:
+        "send {name: ...} or {archived: true|false} or {notes: '...'}",
+    },
     { status: 400 },
   );
 }

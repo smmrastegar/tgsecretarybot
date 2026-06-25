@@ -187,6 +187,7 @@ async function handle(
                 ? t.name
                 : `Topic #${t.messageThreadId}`,
             messageThreadId: t.messageThreadId,
+            notes: t.notes,
           }))
         : undefined,
     messages: messagesWithTopics,

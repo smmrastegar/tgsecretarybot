@@ -300,6 +300,11 @@ export async function ensureSchema(): Promise<void> {
     // Telegram's is_hidden flag (which mirrors what the Telegram client
     // shows) — this one is for «این تاپیک دیگه مهم نیست / پاک شده».
     await q`ALTER TABLE forum_topics ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ`;
+    // Operator-written description of what the topic is for. Passed
+    // to the v2 analyzer so the LLM can read the context («اینجا فقط
+    // تسک‌های pricing هست» / «این تاپیک برای bug-report ها است») and
+    // produce more accurate task extraction.
+    await q`ALTER TABLE forum_topics ADD COLUMN IF NOT EXISTS notes TEXT`;
     // SMS dedup: when the same SMS body arrives repeatedly to the
     // same inbox we update one Telegram message in-place instead of
     // posting N copies. body_signature is a whitespace-normalised
@@ -1918,6 +1923,7 @@ export type ForumTopic = {
   isClosed: boolean;
   isHidden: boolean;
   archivedAt: Date | null;
+  notes: string | null;
   observedAt: Date;
 };
 
@@ -1958,7 +1964,7 @@ export async function listForumTopics(
   const includeArchived = opts?.includeArchived ?? false;
   const rows = await sql()`
     SELECT chat_id, message_thread_id, name, icon_color, icon_emoji,
-           is_closed, is_hidden, archived_at, observed_at
+           is_closed, is_hidden, archived_at, notes, observed_at
     FROM forum_topics
     WHERE chat_id = ${chatId}
       AND (${includeArchived}::boolean = TRUE OR archived_at IS NULL)
@@ -1972,8 +1978,29 @@ export async function listForumTopics(
     isClosed: Boolean(r.is_closed),
     isHidden: Boolean(r.is_hidden),
     archivedAt: (r.archived_at as Date) ?? null,
+    notes: (r.notes as string) ?? null,
     observedAt: r.observed_at as Date,
   }));
+}
+
+// Operator writes a short description of what the topic is for. This
+// gets piped into the v2 analyzer's batch prompts so the LLM has the
+// per-topic context (e.g. "این تاپیک فقط برای bug-report ها"). Pass
+// notes=null or empty to clear.
+export async function setForumTopicNotes(opts: {
+  chatId: number;
+  messageThreadId: number;
+  notes: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  const trimmed = opts.notes?.trim() || null;
+  await sql()`
+    INSERT INTO forum_topics (chat_id, message_thread_id, notes)
+    VALUES (${opts.chatId}, ${opts.messageThreadId}, ${trimmed})
+    ON CONFLICT (chat_id, message_thread_id) DO UPDATE SET
+      notes = ${trimmed},
+      observed_at = NOW()`;
 }
 
 // Operator marks a topic as archived («دیگه مهم نیست / پاک شده»). When

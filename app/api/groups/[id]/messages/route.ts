@@ -54,11 +54,19 @@ export async function GET(
     );
   }
 
+  const topicNotesByThread = new Map<number, string>();
+  for (const t of topics) {
+    if (t.notes && t.notes.trim()) {
+      topicNotesByThread.set(t.messageThreadId, t.notes.trim());
+    }
+  }
+
   // Bucket messages by topic (null thread = "General").
   type TopicBucket = {
     name: string;
     messageThreadId: number | null;
     archived: boolean;
+    notes: string | null;
     messages: {
       sender: string;
       text: string;
@@ -80,10 +88,15 @@ export async function GET(
             `Topic #${m.messageThreadId}`);
       const archived =
         m.messageThreadId != null && archivedThreadIds.has(m.messageThreadId);
+      const notes =
+        m.messageThreadId != null
+          ? (topicNotesByThread.get(m.messageThreadId) ?? null)
+          : null;
       bucket = {
         name,
         messageThreadId: m.messageThreadId,
         archived,
+        notes,
         messages: [],
       };
       buckets.set(k, bucket);
@@ -105,6 +118,7 @@ export async function GET(
           t.name && t.name.trim() ? t.name : `Topic #${t.messageThreadId}`,
         messageThreadId: t.messageThreadId,
         archived: t.archivedAt != null,
+        notes: t.notes?.trim() || null,
         messages: [],
       });
     }
