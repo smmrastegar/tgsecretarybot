@@ -1203,32 +1203,52 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
 // Each stage is small enough to almost never fail; failures in one
 // batch don't poison the rest.
 
-const TASK_EVENTS_PROMPT = `You read a CHUNK of group chat messages. For EVERY message that touches a task, work item, deliverable, commitment, order, request, promise, deadline, or status update — output one JSON row. Be GENEROUS: include product orders, requests for help, status reports, completions, blockers. SKIP pure smalltalk, jokes, greetings, reactions.
+const TASK_EVENTS_PROMPT = `You read messages from ONE forum topic of a Telegram group and extract task events.
 
-The input MAY also include a "topic_contexts" object — operator-written one-line descriptions of what each forum topic is FOR (e.g. {"Bugs": "این تاپیک فقط برای bug-report ها", "LM Requests": "سفارش‌های مشتری لیموم — هر پیام معمولاً یک تسک ایجاد می‌کنه"}). Use it to interpret each topic's messages correctly — if the operator says a topic is "هر پیام = یک تسک" then treat every concrete request there as a task; if a topic is "discussion only" then be stricter.
+CRITICAL — TOPIC NAME IS A STRONG SIGNAL:
+- If the topic name itself is a workflow stage ("Doing" / "Done" / "Stopped" / "In Progress" / "Backlog" / "Stalled" / "TODO" / "WIP"), then EVERY substantive message in that topic is a task at that stage. Default to creating one row per message there. The topic name BECOMES the event_kind:
+    Doing / In Progress / WIP        → event_kind="update"
+    Done / Shipped / Released         → event_kind="complete"
+    Stopped / Stalled / Blocked       → event_kind="block"
+    Backlog / TODO / Announced / New  → event_kind="create"
+- If the topic name is a queue/category ("LM Requests" / "RB Requests" / "Other Requests" / "Bug Reports" / "Incidents" / "Support" / "Orders"), then EVERY concrete message there is a task — default event_kind="create" unless the message itself says it's done/in-progress/blocked.
+- If the topic is "General" / discussion / "Random" / "Chat" — be selective; only extract messages that genuinely describe a task.
+
+The input ALSO carries:
+- "topic_name": the topic these messages came from.
+- "topic_context": operator-written description of what this topic is for. Trust it — if it says «هر پیام = یک تسک» / «هر سفارش جدید» / «task-per-message» then DEFAULT to one task per message.
+
+EXTRACT GENEROUSLY. The owner is asking «who gave me what work, and where is it» — every order, request, deliverable, commitment, complaint, bug-report, status update, completion message is a task event. Only skip:
+- pure greetings ("سلام" / "خسته نباشید")
+- emoji-only reactions
+- one-word agreements ("باشه" / "ok" / "👍") that don't add new info
+- forwarded jokes / memes
+
+When in doubt, INCLUDE the message. Recall matters more than precision here — operator can ignore false positives, but missed tasks are invisible.
+
+For each message that is a task event, output one JSON row.
 
 Return STRICT JSON ARRAY only, no prose, no code fences:
 [
   {
-    "msg_idx": <0-based index into the supplied "messages" array>,
-    "task_summary": "<5-12 word Persian summary of the underlying task this message refers to>",
+    "msg_idx": <0-based index into "messages">,
+    "task_summary": "<5-12 word Persian summary of the underlying task — be specific, not «درخواست از مشتری»>",
     "event_kind": "create" | "update" | "complete" | "block" | "escalate" | "deadline",
     "actor": "<sender name COPIED EXACTLY from the message>",
-    "note": "<one short Persian line: what changed / what was said>"
+    "note": "<one short Persian line: what this message says about the task>"
   }
 ]
 
 Rules:
-- task_summary MUST be CONSISTENT across messages — if msg #3 and msg #17 talk about the same underlying task, use the EXACT same task_summary string in both rows. Always use the most natural / descriptive Persian phrasing.
-- event_kind:
-  - "create"   = the task is announced / requested / assigned for the first time
-  - "update"   = progress, partial work, status report, comment on an existing task
-  - "complete" = "تموم شد", "deliver شد", "deploy شد", "فرستادم", "ثبت شد", "پرداخت شد"
-  - "block"    = blocker, waiting on something, "گیر کردیم به X"
-  - "escalate" = "فوریه", "هرچه سریعتر", "این رو الان رسیدگی کن"
-  - "deadline" = a date or "تا فردا" / "تا آخر هفته" / "تا ساعت X" is mentioned
-- If a message is ambiguous or pure chat, OMIT it. Don't pad.
-- Empty array [] if this batch has no task-shaped messages — that's a valid answer.`;
+- task_summary MUST be CONSISTENT — if two messages discuss the same task use the SAME task_summary string. But DEFAULT to one task per message when the topic is request-shaped or workflow-stage-shaped (see above) — don't over-cluster.
+- event_kind keywords:
+  - "create"   = announced / requested / assigned / new order
+  - "update"   = progress, status report, partial work, comment
+  - "complete" = «تموم شد» / «deliver شد» / «deploy شد» / «فرستادم» / «ثبت شد» / «پرداخت شد»
+  - "block"    = blocker / waiting on something / «گیر کردیم به X»
+  - "escalate" = «فوریه» / «هرچه سریعتر» / «این رو الان رسیدگی کن»
+  - "deadline" = a date / «تا فردا» / «تا آخر هفته» mentioned
+- Empty array [] only when the topic is genuinely chat-only AND no message describes a task.`;
 
 const OVERVIEW_PROMPT = `You are summarising a Telegram group for its owner. In 2-3 Persian sentences (max 60 words total), describe WHAT this group is working on right now — the kind of work, the rhythm, who's leading, and any obvious focus or issue. No lists, no bullets, no "این گروه ..." opening cliché. Return plain text only, no JSON, no quotes.`;
 
@@ -1249,32 +1269,22 @@ type AnalyzerMessage = {
 
 async function extractTaskEventsBatch(
   batch: AnalyzerMessage[],
-  globalOffset: number,
+  globalOffsets: number[],
   chatId?: number,
-  topicNotes?: Record<string, string>,
+  topicNote?: string,
 ): Promise<TaskEvent[]> {
   if (batch.length === 0) return [];
-  // Restrict topic_contexts to topics that actually appear in this
-  // batch — keeps the prompt tight.
-  const topicsInBatch = new Set<string>();
-  for (const m of batch) {
-    if (m.topicName && m.topicName.trim()) topicsInBatch.add(m.topicName);
-  }
-  const ctxEntries = topicNotes
-    ? Object.entries(topicNotes).filter(
-        ([k, v]) => topicsInBatch.has(k) && v.trim(),
-      )
-    : [];
+  // Whole batch is one topic now — set the topic_name + topic_context
+  // at the top of the payload so the LLM treats every message in this
+  // batch with the right framing.
+  const topicName = batch[0]?.topicName ?? "General";
   const payload = {
-    topic_contexts:
-      ctxEntries.length > 0
-        ? Object.fromEntries(ctxEntries.map(([k, v]) => [k, v.slice(0, 1000)]))
-        : undefined,
+    topic_name: topicName,
+    topic_context: topicNote && topicNote.trim() ? topicNote.trim() : undefined,
     messages: batch.map((m, i) => ({
       idx: i,
       sender: m.sender,
       at: m.at.toISOString(),
-      topic: m.topicName ?? null,
       text: m.text.slice(0, 500),
     })),
   };
@@ -1340,7 +1350,7 @@ async function extractTaskEventsBatch(
     const summary = String(o.task_summary ?? o.summary ?? "").trim();
     if (!summary) continue;
     events.push({
-      msgIdx: globalOffset + idx,
+      msgIdx: globalOffsets[idx]!,
       taskSummary: summary,
       eventKind: kind as TaskEvent["eventKind"],
       actor: String(o.actor ?? batch[idx]!.sender).trim(),
@@ -1553,21 +1563,49 @@ export async function analyzeGroupTasksV2(input: {
       debug: { rawResponse: "", parseStatus: "ok" },
     };
   }
-  // Batch into ~60-message chunks so each LLM call stays small and
-  // self-contained.
-  const BATCH = 60;
-  const batches: AnalyzerMessage[][] = [];
-  for (let i = 0; i < messages.length; i += BATCH) {
-    batches.push(messages.slice(i, i + BATCH));
+  // Group messages by topic first — the LLM does much better when a
+  // single batch is all one topic with its operator-written context at
+  // the top, vs chronological chunks that mix 5 topics together.
+  const byTopic = new Map<
+    string,
+    { msg: AnalyzerMessage; originalIdx: number }[]
+  >();
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]!;
+    const tk = m.topicName ?? "General";
+    const arr = byTopic.get(tk) ?? [];
+    arr.push({ msg: m, originalIdx: i });
+    byTopic.set(tk, arr);
   }
-  // Build topic_name → operator-written notes map once, reuse per batch.
   const topicNotesByName: Record<string, string> = {};
   for (const t of input.topics ?? []) {
     if (t.notes && t.notes.trim()) topicNotesByName[t.name] = t.notes.trim();
   }
+  // Split each topic into ≤40-message chunks for LLM attention; small
+  // enough that the model can pay attention to every row.
+  const PER_BATCH = 40;
+  type TopicBatch = {
+    topicName: string;
+    msgs: AnalyzerMessage[];
+    origIdx: number[];
+    note: string | undefined;
+  };
+  const batches: TopicBatch[] = [];
+  for (const [topicName, msgs] of byTopic) {
+    const note = topicNotesByName[topicName];
+    for (let i = 0; i < msgs.length; i += PER_BATCH) {
+      const slice = msgs.slice(i, i + PER_BATCH);
+      batches.push({
+        topicName,
+        msgs: slice.map((s) => s.msg),
+        origIdx: slice.map((s) => s.originalIdx),
+        note,
+      });
+    }
+  }
   const settled = await Promise.allSettled(
-    batches.map((b, bi) =>
-      extractTaskEventsBatch(b, bi * BATCH, input.chatId, topicNotesByName),
+    batches.map((b) =>
+      extractTaskEventsBatch(b.msgs, b.origIdx, input.chatId, b.note),
     ),
   );
   let successfulBatches = 0;
@@ -1737,10 +1775,17 @@ export async function analyzeGroupTasksV2(input: {
   );
 
   const debugSummary = JSON.stringify({
+    batching: "per_topic",
+    topics: byTopic.size,
     batches: batches.length,
     successful_batches: successfulBatches,
     raw_events: events.length,
     deduped_tasks: tasks.length,
+    per_topic_batches: batches.map((b) => ({
+      topic: b.topicName,
+      msgs: b.msgs.length,
+      has_note: Boolean(b.note),
+    })),
   });
   return {
     overview,
