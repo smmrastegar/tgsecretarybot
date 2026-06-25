@@ -10,8 +10,7 @@ import {
   listChatsByFunction,
   listForumTopics,
   upsertGroupAnalytics,
-} from "@/lib/db";
-import { getSettings } from "@/lib/settings";
+} from "@/lib/db";import { getSettings } from "@/lib/settings";
 import {
   analyzeGroupTasksV2,
   type GroupCriticalItem,
@@ -101,7 +100,10 @@ async function handle(
     const looksStale =
       cached != null && cached.messageCount >= 30 && cachedTasks.length === 0;
     if (cached && cached.messageCount > 0 && !looksStale) {
-      const token = await getGroupAnalyticsShareToken(chatId).catch(() => null);
+      const [token, currentTopicsList] = await Promise.all([
+        getGroupAnalyticsShareToken(chatId).catch(() => null),
+        listForumTopics(chatId, { includeArchived: true }).catch(() => []),
+      ]);
       return NextResponse.json({
         ok: true,
         cached: true,
@@ -111,6 +113,12 @@ async function handle(
         analysis: cached.analysis,
         cachedAt: cached.createdAt,
         shareToken: token,
+        currentTopics: currentTopicsList.map((t) => ({
+          name:
+            t.name && t.name.trim() ? t.name : `Topic #${t.messageThreadId}`,
+          messageThreadId: t.messageThreadId,
+          archived: t.archivedAt != null,
+        })),
       });
     }
     if (!opts.allowCompute) {
@@ -211,6 +219,12 @@ async function handle(
       items: analysis.criticalForInbox,
     }).catch((err) => console.warn("[groups] critical inbox failed:", err));
   }
+  // Send the full topic list (including archived) so the frontend
+  // can render correctly without an extra round-trip — archived
+  // entries become struck-through in the UI rather than just hidden.
+  const allTopicsForFrontend = await listForumTopics(chatId, {
+    includeArchived: true,
+  }).catch(() => topics);
   return NextResponse.json({
     ok: true,
     cached: false,
@@ -219,6 +233,12 @@ async function handle(
     messageCount: messages.length,
     analysis,
     shareToken: token,
+    currentTopics: allTopicsForFrontend.map((t) => ({
+      name:
+        t.name && t.name.trim() ? t.name : `Topic #${t.messageThreadId}`,
+      messageThreadId: t.messageThreadId,
+      archived: t.archivedAt != null,
+    })),
   });
 }
 

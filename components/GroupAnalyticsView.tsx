@@ -180,14 +180,22 @@ export function formatTime(iso: string | null): string {
   return d.toLocaleString();
 }
 
+export type CurrentTopic = {
+  name: string;
+  messageThreadId: number;
+  archived: boolean;
+};
+
 export default function GroupAnalyticsView({
   analysis,
   messageCount,
   sinceIso,
+  currentTopics,
 }: {
   analysis: Analysis;
   messageCount: number;
   sinceIso: string | null;
+  currentTopics?: CurrentTopic[];
 }) {
   const overdueTasks = analysis.tasks.filter(
     (t) => t.isOverdue || t.status === "stalled",
@@ -197,6 +205,38 @@ export default function GroupAnalyticsView({
       !t.isOverdue && t.status !== "stalled" && t.status !== "done",
   );
   const doneTasks = analysis.tasks.filter((t) => t.status === "done");
+
+  // Live filter for topicBreakdown: a topic the operator just
+  // archived shouldn't appear here even though the cached analysis
+  // still has its entry. We also rename Topic #N entries to the
+  // current display name when the operator has provided one.
+  const archivedNames = new Set(
+    (currentTopics ?? []).filter((t) => t.archived).map((t) => t.name),
+  );
+  // Also map old "Topic #N" labels to whatever name is now stored for
+  // thread N — that's the rename path. We key by both the literal
+  // "Topic #N" and the threadId numeric string so legacy cached
+  // entries get fixed up on display.
+  const renameMap = new Map<string, string>();
+  for (const t of currentTopics ?? []) {
+    renameMap.set(`Topic #${t.messageThreadId}`, t.name);
+  }
+  const renamedArchivedKeys = new Set<string>();
+  for (const t of currentTopics ?? []) {
+    if (t.archived) renamedArchivedKeys.add(`Topic #${t.messageThreadId}`);
+  }
+  const visibleTopicBreakdown = (analysis.topicBreakdown ?? [])
+    .filter((tb) => {
+      // Hide if the cached name OR the legacy-Topic-#N form maps
+      // to a now-archived topic.
+      if (archivedNames.has(tb.topicName)) return false;
+      if (renamedArchivedKeys.has(tb.topicName)) return false;
+      return true;
+    })
+    .map((tb) => ({
+      ...tb,
+      topicName: renameMap.get(tb.topicName) ?? tb.topicName,
+    }));
 
   return (
     <div dir="rtl">
@@ -319,11 +359,11 @@ export default function GroupAnalyticsView({
         </Card>
       )}
 
-      {analysis.topicBreakdown && analysis.topicBreakdown.length > 1 && (
+      {visibleTopicBreakdown.length > 1 && (
         <Card className="mb-4">
           <div className="text-sm font-medium mb-3">🧵 تفکیک بر اساس تاپیک</div>
           <div className="flex flex-col gap-2">
-            {analysis.topicBreakdown.map((t, i) => (
+            {visibleTopicBreakdown.map((t, i) => (
               <TopicBreakdownRow
                 key={`${t.topicName}-${i}`}
                 topic={t}

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import {
+  deleteGroupAnalytics,
   hasDb,
   setForumTopicArchived,
   setForumTopicNotes,
@@ -17,6 +18,9 @@ export const dynamic = "force-dynamic";
 // This endpoint lets the operator rename a topic manually, archive
 // it («دیگه مهم نیست»), OR write a description that the v2 analyzer
 // passes to the LLM for better context per topic.
+// Any change invalidates the cached group_analytics rows so the next
+// view rebuilds the breakdown with the new name / skips archived /
+// uses the new notes.
 export async function PUT(
   request: Request,
   ctx: { params: Promise<{ id: string; threadId: string }> },
@@ -40,15 +44,15 @@ export async function PUT(
     archived?: boolean;
     notes?: string | null;
   };
+  let response: NextResponse;
   if (typeof body.archived === "boolean") {
     await setForumTopicArchived({
       chatId,
       messageThreadId: tid,
       archived: body.archived,
     });
-    return NextResponse.json({ ok: true, archived: body.archived });
-  }
-  if ("notes" in body) {
+    response = NextResponse.json({ ok: true, archived: body.archived });
+  } else if ("notes" in body) {
     const notes =
       typeof body.notes === "string" ? body.notes.slice(0, 2000) : null;
     await setForumTopicNotes({
@@ -56,9 +60,8 @@ export async function PUT(
       messageThreadId: tid,
       notes,
     });
-    return NextResponse.json({ ok: true, notes: notes?.trim() || null });
-  }
-  if ("name" in body) {
+    response = NextResponse.json({ ok: true, notes: notes?.trim() || null });
+  } else if ("name" in body) {
     const name =
       typeof body.name === "string" && body.name.trim()
         ? body.name.trim().slice(0, 128)
@@ -69,13 +72,19 @@ export async function PUT(
       ON CONFLICT (chat_id, message_thread_id) DO UPDATE SET
         name = ${name},
         observed_at = NOW()`;
-    return NextResponse.json({ ok: true, name });
+    response = NextResponse.json({ ok: true, name });
+  } else {
+    return NextResponse.json(
+      {
+        error:
+          "send {name: ...} or {archived: true|false} or {notes: '...'}",
+      },
+      { status: 400 },
+    );
   }
-  return NextResponse.json(
-    {
-      error:
-        "send {name: ...} or {archived: true|false} or {notes: '...'}",
-    },
-    { status: 400 },
-  );
+  // Any topic change makes the cached analytics misleading (old name in
+  // breakdown, archived topic still listed, notes not in prompt). Drop
+  // every window so the next view computes fresh.
+  await deleteGroupAnalytics(chatId).catch(() => {});
+  return response;
 }

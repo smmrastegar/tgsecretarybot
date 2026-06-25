@@ -6,6 +6,12 @@ import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
 import GroupAnalyticsView, { type Analysis } from "@/components/GroupAnalyticsView";
 
+type CurrentTopic = {
+  name: string;
+  messageThreadId: number;
+  archived: boolean;
+};
+
 type AnalyticsResponse = {
   ok: boolean;
   empty?: boolean;
@@ -16,6 +22,7 @@ type AnalyticsResponse = {
   analysis: Analysis | null;
   cachedAt?: string;
   shareToken?: string | null;
+  currentTopics?: CurrentTopic[];
   error?: string;
 };
 
@@ -326,6 +333,7 @@ export default function GroupAnalyticsPage({
               analysis={data.analysis}
               messageCount={data.messageCount}
               sinceIso={data.sinceIso}
+              currentTopics={data.currentTopics}
             />
           </>
         )}
