@@ -52,6 +52,7 @@ export default function GroupAnalyticsPage({
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
+  const [showRawMessages, setShowRawMessages] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") setOrigin(window.location.origin);
@@ -179,6 +180,14 @@ export default function GroupAnalyticsPage({
                 className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
               >
                 {running ? "در حال پردازش…" : "↻ پردازش مجدد"}
+              </button>
+              <button
+                onClick={() => setShowRawMessages(true)}
+                disabled={running}
+                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                title="نمایش همه پیام‌های دریافت‌شده در این بازه به تفکیک تاپیک — برای بررسی اینکه AI با چی کار می‌کرده"
+              >
+                👀 نمایش پیام‌ها به تفکیک تاپیک
               </button>
               <button
                 onClick={async () => {
@@ -320,6 +329,21 @@ export default function GroupAnalyticsPage({
             />
           </>
         )}
+        {showRawMessages && (
+          <RawMessagesModal
+            chatId={chatId}
+            days={days}
+            onClose={() => setShowRawMessages(false)}
+            onAnalyze={async () => {
+              setShowRawMessages(false);
+              await fetch(`/api/groups/${chatId}/analytics`, {
+                method: "DELETE",
+              });
+              load(days, true);
+            }}
+            running={running}
+          />
+        )}
       </div>
     </Shell>
   );
@@ -395,5 +419,205 @@ function EmptyAnalysisBanner({
         </pre>
       )}
     </Card>
+  );
+}
+
+type TopicBucket = {
+  name: string;
+  messageThreadId: number | null;
+  messages: { sender: string; text: string; at: string; fromOwner: boolean }[];
+};
+
+function RawMessagesModal({
+  chatId,
+  days,
+  onClose,
+  onAnalyze,
+  running,
+}: {
+  chatId: number;
+  days: number;
+  onClose: () => void;
+  onAnalyze: () => void;
+  running: boolean;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [topics, setTopics] = useState<TopicBucket[]>([]);
+  const [totalMessages, setTotalMessages] = useState(0);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setErr(null);
+    fetch(`/api/groups/${chatId}/messages?days=${days}`)
+      .then(async (r) => {
+        const j = (await r.json()) as {
+          ok: boolean;
+          totalMessages?: number;
+          topics?: TopicBucket[];
+          error?: string;
+        };
+        if (!alive) return;
+        if (!r.ok) throw new Error(j.error ?? "failed");
+        setTopics(j.topics ?? []);
+        setTotalMessages(j.totalMessages ?? 0);
+        // Auto-expand the first (largest) topic so the operator sees
+        // content immediately without an extra click.
+        const first = (j.topics ?? [])[0];
+        if (first) {
+          setExpanded(new Set([keyOf(first)]));
+        }
+      })
+      .catch((e) => {
+        if (alive) setErr(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [chatId, days]);
+
+  const keyOf = (t: TopicBucket): string =>
+    t.messageThreadId == null ? "general" : String(t.messageThreadId);
+  const toggle = (k: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  };
+  const expandAll = () =>
+    setExpanded(new Set(topics.map(keyOf)));
+  const collapseAll = () => setExpanded(new Set());
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/70 flex items-stretch justify-center z-50 p-2 sm:p-4 overflow-y-auto"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl w-full max-w-3xl my-4 flex flex-col max-h-[95vh]"
+      >
+        <div className="flex items-center justify-between gap-3 p-4 border-b border-[var(--color-border)]">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold mb-1">
+              📨 پیام‌های دریافت‌شده به تفکیک تاپیک
+            </h2>
+            <p className="text-[11px] text-[var(--color-text-dim)]">
+              {days === 0 ? "از ابتدا" : `${days} روز اخیر`} · {totalMessages}{" "}
+              پیام · {topics.length} تاپیک
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="px-4 py-2 border-b border-[var(--color-border)] flex flex-wrap gap-2 items-center">
+          <button
+            onClick={expandAll}
+            disabled={topics.length === 0}
+            className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+          >
+            باز کن همه
+          </button>
+          <button
+            onClick={collapseAll}
+            disabled={topics.length === 0}
+            className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+          >
+            ببند همه
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={onAnalyze}
+            disabled={running || totalMessages === 0}
+            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+            title="کش رو پاک کن و روی همین پیام‌ها از نو تحلیل بزن"
+          >
+            {running ? "..." : "🔁 تحلیل روی این پیام‌ها"}
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3">
+          {loading && (
+            <p className="text-sm text-[var(--color-text-dim)] text-center py-6">
+              در حال بارگذاری…
+            </p>
+          )}
+          {err && (
+            <p className="text-sm text-red-300 text-center py-6">{err}</p>
+          )}
+          {!loading && !err && topics.length === 0 && (
+            <p className="text-sm text-[var(--color-text-dim)] text-center py-6">
+              هیچ پیامی توی این بازه ثبت نشده.
+            </p>
+          )}
+          {topics.map((t) => {
+            const k = keyOf(t);
+            const open = expanded.has(k);
+            return (
+              <div
+                key={k}
+                className="mb-2 border border-[var(--color-border)] rounded-md overflow-hidden"
+              >
+                <button
+                  onClick={() => toggle(k)}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] text-right"
+                >
+                  <span className="text-sm font-medium truncate">
+                    🧵 {t.name}
+                  </span>
+                  <span className="text-[10px] text-[var(--color-text-dim)] shrink-0">
+                    {t.messages.length} پیام {open ? "▾" : "▸"}
+                  </span>
+                </button>
+                {open && t.messages.length === 0 && (
+                  <p className="text-[11px] text-[var(--color-text-dim)] p-3">
+                    این تاپیک توی این بازه پیامی نداشت.
+                  </p>
+                )}
+                {open && t.messages.length > 0 && (
+                  <ul className="flex flex-col gap-1 p-2">
+                    {t.messages.map((m, i) => (
+                      <li
+                        key={i}
+                        className={`text-[12px] rounded-md px-2 py-1.5 ${
+                          m.fromOwner
+                            ? "bg-[var(--color-accent)]/15 border border-[var(--color-accent)]/40"
+                            : "bg-[var(--color-surface-2)] border border-[var(--color-border)]"
+                        }`}
+                      >
+                        <div className="text-[10px] text-[var(--color-text-dim)] mb-0.5">
+                          {m.fromOwner ? "you" : m.sender} ·{" "}
+                          {new Date(m.at).toLocaleString()}
+                        </div>
+                        <div
+                          dir="auto"
+                          style={{
+                            unicodeBidi: "plaintext",
+                            textAlign: "start",
+                          }}
+                          className="whitespace-pre-wrap break-words"
+                        >
+                          {m.text}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
