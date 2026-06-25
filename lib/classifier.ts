@@ -1187,6 +1187,545 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
   };
 }
 
+// ============================================================
+// V2 group analyzer — chunked / deterministic pipeline
+// ============================================================
+// The single-shot analyzer above asks one LLM call to produce
+// overview + stats + tasks + people + highlights + topicBreakdown +
+// criticalForInbox all in one JSON. For active groups with 100+
+// messages that's ~80k chars of prompt and ~3k chars of structured
+// output — and the model frequently truncates or hallucinates,
+// leaving the operator with 0 tasks. This v2 splits the work:
+//   Stage A:  small per-batch task-event extraction (~60 msgs/batch)
+//   Stage B:  deterministic cluster + lifecycle build (no LLM)
+//   Stage C:  one tiny overview call (~30 msgs, single sentence)
+//   Stage D:  deterministic people / highlights / topics from tasks
+// Each stage is small enough to almost never fail; failures in one
+// batch don't poison the rest.
+
+const TASK_EVENTS_PROMPT = `You read a CHUNK of group chat messages. For EVERY message that touches a task, work item, deliverable, commitment, order, request, promise, deadline, or status update — output one JSON row. Be GENEROUS: include product orders, requests for help, status reports, completions, blockers. SKIP pure smalltalk, jokes, greetings, reactions.
+
+Return STRICT JSON ARRAY only, no prose, no code fences:
+[
+  {
+    "msg_idx": <0-based index into the supplied "messages" array>,
+    "task_summary": "<5-12 word Persian summary of the underlying task this message refers to>",
+    "event_kind": "create" | "update" | "complete" | "block" | "escalate" | "deadline",
+    "actor": "<sender name COPIED EXACTLY from the message>",
+    "note": "<one short Persian line: what changed / what was said>"
+  }
+]
+
+Rules:
+- task_summary MUST be CONSISTENT across messages — if msg #3 and msg #17 talk about the same underlying task, use the EXACT same task_summary string in both rows. Always use the most natural / descriptive Persian phrasing.
+- event_kind:
+  - "create"   = the task is announced / requested / assigned for the first time
+  - "update"   = progress, partial work, status report, comment on an existing task
+  - "complete" = "تموم شد", "deliver شد", "deploy شد", "فرستادم", "ثبت شد", "پرداخت شد"
+  - "block"    = blocker, waiting on something, "گیر کردیم به X"
+  - "escalate" = "فوریه", "هرچه سریعتر", "این رو الان رسیدگی کن"
+  - "deadline" = a date or "تا فردا" / "تا آخر هفته" / "تا ساعت X" is mentioned
+- If a message is ambiguous or pure chat, OMIT it. Don't pad.
+- Empty array [] if this batch has no task-shaped messages — that's a valid answer.`;
+
+const OVERVIEW_PROMPT = `You are summarising a Telegram group for its owner. In 2-3 Persian sentences (max 60 words total), describe WHAT this group is working on right now — the kind of work, the rhythm, who's leading, and any obvious focus or issue. No lists, no bullets, no "این گروه ..." opening cliché. Return plain text only, no JSON, no quotes.`;
+
+export type TaskEvent = {
+  msgIdx: number;
+  taskSummary: string;
+  eventKind: "create" | "update" | "complete" | "block" | "escalate" | "deadline";
+  actor: string;
+  note: string;
+};
+
+type AnalyzerMessage = {
+  sender: string;
+  text: string;
+  at: Date;
+  topicName?: string | null;
+};
+
+async function extractTaskEventsBatch(
+  batch: AnalyzerMessage[],
+  globalOffset: number,
+  chatId?: number,
+): Promise<TaskEvent[]> {
+  if (batch.length === 0) return [];
+  const payload = batch.map((m, i) => ({
+    idx: i,
+    sender: m.sender,
+    at: m.at.toISOString(),
+    topic: m.topicName ?? null,
+    text: m.text.slice(0, 500),
+  }));
+  let content: string;
+  try {
+    content = await callOpenRouter(
+      [
+        { role: "system", content: TASK_EVENTS_PROMPT },
+        { role: "user", content: JSON.stringify(payload) },
+      ],
+      {
+        maxTokens: 2500,
+        temperature: 0.1,
+        jsonObject: true,
+        purpose: "group_task_extract",
+        chatId: chatId ?? null,
+      },
+    );
+  } catch (err) {
+    console.warn(`[ai] task-events batch failed: ${err}`);
+    return [];
+  }
+  // The model sometimes wraps the array in {"events":[...]} despite
+  // the prompt asking for a raw array — handle both.
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    const m = content.match(/\[[\s\S]*\]/);
+    if (m) {
+      try {
+        parsed = JSON.parse(m[0]);
+      } catch {}
+    }
+  }
+  let rows: unknown[] = [];
+  if (Array.isArray(parsed)) rows = parsed;
+  else if (parsed && typeof parsed === "object") {
+    const obj = parsed as Record<string, unknown>;
+    for (const k of ["events", "rows", "items", "tasks"]) {
+      if (Array.isArray(obj[k])) {
+        rows = obj[k] as unknown[];
+        break;
+      }
+    }
+  }
+  const validKinds = new Set([
+    "create",
+    "update",
+    "complete",
+    "block",
+    "escalate",
+    "deadline",
+  ]);
+  const events: TaskEvent[] = [];
+  for (const r of rows) {
+    if (!r || typeof r !== "object") continue;
+    const o = r as Record<string, unknown>;
+    const idx = Number(o.msg_idx ?? o.idx);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= batch.length) continue;
+    const kind = String(o.event_kind ?? o.kind ?? "").toLowerCase();
+    if (!validKinds.has(kind)) continue;
+    const summary = String(o.task_summary ?? o.summary ?? "").trim();
+    if (!summary) continue;
+    events.push({
+      msgIdx: globalOffset + idx,
+      taskSummary: summary,
+      eventKind: kind as TaskEvent["eventKind"],
+      actor: String(o.actor ?? batch[idx]!.sender).trim(),
+      note: String(o.note ?? "").trim(),
+    });
+  }
+  return events;
+}
+
+// Normalize a task summary for clustering. Lowercase, drop punctuation
+// and arabic/persian diacritics, collapse whitespace. Two events with
+// summaries that normalize to the same string are the same task.
+function normalizeTaskKey(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[ً-ْ]/g, "") // arabic harakat
+    .replace(/[ـ\.,،؛:!؟?\-_/\\()«»"'\[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildTaskRecordsFromEvents(
+  events: TaskEvent[],
+  messages: AnalyzerMessage[],
+): GroupTaskRecord[] {
+  const groups = new Map<string, TaskEvent[]>();
+  const titlePicks = new Map<string, string>();
+  for (const e of events) {
+    const key = normalizeTaskKey(e.taskSummary);
+    if (!key) continue;
+    const arr = groups.get(key) ?? [];
+    arr.push(e);
+    groups.set(key, arr);
+    // Pick the longest / most descriptive variant as the title.
+    const cur = titlePicks.get(key) ?? "";
+    if (e.taskSummary.length > cur.length) {
+      titlePicks.set(key, e.taskSummary);
+    }
+  }
+  const now = Date.now();
+  const tasks: GroupTaskRecord[] = [];
+  for (const [key, evs] of groups) {
+    // Sort events chronologically by underlying message.
+    evs.sort(
+      (a, b) =>
+        (messages[a.msgIdx]?.at.getTime() ?? 0) -
+        (messages[b.msgIdx]?.at.getTime() ?? 0),
+    );
+    const first = evs[0]!;
+    const last = evs[evs.length - 1]!;
+    const createEvent = evs.find((e) => e.eventKind === "create") ?? first;
+    const completeEvent =
+      [...evs].reverse().find((e) => e.eventKind === "complete") ?? null;
+    const blockEvent =
+      [...evs].reverse().find((e) => e.eventKind === "block") ?? null;
+    const deadlineEvent =
+      [...evs].reverse().find((e) => e.eventKind === "deadline") ?? null;
+    const announcedAt =
+      messages[createEvent.msgIdx]?.at.toISOString() ??
+      messages[first.msgIdx]!.at.toISOString();
+    const completedAt = completeEvent
+      ? messages[completeEvent.msgIdx]?.at.toISOString() ?? null
+      : null;
+    const lastAt = messages[last.msgIdx]!.at;
+    const staleDays = Math.round((now - lastAt.getTime()) / 86400_000);
+
+    let status: GroupTaskRecord["status"];
+    if (completeEvent) status = "done";
+    else if (blockEvent || staleDays >= 5) status = "stalled";
+    else if (evs.some((e) => e.eventKind === "update")) status = "in_progress";
+    else status = "announced";
+
+    const durationHours =
+      completedAt != null
+        ? Math.round(
+            ((new Date(completedAt).getTime() -
+              new Date(announcedAt).getTime()) /
+              3_600_000) *
+              10,
+          ) / 10
+        : null;
+
+    const dueAt = deadlineEvent ? messages[deadlineEvent.msgIdx]?.at.toISOString() ?? null : null;
+    const isOverdue =
+      status !== "done" &&
+      ((dueAt && new Date(dueAt).getTime() < now) || staleDays >= 5);
+
+    const priority: "high" | "normal" | "low" = evs.some(
+      (e) => e.eventKind === "escalate",
+    )
+      ? "high"
+      : "normal";
+
+    const evidence = evs.slice(0, 5).map((e) => {
+      const msg = messages[e.msgIdx];
+      const text = msg?.text ?? e.note;
+      return text.slice(0, 180);
+    });
+    const owner =
+      evs.find((e) => e.eventKind === "update" || e.eventKind === "complete")
+        ?.actor ?? null;
+
+    tasks.push({
+      title: titlePicks.get(key) ?? first.taskSummary,
+      topicName: messages[first.msgIdx]?.topicName ?? null,
+      owner,
+      announcedBy: createEvent.actor,
+      announcedAt,
+      dueAt,
+      status,
+      priority,
+      isOverdue: Boolean(isOverdue),
+      staleDays,
+      completedAt,
+      durationHours,
+      completedOnTime: completedAt
+        ? !dueAt || new Date(completedAt) <= new Date(dueAt)
+        : null,
+      delayHours:
+        completedAt && dueAt && new Date(completedAt) > new Date(dueAt)
+          ? Math.round(
+              ((new Date(completedAt).getTime() - new Date(dueAt).getTime()) /
+                3_600_000) *
+                10,
+            ) / 10
+          : null,
+      blockedReason: blockEvent?.note || null,
+      evidence,
+    });
+  }
+  // Sort: overdue/stalled first, then by most-recent activity.
+  tasks.sort((a, b) => {
+    const aBad = a.isOverdue || a.status === "stalled" ? 0 : 1;
+    const bBad = b.isOverdue || b.status === "stalled" ? 0 : 1;
+    if (aBad !== bBad) return aBad - bBad;
+    return b.announcedAt.localeCompare(a.announcedAt);
+  });
+  return tasks;
+}
+
+async function generateOverviewV2(
+  chatTitle: string | null,
+  tasks: GroupTaskRecord[],
+  recentMessages: AnalyzerMessage[],
+  chatId?: number,
+): Promise<string> {
+  if (tasks.length === 0 && recentMessages.length === 0) return "";
+  const payload = {
+    chat_title: chatTitle,
+    task_count: tasks.length,
+    open_count: tasks.filter((t) => t.status !== "done").length,
+    done_count: tasks.filter((t) => t.status === "done").length,
+    recent_titles: tasks.slice(0, 8).map((t) => t.title),
+    sample_messages: recentMessages.slice(-30).map((m) => ({
+      sender: m.sender,
+      text: m.text.slice(0, 200),
+    })),
+  };
+  try {
+    const content = await callOpenRouter(
+      [
+        { role: "system", content: OVERVIEW_PROMPT },
+        { role: "user", content: JSON.stringify(payload) },
+      ],
+      {
+        maxTokens: 200,
+        temperature: 0.3,
+        purpose: "group_overview",
+        chatId: chatId ?? null,
+      },
+    );
+    return content.trim().slice(0, 600);
+  } catch {
+    return "";
+  }
+}
+
+export async function analyzeGroupTasksV2(input: {
+  chatTitle: string | null;
+  ownerName: string;
+  ownerContext: string;
+  chatNotes?: string | null;
+  messages: AnalyzerMessage[];
+  topics?: Array<{ name: string; messageThreadId: number }>;
+  chatId?: number;
+}): Promise<GroupTaskAnalysis> {
+  const messages = input.messages;
+  if (messages.length === 0) {
+    return {
+      overview: "",
+      stats: {
+        totalTasks: 0,
+        announced: 0,
+        inProgress: 0,
+        done: 0,
+        stalled: 0,
+        overdue: 0,
+        conflicts: 0,
+        avgCompletionHours: null,
+      },
+      tasks: [],
+      people: [],
+      highlights: [],
+      topicBreakdown: [],
+      criticalForInbox: [],
+      debug: { rawResponse: "", parseStatus: "ok" },
+    };
+  }
+  // Batch into ~60-message chunks so each LLM call stays small and
+  // self-contained.
+  const BATCH = 60;
+  const batches: AnalyzerMessage[][] = [];
+  for (let i = 0; i < messages.length; i += BATCH) {
+    batches.push(messages.slice(i, i + BATCH));
+  }
+  const settled = await Promise.allSettled(
+    batches.map((b, bi) => extractTaskEventsBatch(b, bi * BATCH, input.chatId)),
+  );
+  let successfulBatches = 0;
+  const events: TaskEvent[] = [];
+  for (const r of settled) {
+    if (r.status === "fulfilled") {
+      successfulBatches++;
+      events.push(...r.value);
+    }
+  }
+  const tasks = buildTaskRecordsFromEvents(events, messages);
+
+  // Stats
+  const stats = {
+    totalTasks: tasks.length,
+    announced: tasks.filter((t) => t.status === "announced").length,
+    inProgress: tasks.filter((t) => t.status === "in_progress").length,
+    done: tasks.filter((t) => t.status === "done").length,
+    stalled: tasks.filter((t) => t.status === "stalled").length,
+    overdue: tasks.filter((t) => t.isOverdue && t.status !== "done").length,
+    conflicts: 0,
+    avgCompletionHours: (() => {
+      const dones = tasks.filter(
+        (t) => t.status === "done" && t.durationHours != null,
+      );
+      if (dones.length === 0) return null;
+      return (
+        Math.round(
+          (dones.reduce((s, t) => s + (t.durationHours ?? 0), 0) /
+            dones.length) *
+            10,
+        ) / 10
+      );
+    })(),
+  };
+
+  // People — derive from event actors deterministically.
+  const personMap = new Map<
+    string,
+    {
+      tasksAnnounced: number;
+      tasksCompleted: number;
+      tasksDone: number;
+      onTimeDone: number;
+    }
+  >();
+  for (const t of tasks) {
+    if (t.announcedBy) {
+      const p = personMap.get(t.announcedBy) ?? {
+        tasksAnnounced: 0,
+        tasksCompleted: 0,
+        tasksDone: 0,
+        onTimeDone: 0,
+      };
+      p.tasksAnnounced++;
+      personMap.set(t.announcedBy, p);
+    }
+    if (t.owner && t.status === "done") {
+      const p = personMap.get(t.owner) ?? {
+        tasksAnnounced: 0,
+        tasksCompleted: 0,
+        tasksDone: 0,
+        onTimeDone: 0,
+      };
+      p.tasksCompleted++;
+      p.tasksDone++;
+      if (t.completedOnTime === true) p.onTimeDone++;
+      personMap.set(t.owner, p);
+    }
+  }
+  const people: GroupPersonRecord[] = [...personMap.entries()].map(
+    ([name, s]) => ({
+      name,
+      roleLabel:
+        s.tasksCompleted > s.tasksAnnounced
+          ? "executor"
+          : s.tasksAnnounced > 0 && s.tasksCompleted === 0
+            ? "supervisor"
+            : "other",
+      roleDescription: "",
+      tasksAnnounced: s.tasksAnnounced,
+      tasksCompleted: s.tasksCompleted,
+      onTimeRate: s.tasksDone > 0 ? s.onTimeDone / s.tasksDone : null,
+    }),
+  );
+
+  // Highlights — top 8 overdue / stalled tasks become highlights.
+  const highlights: GroupHighlight[] = tasks
+    .filter((t) => t.isOverdue || t.status === "stalled")
+    .slice(0, 8)
+    .map((t) => ({
+      kind: t.isOverdue ? ("overdue" as const) : ("stalled" as const),
+      title: t.title,
+      details:
+        t.blockedReason ??
+        (t.staleDays != null
+          ? `${t.staleDays} روز پیشرفتی نداشته`
+          : ""),
+      topicName: t.topicName,
+    }));
+
+  // Topic breakdown — group messages by topicName.
+  const topicMap = new Map<
+    string,
+    {
+      messageCount: number;
+      senders: Set<string>;
+      openTasks: number;
+      overdueTasks: number;
+    }
+  >();
+  for (const m of messages) {
+    const name = m.topicName?.trim() || "General";
+    const t = topicMap.get(name) ?? {
+      messageCount: 0,
+      senders: new Set<string>(),
+      openTasks: 0,
+      overdueTasks: 0,
+    };
+    t.messageCount++;
+    t.senders.add(m.sender);
+    topicMap.set(name, t);
+  }
+  for (const t of tasks) {
+    const name = t.topicName?.trim() || "General";
+    const b = topicMap.get(name);
+    if (!b) continue;
+    if (t.status !== "done") b.openTasks++;
+    if (t.isOverdue) b.overdueTasks++;
+  }
+  const topicBreakdown: GroupTopicBreakdown[] = [...topicMap.entries()]
+    .map(([name, b]) => ({
+      topicName: name,
+      messageCount: b.messageCount,
+      activeSenders: b.senders.size,
+      summary: "",
+      openTasks: b.openTasks,
+      overdueTasks: b.overdueTasks,
+      keyPoints: [],
+    }))
+    .sort((a, b) => b.messageCount - a.messageCount);
+
+  // Critical items — high-priority or overdue items get inbox-posted.
+  const criticalForInbox: GroupCriticalItem[] = tasks
+    .filter(
+      (t) =>
+        (t.priority === "high" && t.status !== "done") ||
+        (t.isOverdue && t.status !== "done"),
+    )
+    .slice(0, 5)
+    .map((t) => ({
+      kind: t.isOverdue ? ("overdue" as const) : ("escalation" as const),
+      title: t.title,
+      details:
+        t.blockedReason ?? (t.staleDays ? `${t.staleDays} روز معطل` : ""),
+      topicName: t.topicName,
+      people: [t.announcedBy, t.owner].filter((x): x is string => Boolean(x)),
+      evidence: t.evidence.slice(0, 3),
+    }));
+
+  // Overview — separate small LLM call (best-effort).
+  const overview = await generateOverviewV2(
+    input.chatTitle,
+    tasks,
+    messages,
+    input.chatId,
+  );
+
+  const debugSummary = JSON.stringify({
+    batches: batches.length,
+    successful_batches: successfulBatches,
+    raw_events: events.length,
+    deduped_tasks: tasks.length,
+  });
+  return {
+    overview,
+    stats,
+    tasks,
+    people,
+    highlights,
+    topicBreakdown,
+    criticalForInbox,
+    debug: {
+      rawResponse: debugSummary,
+      parseStatus: successfulBatches === batches.length ? "ok" : "parse_error",
+    },
+  };
+}
+
 // Note watchlist: scan ONE incoming message against a small set of
 // operator-defined concepts ("سفارش جدید", "تأخیر پروازی", ...) and
 // return which concept(s) the message hit, with a short quote. Returns

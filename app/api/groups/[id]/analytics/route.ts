@@ -13,7 +13,7 @@ import {
 } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import {
-  analyzeGroupTasks,
+  analyzeGroupTasksV2,
   type GroupCriticalItem,
 } from "@/lib/classifier";
 import { getBot } from "@/lib/bot";
@@ -173,7 +173,7 @@ async function handle(
           `Topic #${m.messageThreadId}`),
   }));
 
-  const analysis = await analyzeGroupTasks({
+  const analysis = await analyzeGroupTasksV2({
     chatId,
     chatTitle,
     ownerName: settings.ownerName,
