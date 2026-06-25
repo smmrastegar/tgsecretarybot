@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Badge, Card, StatCard } from "@/components/Card";
 import { relTime } from "@/lib/format";
 
@@ -321,43 +322,16 @@ export default function GroupAnalyticsView({
       {analysis.topicBreakdown && analysis.topicBreakdown.length > 1 && (
         <Card className="mb-4">
           <div className="text-sm font-medium mb-3">🧵 تفکیک بر اساس تاپیک</div>
-          <div className="grid md:grid-cols-2 gap-3">
+          <div className="flex flex-col gap-2">
             {analysis.topicBreakdown.map((t, i) => (
-              <div
+              <TopicBreakdownRow
                 key={`${t.topicName}-${i}`}
-                className="border border-[var(--color-border)] rounded-md p-3"
-              >
-                <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
-                  <div className="font-medium">{t.topicName}</div>
-                  <div className="flex gap-1.5">
-                    <Badge tone="neutral">
-                      {t.messageCount} پیام · {t.activeSenders} نفر
-                    </Badge>
-                    {t.openTasks > 0 && (
-                      <Badge tone="info">{t.openTasks} باز</Badge>
-                    )}
-                    {t.overdueTasks > 0 && (
-                      <Badge tone="danger">
-                        {t.overdueTasks} معوق
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-                {t.summary && (
-                  <p className="text-xs leading-relaxed mb-2 whitespace-pre-wrap">
-                    {t.summary}
-                  </p>
+                topic={t}
+                tasks={analysis.tasks.filter(
+                  (task) =>
+                    (task.topicName ?? "General") === t.topicName,
                 )}
-                {t.keyPoints.length > 0 && (
-                  <ul className="text-[11px] text-[var(--color-text-dim)] list-disc pr-5 space-y-0.5">
-                    {t.keyPoints.slice(0, 6).map((p, j) => (
-                      <li key={j} className="break-words">
-                        {p}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              />
             ))}
           </div>
         </Card>
@@ -531,6 +505,133 @@ function TaskRow({ task, emphasize }: { task: Task; emphasize?: boolean }) {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+function TopicBreakdownRow({
+  topic,
+  tasks,
+}: {
+  topic: TopicBreakdown;
+  tasks: Task[];
+}) {
+  const [open, setOpen] = useState(false);
+  const byStatus: Record<TaskStatus, number> = {
+    announced: 0,
+    in_progress: 0,
+    done: 0,
+    stalled: 0,
+  };
+  for (const t of tasks) byStatus[t.status]++;
+  const peopleSet = new Set<string>();
+  for (const t of tasks) {
+    if (t.announcedBy) peopleSet.add(t.announcedBy);
+    if (t.owner) peopleSet.add(t.owner);
+  }
+  const people = [...peopleSet];
+
+  const sortedTasks = [...tasks].sort((a, b) => {
+    const rank = (t: Task): number => {
+      if (t.isOverdue) return 0;
+      if (t.status === "stalled") return 1;
+      if (t.status === "in_progress") return 2;
+      if (t.status === "announced") return 3;
+      return 4;
+    };
+    const r = rank(a) - rank(b);
+    if (r !== 0) return r;
+    return b.announcedAt.localeCompare(a.announcedAt);
+  });
+
+  return (
+    <div className="border border-[var(--color-border)] rounded-md overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-2 p-3 hover:bg-[var(--color-surface-2)] text-right"
+      >
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
+          <span className="text-xs text-[var(--color-text-dim)] shrink-0">
+            {open ? "▾" : "▸"}
+          </span>
+          <span className="font-medium truncate">{topic.topicName}</span>
+        </div>
+        <div className="flex gap-1.5 flex-wrap items-center shrink-0">
+          <Badge tone="neutral">
+            {topic.messageCount} پیام · {topic.activeSenders} نفر
+          </Badge>
+          {topic.openTasks > 0 && (
+            <Badge tone="info">{topic.openTasks} باز</Badge>
+          )}
+          {topic.overdueTasks > 0 && (
+            <Badge tone="danger">{topic.overdueTasks} معوق</Badge>
+          )}
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-[var(--color-border)] p-3 bg-[var(--color-surface-2)]/30">
+          {topic.summary && (
+            <p className="text-xs leading-relaxed mb-3 whitespace-pre-wrap">
+              {topic.summary}
+            </p>
+          )}
+
+          {tasks.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+              {(
+                [
+                  ["announced", byStatus.announced, "info"],
+                  ["in_progress", byStatus.in_progress, "warn"],
+                  ["done", byStatus.done, "success"],
+                  ["stalled", byStatus.stalled, "neutral"],
+                ] as const
+              ).map(([k, n, tone]) => (
+                <div
+                  key={k}
+                  className="border border-[var(--color-border)] rounded-md px-2 py-1.5 flex items-center justify-between bg-[var(--color-surface)]"
+                >
+                  <Badge tone={tone}>{STATUS_LABELS[k]}</Badge>
+                  <span className="text-sm font-semibold">{n}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {people.length > 0 && (
+            <div className="mb-3 text-[11px] text-[var(--color-text-dim)]">
+              <span className="opacity-70">👥 افراد فعال: </span>
+              <span className="text-white">{people.join(" · ")}</span>
+            </div>
+          )}
+
+          {topic.keyPoints.length > 0 && (
+            <ul className="text-[11px] text-[var(--color-text-dim)] list-disc pr-5 space-y-0.5 mb-3">
+              {topic.keyPoints.slice(0, 6).map((p, j) => (
+                <li key={j} className="break-words">
+                  {p}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {sortedTasks.length === 0 ? (
+            <p className="text-[11px] text-[var(--color-text-dim)]">
+              توی این تاپیک هیچ task شناسایی نشد.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {sortedTasks.map((t, i) => (
+                <TaskRow
+                  key={`${topic.topicName}-task-${i}`}
+                  task={t}
+                  emphasize={t.isOverdue || t.status === "stalled"}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
