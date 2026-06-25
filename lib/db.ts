@@ -305,6 +305,29 @@ export async function ensureSchema(): Promise<void> {
     // تسک‌های pricing هست» / «این تاپیک برای bug-report ها است») and
     // produce more accurate task extraction.
     await q`ALTER TABLE forum_topics ADD COLUMN IF NOT EXISTS notes TEXT`;
+    // Group-member roster built up incrementally from chat_member /
+    // my_chat_member updates. Telegram Bot API has no "list all
+    // members" endpoint; this is how we recover one. status follows
+    // the ChatMember enum: "creator" | "administrator" | "member" |
+    // "restricted" | "left" | "kicked". last_status_change_at flips
+    // every time status changes so we can spot recent leavers.
+    await q`
+      CREATE TABLE IF NOT EXISTS chat_members (
+        chat_id                BIGINT NOT NULL,
+        user_id                BIGINT NOT NULL,
+        first_name             TEXT,
+        last_name              TEXT,
+        username               TEXT,
+        is_bot                 BOOLEAN NOT NULL DEFAULT FALSE,
+        is_premium             BOOLEAN NOT NULL DEFAULT FALSE,
+        language_code          TEXT,
+        status                 TEXT NOT NULL DEFAULT 'member',
+        first_seen_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_status_change_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (chat_id, user_id)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS chat_members_chat_status_idx ON chat_members (chat_id, status)`;
     // SMS dedup: when the same SMS body arrives repeatedly to the
     // same inbox we update one Telegram message in-place instead of
     // posting N copies. body_signature is a whitespace-normalised
@@ -1955,6 +1978,46 @@ export async function upsertForumTopic(args: {
       observed_at = NOW()`;
 }
 
+// Upsert one member from a chat_member / my_chat_member update.
+// Sets last_seen + bumps last_status_change_at when status actually
+// flipped (so the dashboard can highlight recent leavers).
+export async function upsertChatMember(args: {
+  chatId: number;
+  userId: number;
+  firstName: string | null;
+  lastName: string | null;
+  username: string | null;
+  isBot: boolean;
+  isPremium: boolean;
+  languageCode: string | null;
+  status: string;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO chat_members (
+      chat_id, user_id, first_name, last_name, username, is_bot,
+      is_premium, language_code, status
+    ) VALUES (
+      ${args.chatId}, ${args.userId}, ${args.firstName}, ${args.lastName},
+      ${args.username}, ${args.isBot}, ${args.isPremium},
+      ${args.languageCode}, ${args.status}
+    )
+    ON CONFLICT (chat_id, user_id) DO UPDATE SET
+      first_name = COALESCE(EXCLUDED.first_name, chat_members.first_name),
+      last_name  = COALESCE(EXCLUDED.last_name,  chat_members.last_name),
+      username   = COALESCE(EXCLUDED.username,   chat_members.username),
+      is_bot     = EXCLUDED.is_bot,
+      is_premium = EXCLUDED.is_premium,
+      language_code = COALESCE(EXCLUDED.language_code, chat_members.language_code),
+      status     = EXCLUDED.status,
+      last_seen_at = NOW(),
+      last_status_change_at = CASE
+        WHEN chat_members.status <> EXCLUDED.status THEN NOW()
+        ELSE chat_members.last_status_change_at
+      END`;
+}
+
 // Aggregate distinct senders ever observed in this chat. Used by the
 // group page «📋 خروجی اعضا» button — pulls every (sender_id,
 // sender_name, sender_username) the bot has ever logged for this chat
@@ -1969,39 +2032,72 @@ export async function listGroupMembersFromMessages(
     messageCount: number;
     firstSeenAt: Date;
     lastSeenAt: Date;
+    status: string | null; // from chat_members; null = sent messages but no chat_member event seen
+    isBot: boolean;
+    isPremium: boolean;
   }>
 > {
   if (!hasDb()) return [];
   await ensureSchema();
+  // FULL OUTER JOIN messages_log senders ⨝ chat_members so the result
+  // covers BOTH paths: people we've seen via chat_member events (even
+  // if they never sent a message) and people who sent messages (even
+  // if we missed their join event because chat_member wasn't enabled
+  // at the time). Pick the freshest name/username from either side.
   const rows = await sql()`
+    WITH senders AS (
+      SELECT
+        sender_id::bigint AS user_id,
+        (
+          ARRAY_AGG(sender_name      ORDER BY created_at DESC) FILTER (WHERE sender_name IS NOT NULL)
+        )[1] AS sender_name,
+        (
+          ARRAY_AGG(sender_username  ORDER BY created_at DESC) FILTER (WHERE sender_username IS NOT NULL)
+        )[1] AS sender_username,
+        COUNT(*)::int   AS msg_count,
+        MIN(created_at) AS first_seen,
+        MAX(created_at) AS last_seen
+      FROM messages_log
+      WHERE chat_id = ${chatId}
+        AND sender_id IS NOT NULL
+        AND COALESCE(from_owner, FALSE) = FALSE
+      GROUP BY sender_id
+    ),
+    members AS (
+      SELECT
+        user_id, first_name, last_name, username, is_bot, is_premium,
+        status, first_seen_at, last_seen_at
+      FROM chat_members
+      WHERE chat_id = ${chatId}
+    )
     SELECT
-      sender_id::bigint AS sender_id,
-      -- Use the most recently observed name + username for each sender
-      -- (people change display names; we want the current one).
-      (
-        ARRAY_AGG(sender_name      ORDER BY created_at DESC) FILTER (WHERE sender_name IS NOT NULL)
-      )[1] AS sender_name,
-      (
-        ARRAY_AGG(sender_username  ORDER BY created_at DESC) FILTER (WHERE sender_username IS NOT NULL)
-      )[1] AS sender_username,
-      COUNT(*)::int         AS msg_count,
-      MIN(created_at)       AS first_seen,
-      MAX(created_at)       AS last_seen
-    FROM messages_log
-    WHERE chat_id = ${chatId}
-      AND sender_id IS NOT NULL
-      AND COALESCE(from_owner, FALSE) = FALSE
-    GROUP BY sender_id
-    ORDER BY msg_count DESC, sender_name ASC NULLS LAST`;
+      COALESCE(s.user_id, m.user_id)                          AS user_id,
+      COALESCE(
+        s.sender_name,
+        NULLIF(TRIM(CONCAT(COALESCE(m.first_name, ''), ' ', COALESCE(m.last_name, ''))), '')
+      )                                                       AS display_name,
+      COALESCE(s.sender_username, m.username)                 AS username,
+      COALESCE(s.msg_count, 0)                                AS msg_count,
+      LEAST(COALESCE(s.first_seen, m.first_seen_at), COALESCE(m.first_seen_at, s.first_seen)) AS first_seen,
+      GREATEST(COALESCE(s.last_seen,  m.last_seen_at),  COALESCE(m.last_seen_at,  s.last_seen))  AS last_seen,
+      m.status                                                AS status,
+      COALESCE(m.is_bot, FALSE)                               AS is_bot,
+      COALESCE(m.is_premium, FALSE)                           AS is_premium
+    FROM senders s
+    FULL OUTER JOIN members m ON m.user_id = s.user_id
+    ORDER BY msg_count DESC, display_name ASC NULLS LAST`;
   return rows.map((r) => {
     const o = r as Record<string, unknown>;
     return {
-      senderId: Number(o.sender_id),
-      senderName: (o.sender_name as string) ?? "",
-      senderUsername: (o.sender_username as string) ?? null,
-      messageCount: Number(o.msg_count),
+      senderId: Number(o.user_id),
+      senderName: (o.display_name as string) ?? "",
+      senderUsername: (o.username as string) ?? null,
+      messageCount: Number(o.msg_count ?? 0),
       firstSeenAt: o.first_seen as Date,
       lastSeenAt: o.last_seen as Date,
+      status: (o.status as string) ?? null,
+      isBot: Boolean(o.is_bot),
+      isPremium: Boolean(o.is_premium),
     };
   });
 }

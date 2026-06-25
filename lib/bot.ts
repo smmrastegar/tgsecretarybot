@@ -95,6 +95,7 @@ import {
   markNoteWatchMatchConfirmed,
   markNoteWatchMatchWrong,
   recordOwnerReaction,
+  upsertChatMember,
 } from "./db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -118,6 +119,13 @@ export const ALLOWED_UPDATES = [
   "channel_post",
   "edited_channel_post",
   "callback_query",
+  // Membership events — Telegram Bot API has no "list all members"
+  // endpoint, but if the bot is an admin and listens for these it
+  // builds up the full roster over time as people join/leave/get
+  // promoted. my_chat_member fires when the BOT's own status changes
+  // (added to / removed from a chat).
+  "chat_member",
+  "my_chat_member",
 ] as const;
 
 type OwnerCacheEntry = { userId: number; userChatId: number; canReply: boolean };
@@ -2038,6 +2046,41 @@ function buildBot(): Bot {
     );
     await handleSecretaryReaction(ctx.update.message_reaction, bot).catch(
       (err) => console.error("[secretary] reaction error:", err),
+    );
+  });
+
+  // chat_member fires when ANY member's status in the chat changes
+  // (joined/left/promoted/restricted). Requires the bot to be an
+  // admin of the group. Telegram doesn't expose a getChatMembers
+  // method, so we recover the roster by upserting on every event —
+  // over time the chat_members table fills up.
+  bot.on("chat_member", async (ctx) => {
+    const upd = ctx.update.chat_member;
+    const u = upd.new_chat_member.user;
+    try {
+      await upsertChatMember({
+        chatId: upd.chat.id,
+        userId: u.id,
+        firstName: u.first_name ?? null,
+        lastName: u.last_name ?? null,
+        username: u.username ?? null,
+        isBot: Boolean(u.is_bot),
+        isPremium: Boolean(u.is_premium),
+        languageCode: u.language_code ?? null,
+        status: upd.new_chat_member.status,
+      });
+    } catch (err) {
+      console.warn("[chat_member] upsert failed:", err);
+    }
+  });
+  // my_chat_member fires when OUR bot's status in the chat changes.
+  // Useful for tracking which groups the bot is in / has been booted
+  // from — we just log it, no state changes needed beyond the row.
+  bot.on("my_chat_member", async (ctx) => {
+    const upd = ctx.update.my_chat_member;
+    console.log(
+      `[my_chat_member] chat=${upd.chat.id} status=${upd.new_chat_member.status} ` +
+        `by=${upd.from?.id ?? "?"}`,
     );
   });
 

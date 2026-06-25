@@ -40,7 +40,7 @@ export async function GET(
     return s;
   };
   const lines: string[] = [
-    "user_id,username,name,message_count,first_seen_at,last_seen_at",
+    "user_id,username,name,status,is_bot,is_premium,message_count,first_seen_at,last_seen_at",
   ];
   for (const m of members) {
     lines.push(
@@ -48,9 +48,12 @@ export async function GET(
         m.senderId,
         m.senderUsername ? "@" + m.senderUsername : "",
         m.senderName,
+        m.status ?? "",
+        m.isBot ? "true" : "false",
+        m.isPremium ? "true" : "false",
         m.messageCount,
-        m.firstSeenAt.toISOString(),
-        m.lastSeenAt.toISOString(),
+        m.firstSeenAt?.toISOString() ?? "",
+        m.lastSeenAt?.toISOString() ?? "",
       ]
         .map(escape)
         .join(","),

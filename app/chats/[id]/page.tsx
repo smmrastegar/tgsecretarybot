@@ -1172,8 +1172,11 @@ export default function ChatDetailPage() {
                         📊 صفحه تحلیل گروه
                       </Link>
                       <span className="text-[10px] text-[var(--color-text-dim)] mr-1">
-                        خروجی شامل هر کسیه که پیام داده — Telegram Bot
-                        API امکان fetch لیست کامل اعضا رو نمی‌ده.
+                        خروجی شامل: هر کسی که پیام داده + هر کسی که از
+                        وقتی ربات ادمین شده، join/leave/promote کرده.
+                        Telegram Bot API لیست کامل اعضای موجود رو
+                        retroactive نمی‌ده — اگه ربات تازه ادمین شده،
+                        فقط رویدادهای بعد از اون رو می‌گیره.
                       </span>
                     </div>
                   </div>
