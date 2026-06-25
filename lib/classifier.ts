@@ -1214,6 +1214,17 @@ CRITICAL — TOPIC NAME IS A STRONG SIGNAL:
 - If the topic name is a queue/category ("LM Requests" / "RB Requests" / "Other Requests" / "Bug Reports" / "Incidents" / "Support" / "Orders"), then EVERY concrete message there is a task — default event_kind="create" unless the message itself says it's done/in-progress/blocked.
 - If the topic is "General" / discussion / "Random" / "Chat" — be selective; only extract messages that genuinely describe a task.
 
+STRUCTURED TASK TEMPLATES — also a strong signal:
+The operator uses a recognisable Persian template inside many task-creating messages:
+    📝 Title: <one-line title>
+    📄 Description: <detail>
+    🚨 Priority: #CRITICAL | #High | #Medium | #Low
+    🏢 Requester: <#Limoome | #Rabeeen | ...>
+    🔗 Assets: ...
+ANY message containing «📝 Title:» (with or without other sections) is DEFINITELY one task — extract it. task_summary = the title line text (the line right after «📝 Title:»). Map Priority → "high" for #CRITICAL/#High, "low" for #Low, "normal" otherwise. event_kind=create unless the message body explicitly says it's done/blocked/in-progress.
+
+If ONE message contains MULTIPLE «📝 Title:» blocks (concatenated tasks), output ONE row PER block. Use idx of the same message for all of them — the deterministic merge layer downstream will keep them separate via distinct task_summary values.
+
 The input ALSO carries:
 - "topic_name": the topic these messages came from.
 - "topic_context": operator-written description of what this topic is for. Trust it — if it says «هر پیام = یک تسک» / «هر سفارش جدید» / «task-per-message» then DEFAULT to one task per message.
@@ -1226,13 +1237,13 @@ EXTRACT GENEROUSLY. The owner is asking «who gave me what work, and where is it
 
 When in doubt, INCLUDE the message. Recall matters more than precision here — operator can ignore false positives, but missed tasks are invisible.
 
-For each message that is a task event, output one JSON row.
+For each task event, output one JSON row.
 
 Return STRICT JSON ARRAY only, no prose, no code fences:
 [
   {
     "msg_idx": <0-based index into "messages">,
-    "task_summary": "<5-12 word Persian summary of the underlying task — be specific, not «درخواست از مشتری»>",
+    "task_summary": "<5-12 word Persian summary — for «📝 Title:» templates use the title line VERBATIM>",
     "event_kind": "create" | "update" | "complete" | "block" | "escalate" | "deadline",
     "actor": "<sender name COPIED EXACTLY from the message>",
     "note": "<one short Persian line: what this message says about the task>"
@@ -1240,13 +1251,13 @@ Return STRICT JSON ARRAY only, no prose, no code fences:
 ]
 
 Rules:
-- task_summary MUST be CONSISTENT — if two messages discuss the same task use the SAME task_summary string. But DEFAULT to one task per message when the topic is request-shaped or workflow-stage-shaped (see above) — don't over-cluster.
+- task_summary MUST be CONSISTENT — if two messages discuss the same task use the SAME task_summary string. But DEFAULT to one task per message when the topic is request-shaped or workflow-stage-shaped or the message uses «📝 Title:» — don't over-cluster.
 - event_kind keywords:
-  - "create"   = announced / requested / assigned / new order
-  - "update"   = progress, status report, partial work, comment
-  - "complete" = «تموم شد» / «deliver شد» / «deploy شد» / «فرستادم» / «ثبت شد» / «پرداخت شد»
+  - "create"   = announced / requested / assigned / new order / a message with «📝 Title:»
+  - "update"   = progress, status report, partial work, comment («پیگیری میکنیم» / «خدمتتون اطلاع می‌دم» counts as update on the most relevant prior task)
+  - "complete" = «تموم شد» / «deliver شد» / «deploy شد» / «فرستادم» / «ثبت شد» / «پرداخت شد» / «این مورد باید برطرف شده باشه»
   - "block"    = blocker / waiting on something / «گیر کردیم به X»
-  - "escalate" = «فوریه» / «هرچه سریعتر» / «این رو الان رسیدگی کن»
+  - "escalate" = «فوریه» / «هرچه سریعتر» / «این رو الان رسیدگی کن» / Priority #CRITICAL
   - "deadline" = a date / «تا فردا» / «تا آخر هفته» mentioned
 - Empty array [] only when the topic is genuinely chat-only AND no message describes a task.`;
 
@@ -1285,7 +1296,12 @@ async function extractTaskEventsBatch(
       idx: i,
       sender: m.sender,
       at: m.at.toISOString(),
-      text: m.text.slice(0, 500),
+      // 1800 chars holds the full «📝 Title / 📄 Description / 🚨
+      // Priority / 🏢 Requester / 🔗 Assets» template the operator
+      // uses; truncating to 500 dropped Priority + Requester + the
+      // back half of every Description so the LLM only saw a half-
+      // sentence and skipped the task.
+      text: m.text.slice(0, 1800),
     })),
   };
   let content: string;
@@ -1296,7 +1312,10 @@ async function extractTaskEventsBatch(
         { role: "user", content: JSON.stringify(payload) },
       ],
       {
-        maxTokens: 2500,
+        // 4000 fits ~30 rich task rows; previous 2500 cap was clipping
+        // the JSON tail when an «LM Requests»-style topic had every
+        // message as a task.
+        maxTokens: 4000,
         temperature: 0.1,
         jsonObject: true,
         purpose: "group_task_extract",
@@ -1340,6 +1359,10 @@ async function extractTaskEventsBatch(
     "deadline",
   ]);
   const events: TaskEvent[] = [];
+  // Track which (msgIdx, taskSummary) pairs we've already emitted so the
+  // structured-template safety net below doesn't duplicate events the
+  // LLM already returned.
+  const seen = new Set<string>();
   for (const r of rows) {
     if (!r || typeof r !== "object") continue;
     const o = r as Record<string, unknown>;
@@ -1349,15 +1372,83 @@ async function extractTaskEventsBatch(
     if (!validKinds.has(kind)) continue;
     const summary = String(o.task_summary ?? o.summary ?? "").trim();
     if (!summary) continue;
+    const globalIdx = globalOffsets[idx]!;
+    seen.add(`${globalIdx}|${normalizeTaskKey(summary)}`);
     events.push({
-      msgIdx: globalOffsets[idx]!,
+      msgIdx: globalIdx,
       taskSummary: summary,
       eventKind: kind as TaskEvent["eventKind"],
       actor: String(o.actor ?? batch[idx]!.sender).trim(),
       note: String(o.note ?? "").trim(),
     });
   }
+  // Deterministic safety net: scan every message in this batch for the
+  // «📝 Title:» template. ANY title block found that the LLM missed
+  // gets added as a synthetic create event. This catches the case where
+  // a single Telegram message contains 3 stacked task templates and
+  // the LLM only emitted one row for it.
+  for (let i = 0; i < batch.length; i++) {
+    const m = batch[i]!;
+    const titles = extractTitleTemplates(m.text);
+    if (titles.length === 0) continue;
+    const globalIdx = globalOffsets[i]!;
+    for (const titleBlock of titles) {
+      const key = `${globalIdx}|${normalizeTaskKey(titleBlock.title)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      events.push({
+        msgIdx: globalIdx,
+        taskSummary: titleBlock.title,
+        eventKind: titleBlock.priority === "high" ? "escalate" : "create",
+        actor: m.sender,
+        note: titleBlock.priority
+          ? `Priority: ${titleBlock.priority}`
+          : "",
+      });
+    }
+  }
   return events;
+}
+
+// Pull out structured «📝 Title: ... / 🚨 Priority: ...» blocks from
+// one message body. Operator uses this template for almost every real
+// task; relying on the LLM alone misses cases where 2-3 templates are
+// concatenated in one message.
+function extractTitleTemplates(text: string): Array<{
+  title: string;
+  priority: "high" | "normal" | "low" | null;
+}> {
+  if (!text || !text.includes("📝")) return [];
+  const out: Array<{ title: string; priority: "high" | "normal" | "low" | null }> = [];
+  // Split on the title marker; the first chunk is preface (often empty)
+  // and each subsequent chunk starts with the title content.
+  const chunks = text.split(/📝\s*Title\s*[:：]?/i).slice(1);
+  for (const chunk of chunks) {
+    // Title is the first non-empty line of this chunk, capped at 120
+    // chars so we don't ingest huge paragraphs.
+    const firstLine = chunk
+      .split(/\n+/)
+      .map((s) => s.trim())
+      .find((s) => s.length > 0);
+    if (!firstLine) continue;
+    const title = firstLine.slice(0, 120);
+    // Skip if it actually looks like another marker line, not a title.
+    if (/^[📄🚨🏢🔗]/.test(title)) continue;
+    // Try to pull Priority from this chunk (before the next 📝 if any).
+    const priorityMatch = chunk.match(
+      /🚨\s*Priority[^\n]*[:：]\s*#?\s*(\S+)/i,
+    );
+    let priority: "high" | "normal" | "low" | null = null;
+    if (priorityMatch) {
+      const p = priorityMatch[1]!.toLowerCase();
+      if (p.includes("critical") || p.includes("high") || p.includes("urgent"))
+        priority = "high";
+      else if (p.includes("low")) priority = "low";
+      else priority = "normal";
+    }
+    out.push({ title, priority });
+  }
+  return out;
 }
 
 // Normalize a task summary for clustering. Lowercase, drop punctuation
