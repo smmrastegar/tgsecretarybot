@@ -560,6 +560,16 @@ function RawMessagesModal({
               هیچ پیامی توی این بازه ثبت نشده.
             </p>
           )}
+          {topics.some((t) => t.name.startsWith("Topic #")) && (
+            <div className="mb-3 p-2 rounded-md bg-amber-500/5 border border-amber-500/30 text-[11px] text-amber-200">
+              ⚠️ بعضی تاپیک‌ها به اسم «Topic #N» نشون داده می‌شن چون ربات
+              موقع ساخته شدنشون توی گروه نبود (Telegram Bot API امکان
+              fetch retroactive تاپیک‌ها رو نمی‌ده). روی اسم هر تاپیک
+              کلیک کن تا اسم واقعی‌اش رو دستی بزنی — یا توی تلگرام تاپیک
+              رو rename کن (می‌تونی بعداً اسم اصلیش رو برگردونی) تا ربات
+              event رو دریافت کنه.
+            </div>
+          )}
           {topics.map((t) => {
             const k = keyOf(t);
             const open = expanded.has(k);
@@ -568,17 +578,26 @@ function RawMessagesModal({
                 key={k}
                 className="mb-2 border border-[var(--color-border)] rounded-md overflow-hidden"
               >
-                <button
-                  onClick={() => toggle(k)}
-                  className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] text-right"
-                >
-                  <span className="text-sm font-medium truncate">
-                    🧵 {t.name}
-                  </span>
-                  <span className="text-[10px] text-[var(--color-text-dim)] shrink-0">
+                <div className="flex items-center gap-2 px-3 py-2 bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)]">
+                  <TopicNameEditor
+                    chatId={chatId}
+                    threadId={t.messageThreadId}
+                    initialName={t.name}
+                    onRenamed={(newName) => {
+                      setTopics((prev) =>
+                        prev.map((tt) =>
+                          keyOf(tt) === k ? { ...tt, name: newName } : tt,
+                        ),
+                      );
+                    }}
+                  />
+                  <button
+                    onClick={() => toggle(k)}
+                    className="text-[10px] text-[var(--color-text-dim)] shrink-0 hover:text-white"
+                  >
                     {t.messages.length} پیام {open ? "▾" : "▸"}
-                  </span>
-                </button>
+                  </button>
+                </div>
                 {open && t.messages.length === 0 && (
                   <p className="text-[11px] text-[var(--color-text-dim)] p-3">
                     این تاپیک توی این بازه پیامی نداشت.
@@ -619,5 +638,111 @@ function RawMessagesModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function TopicNameEditor({
+  chatId,
+  threadId,
+  initialName,
+  onRenamed,
+}: {
+  chatId: number;
+  threadId: number | null;
+  initialName: string;
+  onRenamed: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(initialName);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // The "General" pseudo-topic has no real thread id — Telegram's
+  // bot API doesn't expose a rename hook for it. Show it read-only.
+  if (threadId == null) {
+    return (
+      <span className="text-sm font-medium truncate flex-1">
+        🧵 {initialName}
+      </span>
+    );
+  }
+
+  const save = async () => {
+    const next = value.trim();
+    if (!next || next === initialName) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setErr(null);
+    try {
+      const r = await fetch(
+        `/api/groups/${chatId}/topics/${threadId}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: next }),
+        },
+      );
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${r.status}`);
+      }
+      onRenamed(next);
+      setEditing(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <div className="flex-1 flex items-center gap-1 min-w-0">
+        <input
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") {
+              setValue(initialName);
+              setEditing(false);
+            }
+          }}
+          disabled={saving}
+          className="flex-1 min-w-0 text-sm bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-2 py-1"
+        />
+        <button
+          onClick={save}
+          disabled={saving}
+          className="text-[11px] px-2 py-1 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+        >
+          {saving ? "..." : "ذخیره"}
+        </button>
+        <button
+          onClick={() => {
+            setValue(initialName);
+            setEditing(false);
+            setErr(null);
+          }}
+          disabled={saving}
+          className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)]"
+        >
+          لغو
+        </button>
+        {err && <span className="text-[10px] text-red-300 ml-2">{err}</span>}
+      </div>
+    );
+  }
+  return (
+    <button
+      onClick={() => setEditing(true)}
+      className="text-sm font-medium truncate flex-1 text-right hover:text-amber-200"
+      title="کلیک کن تا اسم تاپیک رو دستی ویرایش کنی"
+    >
+      🧵 {initialName} <span className="text-[10px] opacity-50">✎</span>
+    </button>
   );
 }
