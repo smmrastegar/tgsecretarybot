@@ -1156,6 +1156,26 @@ export default function ChatDetailPage() {
                         </span>
                       )}
                     </div>
+                    <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex flex-wrap items-center gap-2">
+                      <a
+                        href={`/api/groups/${chatId}/members?format=csv`}
+                        download={`group-${chatId}-members.csv`}
+                        className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                        title="فایل CSV با ID عددی، @username و اسم همه‌ی افرادی که توی این گروه پیام دادن"
+                      >
+                        👥 خروجی اعضا (CSV)
+                      </a>
+                      <Link
+                        href={`/groups/${chatId}`}
+                        className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                      >
+                        📊 صفحه تحلیل گروه
+                      </Link>
+                      <span className="text-[10px] text-[var(--color-text-dim)] mr-1">
+                        خروجی شامل هر کسیه که پیام داده — Telegram Bot
+                        API امکان fetch لیست کامل اعضا رو نمی‌ده.
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>
