@@ -89,6 +89,16 @@ async function runSql(text: string): Promise<ToolResult> {
   };
 }
 
+// Parameterised query for the curated tools — uses $1/$2 placeholders
+// so group_id etc. can't be injected.
+async function runParams(text: string, params: unknown[]): Promise<unknown[]> {
+  if (!hasDb()) throw new Error("DATABASE_URL not configured");
+  const q = sql() as unknown as {
+    query: (t: string, p?: unknown[]) => Promise<unknown[]>;
+  };
+  return (await q.query(text, params)) ?? [];
+}
+
 const TOOLS = [
   {
     name: "list_tables",
@@ -137,6 +147,82 @@ const TOOLS = [
         },
       },
       required: ["sql", "confirm"],
+      additionalProperties: false,
+    },
+  },
+  // ─── Curated group-analysis tools ──────────────────────────────
+  {
+    name: "list_groups",
+    description:
+      "List every group / supergroup the bot has seen, with message count, distinct sender count, first/last activity, and whether a cached AI task-analysis exists. Use this to pick a group_id for the other group_* tools.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "group_overview",
+    description:
+      "Activity snapshot for ONE group: total messages, distinct senders, date range, per-topic message counts, top 15 senders by volume, and daily message counts for the last 30 days.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        group_id: {
+          type: "number",
+          description: "chat_id of the group (negative number)",
+        },
+      },
+      required: ["group_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "group_tasks",
+    description:
+      "Return the cached AI task-analysis for a group — overview, stats, and the full task list (title, status, owner, announced/completed times, overdue flag, topic). This is the output of the group analyzer. window_days=0 is the all-time analysis. If no cache exists, returns an empty result and you should tell the user to open the group's analytics page once to build it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        group_id: { type: "number", description: "chat_id of the group" },
+        window_days: {
+          type: "number",
+          description:
+            "Which cached window to read (0 = all-time, 7 / 14 / 30 = bounded). Defaults to whichever window has the most messages.",
+        },
+      },
+      required: ["group_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "group_topic_messages",
+    description:
+      "Raw messages for ONE group, optionally filtered to one topic, newest first. Use to read what people actually said when the task analysis isn't enough. Capped at 500 messages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        group_id: { type: "number", description: "chat_id of the group" },
+        topic: {
+          type: "string",
+          description:
+            "Optional forum topic name to filter to (matches forum_topics.name). Omit for all topics.",
+        },
+        limit: {
+          type: "number",
+          description: "Max messages to return (default 200, max 500)",
+        },
+      },
+      required: ["group_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "group_members",
+    description:
+      "Member roster for a group: numeric user_id, @username, name, status (member/admin/…), is_premium, message count, first/last seen. Combines chat_member events with message senders.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        group_id: { type: "number", description: "chat_id of the group" },
+      },
+      required: ["group_id"],
       additionalProperties: false,
     },
   },
@@ -196,6 +282,211 @@ async function callTool(
       const r = await runSql(text);
       return toolText({ rowCount: r.rowCount, returned: r.rows });
     }
+
+    // ─── Curated group tools ─────────────────────────────────────
+    case "list_groups": {
+      const rows = await runParams(
+        `SELECT
+           m.chat_id,
+           (ARRAY_AGG(m.chat_title ORDER BY m.created_at DESC)
+              FILTER (WHERE m.chat_title IS NOT NULL))[1] AS title,
+           (ARRAY_AGG(m.chat_type  ORDER BY m.created_at DESC))[1]  AS chat_type,
+           COUNT(*)::int                          AS messages,
+           COUNT(DISTINCT m.sender_id)::int       AS senders,
+           MIN(m.created_at)                      AS first_seen,
+           MAX(m.created_at)                      AS last_seen,
+           EXISTS (
+             SELECT 1 FROM group_analytics g WHERE g.chat_id = m.chat_id
+           )                                      AS has_cached_analysis
+         FROM messages_log m
+         WHERE m.chat_type IN ('group', 'supergroup')
+         GROUP BY m.chat_id
+         ORDER BY MAX(m.created_at) DESC`,
+        [],
+      );
+      return toolText(rows);
+    }
+
+    case "group_overview": {
+      const gid = Number(args.group_id);
+      if (!Number.isFinite(gid)) throw new Error("group_id required");
+      const [summary, topics, topSenders, daily] = await Promise.all([
+        runParams(
+          `SELECT
+             (ARRAY_AGG(chat_title ORDER BY created_at DESC)
+                FILTER (WHERE chat_title IS NOT NULL))[1] AS title,
+             COUNT(*)::int                    AS messages,
+             COUNT(DISTINCT sender_id)::int   AS senders,
+             MIN(created_at)                  AS first_seen,
+             MAX(created_at)                  AS last_seen
+           FROM messages_log WHERE chat_id = $1`,
+          [gid],
+        ),
+        runParams(
+          `SELECT
+             COALESCE(ft.name, CASE WHEN m.message_thread_id IS NULL
+               THEN 'General' ELSE 'Topic #' || m.message_thread_id END) AS topic,
+             COUNT(*)::int AS messages,
+             COUNT(DISTINCT m.sender_id)::int AS senders
+           FROM messages_log m
+           LEFT JOIN forum_topics ft
+             ON ft.chat_id = m.chat_id
+            AND ft.message_thread_id = m.message_thread_id
+           WHERE m.chat_id = $1
+           GROUP BY 1
+           ORDER BY messages DESC`,
+          [gid],
+        ),
+        runParams(
+          `SELECT
+             sender_id,
+             (ARRAY_AGG(sender_name ORDER BY created_at DESC)
+                FILTER (WHERE sender_name IS NOT NULL))[1] AS name,
+             (ARRAY_AGG(sender_username ORDER BY created_at DESC)
+                FILTER (WHERE sender_username IS NOT NULL))[1] AS username,
+             COUNT(*)::int AS messages
+           FROM messages_log
+           WHERE chat_id = $1 AND sender_id IS NOT NULL
+             AND COALESCE(from_owner, FALSE) = FALSE
+           GROUP BY sender_id
+           ORDER BY messages DESC
+           LIMIT 15`,
+          [gid],
+        ),
+        runParams(
+          `SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
+                  COUNT(*)::int AS messages
+           FROM messages_log
+           WHERE chat_id = $1 AND created_at > NOW() - INTERVAL '30 days'
+           GROUP BY 1 ORDER BY 1`,
+          [gid],
+        ),
+      ]);
+      return toolText({
+        summary: summary[0] ?? null,
+        topics,
+        top_senders: topSenders,
+        daily_last_30d: daily,
+      });
+    }
+
+    case "group_tasks": {
+      const gid = Number(args.group_id);
+      if (!Number.isFinite(gid)) throw new Error("group_id required");
+      const windowDays =
+        args.window_days != null ? Number(args.window_days) : null;
+      const rows =
+        windowDays != null
+          ? await runParams(
+              `SELECT chat_title, window_days, since_iso, message_count,
+                      analysis, created_at
+               FROM group_analytics
+               WHERE chat_id = $1 AND window_days = $2 LIMIT 1`,
+              [gid, windowDays],
+            )
+          : await runParams(
+              `SELECT chat_title, window_days, since_iso, message_count,
+                      analysis, created_at
+               FROM group_analytics
+               WHERE chat_id = $1
+               ORDER BY message_count DESC LIMIT 1`,
+              [gid],
+            );
+      if (rows.length === 0) {
+        return toolText({
+          cached: false,
+          note: "No cached analysis for this group. Open the group's analytics page in the dashboard once (or hit «🔁 تحلیل روی این پیام‌ها») to build it.",
+        });
+      }
+      const r = rows[0] as Record<string, unknown>;
+      // analysis is jsonb — already an object from neon.
+      const analysis = r.analysis as
+        | { overview?: string; stats?: unknown; tasks?: unknown[] }
+        | null;
+      return toolText({
+        cached: true,
+        chat_title: r.chat_title,
+        window_days: r.window_days,
+        since: r.since_iso,
+        message_count: r.message_count,
+        computed_at: r.created_at,
+        overview: analysis?.overview ?? "",
+        stats: analysis?.stats ?? null,
+        tasks: analysis?.tasks ?? [],
+      });
+    }
+
+    case "group_topic_messages": {
+      const gid = Number(args.group_id);
+      if (!Number.isFinite(gid)) throw new Error("group_id required");
+      const topic =
+        typeof args.topic === "string" && args.topic.trim()
+          ? args.topic.trim()
+          : null;
+      const limit = Math.min(
+        Math.max(Number(args.limit ?? 200) || 200, 1),
+        500,
+      );
+      const rows = await runParams(
+        `SELECT m.created_at, m.sender_name, m.sender_username,
+                m.from_owner,
+                COALESCE(ft.name, CASE WHEN m.message_thread_id IS NULL
+                  THEN 'General' ELSE 'Topic #' || m.message_thread_id END) AS topic,
+                COALESCE(NULLIF(m.message_text, ''),
+                         '[' || COALESCE(m.media_kind, 'media') || ']') AS text
+         FROM messages_log m
+         LEFT JOIN forum_topics ft
+           ON ft.chat_id = m.chat_id
+          AND ft.message_thread_id = m.message_thread_id
+         WHERE m.chat_id = $1
+           AND ($2::text IS NULL OR COALESCE(ft.name,
+                CASE WHEN m.message_thread_id IS NULL THEN 'General'
+                     ELSE 'Topic #' || m.message_thread_id END) = $2)
+         ORDER BY m.created_at DESC
+         LIMIT $3`,
+        [gid, topic, limit],
+      );
+      return toolText({ count: rows.length, messages: rows });
+    }
+
+    case "group_members": {
+      const gid = Number(args.group_id);
+      if (!Number.isFinite(gid)) throw new Error("group_id required");
+      const rows = await runParams(
+        `WITH senders AS (
+           SELECT sender_id::bigint AS user_id,
+             (ARRAY_AGG(sender_name ORDER BY created_at DESC)
+                FILTER (WHERE sender_name IS NOT NULL))[1] AS name,
+             (ARRAY_AGG(sender_username ORDER BY created_at DESC)
+                FILTER (WHERE sender_username IS NOT NULL))[1] AS username,
+             COUNT(*)::int AS msg_count,
+             MIN(created_at) AS first_seen, MAX(created_at) AS last_seen
+           FROM messages_log
+           WHERE chat_id = $1 AND sender_id IS NOT NULL
+             AND COALESCE(from_owner, FALSE) = FALSE
+           GROUP BY sender_id
+         ),
+         members AS (
+           SELECT user_id, first_name, last_name, username, is_bot,
+                  is_premium, status, first_seen_at, last_seen_at
+           FROM chat_members WHERE chat_id = $1
+         )
+         SELECT
+           COALESCE(s.user_id, m.user_id) AS user_id,
+           COALESCE(s.name, NULLIF(TRIM(CONCAT(COALESCE(m.first_name,''),' ',
+             COALESCE(m.last_name,''))), '')) AS name,
+           COALESCE(s.username, m.username) AS username,
+           m.status, COALESCE(m.is_bot, FALSE) AS is_bot,
+           COALESCE(m.is_premium, FALSE) AS is_premium,
+           COALESCE(s.msg_count, 0) AS messages
+         FROM senders s
+         FULL OUTER JOIN members m ON m.user_id = s.user_id
+         ORDER BY messages DESC NULLS LAST`,
+        [gid],
+      );
+      return toolText({ count: rows.length, members: rows });
+    }
+
     default:
       throw new Error(`unknown tool: ${name}`);
   }

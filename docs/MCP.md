@@ -29,6 +29,8 @@ Until `MCP_SECRET` is set the endpoint refuses every request (401).
 
 ## 2. Tools
 
+### Generic SQL
+
 | Tool | What it does |
 |------|--------------|
 | `list_tables` | every public table + row-count estimate — start here |
@@ -39,6 +41,20 @@ Until `MCP_SECRET` is set the endpoint refuses every request (401).
 Key tables: `messages_log`, `chat_rules`, `chat_members`,
 `forum_topics`, `group_analytics`, `ai_usage`, `note_watch_items`,
 `sms_webhooks`.
+
+### Group analysis (curated — no SQL needed)
+
+| Tool | What it does |
+|------|--------------|
+| `list_groups` | every group/supergroup with message + sender counts, activity range, and whether a cached AI analysis exists. Pick a `group_id` here |
+| `group_overview` | one group: totals, per-topic counts, top 15 senders, daily volume (30d) |
+| `group_tasks` | the cached AI task-analysis — overview, stats, full task list (status/owner/overdue/topic). `window_days=0` is all-time |
+| `group_topic_messages` | raw messages for a group, optionally one topic, newest first (≤500) |
+| `group_members` | roster: user_id, @username, status, is_premium, message count |
+
+Typical flow: `list_groups` → `group_overview(group_id)` →
+`group_tasks(group_id)` for the analysis, or `group_topic_messages`
+to read raw chatter.
 
 ## 3. Connect
 
