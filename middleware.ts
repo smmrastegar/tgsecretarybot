@@ -21,6 +21,10 @@ const PUBLIC_PREFIXES = [
   // that chat but cannot trigger a recompute or modify anything.
   "/api/public",
   "/share",
+  // MCP endpoint — authed by its own Authorization: Bearer <MCP_SECRET>
+  // check, not the dashboard session cookie. Session-gating it would
+  // break every MCP client (which sends a bearer token, not a cookie).
+  "/api/mcp",
   "/_next",
   "/favicon",
 ];

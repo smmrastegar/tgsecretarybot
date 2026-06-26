@@ -30,6 +30,10 @@ export const config = {
   webhookSecretToken: optional("WEBHOOK_SECRET_TOKEN"),
   setupSecret: optional("SETUP_SECRET"),
   cronSecret: optional("CRON_SECRET"),
+  // Bearer token for the MCP endpoint (/api/mcp). When unset the
+  // endpoint refuses every request. Set a long random value in Vercel
+  // env and paste the same into your MCP client config.
+  mcpSecret: optional("MCP_SECRET"),
 
   databaseUrl:
     optional("DATABASE_URL") ??
