@@ -1,9 +1,18 @@
 import { config } from "@/lib/config";
-import { hasDb, sql } from "@/lib/db";
+import {
+  getChatRule,
+  hasDb,
+  listChatMessagesForAnalysis,
+  listForumTopics,
+  sql,
+  upsertGroupAnalytics,
+} from "@/lib/db";
+import { analyzeGroupTasksV2 } from "@/lib/classifier";
+import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // ──────────────────────────────────────────────────────────────────
 // Model Context Protocol (MCP) server — stateless Streamable HTTP.
@@ -221,6 +230,23 @@ const TOOLS = [
       type: "object",
       properties: {
         group_id: { type: "number", description: "chat_id of the group" },
+      },
+      required: ["group_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "group_reanalyze",
+    description:
+      "Re-run the AI task analyzer on a group RIGHT NOW using the CURRENT forum-topic names + operator-written topic notes, then cache and return the fresh result (overview, stats, tasks). Use this after the operator has renamed topics or added topic descriptions so the analysis reflects them. window_days=0 (default) is all-time. Takes 20-60s for an active group.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        group_id: { type: "number", description: "chat_id of the group" },
+        window_days: {
+          type: "number",
+          description: "0 = all-time (default), or 7 / 14 / 30 for a window",
+        },
       },
       required: ["group_id"],
       additionalProperties: false,
@@ -485,6 +511,91 @@ async function callTool(
         [gid],
       );
       return toolText({ count: rows.length, members: rows });
+    }
+
+    case "group_reanalyze": {
+      const gid = Number(args.group_id);
+      if (!Number.isFinite(gid)) throw new Error("group_id required");
+      const allTime =
+        args.window_days == null || Number(args.window_days) === 0;
+      const days = allTime
+        ? 0
+        : Math.min(Math.max(Number(args.window_days), 1), 90);
+      const since = allTime
+        ? new Date(0)
+        : new Date(Date.now() - days * 86400_000);
+      const { chatTitle, messages } = await listChatMessagesForAnalysis({
+        chatId: gid,
+        since,
+        limit: allTime ? 5000 : 1500,
+      });
+      if (messages.length === 0) {
+        return toolText({ ok: false, note: "no messages in this window" });
+      }
+      const settings = await getSettings();
+      const rule = await getChatRule(gid).catch(() => null);
+      // Current topic names + operator notes — this is the whole point:
+      // pick up renames + descriptions the operator just made.
+      const topics = await listForumTopics(gid).catch(() => []);
+      const nameByThread = new Map<number, string>();
+      for (const t of topics) {
+        nameByThread.set(
+          t.messageThreadId,
+          t.name && t.name.trim() ? t.name : `Topic #${t.messageThreadId}`,
+        );
+      }
+      const messagesWithTopics = messages.map((m) => ({
+        sender: m.fromOwner
+          ? settings.ownerDisplayName || settings.ownerName || "owner"
+          : m.sender,
+        text: m.text,
+        at: m.at,
+        topicName:
+          m.messageThreadId == null
+            ? null
+            : nameByThread.get(m.messageThreadId) ??
+              `Topic #${m.messageThreadId}`,
+      }));
+      const analysis = await analyzeGroupTasksV2({
+        chatId: gid,
+        chatTitle,
+        ownerName: settings.ownerName,
+        ownerContext: settings.ownerContext,
+        chatNotes: rule?.notes ?? null,
+        topics:
+          topics.length > 0
+            ? topics.map((t) => ({
+                name:
+                  t.name && t.name.trim()
+                    ? t.name
+                    : `Topic #${t.messageThreadId}`,
+                messageThreadId: t.messageThreadId,
+                notes: t.notes,
+              }))
+            : undefined,
+        messages: messagesWithTopics,
+      });
+      await upsertGroupAnalytics({
+        chatId: gid,
+        chatTitle,
+        windowDays: days,
+        sinceIso: since.toISOString(),
+        messageCount: messages.length,
+        analysis,
+      }).catch(() => {});
+      return toolText({
+        ok: true,
+        recomputed: true,
+        message_count: messages.length,
+        topics_used: topics.map((t) => ({
+          name:
+            t.name && t.name.trim() ? t.name : `Topic #${t.messageThreadId}`,
+          has_note: Boolean(t.notes && t.notes.trim()),
+        })),
+        overview: analysis.overview,
+        stats: analysis.stats,
+        tasks: analysis.tasks,
+      });
     }
 
     default:
