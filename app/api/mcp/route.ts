@@ -236,6 +236,45 @@ const TOOLS = [
     },
   },
   {
+    name: "send_message",
+    description:
+      "Send a text message AS THE BOT to a Telegram chat (group/user) the bot is a member of. Supports HTML parse_mode (<b>, <i>, <code>, <a href>). Use to post reports into a group. Max 4096 chars per message — split long content into multiple calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: {
+          type: "number",
+          description: "Target chat_id (group is negative)",
+        },
+        text: { type: "string", description: "Message text (HTML allowed)" },
+        parse_mode: {
+          type: "string",
+          description: "'HTML' (default) or 'MarkdownV2' or 'none'",
+        },
+      },
+      required: ["chat_id", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "send_photo",
+    description:
+      "Send a photo (by public URL) AS THE BOT to a Telegram chat, with an optional HTML caption. Use for charts / diagrams that illustrate a report. The URL must be publicly fetchable by Telegram's servers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: { type: "number", description: "Target chat_id" },
+        photo_url: { type: "string", description: "Public image URL" },
+        caption: {
+          type: "string",
+          description: "Optional HTML caption (max 1024 chars)",
+        },
+      },
+      required: ["chat_id", "photo_url"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "group_reanalyze",
     description:
       "Re-run the AI task analyzer on a group RIGHT NOW using the CURRENT forum-topic names + operator-written topic notes, then cache and return the fresh result (overview, stats, tasks). Use this after the operator has renamed topics or added topic descriptions so the analysis reflects them. window_days=0 (default) is all-time. Takes 20-60s for an active group.",
@@ -511,6 +550,62 @@ async function callTool(
         [gid],
       );
       return toolText({ count: rows.length, members: rows });
+    }
+
+    case "send_message": {
+      const chatId = Number(args.chat_id);
+      if (!Number.isFinite(chatId)) throw new Error("chat_id required");
+      const text = String(args.text ?? "");
+      if (!text.trim()) throw new Error("text required");
+      const pm = String(args.parse_mode ?? "HTML");
+      const body: Record<string, unknown> = {
+        chat_id: chatId,
+        text: text.slice(0, 4096),
+        disable_web_page_preview: true,
+      };
+      if (pm !== "none") body.parse_mode = pm;
+      const res = await fetch(
+        `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const j = (await res.json()) as {
+        ok: boolean;
+        result?: { message_id: number };
+        description?: string;
+      };
+      if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
+      return toolText({ ok: true, message_id: j.result?.message_id });
+    }
+
+    case "send_photo": {
+      const chatId = Number(args.chat_id);
+      if (!Number.isFinite(chatId)) throw new Error("chat_id required");
+      const photo = String(args.photo_url ?? "");
+      if (!photo) throw new Error("photo_url required");
+      const body: Record<string, unknown> = { chat_id: chatId, photo };
+      if (args.caption) {
+        body.caption = String(args.caption).slice(0, 1024);
+        body.parse_mode = "HTML";
+      }
+      const res = await fetch(
+        `https://api.telegram.org/bot${config.telegramBotToken}/sendPhoto`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const j = (await res.json()) as {
+        ok: boolean;
+        result?: { message_id: number };
+        description?: string;
+      };
+      if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
+      return toolText({ ok: true, message_id: j.result?.message_id });
     }
 
     case "group_reanalyze": {
