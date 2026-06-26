@@ -251,6 +251,11 @@ const TOOLS = [
           type: "string",
           description: "'HTML' (default) or 'MarkdownV2' or 'none'",
         },
+        message_thread_id: {
+          type: "number",
+          description:
+            "Optional forum topic thread id to post INTO a specific topic of a supergroup. Omit for the General channel.",
+        },
       },
       required: ["chat_id", "text"],
       additionalProperties: false,
@@ -269,8 +274,26 @@ const TOOLS = [
           type: "string",
           description: "Optional HTML caption (max 1024 chars)",
         },
+        message_thread_id: {
+          type: "number",
+          description: "Optional forum topic thread id (post into a topic)",
+        },
       },
       required: ["chat_id", "photo_url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "delete_message",
+    description:
+      "Delete a message the bot sent (by chat_id + message_id). Use to clean up mistakes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: { type: "number", description: "chat_id" },
+        message_id: { type: "number", description: "message_id to delete" },
+      },
+      required: ["chat_id", "message_id"],
       additionalProperties: false,
     },
   },
@@ -564,6 +587,9 @@ async function callTool(
         disable_web_page_preview: true,
       };
       if (pm !== "none") body.parse_mode = pm;
+      if (args.message_thread_id != null) {
+        body.message_thread_id = Number(args.message_thread_id);
+      }
       const res = await fetch(
         `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`,
         {
@@ -591,6 +617,9 @@ async function callTool(
         body.caption = String(args.caption).slice(0, 1024);
         body.parse_mode = "HTML";
       }
+      if (args.message_thread_id != null) {
+        body.message_thread_id = Number(args.message_thread_id);
+      }
       const res = await fetch(
         `https://api.telegram.org/bot${config.telegramBotToken}/sendPhoto`,
         {
@@ -606,6 +635,24 @@ async function callTool(
       };
       if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
       return toolText({ ok: true, message_id: j.result?.message_id });
+    }
+
+    case "delete_message": {
+      const chatId = Number(args.chat_id);
+      const messageId = Number(args.message_id);
+      if (!Number.isFinite(chatId) || !Number.isFinite(messageId)) {
+        throw new Error("chat_id and message_id required");
+      }
+      const res = await fetch(
+        `https://api.telegram.org/bot${config.telegramBotToken}/deleteMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+        },
+      );
+      const j = (await res.json()) as { ok: boolean; description?: string };
+      return toolText({ ok: j.ok, error: j.description });
     }
 
     case "group_reanalyze": {
