@@ -308,6 +308,60 @@ const TOOLS = [
     },
   },
   {
+    name: "find_chat",
+    description:
+      "Find a chat (DM or group) by a person's name or group title (case-insensitive substring). Returns chat_id, chat_type, display name/title, business_connection_id (needed to reply as the owner), message count, first/last seen. One call instead of writing SQL — use before chat_messages / send_*.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Name / title substring to search" },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "chat_messages",
+    description:
+      "Recent messages for ANY chat (DM or group) by chat_id, newest first by default. Returns sender, from_owner flag, text (or transcript / media placeholder), time. Use for sentiment / summary / analysis of a person's chat.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: { type: "number", description: "chat_id" },
+        limit: { type: "number", description: "max messages (default 30, max 300)" },
+        order: { type: "string", description: "'desc' (newest first, default) or 'asc'" },
+      },
+      required: ["chat_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "send_chart",
+    description:
+      "Build a chart from a Chart.js config object (rendered server-side via QuickChart) and send it as a photo to a chat. Saves building chart URLs by hand. Pass the Chart.js spec in `chart` (e.g. {type:'line',data:{...},options:{...}}). Use Latin/number labels for axes (Persian renders poorly in charts) and put Persian text in the caption.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: { type: "number", description: "target chat_id" },
+        chart: {
+          type: "object",
+          description: "Chart.js config object (type/data/options)",
+        },
+        caption: { type: "string", description: "Optional HTML caption" },
+        business_connection_id: {
+          type: "string",
+          description: "Optional — send as the owner's business account",
+        },
+        message_thread_id: {
+          type: "number",
+          description: "Optional forum topic id",
+        },
+      },
+      required: ["chat_id", "chart"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "group_reanalyze",
     description:
       "Re-run the AI task analyzer on a group RIGHT NOW using the CURRENT forum-topic names + operator-written topic notes, then cache and return the fresh result (overview, stats, tasks). Use this after the operator has renamed topics or added topic descriptions so the analysis reflects them. window_days=0 (default) is all-time. Takes 20-60s for an active group.",
@@ -669,6 +723,85 @@ async function callTool(
       );
       const j = (await res.json()) as { ok: boolean; description?: string };
       return toolText({ ok: j.ok, error: j.description });
+    }
+
+    case "find_chat": {
+      const nm = String(args.name ?? "").trim();
+      if (!nm) throw new Error("name required");
+      const like = `%${nm}%`;
+      const rows = await runParams(
+        `SELECT chat_id,
+                (ARRAY_AGG(chat_type ORDER BY created_at DESC))[1] AS chat_type,
+                (ARRAY_AGG(COALESCE(chat_title, sender_name) ORDER BY created_at DESC))[1] AS name,
+                (ARRAY_AGG(business_connection_id ORDER BY created_at DESC)
+                   FILTER (WHERE business_connection_id IS NOT NULL))[1] AS business_connection_id,
+                COUNT(*)::int AS messages,
+                MIN(created_at) AS first_seen,
+                MAX(created_at) AS last_seen
+         FROM messages_log
+         WHERE chat_title ILIKE $1 OR sender_name ILIKE $1
+         GROUP BY chat_id
+         ORDER BY MAX(created_at) DESC
+         LIMIT 25`,
+        [like],
+      );
+      return toolText(rows);
+    }
+
+    case "chat_messages": {
+      const cid = Number(args.chat_id);
+      if (!Number.isFinite(cid)) throw new Error("chat_id required");
+      const limit = Math.min(Math.max(Number(args.limit ?? 30) || 30, 1), 300);
+      const asc = String(args.order ?? "desc").toLowerCase() === "asc";
+      const rows = await runParams(
+        `SELECT created_at, from_owner, sender_name,
+                COALESCE(NULLIF(message_text, ''), transcript,
+                  '[' || COALESCE(media_kind, 'media') || ']') AS text
+         FROM messages_log
+         WHERE chat_id = $1
+         ORDER BY created_at ${asc ? "ASC" : "DESC"}
+         LIMIT $2`,
+        [cid, limit],
+      );
+      return toolText({ count: rows.length, messages: rows });
+    }
+
+    case "send_chart": {
+      const cid = Number(args.chat_id);
+      if (!Number.isFinite(cid)) throw new Error("chat_id required");
+      const chart = args.chart;
+      if (!chart || typeof chart !== "object") {
+        throw new Error("chart (Chart.js config object) required");
+      }
+      const url =
+        "https://quickchart.io/chart?w=640&h=400&c=" +
+        encodeURIComponent(JSON.stringify(chart));
+      const body: Record<string, unknown> = { chat_id: cid, photo: url };
+      if (args.caption) {
+        body.caption = String(args.caption).slice(0, 1024);
+        body.parse_mode = "HTML";
+      }
+      if (args.business_connection_id) {
+        body.business_connection_id = String(args.business_connection_id);
+      }
+      if (args.message_thread_id != null) {
+        body.message_thread_id = Number(args.message_thread_id);
+      }
+      const res = await fetch(
+        `https://api.telegram.org/bot${config.telegramBotToken}/sendPhoto`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const j = (await res.json()) as {
+        ok: boolean;
+        result?: { message_id: number };
+        description?: string;
+      };
+      if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
+      return toolText({ ok: true, message_id: j.result?.message_id });
     }
 
     case "group_reanalyze": {
