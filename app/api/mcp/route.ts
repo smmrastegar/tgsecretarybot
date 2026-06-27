@@ -283,6 +283,11 @@ const TOOLS = [
           type: "number",
           description: "Optional forum topic thread id (post into a topic)",
         },
+        business_connection_id: {
+          type: "string",
+          description:
+            "Optional. Send on behalf of the connected business account (appears FROM the owner).",
+        },
       },
       required: ["chat_id", "photo_url"],
       additionalProperties: false,
@@ -627,6 +632,9 @@ async function callTool(
       }
       if (args.message_thread_id != null) {
         body.message_thread_id = Number(args.message_thread_id);
+      }
+      if (args.business_connection_id) {
+        body.business_connection_id = String(args.business_connection_id);
       }
       const res = await fetch(
         `https://api.telegram.org/bot${config.telegramBotToken}/sendPhoto`,
