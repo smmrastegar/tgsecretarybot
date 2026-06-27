@@ -56,6 +56,26 @@ Typical flow: `list_groups` → `group_overview(group_id)` →
 `group_tasks(group_id)` for the analysis, or `group_topic_messages`
 to read raw chatter.
 
+`group_reanalyze(group_id, window_days)` recomputes on demand using
+the current topic names + operator topic notes.
+
+### Any chat — find, read, send
+
+| Tool | What it does |
+|------|--------------|
+| `find_chat` | fuzzy-search a DM/group by person name or title → chat_id + business_connection_id + counts |
+| `chat_messages` | recent messages for any chat (DM or group), newest first |
+| `send_message` | send text as the bot, or as the owner (`business_connection_id`), into a topic (`message_thread_id`) |
+| `send_photo` | send a photo by URL (same options) |
+| `send_chart` | render a Chart.js config via QuickChart and send it as a photo (same options) |
+| `delete_message` | delete a bot message |
+
+Sending **as the owner** (so it appears from the owner's account, not
+the bot) requires `business_connection_id` — get it from `find_chat`.
+Note: Telegram restricts business sends to peers the account can
+currently address; stale or privacy-restricted chats may return
+`BUSINESS_PEER_USAGE_MISSING` / `PEER_ID_INVALID`.
+
 ## 3. Connect
 
 ### Claude Desktop / Claude.ai (remote connector)
