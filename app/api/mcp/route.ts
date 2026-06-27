@@ -256,6 +256,11 @@ const TOOLS = [
           description:
             "Optional forum topic thread id to post INTO a specific topic of a supergroup. Omit for the General channel.",
         },
+        business_connection_id: {
+          type: "string",
+          description:
+            "Optional. When set, the message is sent ON BEHALF OF the connected business account (i.e. appears FROM the owner, not the bot) — use this to reply inside the owner's personal DMs.",
+        },
       },
       required: ["chat_id", "text"],
       additionalProperties: false,
@@ -589,6 +594,9 @@ async function callTool(
       if (pm !== "none") body.parse_mode = pm;
       if (args.message_thread_id != null) {
         body.message_thread_id = Number(args.message_thread_id);
+      }
+      if (args.business_connection_id) {
+        body.business_connection_id = String(args.business_connection_id);
       }
       const res = await fetch(
         `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`,
