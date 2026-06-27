@@ -243,8 +243,9 @@ const TOOLS = [
       type: "object",
       properties: {
         chat_id: {
-          type: "number",
-          description: "Target chat_id (group is negative)",
+          type: ["number", "string"],
+          description:
+            "Target chat_id (group is negative) or '@username' (only works via business connection / public peers)",
         },
         text: { type: "string", description: "Message text (HTML allowed)" },
         parse_mode: {
@@ -640,13 +641,24 @@ async function callTool(
     }
 
     case "send_message": {
-      const chatId = Number(args.chat_id);
-      if (!Number.isFinite(chatId)) throw new Error("chat_id required");
+      // chat_id may be a numeric id OR an "@username" string (only
+      // resolvable when sending via a business connection / public peer).
+      const rawCid = args.chat_id as unknown;
+      const chatTarget =
+        typeof rawCid === "string" && rawCid.trim().startsWith("@")
+          ? rawCid.trim()
+          : Number(rawCid);
+      if (
+        chatTarget === "" ||
+        (typeof chatTarget === "number" && !Number.isFinite(chatTarget))
+      ) {
+        throw new Error("chat_id required (number or @username)");
+      }
       const text = String(args.text ?? "");
       if (!text.trim()) throw new Error("text required");
       const pm = String(args.parse_mode ?? "HTML");
       const body: Record<string, unknown> = {
-        chat_id: chatId,
+        chat_id: chatTarget,
         text: text.slice(0, 4096),
         disable_web_page_preview: true,
       };
