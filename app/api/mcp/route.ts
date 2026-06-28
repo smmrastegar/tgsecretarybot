@@ -7,8 +7,10 @@ import {
   sql,
   upsertGroupAnalytics,
 } from "@/lib/db";
-import { analyzeGroupTasksV2 } from "@/lib/classifier";
+import { analyzeGroupTasksV2, analyzeSiteChange } from "@/lib/classifier";
 import { getSettings } from "@/lib/settings";
+import { fetchMonitoredPage } from "@/lib/site-monitor";
+import type { SiteMonitor } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -359,6 +361,25 @@ const TOOLS = [
         },
       },
       required: ["chat_id", "chart"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "site_probe",
+    description:
+      "TEST a site-monitor config from the server (which has internet access): log in with the given credentials and fetch the target page, returning login status, cookie count, a text preview, and the AI verdict — WITHOUT saving anything. Use to verify the login field names are right before creating the monitor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        login_url: { type: "string" },
+        check_url: { type: "string" },
+        username: { type: "string" },
+        password: { type: "string" },
+        username_field: { type: "string", description: "form field name for username (default 'username')" },
+        password_field: { type: "string", description: "form field name for password (default 'password')" },
+        extra_fields_json: { type: "string", description: "optional JSON of extra form fields" },
+      },
+      required: ["login_url", "check_url"],
       additionalProperties: false,
     },
   },
@@ -814,6 +835,33 @@ async function callTool(
       };
       if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
       return toolText({ ok: true, message_id: j.result?.message_id });
+    }
+
+    case "site_probe": {
+      const m = {
+        id: 0,
+        name: "probe",
+        loginUrl: String(args.login_url ?? ""),
+        checkUrl: String(args.check_url ?? ""),
+        username: args.username ? String(args.username) : null,
+        password: args.password ? String(args.password) : null,
+        usernameField: args.username_field ? String(args.username_field) : "username",
+        passwordField: args.password_field ? String(args.password_field) : "password",
+        extraFieldsJson: args.extra_fields_json ? String(args.extra_fields_json) : null,
+      } as unknown as SiteMonitor;
+      const page = await fetchMonitoredPage(m);
+      const analysis =
+        page.status === "ok"
+          ? await analyzeSiteChange({ monitorName: "probe", url: m.checkUrl, text: page.text })
+          : null;
+      return toolText({
+        status: page.status,
+        error: page.error,
+        loginInfo: page.loginInfo,
+        textLength: page.text.length,
+        textPreview: page.text.slice(0, 1800),
+        analysis,
+      });
     }
 
     case "group_reanalyze": {
