@@ -16,6 +16,10 @@
     {
       "path": "/api/cron/follow-up",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/site-monitor",
+      "schedule": "30 * * * *"
     }
   ]
 }

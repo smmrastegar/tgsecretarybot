@@ -3558,3 +3558,72 @@ export async function generateRequestTriggerVariations(input: {
   }
   return out;
 }
+
+// ── Site monitor content analysis ───────────────────────────────
+// Given the visible text of a monitored page (after login), decide
+// whether there's a meaningful result the operator should see, and
+// produce a short Persian summary suitable for the notes_inbox card.
+const SITE_MONITOR_PROMPT = `You are monitoring a private web report page for the owner. You receive the visible TEXT content of the page after login. Your job: decide if the page currently shows a MEANINGFUL result/value the owner must act on (e.g. a pending settlement / واریز, an outstanding amount, a number that isn't zero, an alert), versus an empty / "nothing to do" / all-zero state.
+
+Return STRICT JSON only:
+{
+  "has_result": true|false,         // true if there is something notable to report
+  "is_empty": true|false,           // true if the page basically says "nothing remaining / 0 / no data"
+  "headline": "<عنوان کوتاه فارسی برای نوتیفیکیشن>",
+  "summary": "<۱ تا ۴ خط فارسی: دقیقا چی روی صفحه هست و owner چی‌کار باید بکنه. اعداد مهم رو عینا بیار.>",
+  "key_values": ["<عدد/مقدار مهم ۱>", "..."]
+}
+
+Rules:
+- If the page shows amounts, balances, counts, or rows that are non-zero / non-empty → has_result=true, is_empty=false.
+- If it clearly indicates nothing is pending / همه چیز تسویه شده / 0 / خالی → has_result=false, is_empty=true.
+- Persian for all free text. Keep numbers exactly as shown.`;
+
+export async function analyzeSiteChange(input: {
+  monitorName: string;
+  url: string;
+  text: string;
+}): Promise<{
+  hasResult: boolean;
+  isEmpty: boolean;
+  headline: string;
+  summary: string;
+  keyValues: string[];
+} | null> {
+  const text = (input.text ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return { hasResult: false, isEmpty: true, headline: "", summary: "صفحه خالی بود.", keyValues: [] };
+  const payload = {
+    monitor: input.monitorName,
+    url: input.url,
+    page_text: text.slice(0, 6000),
+  };
+  let raw: string;
+  try {
+    raw = await callOpenRouter(
+      [
+        { role: "system", content: SITE_MONITOR_PROMPT },
+        { role: "user", content: JSON.stringify(payload) },
+      ],
+      { maxTokens: 600, jsonObject: true, temperature: 0.1, purpose: "site_monitor" },
+    );
+  } catch {
+    return null;
+  }
+  const j = extractJson(raw);
+  if (!j) return null;
+  try {
+    const p = JSON.parse(j) as Record<string, unknown>;
+    const kv = Array.isArray(p.key_values)
+      ? (p.key_values as unknown[]).filter((x): x is string => typeof x === "string")
+      : [];
+    return {
+      hasResult: p.has_result === true,
+      isEmpty: p.is_empty === true,
+      headline: typeof p.headline === "string" ? p.headline : "",
+      summary: typeof p.summary === "string" ? p.summary : "",
+      keyValues: kv,
+    };
+  } catch {
+    return null;
+  }
+}

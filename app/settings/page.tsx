@@ -83,6 +83,12 @@ const TILES: Array<{
     desc: "اکانت‌های اینستاگرام که هر ۵ دقیقه چک می‌شن برای استوری جدید",
   },
   {
+    href: "/site-monitors",
+    emoji: "🌐",
+    label: "Site Monitor",
+    desc: "سایت‌های با لاگین (آدرس + یوزر/پسورد) که سر ساعت‌های مشخص به‌وقت تهران چک می‌شن؛ اگه نتیجه‌ای بود با تحلیل AI توی Note Inbox می‌آد.",
+  },
+  {
     href: "/groups",
     emoji: "📊",
     label: "Groups",

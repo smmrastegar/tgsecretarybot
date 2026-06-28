@@ -328,6 +328,38 @@ export async function ensureSchema(): Promise<void> {
         PRIMARY KEY (chat_id, user_id)
       )`;
     await q`CREATE INDEX IF NOT EXISTS chat_members_chat_status_idx ON chat_members (chat_id, status)`;
+    // Site monitors: credentialed web pages the operator wants polled
+    // on a Tehran-time schedule. The cron logs in (form POST), loads a
+    // target page, AI-analyses the content, and posts notable output to
+    // the notes_inbox channel. Credentials are stored here (sensitive).
+    await q`
+      CREATE TABLE IF NOT EXISTS site_monitors (
+        id                 BIGSERIAL PRIMARY KEY,
+        name               TEXT NOT NULL,
+        login_url          TEXT NOT NULL,
+        check_url          TEXT NOT NULL,
+        username           TEXT,
+        password           TEXT,
+        username_field     TEXT NOT NULL DEFAULT 'username',
+        password_field     TEXT NOT NULL DEFAULT 'password',
+        extra_fields_json  TEXT,
+        -- comma-separated Tehran-time hours to run at, e.g. '13,15'
+        check_hours_tehran TEXT NOT NULL DEFAULT '13,15',
+        -- comma-separated weekday numbers to SKIP (0=Sun..6=Sat).
+        -- Default skips Thursday(4) & Friday(5) per the operator.
+        skip_weekdays      TEXT NOT NULL DEFAULT '4,5',
+        enabled            BOOLEAN NOT NULL DEFAULT TRUE,
+        notify_on          TEXT NOT NULL DEFAULT 'change',  -- 'change' | 'always' | 'nonempty'
+        last_run_at        TIMESTAMPTZ,
+        last_run_slot      TEXT,   -- 'YYYY-MM-DD:HH' Tehran, to dedupe per slot
+        last_status        TEXT,   -- 'ok' | 'login_failed' | 'fetch_failed' | 'error'
+        last_error         TEXT,
+        last_content_hash  TEXT,
+        last_content       TEXT,
+        last_summary       TEXT,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
     // SMS dedup: when the same SMS body arrives repeatedly to the
     // same inbox we update one Telegram message in-place instead of
     // posting N copies. body_signature is a whitespace-normalised
@@ -9986,3 +10018,178 @@ export async function listRecentMessagesForTest(
   }));
 }
 
+
+// ── Site monitors ───────────────────────────────────────────────
+export type SiteMonitor = {
+  id: number;
+  name: string;
+  loginUrl: string;
+  checkUrl: string;
+  username: string | null;
+  password: string | null;
+  usernameField: string;
+  passwordField: string;
+  extraFieldsJson: string | null;
+  checkHoursTehran: string;
+  skipWeekdays: string;
+  enabled: boolean;
+  notifyOn: string;
+  lastRunAt: Date | null;
+  lastRunSlot: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  lastContentHash: string | null;
+  lastContent: string | null;
+  lastSummary: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+function rowToSiteMonitor(r: Record<string, unknown>): SiteMonitor {
+  return {
+    id: Number(r.id),
+    name: (r.name as string) ?? "",
+    loginUrl: (r.login_url as string) ?? "",
+    checkUrl: (r.check_url as string) ?? "",
+    username: (r.username as string) ?? null,
+    password: (r.password as string) ?? null,
+    usernameField: (r.username_field as string) ?? "username",
+    passwordField: (r.password_field as string) ?? "password",
+    extraFieldsJson: (r.extra_fields_json as string) ?? null,
+    checkHoursTehran: (r.check_hours_tehran as string) ?? "13,15",
+    skipWeekdays: (r.skip_weekdays as string) ?? "4,5",
+    enabled: Boolean(r.enabled),
+    notifyOn: (r.notify_on as string) ?? "change",
+    lastRunAt: (r.last_run_at as Date) ?? null,
+    lastRunSlot: (r.last_run_slot as string) ?? null,
+    lastStatus: (r.last_status as string) ?? null,
+    lastError: (r.last_error as string) ?? null,
+    lastContentHash: (r.last_content_hash as string) ?? null,
+    lastContent: (r.last_content as string) ?? null,
+    lastSummary: (r.last_summary as string) ?? null,
+    createdAt: r.created_at as Date,
+    updatedAt: r.updated_at as Date,
+  };
+}
+
+export async function listSiteMonitors(): Promise<SiteMonitor[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`SELECT * FROM site_monitors ORDER BY id ASC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToSiteMonitor);
+}
+
+export async function getSiteMonitor(id: number): Promise<SiteMonitor | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`SELECT * FROM site_monitors WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToSiteMonitor(r) : null;
+}
+
+export async function createSiteMonitor(m: {
+  name: string;
+  loginUrl: string;
+  checkUrl: string;
+  username: string | null;
+  password: string | null;
+  usernameField?: string;
+  passwordField?: string;
+  extraFieldsJson?: string | null;
+  checkHoursTehran?: string;
+  skipWeekdays?: string;
+  notifyOn?: string;
+}): Promise<number> {
+  if (!hasDb()) throw new Error("no db");
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO site_monitors
+      (name, login_url, check_url, username, password, username_field,
+       password_field, extra_fields_json, check_hours_tehran, skip_weekdays, notify_on)
+    VALUES
+      (${m.name}, ${m.loginUrl}, ${m.checkUrl}, ${m.username}, ${m.password},
+       ${m.usernameField ?? "username"}, ${m.passwordField ?? "password"},
+       ${m.extraFieldsJson ?? null}, ${m.checkHoursTehran ?? "13,15"},
+       ${m.skipWeekdays ?? "4,5"}, ${m.notifyOn ?? "change"})
+    RETURNING id`;
+  return Number((rows[0] as { id: string | number }).id);
+}
+
+export async function updateSiteMonitor(
+  id: number,
+  patch: Partial<{
+    name: string;
+    loginUrl: string;
+    checkUrl: string;
+    username: string | null;
+    password: string | null;
+    usernameField: string;
+    passwordField: string;
+    extraFieldsJson: string | null;
+    checkHoursTehran: string;
+    skipWeekdays: string;
+    enabled: boolean;
+    notifyOn: string;
+  }>,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  const cur = await getSiteMonitor(id);
+  if (!cur) return;
+  const v = {
+    name: patch.name ?? cur.name,
+    loginUrl: patch.loginUrl ?? cur.loginUrl,
+    checkUrl: patch.checkUrl ?? cur.checkUrl,
+    username: patch.username === undefined ? cur.username : patch.username,
+    password:
+      patch.password === undefined || patch.password === ""
+        ? cur.password
+        : patch.password,
+    usernameField: patch.usernameField ?? cur.usernameField,
+    passwordField: patch.passwordField ?? cur.passwordField,
+    extraFieldsJson:
+      patch.extraFieldsJson === undefined
+        ? cur.extraFieldsJson
+        : patch.extraFieldsJson,
+    checkHoursTehran: patch.checkHoursTehran ?? cur.checkHoursTehran,
+    skipWeekdays: patch.skipWeekdays ?? cur.skipWeekdays,
+    enabled: patch.enabled === undefined ? cur.enabled : patch.enabled,
+    notifyOn: patch.notifyOn ?? cur.notifyOn,
+  };
+  await sql()`
+    UPDATE site_monitors SET
+      name = ${v.name}, login_url = ${v.loginUrl}, check_url = ${v.checkUrl},
+      username = ${v.username}, password = ${v.password},
+      username_field = ${v.usernameField}, password_field = ${v.passwordField},
+      extra_fields_json = ${v.extraFieldsJson},
+      check_hours_tehran = ${v.checkHoursTehran}, skip_weekdays = ${v.skipWeekdays},
+      enabled = ${v.enabled}, notify_on = ${v.notifyOn}, updated_at = NOW()
+    WHERE id = ${id}`;
+}
+
+export async function deleteSiteMonitor(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`DELETE FROM site_monitors WHERE id = ${id}`;
+}
+
+export async function recordSiteMonitorRun(
+  id: number,
+  r: {
+    slot: string;
+    status: string;
+    error: string | null;
+    contentHash: string | null;
+    content: string | null;
+    summary: string | null;
+  },
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE site_monitors SET
+      last_run_at = NOW(), last_run_slot = ${r.slot}, last_status = ${r.status},
+      last_error = ${r.error}, last_content_hash = ${r.contentHash},
+      last_content = ${r.content}, last_summary = ${r.summary}, updated_at = NOW()
+    WHERE id = ${id}`;
+}
