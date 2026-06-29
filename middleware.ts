@@ -25,6 +25,11 @@ const PUBLIC_PREFIXES = [
   // check, not the dashboard session cookie. Session-gating it would
   // break every MCP client (which sends a bearer token, not a cookie).
   "/api/mcp",
+  // Ingest endpoint for the external browser scraper — authed by its
+  // own Bearer <SITE_MONITOR_INGEST_SECRET>, not the dashboard session.
+  // Note: only the /ingest sub-path is public; /api/site-monitors
+  // itself stays session-gated.
+  "/api/site-monitors/ingest",
   "/_next",
   "/favicon",
 ];

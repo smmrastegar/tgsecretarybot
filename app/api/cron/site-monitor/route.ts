@@ -28,7 +28,10 @@ async function run(request: Request): Promise<NextResponse> {
   const ran: Array<Record<string, unknown>> = [];
   let skipped = 0;
   for (const m of monitors) {
-    const { due, slot, reason } = isMonitorDue(m, now);
+    // browser-mode monitors are driven by the external GitHub Action
+    // (it POSTs to /ingest); the HTTP cron must not touch them.
+    if (m.scrapeMode === "browser") { skipped++; continue; }
+    const { due, slot } = isMonitorDue(m, now);
     if (!due) { skipped++; continue; }
     try {
       const r = await runSiteMonitor(m, slot);

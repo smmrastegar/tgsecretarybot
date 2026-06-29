@@ -34,6 +34,9 @@ export const config = {
   // endpoint refuses every request. Set a long random value in Vercel
   // env and paste the same into your MCP client config.
   mcpSecret: optional("MCP_SECRET"),
+  // Shared secret the external browser scraper (GitHub Action) uses to
+  // POST scraped page text to /api/site-monitors/ingest.
+  siteMonitorIngestSecret: optional("SITE_MONITOR_INGEST_SECRET"),
 
   databaseUrl:
     optional("DATABASE_URL") ??

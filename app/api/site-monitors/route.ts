@@ -35,6 +35,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     checkHoursTehran: b.checkHoursTehran ? String(b.checkHoursTehran) : undefined,
     skipWeekdays: b.skipWeekdays ? String(b.skipWeekdays) : undefined,
     notifyOn: b.notifyOn ? String(b.notifyOn) : undefined,
+    scrapeMode: b.scrapeMode ? String(b.scrapeMode) : undefined,
   });
   return NextResponse.json({ ok: true, id });
 }

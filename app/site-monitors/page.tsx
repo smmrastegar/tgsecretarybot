@@ -17,6 +17,7 @@ type Monitor = {
   skipWeekdays: string;
   enabled: boolean;
   notifyOn: string;
+  scrapeMode: string;
   hasPassword: boolean;
   lastRunAt: string | null;
   lastStatus: string | null;
@@ -46,6 +47,7 @@ const EMPTY = {
   checkHoursTehran: "13,15",
   skipWeekdays: "4,5",
   notifyOn: "change",
+  scrapeMode: "http",
 };
 
 export default function SiteMonitorsPage() {
@@ -148,6 +150,7 @@ export default function SiteMonitorsPage() {
       checkHoursTehran: m.checkHoursTehran,
       skipWeekdays: m.skipWeekdays,
       notifyOn: m.notifyOn,
+      scrapeMode: m.scrapeMode,
     });
     setEditing(true);
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
@@ -218,6 +221,36 @@ export default function SiteMonitorsPage() {
                 );
               })}
             </div>
+          </div>
+          <div className="mt-3">
+            <div className="text-[10px] text-[var(--color-text-dim)] mb-1">روش چک کردن:</div>
+            <div className="flex gap-1.5 flex-wrap">
+              {[
+                ["http", "🌐 HTTP (سایت ساده، روی Vercel)"],
+                ["browser", "🧭 مرورگر (سایت JS، با GitHub Action)"],
+              ].map(([val, label]) => (
+                <button
+                  key={val}
+                  onClick={() => setForm((f) => ({ ...f, scrapeMode: val ?? "http" }))}
+                  className={`text-[11px] px-2 py-1 rounded-md border ${
+                    form.scrapeMode === val
+                      ? "bg-[var(--color-accent)] text-white border-transparent"
+                      : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {form.scrapeMode === "browser" && (
+              <div className="mt-2 p-2 rounded-md bg-amber-500/5 border border-amber-500/30 text-[10px] text-amber-200 leading-relaxed">
+                این سایت با JavaScript کار می‌کنه و کرون Vercel نمی‌تونه رندرش
+                کنه. یه GitHub Action (رایگان) با مرورگر واقعی لاگین می‌کنه و
+                متن رو می‌فرسته به این اپ. زمان‌بندی توسط همون Action انجام
+                می‌شه (سر ۱۳ و ۱۵ تهران، به‌جز پنجشنبه/جمعه). راهنمای ست کردن
+                Secretها توی <code>docs/SITE_MONITOR.md</code> هست.
+              </div>
+            )}
           </div>
           <div className="mt-3 flex gap-2">
             <button

@@ -187,37 +187,23 @@ async function postToNotesInbox(text: string): Promise<boolean> {
   return Boolean(j.ok);
 }
 
-// Run a full check: fetch → analyze → decide → (maybe) notify → record.
-// `slot` is the Tehran 'YYYY-MM-DD:HH' bucket this run belongs to.
-export async function runSiteMonitor(
+// Given already-scraped page text (from HTTP fetch OR an external
+// browser run), analyse it, decide whether to notify per the monitor's
+// rules, post to notes_inbox, and record the run. Shared by the HTTP
+// cron path and the /ingest endpoint.
+export async function processScrapedText(
   m: SiteMonitor,
+  text: string,
   slot: string,
 ): Promise<{ status: string; notified: boolean; summary: string }> {
-  const page = await fetchMonitoredPage(m);
-  if (page.status !== "ok") {
-    await recordSiteMonitorRun(m.id, {
-      slot,
-      status: page.status,
-      error: page.error,
-      contentHash: null,
-      content: null,
-      summary: null,
-    });
-    // Surface hard failures (login/fetch) to the inbox once per slot so
-    // the operator notices a broken monitor instead of silent gaps.
-    await postToNotesInbox(
-      `⚠️ <b>مانیتور سایت «${esc(m.name)}» خطا خورد</b>\n${esc(page.error ?? page.status)}\n<code>${esc(page.loginInfo)}</code>`,
-    ).catch(() => {});
-    return { status: page.status, notified: true, summary: page.error ?? "" };
-  }
-
+  const contentHash = createHash("sha256").update(text).digest("hex").slice(0, 32);
   const analysis = await analyzeSiteChange({
     monitorName: m.name,
     url: m.checkUrl,
-    text: page.text,
+    text,
   });
 
-  const changed = page.contentHash !== m.lastContentHash;
+  const changed = contentHash !== m.lastContentHash;
   let shouldNotify = false;
   if (m.notifyOn === "always") shouldNotify = true;
   else if (m.notifyOn === "nonempty") shouldNotify = Boolean(analysis?.hasResult);
@@ -241,11 +227,37 @@ export async function runSiteMonitor(
     slot,
     status: "ok",
     error: null,
-    contentHash: page.contentHash,
-    content: page.text.slice(0, 8000),
+    contentHash,
+    content: text.slice(0, 8000),
     summary,
   });
   return { status: "ok", notified, summary };
+}
+
+// Run a full HTTP check: fetch → processScrapedText. `slot` is the
+// Tehran 'YYYY-MM-DD:HH' bucket this run belongs to.
+export async function runSiteMonitor(
+  m: SiteMonitor,
+  slot: string,
+): Promise<{ status: string; notified: boolean; summary: string }> {
+  const page = await fetchMonitoredPage(m);
+  if (page.status !== "ok") {
+    await recordSiteMonitorRun(m.id, {
+      slot,
+      status: page.status,
+      error: page.error,
+      contentHash: null,
+      content: null,
+      summary: null,
+    });
+    // Surface hard failures (login/fetch) to the inbox once per slot so
+    // the operator notices a broken monitor instead of silent gaps.
+    await postToNotesInbox(
+      `⚠️ <b>مانیتور سایت «${esc(m.name)}» خطا خورد</b>\n${esc(page.error ?? page.status)}\n<code>${esc(page.loginInfo)}</code>`,
+    ).catch(() => {});
+    return { status: page.status, notified: true, summary: page.error ?? "" };
+  }
+  return processScrapedText(m, page.text, slot);
 }
 
 // ── Tehran-time scheduling helpers ──────────────────────────────

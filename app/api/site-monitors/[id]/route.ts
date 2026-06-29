@@ -12,7 +12,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   if (!Number.isFinite(mid)) return NextResponse.json({ error: "invalid id" }, { status: 400 });
   const b = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const patch: Record<string, unknown> = {};
-  for (const k of ["name","loginUrl","checkUrl","username","password","usernameField","passwordField","extraFieldsJson","checkHoursTehran","skipWeekdays","notifyOn"]) {
+  for (const k of ["name","loginUrl","checkUrl","username","password","usernameField","passwordField","extraFieldsJson","checkHoursTehran","skipWeekdays","notifyOn","scrapeMode"]) {
     if (k in b) patch[k] = b[k] === null ? null : String(b[k]);
   }
   if ("enabled" in b) patch.enabled = Boolean(b.enabled);

@@ -360,6 +360,13 @@ export async function ensureSchema(): Promise<void> {
         created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
+    // scrape_mode: 'http' = the Vercel cron logs in via form POST and
+    // fetches the page itself (works for server-rendered sites).
+    // 'browser' = a JavaScript SPA the cron can't render; an external
+    // GitHub Action runs a real browser, scrapes the text, and POSTs it
+    // to /api/site-monitors/ingest. The Vercel cron SKIPS browser-mode
+    // monitors (the Action drives them on its own schedule).
+    await q`ALTER TABLE site_monitors ADD COLUMN IF NOT EXISTS scrape_mode TEXT NOT NULL DEFAULT 'http'`;
     // SMS dedup: when the same SMS body arrives repeatedly to the
     // same inbox we update one Telegram message in-place instead of
     // posting N copies. body_signature is a whitespace-normalised
@@ -10034,6 +10041,7 @@ export type SiteMonitor = {
   skipWeekdays: string;
   enabled: boolean;
   notifyOn: string;
+  scrapeMode: string;
   lastRunAt: Date | null;
   lastRunSlot: string | null;
   lastStatus: string | null;
@@ -10060,6 +10068,7 @@ function rowToSiteMonitor(r: Record<string, unknown>): SiteMonitor {
     skipWeekdays: (r.skip_weekdays as string) ?? "4,5",
     enabled: Boolean(r.enabled),
     notifyOn: (r.notify_on as string) ?? "change",
+    scrapeMode: (r.scrape_mode as string) ?? "http",
     lastRunAt: (r.last_run_at as Date) ?? null,
     lastRunSlot: (r.last_run_slot as string) ?? null,
     lastStatus: (r.last_status as string) ?? null,
@@ -10087,6 +10096,17 @@ export async function getSiteMonitor(id: number): Promise<SiteMonitor | null> {
   return r ? rowToSiteMonitor(r) : null;
 }
 
+export async function getSiteMonitorByName(
+  name: string,
+): Promise<SiteMonitor | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM site_monitors WHERE LOWER(name) = LOWER(${name}) LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToSiteMonitor(r) : null;
+}
+
 export async function createSiteMonitor(m: {
   name: string;
   loginUrl: string;
@@ -10099,18 +10119,21 @@ export async function createSiteMonitor(m: {
   checkHoursTehran?: string;
   skipWeekdays?: string;
   notifyOn?: string;
+  scrapeMode?: string;
 }): Promise<number> {
   if (!hasDb()) throw new Error("no db");
   await ensureSchema();
   const rows = await sql()`
     INSERT INTO site_monitors
       (name, login_url, check_url, username, password, username_field,
-       password_field, extra_fields_json, check_hours_tehran, skip_weekdays, notify_on)
+       password_field, extra_fields_json, check_hours_tehran, skip_weekdays,
+       notify_on, scrape_mode)
     VALUES
       (${m.name}, ${m.loginUrl}, ${m.checkUrl}, ${m.username}, ${m.password},
        ${m.usernameField ?? "username"}, ${m.passwordField ?? "password"},
        ${m.extraFieldsJson ?? null}, ${m.checkHoursTehran ?? "13,15"},
-       ${m.skipWeekdays ?? "4,5"}, ${m.notifyOn ?? "change"})
+       ${m.skipWeekdays ?? "4,5"}, ${m.notifyOn ?? "change"},
+       ${m.scrapeMode ?? "http"})
     RETURNING id`;
   return Number((rows[0] as { id: string | number }).id);
 }
@@ -10130,6 +10153,7 @@ export async function updateSiteMonitor(
     skipWeekdays: string;
     enabled: boolean;
     notifyOn: string;
+    scrapeMode: string;
   }>,
 ): Promise<void> {
   if (!hasDb()) return;
@@ -10155,6 +10179,7 @@ export async function updateSiteMonitor(
     skipWeekdays: patch.skipWeekdays ?? cur.skipWeekdays,
     enabled: patch.enabled === undefined ? cur.enabled : patch.enabled,
     notifyOn: patch.notifyOn ?? cur.notifyOn,
+    scrapeMode: patch.scrapeMode ?? cur.scrapeMode,
   };
   await sql()`
     UPDATE site_monitors SET
@@ -10163,7 +10188,8 @@ export async function updateSiteMonitor(
       username_field = ${v.usernameField}, password_field = ${v.passwordField},
       extra_fields_json = ${v.extraFieldsJson},
       check_hours_tehran = ${v.checkHoursTehran}, skip_weekdays = ${v.skipWeekdays},
-      enabled = ${v.enabled}, notify_on = ${v.notifyOn}, updated_at = NOW()
+      enabled = ${v.enabled}, notify_on = ${v.notifyOn},
+      scrape_mode = ${v.scrapeMode}, updated_at = NOW()
     WHERE id = ${id}`;
 }
 
