@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { listEmails } from "@/lib/db";
+import { getEmailAccount, listEmails } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 
 export const runtime = "nodejs";
@@ -27,10 +27,12 @@ export async function GET(request: Request): Promise<NextResponse> {
 export async function POST(request: Request): Promise<NextResponse> {
   try { await requireSession(); } catch { return NextResponse.json({ error: "unauthorized" }, { status: 401 }); }
   const b = (await request.json().catch(() => ({}))) as {
-    to?: string; subject?: string; text?: string; html?: string; cc?: string;
+    to?: string; subject?: string; text?: string; html?: string; cc?: string; accountId?: number;
   };
   if (!b.to || !b.subject) return NextResponse.json({ error: "to و subject لازمه" }, { status: 400 });
+  const account = b.accountId ? await getEmailAccount(Number(b.accountId)) : null;
   const r = await sendEmail({
+    account,
     to: String(b.to), subject: String(b.subject),
     text: b.text ? String(b.text) : undefined,
     html: b.html ? String(b.html) : undefined,

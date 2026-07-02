@@ -1,0 +1,35 @@
+import { NextResponse } from "next/server";
+import { requireSession } from "@/lib/auth";
+import { createEmailAccount, listEmailAccounts } from "@/lib/db";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function redact<T extends { resendApiKey: string | null; inboundToken: string | null }>(a: T) {
+  return {
+    ...a,
+    resendApiKey: a.resendApiKey ? "********" : "",
+    hasApiKey: Boolean(a.resendApiKey),
+    // inbound token IS shown (it goes in the webhook URL the operator pastes)
+  };
+}
+
+export async function GET(): Promise<NextResponse> {
+  try { await requireSession(); } catch { return NextResponse.json({ error: "unauthorized" }, { status: 401 }); }
+  const accounts = (await listEmailAccounts()).map(redact);
+  return NextResponse.json({ accounts });
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  try { await requireSession(); } catch { return NextResponse.json({ error: "unauthorized" }, { status: 401 }); }
+  const b = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!b.name) return NextResponse.json({ error: "name required" }, { status: 400 });
+  const id = await createEmailAccount({
+    name: String(b.name),
+    resendApiKey: b.resendApiKey ? String(b.resendApiKey) : null,
+    fromEmail: b.fromEmail ? String(b.fromEmail) : null,
+    inboundToken: b.inboundToken ? String(b.inboundToken) : null,
+    tgChannelId: b.tgChannelId != null && b.tgChannelId !== "" ? Number(b.tgChannelId) : null,
+  });
+  return NextResponse.json({ ok: true, id });
+}

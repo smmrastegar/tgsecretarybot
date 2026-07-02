@@ -58,7 +58,12 @@ export default function EmailsPage() {
           }
         />
 
-        {showSettings && <ResendSettings origin={origin} />}
+        {showSettings && (
+          <>
+            <AccountsManager origin={origin} />
+            <ResendSettings origin={origin} />
+          </>
+        )}
 
         <div role="tablist" className="flex gap-1.5 mb-3">
           {(["in", "out"] as const).map((t) => (
@@ -116,6 +121,84 @@ export default function EmailsPage() {
 
       {compose && <ComposeModal onClose={() => setCompose(false)} onSent={load} />}
     </Shell>
+  );
+}
+
+type Account = {
+  id: number;
+  name: string;
+  fromEmail: string | null;
+  inboundToken: string | null;
+  tgChannelId: number | null;
+  enabled: boolean;
+  hasApiKey: boolean;
+};
+
+function AccountsManager({ origin }: { origin: string }) {
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [form, setForm] = useState({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "" });
+  const load = useCallback(async () => {
+    const r = await fetch("/api/email-accounts");
+    const j = (await r.json()) as { accounts: Account[] };
+    setAccounts(j.accounts ?? []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const genToken = () => setForm((f) => ({ ...f, inboundToken: Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) }));
+  const create = async () => {
+    if (!form.name) return;
+    await fetch("/api/email-accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+    setForm({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "" });
+    await load();
+  };
+  const del = async (id: number) => {
+    if (!confirm("این اکانت حذف بشه؟")) return;
+    await fetch(`/api/email-accounts/${id}`, { method: "DELETE" });
+    await load();
+  };
+
+  return (
+    <Card className="mb-4">
+      <div className="text-sm font-medium mb-2">📮 اکانت‌های ایمیل</div>
+      <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+        هر اکانت API key و آدرس و کانال تلگرام خودش رو داره. ایمیل ورودی هر اکانت توی کانال خودش پست می‌شه و از همونجا می‌تونی ریپلای بدی.
+      </p>
+      {accounts.length > 0 && (
+        <div className="flex flex-col gap-1.5 mb-3">
+          {accounts.map((a) => (
+            <div key={a.id} className="flex items-center justify-between gap-2 p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
+              <div className="min-w-0">
+                <div className="text-sm font-medium flex items-center gap-1.5">
+                  {a.name}
+                  {a.enabled ? <Badge tone="success">فعال</Badge> : <Badge tone="neutral">خاموش</Badge>}
+                  {!a.hasApiKey && <Badge tone="warn">بدون API key</Badge>}
+                </div>
+                <div dir="ltr" className="text-[10px] text-[var(--color-text-dim)] text-left break-all">
+                  {a.fromEmail ?? "—"} · channel {a.tgChannelId ?? "—"}
+                </div>
+                {a.inboundToken && (
+                  <code dir="ltr" className="text-[9px] text-[var(--color-text-dim)] block break-all text-left mt-0.5">
+                    {origin}/api/email-webhook?token={a.inboundToken}
+                  </code>
+                )}
+              </div>
+              <button onClick={() => del(a.id)} className="text-[11px] px-2 py-1 rounded-md border border-rose-500/40 text-rose-200 shrink-0">🗑</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="grid md:grid-cols-2 gap-2">
+        <input dir="ltr" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="نام اکانت (مثلاً Sales)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
+        <input dir="ltr" value={form.fromEmail} onChange={(e) => setForm((f) => ({ ...f, fromEmail: e.target.value }))} placeholder="From: Sales <sales@domain.com>" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
+        <input dir="ltr" value={form.resendApiKey} onChange={(e) => setForm((f) => ({ ...f, resendApiKey: e.target.value }))} placeholder="Resend API key (re_...)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
+        <input dir="ltr" value={form.tgChannelId} onChange={(e) => setForm((f) => ({ ...f, tgChannelId: e.target.value }))} placeholder="Channel ID تلگرام (-100...)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
+        <div className="flex gap-1.5 md:col-span-2">
+          <input dir="ltr" value={form.inboundToken} onChange={(e) => setForm((f) => ({ ...f, inboundToken: e.target.value }))} placeholder="Inbound token (برای وب‌هوک ورودی)" className="flex-1 text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
+          <button onClick={genToken} className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)]">🎲 ساخت</button>
+        </div>
+      </div>
+      <button onClick={create} disabled={!form.name} className="mt-2 text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-40">+ افزودن اکانت</button>
+    </Card>
   );
 }
 
@@ -179,6 +262,18 @@ function ComposeModal({ onClose, onSent }: { onClose: () => void; onSent: () => 
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountId, setAccountId] = useState<number | "">("");
+  useEffect(() => {
+    fetch("/api/email-accounts")
+      .then((r) => r.json())
+      .then((d: { accounts: Account[] }) => {
+        setAccounts(d.accounts ?? []);
+        const first = d.accounts?.[0];
+        if (first) setAccountId(first.id);
+      })
+      .catch(() => {});
+  }, []);
   const send = async () => {
     setSending(true);
     setErr(null);
@@ -186,7 +281,7 @@ function ComposeModal({ onClose, onSent }: { onClose: () => void; onSent: () => 
       const r = await fetch("/api/emails", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, cc: cc || undefined, subject, text }),
+        body: JSON.stringify({ to, cc: cc || undefined, subject, text, accountId: accountId || undefined }),
       });
       const j = (await r.json()) as { ok?: boolean; error?: string };
       if (r.ok && j.ok) { onSent(); onClose(); }
@@ -200,6 +295,13 @@ function ComposeModal({ onClose, onSent }: { onClose: () => void; onSent: () => 
       <div dir="rtl" onClick={(e) => e.stopPropagation()} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 w-full max-w-lg">
         <div className="text-sm font-medium mb-3">✉️ ایمیل جدید</div>
         <div className="flex flex-col gap-2">
+          {accounts.length > 0 && (
+            <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")} className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]">
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>{a.name} ({a.fromEmail ?? "?"})</option>
+              ))}
+            </select>
+          )}
           <input dir="ltr" value={to} onChange={(e) => setTo(e.target.value)} placeholder="به: someone@example.com" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
           <input dir="ltr" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="cc (اختیاری)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
           <input dir="auto" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="موضوع" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />

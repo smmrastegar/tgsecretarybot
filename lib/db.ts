@@ -360,30 +360,6 @@ export async function ensureSchema(): Promise<void> {
         created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
-    // Emails sent/received through the Resend integration. Inbound rows
-    // come from the /api/email-webhook (Resend "email.received" events);
-    // outbound rows are written when the operator sends/replies from the
-    // dashboard. message_id / in_reply_to are RFC-2822 header values so
-    // replies thread correctly in the recipient's mail client.
-    await q`
-      CREATE TABLE IF NOT EXISTS email_messages (
-        id             BIGSERIAL PRIMARY KEY,
-        direction      TEXT NOT NULL,             -- 'in' | 'out'
-        resend_id      TEXT,
-        message_id     TEXT,
-        in_reply_to    TEXT,
-        from_addr      TEXT NOT NULL DEFAULT '',
-        to_addrs       TEXT NOT NULL DEFAULT '',
-        cc_addrs       TEXT,
-        subject        TEXT NOT NULL DEFAULT '',
-        body_text      TEXT,
-        body_html      TEXT,
-        summary        TEXT,
-        tg_chat_id     BIGINT,
-        tg_message_id  BIGINT,
-        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )`;
-    await q
     // fetches the page itself (works for server-rendered sites).
     // 'browser' = a JavaScript SPA the cron can't render; an external
     // GitHub Action runs a real browser, scrapes the text, and POSTs it
@@ -418,6 +394,33 @@ export async function ensureSchema(): Promise<void> {
       )`;
     await q`CREATE INDEX IF NOT EXISTS emails_created_idx ON emails (created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS emails_thread_idx ON emails (thread_key)`;
+    // Multiple email accounts: each has its own Resend API key, from
+    // address, inbound token (routes inbound webhooks), and Telegram
+    // channel/group where its mail is posted + operated from.
+    await q`
+      CREATE TABLE IF NOT EXISTS email_accounts (
+        id              BIGSERIAL PRIMARY KEY,
+        name            TEXT NOT NULL,
+        resend_api_key  TEXT,
+        from_email      TEXT,
+        inbound_token   TEXT UNIQUE,
+        tg_channel_id   BIGINT,
+        enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`ALTER TABLE emails ADD COLUMN IF NOT EXISTS account_id BIGINT`;
+    // Telegram-native reply flow: when the operator taps ↩️ پاسخ on an
+    // email card in the group, the bot posts a force-reply prompt and
+    // records it here so the operator's reply is matched to the email.
+    await q`
+      CREATE TABLE IF NOT EXISTS email_pending_replies (
+        prompt_chat_id     BIGINT NOT NULL,
+        prompt_message_id  BIGINT NOT NULL,
+        email_id           BIGINT NOT NULL,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (prompt_chat_id, prompt_message_id)
+      )`;
     // SMS dedup: when the same SMS body arrives repeatedly to the
     // same inbox we update one Telegram message in-place instead of
     // posting N copies. body_signature is a whitespace-normalised
@@ -10277,6 +10280,7 @@ export async function recordSiteMonitorRun(
 // ── Emails (Resend) ─────────────────────────────────────────────
 export type EmailRow = {
   id: number;
+  accountId: number | null;
   direction: "in" | "out";
   resendId: string | null;
   messageId: string | null;
@@ -10300,6 +10304,7 @@ export type EmailRow = {
 function rowToEmail(r: Record<string, unknown>): EmailRow {
   return {
     id: Number(r.id),
+    accountId: r.account_id != null ? Number(r.account_id) : null,
     direction: (r.direction as "in" | "out") ?? "in",
     resendId: (r.resend_id as string) ?? null,
     messageId: (r.message_id as string) ?? null,
@@ -10323,6 +10328,7 @@ function rowToEmail(r: Record<string, unknown>): EmailRow {
 
 export async function insertEmail(e: {
   direction: "in" | "out";
+  accountId?: number | null;
   resendId?: string | null;
   messageId?: string | null;
   inReplyTo?: string | null;
@@ -10341,15 +10347,15 @@ export async function insertEmail(e: {
   await ensureSchema();
   const rows = await sql()`
     INSERT INTO emails
-      (direction, resend_id, message_id, in_reply_to, thread_key,
+      (direction, account_id, resend_id, message_id, in_reply_to, thread_key,
        from_email, from_name, to_emails, cc_emails, subject,
        text_body, html_body, status, error)
     VALUES
-      (${e.direction}, ${e.resendId ?? null}, ${e.messageId ?? null},
-       ${e.inReplyTo ?? null}, ${e.threadKey ?? null}, ${e.fromEmail ?? null},
-       ${e.fromName ?? null}, ${e.toEmails ?? null}, ${e.ccEmails ?? null},
-       ${e.subject ?? null}, ${e.textBody ?? null}, ${e.htmlBody ?? null},
-       ${e.status ?? null}, ${e.error ?? null})
+      (${e.direction}, ${e.accountId ?? null}, ${e.resendId ?? null},
+       ${e.messageId ?? null}, ${e.inReplyTo ?? null}, ${e.threadKey ?? null},
+       ${e.fromEmail ?? null}, ${e.fromName ?? null}, ${e.toEmails ?? null},
+       ${e.ccEmails ?? null}, ${e.subject ?? null}, ${e.textBody ?? null},
+       ${e.htmlBody ?? null}, ${e.status ?? null}, ${e.error ?? null})
     RETURNING id`;
   return Number((rows[0] as { id: string | number }).id);
 }
@@ -10396,4 +10402,166 @@ export async function setEmailSummary(id: number, summary: string): Promise<void
   if (!hasDb()) return;
   await ensureSchema();
   await sql()`UPDATE emails SET summary = ${summary} WHERE id = ${id}`;
+}
+
+// ── Email accounts (multi) ──────────────────────────────────────
+export type EmailAccount = {
+  id: number;
+  name: string;
+  resendApiKey: string | null;
+  fromEmail: string | null;
+  inboundToken: string | null;
+  tgChannelId: number | null;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+function rowToEmailAccount(r: Record<string, unknown>): EmailAccount {
+  return {
+    id: Number(r.id),
+    name: (r.name as string) ?? "",
+    resendApiKey: (r.resend_api_key as string) ?? null,
+    fromEmail: (r.from_email as string) ?? null,
+    inboundToken: (r.inbound_token as string) ?? null,
+    tgChannelId: r.tg_channel_id != null ? Number(r.tg_channel_id) : null,
+    enabled: Boolean(r.enabled),
+    createdAt: r.created_at as Date,
+    updatedAt: r.updated_at as Date,
+  };
+}
+
+export async function listEmailAccounts(): Promise<EmailAccount[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`SELECT * FROM email_accounts ORDER BY id ASC`;
+  return (rows as Array<Record<string, unknown>>).map(rowToEmailAccount);
+}
+
+export async function getEmailAccount(id: number): Promise<EmailAccount | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`SELECT * FROM email_accounts WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToEmailAccount(r) : null;
+}
+
+export async function getEmailAccountByToken(
+  token: string,
+): Promise<EmailAccount | null> {
+  if (!hasDb() || !token) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM email_accounts WHERE inbound_token = ${token} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToEmailAccount(r) : null;
+}
+
+export async function getEmailAccountByChannel(
+  chatId: number,
+): Promise<EmailAccount | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM email_accounts WHERE tg_channel_id = ${chatId} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToEmailAccount(r) : null;
+}
+
+export async function createEmailAccount(a: {
+  name: string;
+  resendApiKey?: string | null;
+  fromEmail?: string | null;
+  inboundToken?: string | null;
+  tgChannelId?: number | null;
+}): Promise<number> {
+  if (!hasDb()) throw new Error("no db");
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO email_accounts (name, resend_api_key, from_email, inbound_token, tg_channel_id)
+    VALUES (${a.name}, ${a.resendApiKey ?? null}, ${a.fromEmail ?? null},
+            ${a.inboundToken ?? null}, ${a.tgChannelId ?? null})
+    RETURNING id`;
+  return Number((rows[0] as { id: string | number }).id);
+}
+
+export async function updateEmailAccount(
+  id: number,
+  patch: Partial<{
+    name: string;
+    resendApiKey: string | null;
+    fromEmail: string | null;
+    inboundToken: string | null;
+    tgChannelId: number | null;
+    enabled: boolean;
+  }>,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  const cur = await getEmailAccount(id);
+  if (!cur) return;
+  const v = {
+    name: patch.name ?? cur.name,
+    resendApiKey:
+      patch.resendApiKey === undefined || patch.resendApiKey === ""
+        ? cur.resendApiKey
+        : patch.resendApiKey,
+    fromEmail: patch.fromEmail === undefined ? cur.fromEmail : patch.fromEmail,
+    inboundToken:
+      patch.inboundToken === undefined ? cur.inboundToken : patch.inboundToken,
+    tgChannelId:
+      patch.tgChannelId === undefined ? cur.tgChannelId : patch.tgChannelId,
+    enabled: patch.enabled === undefined ? cur.enabled : patch.enabled,
+  };
+  await sql()`
+    UPDATE email_accounts SET
+      name = ${v.name}, resend_api_key = ${v.resendApiKey},
+      from_email = ${v.fromEmail}, inbound_token = ${v.inboundToken},
+      tg_channel_id = ${v.tgChannelId}, enabled = ${v.enabled}, updated_at = NOW()
+    WHERE id = ${id}`;
+}
+
+export async function deleteEmailAccount(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`DELETE FROM email_accounts WHERE id = ${id}`;
+}
+
+// ── Email pending replies (Telegram force-reply flow) ───────────
+export async function createEmailPendingReply(
+  promptChatId: number,
+  promptMessageId: number,
+  emailId: number,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO email_pending_replies (prompt_chat_id, prompt_message_id, email_id)
+    VALUES (${promptChatId}, ${promptMessageId}, ${emailId})
+    ON CONFLICT (prompt_chat_id, prompt_message_id) DO UPDATE SET email_id = ${emailId}`;
+}
+
+export async function getEmailPendingReply(
+  promptChatId: number,
+  promptMessageId: number,
+): Promise<number | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT email_id FROM email_pending_replies
+    WHERE prompt_chat_id = ${promptChatId} AND prompt_message_id = ${promptMessageId}
+    LIMIT 1`;
+  const r = rows[0] as { email_id: string | number } | undefined;
+  return r ? Number(r.email_id) : null;
+}
+
+export async function deleteEmailPendingReply(
+  promptChatId: number,
+  promptMessageId: number,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    DELETE FROM email_pending_replies
+    WHERE prompt_chat_id = ${promptChatId} AND prompt_message_id = ${promptMessageId}`;
 }

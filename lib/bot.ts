@@ -96,7 +96,14 @@ import {
   markNoteWatchMatchWrong,
   recordOwnerReaction,
   upsertChatMember,
+  getEmail,
+  getEmailAccountByChannel,
+  createEmailPendingReply,
+  getEmailPendingReply,
+  deleteEmailPendingReply,
 } from "./db";
+import { replyToEmail, sendEmail } from "./email";
+import { summarizeEmail } from "./classifier";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
 import { randomBytes } from "node:crypto";
@@ -804,6 +811,122 @@ async function handleSmsCallback(
     return;
   }
   await ctx.answerCallbackQuery().catch(() => {});
+}
+
+// Email card buttons (em:sum:<id> / em:reply:<id>). Summary posts an
+// AI summary as a reply in the channel; Reply posts a force-reply
+// prompt the operator answers to send the email reply — all without
+// leaving Telegram.
+async function handleEmailCallback(
+  ctx: Context,
+  data: string,
+  _bot: Bot,
+): Promise<void> {
+  const parts = data.split(":");
+  const action = parts[1];
+  const emailId = Number(parts[2]);
+  const chatId = ctx.chat?.id;
+  const cardMsgId = ctx.callbackQuery?.message?.message_id;
+  if (!Number.isFinite(emailId) || chatId == null) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  if (action === "sum") {
+    await ctx.answerCallbackQuery({ text: "در حال خلاصه‌سازی…" }).catch(() => {});
+    const e = await getEmail(emailId).catch(() => null);
+    if (!e) return;
+    const r = await summarizeEmail({ subject: e.subject, from: e.fromEmail, text: e.textBody }).catch(() => null);
+    const body = r
+      ? `🧠 <b>خلاصه</b>\n${r.summary}${r.keyPoints.length ? "\n\n• " + r.keyPoints.join("\n• ") : ""}`
+      : "خلاصه‌سازی ناموفق بود.";
+    await ctx.api
+      .sendMessage(chatId, body.slice(0, 4096), {
+        parse_mode: "HTML",
+        reply_parameters: cardMsgId ? { message_id: cardMsgId } : undefined,
+      })
+      .catch(() => {});
+    return;
+  }
+  if (action === "reply") {
+    await ctx.answerCallbackQuery().catch(() => {});
+    const sent = await ctx.api
+      .sendMessage(
+        chatId,
+        "↩️ متن پاسخت رو <b>به همین پیام ریپلای کن</b> تا برای فرستنده ایمیل بشه.",
+        {
+          parse_mode: "HTML",
+          reply_markup: { force_reply: true, input_field_placeholder: "متن پاسخ ایمیل…" },
+        },
+      )
+      .catch(() => null);
+    if (sent) {
+      await createEmailPendingReply(chatId, sent.message_id, emailId).catch(() => {});
+    }
+    return;
+  }
+  await ctx.answerCallbackQuery().catch(() => {});
+}
+
+// Handles email actions that arrive as plain group messages:
+//   (a) a reply to the bot's force-reply prompt → send the email reply
+//   (b) "/email to@x.com | subject | body" in the email channel → send
+// Returns true when it consumed the message.
+async function handleEmailGroupMessage(m: Message, bot: Bot): Promise<boolean> {
+  const chatId = m.chat?.id;
+  const text = m.text ?? m.caption ?? "";
+  if (chatId == null) return false;
+
+  // (a) reply to a pending force-reply prompt
+  const replyTo = m.reply_to_message?.message_id;
+  if (replyTo != null) {
+    const emailId = await getEmailPendingReply(chatId, replyTo).catch(() => null);
+    if (emailId != null) {
+      await deleteEmailPendingReply(chatId, replyTo).catch(() => {});
+      if (!text.trim()) return true;
+      const r = await replyToEmail(emailId, text).catch((e) => ({ ok: false, error: String(e) }));
+      await bot.api
+        .sendMessage(
+          chatId,
+          r.ok ? "✅ پاسخ ایمیل ارسال شد." : `❌ ارسال ناموفق: ${r.error ?? "?"}`,
+          { reply_parameters: { message_id: m.message_id } },
+        )
+        .catch(() => {});
+      return true;
+    }
+  }
+
+  // (b) /email compose command — only in a chat tied to an email account
+  if (/^\/email(@\w+)?\b/i.test(text)) {
+    const account = await getEmailAccountByChannel(chatId).catch(() => null);
+    const rest = text.replace(/^\/email(@\w+)?\s*/i, "");
+    const parts = rest.split("|").map((x) => x.trim());
+    if (parts.length < 3 || !parts[0] || !parts[1]) {
+      await bot.api
+        .sendMessage(
+          chatId,
+          "فرمت: <code>/email گیرنده@دامنه | موضوع | متن</code>",
+          { parse_mode: "HTML", reply_parameters: { message_id: m.message_id } },
+        )
+        .catch(() => {});
+      return true;
+    }
+    const [to, subject, ...bodyParts] = parts;
+    const r = await sendEmail({
+      account,
+      to: to!,
+      subject: subject!,
+      text: bodyParts.join(" | "),
+    }).catch((e) => ({ ok: false, error: String(e) }) as { ok: boolean; error?: string });
+    await bot.api
+      .sendMessage(
+        chatId,
+        r.ok ? `✅ ایمیل به ${to} ارسال شد.` : `❌ ارسال ناموفق: ${r.error ?? "?"}`,
+        { reply_parameters: { message_id: m.message_id } },
+      )
+      .catch(() => {});
+    return true;
+  }
+  return false;
 }
 
 // Reveal / hide the body of a "🔒 پیام خصوصی" SMS card. Edits the
@@ -1799,6 +1922,12 @@ function buildBot(): Bot {
       );
       return;
     }
+    if (data.startsWith("em:")) {
+      await handleEmailCallback(ctx, data, bot).catch((err) =>
+        console.error("[email_callback] failed:", err),
+      );
+      return;
+    }
     if (!data.startsWith("ui:")) {
       await ctx.answerCallbackQuery().catch(() => {});
       return;
@@ -1957,6 +2086,13 @@ function buildBot(): Bot {
       return false;
     });
     if (routed) return;
+    // Email: (a) a reply to the bot's ↩️ force-reply prompt → send the
+    // email reply; (b) a /email compose command in the email channel.
+    const handledEmail = await handleEmailGroupMessage(m, bot).catch((err) => {
+      console.error("[email] group handler error:", err);
+      return false;
+    });
+    if (handledEmail) return;
     // Groups/supergroups: classify + log + alert if urgent. Requires
     // 'Disable group privacy' on the bot in BotFather so Telegram
     // forwards every message instead of just /commands and mentions.
