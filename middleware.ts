@@ -16,6 +16,8 @@ const PUBLIC_PREFIXES = [
   // /api/sms-webhook. Session-gating would lock out the operator's
   // external change-detector service.
   "/api/insta-webhook",
+  // Resend inbound-email webhook — token in ?token= is the auth.
+  "/api/email-webhook",
   // Public share links — the URL token itself is the auth. Anyone
   // holding /share/groups/<token> can view the cached analytics for
   // that chat but cannot trigger a recompute or modify anything.

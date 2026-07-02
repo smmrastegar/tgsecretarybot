@@ -3627,3 +3627,52 @@ export async function analyzeSiteChange(input: {
     return null;
   }
 }
+
+// ── Email summary ───────────────────────────────────────────────
+const EMAIL_SUMMARY_PROMPT = `You summarise a single email for a busy operator. Output STRICT JSON:
+{
+  "summary": "<۲ تا ۵ خط فارسی: موضوع اصلی، درخواست/خبر مهم، و اگه اقدامی لازمه چیه>",
+  "action_needed": true|false,
+  "key_points": ["<نکته کوتاه فارسی>", "..."]
+}
+Persian for all free text. Be concise and concrete; quote important numbers/dates/links exactly.`;
+
+export async function summarizeEmail(input: {
+  subject: string | null;
+  from: string | null;
+  text: string | null;
+}): Promise<{ summary: string; actionNeeded: boolean; keyPoints: string[] } | null> {
+  const body = (input.text ?? "").replace(/\s+/g, " ").trim();
+  const payload = {
+    from: input.from,
+    subject: input.subject,
+    body: body.slice(0, 6000),
+  };
+  let raw: string;
+  try {
+    raw = await callOpenRouter(
+      [
+        { role: "system", content: EMAIL_SUMMARY_PROMPT },
+        { role: "user", content: JSON.stringify(payload) },
+      ],
+      { maxTokens: 500, jsonObject: true, temperature: 0.2, purpose: "email_summary" },
+    );
+  } catch {
+    return null;
+  }
+  const j = extractJson(raw);
+  if (!j) return null;
+  try {
+    const p = JSON.parse(j) as Record<string, unknown>;
+    const kp = Array.isArray(p.key_points)
+      ? (p.key_points as unknown[]).filter((x): x is string => typeof x === "string")
+      : [];
+    return {
+      summary: typeof p.summary === "string" ? p.summary : "",
+      actionNeeded: p.action_needed === true,
+      keyPoints: kp,
+    };
+  } catch {
+    return null;
+  }
+}

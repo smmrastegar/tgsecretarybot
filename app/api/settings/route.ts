@@ -16,6 +16,8 @@ export const dynamic = "force-dynamic";
 const SENSITIVE_KEYS: SettingKey[] = [
   "hikerApiKeyOverride",
   "monitorExternalSecret",
+  "resendApiKey",
+  "resendInboundSecret",
 ];
 function redactSettings(
   values: Record<SettingKey, string>,

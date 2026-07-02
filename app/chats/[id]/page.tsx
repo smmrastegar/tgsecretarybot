@@ -128,6 +128,7 @@ type Rule = {
     | "video_storage"
     | "photo_storage"
     | "notes_inbox"
+    | "email_inbox"
     | null;
   functionConfig: Record<string, unknown> | null;
   autoSummarizeEnabled: boolean;
@@ -169,6 +170,7 @@ const FUNCTION_ROLE_LABELS: Record<string, string> = {
   video_storage: "🎬 Video storage",
   photo_storage: "🖼 Photo storage",
   notes_inbox: "📒 Notes inbox",
+  email_inbox: "📧 Email inbox (Resend)",
 };
 const ALL_FUNCTION_ROLES = Object.keys(FUNCTION_ROLE_LABELS) as Array<
   keyof typeof FUNCTION_ROLE_LABELS

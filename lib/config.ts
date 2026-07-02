@@ -181,6 +181,18 @@ export const DEFAULT_SETTINGS = {
   // Human-readable label for the active key (e.g. "smmr"). Purely
   // for display.
   hikerApiKeyName: "",
+  // --- Email (Resend) ---
+  // API key for https://resend.com — used to SEND emails (reply /
+  // compose). Sensitive.
+  resendApiKey: "",
+  // Verified from-address, e.g. "Secretary <mail@yourdomain.com>".
+  resendFromEmail: "",
+  // Shared secret the inbound-email webhook must present (?token= or
+  // Svix signature). Sensitive.
+  resendInboundSecret: "",
+  // Telegram channel/chat id incoming emails are posted to. If empty,
+  // falls back to the chat marked with the email_inbox function role.
+  emailChannelId: "",
 } as const satisfies Record<string, string>;
 
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
@@ -263,6 +275,10 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   notesAutoArchiveDays: optional("NOTES_AUTO_ARCHIVE_DAYS"),
   notesDailyDigestEnabled: optional("NOTES_DAILY_DIGEST_ENABLED"),
   notesDailyDigestHourUTC: optional("NOTES_DAILY_DIGEST_HOUR_UTC"),
+  resendApiKey: optional("RESEND_API_KEY"),
+  resendFromEmail: optional("RESEND_FROM_EMAIL"),
+  resendInboundSecret: optional("RESEND_INBOUND_SECRET"),
+  emailChannelId: optional("EMAIL_CHANNEL_ID"),
 };
 
 export function envOverride(key: SettingKey): string | undefined {

@@ -360,13 +360,64 @@ export async function ensureSchema(): Promise<void> {
         created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
-    // scrape_mode: 'http' = the Vercel cron logs in via form POST and
+    // Emails sent/received through the Resend integration. Inbound rows
+    // come from the /api/email-webhook (Resend "email.received" events);
+    // outbound rows are written when the operator sends/replies from the
+    // dashboard. message_id / in_reply_to are RFC-2822 header values so
+    // replies thread correctly in the recipient's mail client.
+    await q`
+      CREATE TABLE IF NOT EXISTS email_messages (
+        id             BIGSERIAL PRIMARY KEY,
+        direction      TEXT NOT NULL,             -- 'in' | 'out'
+        resend_id      TEXT,
+        message_id     TEXT,
+        in_reply_to    TEXT,
+        from_addr      TEXT NOT NULL DEFAULT '',
+        to_addrs       TEXT NOT NULL DEFAULT '',
+        cc_addrs       TEXT,
+        subject        TEXT NOT NULL DEFAULT '',
+        body_text      TEXT,
+        body_html      TEXT,
+        summary        TEXT,
+        tg_chat_id     BIGINT,
+        tg_message_id  BIGINT,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q
     // fetches the page itself (works for server-rendered sites).
     // 'browser' = a JavaScript SPA the cron can't render; an external
     // GitHub Action runs a real browser, scrapes the text, and POSTs it
     // to /api/site-monitors/ingest. The Vercel cron SKIPS browser-mode
     // monitors (the Action drives them on its own schedule).
     await q`ALTER TABLE site_monitors ADD COLUMN IF NOT EXISTS scrape_mode TEXT NOT NULL DEFAULT 'http'`;
+    // Emails received/sent via Resend. Incoming emails (inbound webhook)
+    // are stored here and posted to the email_inbox channel with
+    // Preview/Summary/Text/HTML inline buttons; the summary/preview
+    // pages + reply/compose UI read from this table.
+    await q`
+      CREATE TABLE IF NOT EXISTS emails (
+        id                 BIGSERIAL PRIMARY KEY,
+        direction          TEXT NOT NULL,           -- 'in' | 'out'
+        resend_id          TEXT,                    -- Resend message id (outgoing) or inbound id
+        message_id         TEXT,                    -- RFC Message-ID header
+        in_reply_to        TEXT,                    -- Message-ID this replies to
+        thread_key         TEXT,                    -- for grouping (references / subject)
+        from_email         TEXT,
+        from_name          TEXT,
+        to_emails          TEXT,                    -- comma-separated
+        cc_emails          TEXT,
+        subject            TEXT,
+        text_body          TEXT,
+        html_body          TEXT,
+        summary            TEXT,                    -- AI summary (lazy)
+        tg_chat_id         BIGINT,                  -- channel it was posted to
+        tg_message_id      BIGINT,                  -- message id in that channel
+        status             TEXT,                    -- outgoing: 'sent' | 'failed'
+        error              TEXT,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS emails_created_idx ON emails (created_at DESC)`;
+    await q`CREATE INDEX IF NOT EXISTS emails_thread_idx ON emails (thread_key)`;
     // SMS dedup: when the same SMS body arrives repeatedly to the
     // same inbox we update one Telegram message in-place instead of
     // posting N copies. body_signature is a whitespace-normalised
@@ -2920,6 +2971,7 @@ export const FUNCTION_ROLES = [
   "video_storage",
   "photo_storage",
   "notes_inbox",
+  "email_inbox",
 ] as const;
 export type FunctionRole = (typeof FUNCTION_ROLES)[number];
 
@@ -2943,6 +2995,8 @@ export const FUNCTION_ROLE_LABELS: Record<FunctionRole, string> = {
     "Photo storage (auto-forwarded photos from chats with auto_forward_photo)",
   notes_inbox:
     "Notes inbox (auto-extracted addresses, locations, contacts and key points from chats with auto_extract_notes)",
+  email_inbox:
+    "Email inbox (incoming Resend emails are posted here with Preview/Summary/Text/HTML buttons)",
 };
 
 export type ChatRule = {
@@ -10218,4 +10272,128 @@ export async function recordSiteMonitorRun(
       last_error = ${r.error}, last_content_hash = ${r.contentHash},
       last_content = ${r.content}, last_summary = ${r.summary}, updated_at = NOW()
     WHERE id = ${id}`;
+}
+
+// ── Emails (Resend) ─────────────────────────────────────────────
+export type EmailRow = {
+  id: number;
+  direction: "in" | "out";
+  resendId: string | null;
+  messageId: string | null;
+  inReplyTo: string | null;
+  threadKey: string | null;
+  fromEmail: string | null;
+  fromName: string | null;
+  toEmails: string | null;
+  ccEmails: string | null;
+  subject: string | null;
+  textBody: string | null;
+  htmlBody: string | null;
+  summary: string | null;
+  tgChatId: number | null;
+  tgMessageId: number | null;
+  status: string | null;
+  error: string | null;
+  createdAt: Date;
+};
+
+function rowToEmail(r: Record<string, unknown>): EmailRow {
+  return {
+    id: Number(r.id),
+    direction: (r.direction as "in" | "out") ?? "in",
+    resendId: (r.resend_id as string) ?? null,
+    messageId: (r.message_id as string) ?? null,
+    inReplyTo: (r.in_reply_to as string) ?? null,
+    threadKey: (r.thread_key as string) ?? null,
+    fromEmail: (r.from_email as string) ?? null,
+    fromName: (r.from_name as string) ?? null,
+    toEmails: (r.to_emails as string) ?? null,
+    ccEmails: (r.cc_emails as string) ?? null,
+    subject: (r.subject as string) ?? null,
+    textBody: (r.text_body as string) ?? null,
+    htmlBody: (r.html_body as string) ?? null,
+    summary: (r.summary as string) ?? null,
+    tgChatId: r.tg_chat_id != null ? Number(r.tg_chat_id) : null,
+    tgMessageId: r.tg_message_id != null ? Number(r.tg_message_id) : null,
+    status: (r.status as string) ?? null,
+    error: (r.error as string) ?? null,
+    createdAt: r.created_at as Date,
+  };
+}
+
+export async function insertEmail(e: {
+  direction: "in" | "out";
+  resendId?: string | null;
+  messageId?: string | null;
+  inReplyTo?: string | null;
+  threadKey?: string | null;
+  fromEmail?: string | null;
+  fromName?: string | null;
+  toEmails?: string | null;
+  ccEmails?: string | null;
+  subject?: string | null;
+  textBody?: string | null;
+  htmlBody?: string | null;
+  status?: string | null;
+  error?: string | null;
+}): Promise<number> {
+  if (!hasDb()) throw new Error("no db");
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO emails
+      (direction, resend_id, message_id, in_reply_to, thread_key,
+       from_email, from_name, to_emails, cc_emails, subject,
+       text_body, html_body, status, error)
+    VALUES
+      (${e.direction}, ${e.resendId ?? null}, ${e.messageId ?? null},
+       ${e.inReplyTo ?? null}, ${e.threadKey ?? null}, ${e.fromEmail ?? null},
+       ${e.fromName ?? null}, ${e.toEmails ?? null}, ${e.ccEmails ?? null},
+       ${e.subject ?? null}, ${e.textBody ?? null}, ${e.htmlBody ?? null},
+       ${e.status ?? null}, ${e.error ?? null})
+    RETURNING id`;
+  return Number((rows[0] as { id: string | number }).id);
+}
+
+export async function getEmail(id: number): Promise<EmailRow | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`SELECT * FROM emails WHERE id = ${id} LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  return r ? rowToEmail(r) : null;
+}
+
+export async function listEmails(opts?: {
+  direction?: "in" | "out";
+  limit?: number;
+  offset?: number;
+}): Promise<EmailRow[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const limit = Math.min(Math.max(opts?.limit ?? 30, 1), 100);
+  const offset = Math.max(opts?.offset ?? 0, 0);
+  const dir = opts?.direction ?? null;
+  const rows = await sql()`
+    SELECT * FROM emails
+    WHERE (${dir}::text IS NULL OR direction = ${dir})
+    ORDER BY created_at DESC
+    LIMIT ${limit} OFFSET ${offset}`;
+  return (rows as Array<Record<string, unknown>>).map(rowToEmail);
+}
+
+export async function setEmailTelegramRef(
+  id: number,
+  tgChatId: number,
+  tgMessageId: number,
+): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE emails SET tg_chat_id = ${tgChatId}, tg_message_id = ${tgMessageId}
+    WHERE id = ${id}`;
+}
+
+export async function setEmailSummary(id: number, summary: string): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`UPDATE emails SET summary = ${summary} WHERE id = ${id}`;
 }

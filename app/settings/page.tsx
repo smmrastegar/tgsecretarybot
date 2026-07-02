@@ -89,6 +89,12 @@ const TILES: Array<{
     desc: "سایت‌های با لاگین (آدرس + یوزر/پسورد) که سر ساعت‌های مشخص به‌وقت تهران چک می‌شن؛ اگه نتیجه‌ای بود با تحلیل AI توی Note Inbox می‌آد.",
   },
   {
+    href: "/emails",
+    emoji: "📧",
+    label: "Email (Resend)",
+    desc: "دریافت/ارسال ایمیل با Resend. ایمیل ورودی توی کانال ایمیل با دکمه‌های Preview/Summary/Text/HTML میاد؛ ریپلای و ساخت ایمیل جدید هم از همینجا.",
+  },
+  {
     href: "/groups",
     emoji: "📊",
     label: "Groups",
