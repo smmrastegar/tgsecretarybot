@@ -17,7 +17,7 @@ import type { SiteMonitor } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 // ──────────────────────────────────────────────────────────────────
 // Model Context Protocol (MCP) server — stateless Streamable HTTP.
