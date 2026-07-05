@@ -128,6 +128,18 @@ export function pgToMysql(text: string): {
     for (const col of keyCols) {
       s = s.replace(new RegExp(`(\\b${col}\\b\\s+)TEXT\\b`, "i"), "$1VARCHAR(255)");
     }
+    // (b1) Short identifier columns that are INDEXED must be VARCHAR
+    //      (MySQL can't index TEXT without a prefix length). These all
+    //      hold short values so VARCHAR(255) is safe. Long-content
+    //      columns (message_text, html_body, notes, …) stay TEXT.
+    const INDEXED_TEXT = [
+      "source", "function_role", "role", "status", "thread_key",
+      "phone_tail", "name", "username", "slug", "token", "concept",
+      "label", "kind", "platform", "external_id",
+    ];
+    for (const col of INDEXED_TEXT) {
+      s = s.replace(new RegExp(`(\\b${col}\\s+)TEXT\\b`, "gi"), "$1VARCHAR(255)");
+    }
     // (b2) TEXT/JSON/BLOB columns can't have a DEFAULT in MySQL. Drop it.
     s = s.replace(
       /\b(TEXT|JSON|BLOB|LONGTEXT|MEDIUMTEXT)\b(\s+NOT\s+NULL)?\s+DEFAULT\s+('(?:[^']|'')*'|[^,)\s]+)/gi,
