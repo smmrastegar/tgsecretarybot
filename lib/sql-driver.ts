@@ -134,10 +134,16 @@ export function pgToMysql(text: string): {
     //      (MySQL can't index TEXT without a prefix length). These all
     //      hold short values so VARCHAR(255) is safe. Long-content
     //      columns (message_text, html_body, notes, …) stay TEXT.
+    // Every column that appears in any CREATE INDEX. Only the TEXT ones
+    // actually convert (the regex won't match BIGINT/DATETIME columns),
+    // so listing numeric/date columns here is harmless.
     const INDEXED_TEXT = [
       "source", "function_role", "role", "status", "thread_key",
-      "phone_tail", "name", "username", "slug", "token", "concept",
-      "label", "kind", "platform", "external_id",
+      "phone_tail", "level", "business_connection_id", "analytics_share_token",
+      "body_signature", "prompt_hash", "purpose", "update_type", "kind",
+      "secret", "platform", "external_id",
+      // short identifier columns commonly used as keys/lookups
+      "name", "username", "slug", "token", "concept", "label",
     ];
     for (const col of INDEXED_TEXT) {
       s = s.replace(new RegExp(`(\\b${col}\\s+)TEXT\\b`, "gi"), "$1VARCHAR(255)");
