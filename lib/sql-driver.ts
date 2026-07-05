@@ -217,6 +217,31 @@ async function runMysql(
 ): Promise<Record<string, unknown>[]> {
   const pool = await getPool(urlOverride);
   const { sql: translated, returning } = pgToMysql(text);
+
+  // Postgres `ALTER COLUMN col DROP NOT NULL` has no MySQL equivalent —
+  // MySQL needs `MODIFY COLUMN col <type> NULL`, which requires the
+  // current type. Resolve it at run time (we have the connection) and
+  // rewrite. No-op if the column doesn't exist yet.
+  const dropNN =
+    /ALTER\s+TABLE\s+`?(\w+)`?\s+ALTER\s+COLUMN\s+`?(\w+)`?\s+DROP\s+NOT\s+NULL/i.exec(
+      translated,
+    );
+  if (dropNN) {
+    const tbl = dropNN[1];
+    const col = dropNN[2];
+    const [ct] = await pool.query(
+      "SELECT column_type FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?",
+      [tbl, col],
+    );
+    const colType = (ct as { column_type?: string }[])[0]?.column_type;
+    if (colType) {
+      await pool.query(
+        `ALTER TABLE \`${tbl}\` MODIFY COLUMN \`${col}\` ${colType} NULL`,
+      );
+    }
+    return [];
+  }
+
   // Use .query (not .execute) so array params expand for IN (?).
   const [result] = await pool.query(translated, params);
   // SELECT → rows array. INSERT/UPDATE/DELETE → ResultSetHeader.
