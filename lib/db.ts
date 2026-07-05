@@ -1,5 +1,6 @@
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 import { config } from "./config";
+import { driverKind, makeMysqlClient } from "./sql-driver";
 
 let cached: NeonQueryFunction<false, false> | null = null;
 let schemaPromise: Promise<void> | null = null;
@@ -8,11 +9,21 @@ export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
 }
 
+// Returns the query client. On Postgres this is the neon tagged
+// template; on MySQL/TiDB (DB_DRIVER=mysql or a mysql:// URL) it's a
+// mysql2-backed client that translates the Postgres dialect at run
+// time — same call surface, so the ~hundreds of query call sites don't
+// change. See lib/sql-driver.ts.
 export function sql(): NeonQueryFunction<false, false> {
   if (!config.databaseUrl) {
     throw new Error("DATABASE_URL is not configured");
   }
-  if (!cached) cached = neon(config.databaseUrl);
+  if (!cached) {
+    cached =
+      driverKind() === "mysql"
+        ? (makeMysqlClient() as unknown as NeonQueryFunction<false, false>)
+        : neon(config.databaseUrl);
+  }
   return cached;
 }
 
