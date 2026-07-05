@@ -128,6 +128,11 @@ export function pgToMysql(text: string): {
     for (const col of keyCols) {
       s = s.replace(new RegExp(`(\\b${col}\\b\\s+)TEXT\\b`, "i"), "$1VARCHAR(255)");
     }
+    // (b2) TEXT/JSON/BLOB columns can't have a DEFAULT in MySQL. Drop it.
+    s = s.replace(
+      /\b(TEXT|JSON|BLOB|LONGTEXT|MEDIUMTEXT)\b(\s+NOT\s+NULL)?\s+DEFAULT\s+('(?:[^']|'')*'|[^,)\s]+)/gi,
+      "$1$2",
+    );
     // (c) Backtick reserved-word column names (key, value, …) — MySQL
     //     rejects them unquoted, Postgres allowed them.
     const RESERVED = [
