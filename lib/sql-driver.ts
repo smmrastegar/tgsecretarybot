@@ -111,19 +111,22 @@ export function pgToMysql(text: string): {
   return { sql: s, returning };
 }
 
-// ── MySQL/TiDB client (lazy) ────────────────────────────────────
-let poolPromise: Promise<import("mysql2/promise").Pool> | null = null;
+// ── MySQL/TiDB client (lazy, pooled per connection URL) ─────────
+const pools = new Map<string, Promise<import("mysql2/promise").Pool>>();
 
-async function getPool(): Promise<import("mysql2/promise").Pool> {
-  if (!poolPromise) {
-    poolPromise = (async () => {
+export async function getPool(
+  urlOverride?: string,
+): Promise<import("mysql2/promise").Pool> {
+  const url = urlOverride ?? config.databaseUrl ?? "";
+  let p = pools.get(url);
+  if (!p) {
+    p = (async () => {
       const mysql = await import("mysql2/promise");
-      const url = config.databaseUrl ?? "";
       return mysql.createPool({
         uri: url,
         connectionLimit: 5,
-        // TiDB Cloud requires TLS; self-hosted may not. Enable if the
-        // URL doesn't already disable it.
+        // TiDB Cloud requires TLS; self-hosted may not. Enable unless
+        // the URL disables it.
         ssl: /sslmode=disable|ssl=false/i.test(url)
           ? undefined
           : { rejectUnauthorized: false },
@@ -132,15 +135,17 @@ async function getPool(): Promise<import("mysql2/promise").Pool> {
         dateStrings: false,
       });
     })();
+    pools.set(url, p);
   }
-  return poolPromise;
+  return p;
 }
 
 async function runMysql(
   text: string,
   params: unknown[],
+  urlOverride?: string,
 ): Promise<Record<string, unknown>[]> {
-  const pool = await getPool();
+  const pool = await getPool(urlOverride);
   const { sql: translated, returning } = pgToMysql(text);
   // Use .query (not .execute) so array params expand for IN (?).
   const [result] = await pool.query(translated, params);
@@ -179,7 +184,7 @@ async function runMysql(
   return [];
 }
 
-export function makeMysqlClient(): SqlTagged {
+export function makeMysqlClient(urlOverride?: string): SqlTagged {
   const fn = ((strings: TemplateStringsArray, ...values: unknown[]) => {
     // Rebuild the query with ? placeholders + collect params, matching
     // how the neon tag would parameterise it.
@@ -192,12 +197,12 @@ export function makeMysqlClient(): SqlTagged {
         params.push(values[i]);
       }
     });
-    return runMysql(text, params);
+    return runMysql(text, params, urlOverride);
   }) as SqlTagged;
   fn.query = (text: string, p: unknown[] = []) => {
     // The app uses $1,$2 in a couple of .query() call sites — convert.
     const converted = text.replace(/\$(\d+)/g, "?");
-    return runMysql(converted, p);
+    return runMysql(converted, p, urlOverride);
   };
   return fn;
 }

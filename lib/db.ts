@@ -27,10 +27,15 @@ export function sql(): NeonQueryFunction<false, false> {
   return cached;
 }
 
-export async function ensureSchema(): Promise<void> {
-  if (schemaPromise) return schemaPromise;
-  schemaPromise = (async () => {
-    const q = sql();
+// clientOverride runs the full DDL against a DIFFERENT database than
+// the configured one (used to provision a TiDB target during migration
+// via the MCP tools). When given, memoization is skipped.
+export async function ensureSchema(
+  clientOverride?: NeonQueryFunction<false, false>,
+): Promise<void> {
+  if (!clientOverride && schemaPromise) return schemaPromise;
+  const run = (async () => {
+    const q = clientOverride ?? sql();
     await q`
       CREATE TABLE IF NOT EXISTS business_connections (
         id            TEXT PRIMARY KEY,
@@ -1628,10 +1633,11 @@ export async function ensureSchema(): Promise<void> {
       }
     }
   })().catch((err) => {
-    schemaPromise = null;
+    if (!clientOverride) schemaPromise = null;
     throw err;
   });
-  return schemaPromise;
+  if (!clientOverride) schemaPromise = run;
+  return run;
 }
 
 // --- Business connections ---

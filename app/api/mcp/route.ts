@@ -1,5 +1,6 @@
 import { config } from "@/lib/config";
 import {
+  ensureSchema,
   getChatRule,
   hasDb,
   listChatMessagesForAnalysis,
@@ -10,6 +11,8 @@ import {
 import { analyzeGroupTasksV2, analyzeSiteChange } from "@/lib/classifier";
 import { getSettings } from "@/lib/settings";
 import { fetchMonitoredPage } from "@/lib/site-monitor";
+import { getPool, makeMysqlClient } from "@/lib/sql-driver";
+import type { NeonQueryFunction } from "@neondatabase/serverless";
 import type { SiteMonitor } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -380,6 +383,81 @@ const TOOLS = [
         extra_fields_json: { type: "string", description: "optional JSON of extra form fields" },
       },
       required: ["login_url", "check_url"],
+      additionalProperties: false,
+    },
+  },
+  // ─── TiDB / MySQL migration tools (run from Vercel, which can
+  // reach BOTH the current Neon DB and the target TiDB) ───────────
+  {
+    name: "tidb_probe",
+    description:
+      "Test connectivity to a target MySQL/TiDB from the server. Pass its mysql:// URL; returns the server version + a table count, or the connection error.",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string", description: "mysql://user:pass@host:port/db" } },
+      required: ["url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "tidb_init_schema",
+    description:
+      "Create ALL app tables on the target TiDB/MySQL (runs ensureSchema translated to MySQL DDL). Idempotent (CREATE TABLE IF NOT EXISTS). Do this before migrating data.",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string", description: "target mysql:// URL" } },
+      required: ["url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "tidb_exec",
+    description:
+      "Run one SQL statement against the target TiDB/MySQL URL (for verification, manual DDL fixes, spot-checks). Returns rows or affected-row info.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        sql: { type: "string" },
+      },
+      required: ["url", "sql"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "db_list_tables",
+    description:
+      "List the SOURCE database's tables (the DB the app currently uses — Neon during migration) with row counts. Use to plan the migration.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "db_migrate_table",
+    description:
+      "Copy rows from the SOURCE db (app's current DB) into the target TiDB for ONE table. Keyset-paginated by `id` when present (pass after_id from the previous call's last_id to continue); full-copy otherwise. Uses INSERT IGNORE so re-runs are safe. Call tidb_init_schema first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "target mysql:// URL" },
+        table: { type: "string", description: "table name" },
+        after_id: { type: "number", description: "keyset cursor (default 0)" },
+        limit: { type: "number", description: "rows per batch (default 500, max 2000)" },
+        truncate: { type: "boolean", description: "TRUNCATE the target table first (only pass on the first batch)" },
+      },
+      required: ["url", "table"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "db_counts",
+    description:
+      "Compare row counts between the SOURCE db and the target TiDB for every table (or one table). Use to verify a migration is complete.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        table: { type: "string", description: "optional single table" },
+      },
+      required: ["url"],
       additionalProperties: false,
     },
   },
@@ -862,6 +940,140 @@ async function callTool(
         textPreview: page.text.slice(0, 1800),
         analysis,
       });
+    }
+
+    case "tidb_probe": {
+      const pool = await getPool(String(args.url ?? ""));
+      const [ver] = await pool.query("SELECT VERSION() AS v");
+      const [tbls] = await pool.query(
+        "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE()",
+      );
+      return toolText({
+        ok: true,
+        version: (ver as { v?: string }[])[0]?.v,
+        tables: (tbls as { n?: number }[])[0]?.n ?? 0,
+      });
+    }
+
+    case "tidb_init_schema": {
+      const client = makeMysqlClient(String(args.url ?? "")) as unknown as NeonQueryFunction<false, false>;
+      await ensureSchema(client);
+      const pool = await getPool(String(args.url ?? ""));
+      const [tbls] = await pool.query(
+        "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE()",
+      );
+      return toolText({ ok: true, tables: (tbls as { n?: number }[])[0]?.n ?? 0 });
+    }
+
+    case "tidb_exec": {
+      const pool = await getPool(String(args.url ?? ""));
+      const [result] = await pool.query(String(args.sql ?? ""));
+      if (Array.isArray(result)) {
+        return toolText({ ok: true, rowCount: result.length, rows: (result as unknown[]).slice(0, 200) });
+      }
+      return toolText({ ok: true, result });
+    }
+
+    case "db_list_tables": {
+      const rows = await runSql(`
+        SELECT c.relname AS table, c.reltuples::bigint AS est_rows
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relkind = 'r'
+        ORDER BY c.relname`);
+      return toolText(rows.rows);
+    }
+
+    case "db_migrate_table": {
+      const targetUrl = String(args.url ?? "");
+      const table = String(args.table ?? "");
+      if (!/^[a-z_][a-z0-9_]*$/.test(table)) throw new Error("invalid table name");
+      const limit = Math.min(Math.max(Number(args.limit ?? 500) || 500, 1), 2000);
+      const afterId = Number(args.after_id ?? 0) || 0;
+      const src = sql() as unknown as {
+        query: (t: string, p?: unknown[]) => Promise<Record<string, unknown>[]>;
+      };
+      const target = await getPool(targetUrl);
+
+      if (args.truncate === true) {
+        await target.query(`TRUNCATE TABLE \`${table}\``).catch(async () => {
+          await target.query(`DELETE FROM \`${table}\``);
+        });
+      }
+
+      // Does the source table have an `id` column? (keyset pagination)
+      const colRows = await src.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1`,
+        [table],
+      );
+      const cols = colRows.map((r) => String(r.column_name));
+      if (cols.length === 0) throw new Error("table not found in source");
+      const hasId = cols.includes("id");
+
+      const rows = hasId
+        ? await src.query(
+            `SELECT * FROM "${table}" WHERE id > $1 ORDER BY id ASC LIMIT $2`,
+            [afterId, limit],
+          )
+        : await src.query(`SELECT * FROM "${table}"`);
+
+      if (rows.length === 0) {
+        return toolText({ ok: true, table, copied: 0, done: true, last_id: afterId });
+      }
+
+      // Coerce PG values → MySQL-friendly (Date stays; objects → JSON
+      // string; everything else as-is).
+      const coerce = (v: unknown): unknown => {
+        if (v == null) return null;
+        if (v instanceof Date) return v;
+        if (typeof v === "object") return JSON.stringify(v);
+        return v;
+      };
+      const colList = cols.map((c) => `\`${c}\``).join(", ");
+      const tuples = rows.map((r) => cols.map((c) => coerce(r[c])));
+      await target.query(
+        `INSERT IGNORE INTO \`${table}\` (${colList}) VALUES ?`,
+        [tuples],
+      );
+      const lastId = hasId ? Number(rows[rows.length - 1]!.id) : afterId;
+      return toolText({
+        ok: true,
+        table,
+        copied: rows.length,
+        last_id: lastId,
+        done: hasId ? rows.length < limit : true,
+      });
+    }
+
+    case "db_counts": {
+      const targetUrl = String(args.url ?? "");
+      const target = await getPool(targetUrl);
+      const one = args.table ? String(args.table) : null;
+      const tableRows = one
+        ? [{ table: one }]
+        : (
+            await runSql(`
+              SELECT c.relname AS table FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname='public' AND c.relkind='r' ORDER BY c.relname`)
+          ).rows.map((r) => ({ table: String((r as { table: string }).table) }));
+      const src = sql() as unknown as {
+        query: (t: string, p?: unknown[]) => Promise<Record<string, unknown>[]>;
+      };
+      const out: Array<Record<string, unknown>> = [];
+      for (const { table } of tableRows) {
+        if (!/^[a-z_][a-z0-9_]*$/.test(table)) continue;
+        let srcN: number | string = "?";
+        let tgtN: number | string = "?";
+        try {
+          srcN = Number((await src.query(`SELECT COUNT(*) AS n FROM "${table}"`))[0]?.n ?? 0);
+        } catch (e) { srcN = "err"; }
+        try {
+          const [tr] = await target.query(`SELECT COUNT(*) AS n FROM \`${table}\``);
+          tgtN = Number((tr as { n?: number }[])[0]?.n ?? 0);
+        } catch (e) { tgtN = "missing"; }
+        out.push({ table, source: srcN, tidb: tgtN, match: srcN === tgtN });
+      }
+      return toolText(out);
     }
 
     case "group_reanalyze": {
