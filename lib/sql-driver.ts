@@ -108,6 +108,45 @@ export function pgToMysql(text: string): {
     s = s.replace(/\sWHERE\s[\s\S]*$/i, "");
   }
 
+  // 9) CREATE TABLE fixups for MySQL/TiDB.
+  if (/CREATE\s+TABLE/i.test(s)) {
+    // (a) TEXT can't be a key. Inline `TEXT [NOT NULL] PRIMARY KEY|UNIQUE`
+    //     → VARCHAR(255).
+    s = s.replace(
+      /\bTEXT\b(\s+NOT\s+NULL)?\s+(PRIMARY\s+KEY|UNIQUE)/gi,
+      "VARCHAR(255)$1 $2",
+    );
+    // (b) TEXT columns named in a composite PRIMARY KEY / UNIQUE (…) →
+    //     VARCHAR(255) so the key is valid.
+    const keyCols = new Set<string>();
+    for (const m of s.matchAll(/(?:PRIMARY\s+KEY|UNIQUE(?:\s+KEY)?)\s*\(([^)]+)\)/gi)) {
+      (m[1] ?? "").split(",").forEach((c) => {
+        const n = c.trim().replace(/[`"]/g, "");
+        if (n) keyCols.add(n);
+      });
+    }
+    for (const col of keyCols) {
+      s = s.replace(new RegExp(`(\\b${col}\\b\\s+)TEXT\\b`, "i"), "$1VARCHAR(255)");
+    }
+    // (c) Backtick reserved-word column names (key, value, …) — MySQL
+    //     rejects them unquoted, Postgres allowed them.
+    const RESERVED = [
+      "key", "value", "order", "status", "rank", "read", "usage",
+      "interval", "groups", "lock", "range", "rows", "system", "keys",
+    ];
+    const TYPES =
+      "TEXT|VARCHAR|BIGINT|INTEGER|INT|BOOLEAN|JSON|DATETIME|TIMESTAMP|NUMERIC|REAL|DOUBLE|SMALLINT";
+    for (const w of RESERVED) {
+      // column definition: (or , ) <w> <TYPE>
+      s = s.replace(
+        new RegExp(`([(,]\\s*)${w}(\\s+(?:${TYPES}))`, "gi"),
+        "$1`" + w + "`$2",
+      );
+      // key list: ( … , <w> , … )
+      s = s.replace(new RegExp(`([(,]\\s*)${w}(\\s*[),])`, "gi"), "$1`" + w + "`$2");
+    }
+  }
+
   return { sql: s, returning };
 }
 
