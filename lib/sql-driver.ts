@@ -144,6 +144,11 @@ export function pgToMysql(text: string): {
       "secret", "platform", "external_id",
       // short identifier columns commonly used as keys/lookups
       "name", "username", "slug", "token", "concept", "label",
+      // short enum-like columns that carry a DEFAULT (MySQL forbids
+      // DEFAULT on TEXT) — VARCHAR keeps the default working.
+      "mode", "notify_on", "plan", "scrape_mode", "check_hours_tehran",
+      "skip_weekdays", "password_field", "username_field", "priority",
+      "direction", "relationship", "chat_type",
     ];
     for (const col of INDEXED_TEXT) {
       s = s.replace(new RegExp(`(\\b${col}\\s+)TEXT\\b`, "gi"), "$1VARCHAR(255)");
