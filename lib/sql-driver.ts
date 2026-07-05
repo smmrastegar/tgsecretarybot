@@ -180,7 +180,13 @@ export async function getPool(
       const mysql = await import("mysql2/promise");
       return mysql.createPool({
         uri: url,
-        connectionLimit: 5,
+        // Gentle: small servers (free TiDB) have low max_connections;
+        // don't exhaust them + release idle connections quickly.
+        connectionLimit: 3,
+        maxIdle: 1,
+        idleTimeout: 20000,
+        connectTimeout: 20000,
+        enableKeepAlive: false,
         // TiDB Cloud requires TLS; self-hosted may not. Enable unless
         // the URL disables it.
         ssl: /sslmode=disable|ssl=false/i.test(url)
@@ -194,6 +200,12 @@ export async function getPool(
     pools.set(url, p);
   }
   return p;
+}
+
+// Drop a cached pool (e.g. after a connection error) so the next call
+// builds a fresh one instead of reusing hung connections.
+export function evictPool(urlOverride?: string): void {
+  pools.delete(urlOverride ?? config.databaseUrl ?? "");
 }
 
 async function runMysql(
