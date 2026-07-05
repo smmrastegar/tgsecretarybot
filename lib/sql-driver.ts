@@ -290,6 +290,32 @@ async function runMysql(
   return [];
 }
 
+// A recording client: instead of executing, it translates each
+// parameterless DDL statement and pushes it into `out`. Statements with
+// bound params (backfill data-migrations) are no-ops on a fresh DB and
+// are skipped. Used by tidb_init_schema to collect the whole schema
+// then run it in a few batched round-trips (avoids ~150 slow ones).
+export function makeCaptureClient(out: string[]): SqlTagged {
+  const capture = (text: string, hasParams: boolean) => {
+    if (hasParams) return Promise.resolve([] as Record<string, unknown>[]);
+    if (!/^\s*(CREATE|ALTER|DROP)\b/i.test(text)) {
+      return Promise.resolve([] as Record<string, unknown>[]);
+    }
+    out.push(pgToMysql(text).sql);
+    return Promise.resolve([] as Record<string, unknown>[]);
+  };
+  const fn = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+    let text = "";
+    strings.forEach((chunk, i) => {
+      text += chunk;
+      if (i < values.length) text += "?";
+    });
+    return capture(text, values.length > 0);
+  }) as SqlTagged;
+  fn.query = (text: string, p: unknown[] = []) => capture(text, p.length > 0);
+  return fn;
+}
+
 export function makeMysqlClient(urlOverride?: string): SqlTagged {
   const fn = ((strings: TemplateStringsArray, ...values: unknown[]) => {
     // Rebuild the query with ? placeholders + collect params, matching

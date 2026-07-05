@@ -11,7 +11,7 @@ import {
 import { analyzeGroupTasksV2, analyzeSiteChange } from "@/lib/classifier";
 import { getSettings } from "@/lib/settings";
 import { fetchMonitoredPage } from "@/lib/site-monitor";
-import { getPool, makeMysqlClient } from "@/lib/sql-driver";
+import { getPool, makeCaptureClient, makeMysqlClient } from "@/lib/sql-driver";
 import type { NeonQueryFunction } from "@neondatabase/serverless";
 import type { SiteMonitor } from "@/lib/db";
 
@@ -956,13 +956,77 @@ async function callTool(
     }
 
     case "tidb_init_schema": {
-      const client = makeMysqlClient(String(args.url ?? "")) as unknown as NeonQueryFunction<false, false>;
-      await ensureSchema(client);
-      const pool = await getPool(String(args.url ?? ""));
+      const url = String(args.url ?? "");
+      // Collect the whole translated schema first (no DB round-trips),
+      // then run it in a few batched multi-statement queries — far
+      // fewer round-trips than executing ~150 statements one-by-one
+      // (which times the function out + leaks connections on a small
+      // TiDB).
+      const stmts: string[] = [];
+      const capture = makeCaptureClient(stmts) as unknown as NeonQueryFunction<false, false>;
+      await ensureSchema(capture);
+      // `ALTER … DROP NOT NULL` needs a runtime type lookup + MODIFY —
+      // pull those out and run them separately after the batches.
+      const dropNN = stmts.filter((s) => /DROP\s+NOT\s+NULL/i.test(s));
+      const ddl = stmts.filter((s) => !/DROP\s+NOT\s+NULL/i.test(s));
+
+      const mysql = await import("mysql2/promise");
+      const conn = await mysql.createConnection({
+        uri: url,
+        multipleStatements: true,
+        ssl: /sslmode=disable|ssl=false/i.test(url)
+          ? undefined
+          : { rejectUnauthorized: false },
+      });
+      let ran = 0;
+      let firstError: string | null = null;
+      const BATCH = 15;
+      try {
+        for (let i = 0; i < ddl.length; i += BATCH) {
+          const chunk = ddl
+            .slice(i, i + BATCH)
+            .map((s) => s.replace(/;+\s*$/, ""))
+            .join(";\n");
+          try {
+            await conn.query(chunk);
+            ran += Math.min(BATCH, ddl.length - i);
+          } catch (e) {
+            // Fall back to statement-by-statement for this chunk so one
+            // bad statement doesn't drop 15.
+            for (const s of ddl.slice(i, i + BATCH)) {
+              try {
+                await conn.query(s.replace(/;+\s*$/, ""));
+                ran++;
+              } catch (e2) {
+                if (!firstError)
+                  firstError = `${e2 instanceof Error ? e2.message : e2} :: ${s.slice(0, 120)}`;
+              }
+            }
+          }
+        }
+      } finally {
+        await conn.end().catch(() => {});
+      }
+      // DROP NOT NULL via the runtime handler (type lookup + MODIFY).
+      const m = makeMysqlClient(url);
+      for (const s of dropNN) {
+        await (m as unknown as { query: (t: string) => Promise<unknown> })
+          .query(s)
+          .catch((e: unknown) => {
+            if (!firstError) firstError = `${e} :: ${s.slice(0, 80)}`;
+          });
+      }
+      const pool = await getPool(url);
       const [tbls] = await pool.query(
         "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE()",
       );
-      return toolText({ ok: true, tables: (tbls as { n?: number }[])[0]?.n ?? 0 });
+      return toolText({
+        ok: !firstError,
+        statements: stmts.length,
+        ran,
+        tables: (tbls as { n?: number }[])[0]?.n ?? 0,
+        firstError,
+      });
     }
 
     case "tidb_exec": {
