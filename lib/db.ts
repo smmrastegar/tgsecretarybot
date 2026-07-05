@@ -1541,7 +1541,7 @@ export async function ensureSchema(
       const flag = await q`SELECT value FROM settings WHERE key = 'migration.admin_seed_existing_owners.v1'`;
       if ((flag as unknown[]).length === 0) {
         const adminCount = await q`SELECT COUNT(*)::int AS n FROM admin_users`;
-        const n = Number((adminCount[0] as { n: number }).n);
+        const n = Number((adminCount[0] as { n?: number } | undefined)?.n ?? 0);
         if (n === 0) {
           await q`
             INSERT INTO admin_users (user_id, username, first_name)
@@ -1581,7 +1581,9 @@ export async function ensureSchema(
           VALUES ('Default', 'starter', 50, 10, 10, 'Auto-created by multi-tenant migration')
           ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
           RETURNING id`;
-        const defaultId = Number((tRows[0] as { id: string | number }).id);
+        const defaultId = Number(
+          (tRows[0] as { id?: string | number } | undefined)?.id ?? 0,
+        );
         // Attach every existing business connection to Default
         // unless it's already attached somewhere.
         await q`UPDATE business_connections
