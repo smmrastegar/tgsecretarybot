@@ -108,8 +108,10 @@ export function pgToMysql(text: string): {
     s = s.replace(/\sWHERE\s[\s\S]*$/i, "");
   }
 
-  // 9) CREATE TABLE fixups for MySQL/TiDB.
-  if (/CREATE\s+TABLE/i.test(s)) {
+  // 9) CREATE TABLE / ALTER TABLE fixups for MySQL/TiDB. (Some columns
+  //    like `source` are added later via ALTER TABLE ADD COLUMN, so the
+  //    type fixes must apply there too — not just CREATE TABLE.)
+  if (/CREATE\s+TABLE|ALTER\s+TABLE/i.test(s)) {
     // (a) TEXT can't be a key. Inline `TEXT [NOT NULL] PRIMARY KEY|UNIQUE`
     //     → VARCHAR(255).
     s = s.replace(
