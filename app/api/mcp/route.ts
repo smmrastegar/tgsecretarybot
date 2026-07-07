@@ -1049,10 +1049,12 @@ async function callTool(
         await target.query(`TRUNCATE TABLE "${table}" CASCADE`).catch(() => {});
       }
       const colRows = await src.query(
-        `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position`,
+        `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position`,
         [table],
       );
       const cols = colRows.map((r) => String(r.column_name));
+      const colType: Record<string, string> = {};
+      for (const r of colRows) colType[String(r.column_name)] = String(r.data_type);
       if (cols.length === 0) throw new Error("table not found in source");
       const hasId = cols.includes("id");
       // Cap batch so total placeholders stay under Postgres' 65535
@@ -1072,7 +1074,22 @@ async function callTool(
       const tuples = rows.map((r) => {
         const ph = cols.map((c) => {
           const v = r[c];
-          params.push(v != null && typeof v === "object" && !(v instanceof Date) ? JSON.stringify(v) : v);
+          const dt = colType[c] ?? "";
+          let out: unknown = v;
+          if (v != null && !(v instanceof Date)) {
+            if (dt === "ARRAY") {
+              // pg formats a JS array as a Postgres array literal — pass
+              // through unchanged.
+              out = v;
+            } else if (dt === "jsonb" || dt === "json") {
+              // node-postgres would treat a JS array as a PG array, so
+              // stringify json/jsonb values explicitly.
+              out = JSON.stringify(v);
+            } else if (typeof v === "object") {
+              out = JSON.stringify(v);
+            }
+          }
+          params.push(out);
           return `$${params.length}`;
         });
         return `(${ph.join(",")})`;
