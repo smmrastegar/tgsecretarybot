@@ -33,14 +33,28 @@ export async function getPgPool(url: string): Promise<PgPool> {
   return p;
 }
 
-export function makePgClient(url: string): SqlTagged {
+export function makePgClient(
+  url: string,
+  opts?: { tolerant?: boolean; errors?: string[] },
+): SqlTagged {
   const run = async (
     text: string,
     params: unknown[],
   ): Promise<Record<string, unknown>[]> => {
     const pool = await getPgPool(url);
-    const res = await pool.query(text, params as unknown[]);
-    return (res.rows ?? []) as Record<string, unknown>[];
+    try {
+      const res = await pool.query(text, params as unknown[]);
+      return (res.rows ?? []) as Record<string, unknown>[];
+    } catch (e) {
+      // Tolerant mode (schema init): swallow per-statement errors so
+      // ensureSchema runs to completion. Ordering issues (an ALTER on a
+      // table created later) resolve on a second pass.
+      if (opts?.tolerant) {
+        opts.errors?.push(`${e instanceof Error ? e.message : e} :: ${text.slice(0, 100)}`);
+        return [];
+      }
+      throw e;
+    }
   };
   const fn = ((strings: TemplateStringsArray, ...values: unknown[]) => {
     // Rebuild with $1,$2… placeholders (Postgres native), matching neon.

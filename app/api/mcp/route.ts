@@ -1009,13 +1009,29 @@ async function callTool(
     }
 
     case "pg_init_schema": {
-      const client = makePgClient(String(args.url ?? "")) as unknown as NeonQueryFunction<false, false>;
-      await ensureSchema(client);
-      const pool = await getPgPool(String(args.url ?? ""));
+      const url = String(args.url ?? "");
+      // Two tolerant passes: pass 1 creates every table (some ALTERs
+      // fail because they reference a table created later); pass 2
+      // re-runs so those ALTERs succeed. Only errors that survive pass
+      // 2 are real.
+      const e1: string[] = [];
+      await ensureSchema(
+        makePgClient(url, { tolerant: true, errors: e1 }) as unknown as NeonQueryFunction<false, false>,
+      );
+      const e2: string[] = [];
+      await ensureSchema(
+        makePgClient(url, { tolerant: true, errors: e2 }) as unknown as NeonQueryFunction<false, false>,
+      );
+      const pool = await getPgPool(url);
       const t = await pool.query(
         "SELECT COUNT(*)::int AS n FROM information_schema.tables WHERE table_schema='public'",
       );
-      return toolText({ ok: true, tables: t.rows[0]?.n ?? 0 });
+      return toolText({
+        ok: e2.length === 0,
+        tables: t.rows[0]?.n ?? 0,
+        pass1_errors: e1.length,
+        remaining_errors: e2.slice(0, 20),
+      });
     }
 
     case "pg_migrate_table": {
