@@ -12,6 +12,7 @@ import { analyzeGroupTasksV2, analyzeSiteChange } from "@/lib/classifier";
 import { getSettings } from "@/lib/settings";
 import { fetchMonitoredPage } from "@/lib/site-monitor";
 import { getPool, makeCaptureClient, makeMysqlClient } from "@/lib/sql-driver";
+import { getPgPool, makePgClient } from "@/lib/pg-driver";
 import type { NeonQueryFunction } from "@neondatabase/serverless";
 import type { SiteMonitor } from "@/lib/db";
 
@@ -383,6 +384,62 @@ const TOOLS = [
         extra_fields_json: { type: "string", description: "optional JSON of extra form fields" },
       },
       required: ["login_url", "check_url"],
+      additionalProperties: false,
+    },
+  },
+  // ─── Postgres → Postgres migration (move to a new self-hosted PG).
+  // Runs from Vercel which has the source (Neon) connection + can
+  // reach the target. No dialect translation — both are Postgres. ──
+  {
+    name: "pg_probe",
+    description:
+      "Test a target PostgreSQL URL from the server: connect + return version + table count.",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string", description: "postgresql://… URL" } },
+      required: ["url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pg_init_schema",
+    description:
+      "Create ALL app tables on the target PostgreSQL (runs ensureSchema against it, verbatim — no translation). Fast on real Postgres. Idempotent.",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string" } },
+      required: ["url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pg_migrate_table",
+    description:
+      "Copy rows from the SOURCE db (app's current Neon DB) into the target PostgreSQL for ONE table. Keyset-paginated by id when present (pass after_id to continue). ON CONFLICT DO NOTHING so re-runs are safe. Run pg_init_schema first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "target postgresql:// URL" },
+        table: { type: "string" },
+        after_id: { type: "number" },
+        limit: { type: "number", description: "rows/batch (default 1000, max 5000)" },
+        truncate: { type: "boolean", description: "TRUNCATE target first (first batch only)" },
+      },
+      required: ["url", "table"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "pg_counts",
+    description:
+      "Compare row counts between the SOURCE db and the target PostgreSQL for every table (or one).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        table: { type: "string" },
+      },
+      required: ["url"],
       additionalProperties: false,
     },
   },
@@ -940,6 +997,94 @@ async function callTool(
         textPreview: page.text.slice(0, 1800),
         analysis,
       });
+    }
+
+    case "pg_probe": {
+      const pool = await getPgPool(String(args.url ?? ""));
+      const ver = await pool.query("SELECT version() AS v");
+      const t = await pool.query(
+        "SELECT COUNT(*)::int AS n FROM information_schema.tables WHERE table_schema='public'",
+      );
+      return toolText({ ok: true, version: ver.rows[0]?.v, tables: t.rows[0]?.n ?? 0 });
+    }
+
+    case "pg_init_schema": {
+      const client = makePgClient(String(args.url ?? "")) as unknown as NeonQueryFunction<false, false>;
+      await ensureSchema(client);
+      const pool = await getPgPool(String(args.url ?? ""));
+      const t = await pool.query(
+        "SELECT COUNT(*)::int AS n FROM information_schema.tables WHERE table_schema='public'",
+      );
+      return toolText({ ok: true, tables: t.rows[0]?.n ?? 0 });
+    }
+
+    case "pg_migrate_table": {
+      const targetUrl = String(args.url ?? "");
+      const table = String(args.table ?? "");
+      if (!/^[a-z_][a-z0-9_]*$/.test(table)) throw new Error("invalid table name");
+      const limit = Math.min(Math.max(Number(args.limit ?? 1000) || 1000, 1), 5000);
+      const afterId = Number(args.after_id ?? 0) || 0;
+      const src = sql() as unknown as {
+        query: (t: string, p?: unknown[]) => Promise<Record<string, unknown>[]>;
+      };
+      const target = await getPgPool(targetUrl);
+
+      if (args.truncate === true) {
+        await target.query(`TRUNCATE TABLE "${table}" CASCADE`).catch(() => {});
+      }
+      const colRows = await src.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position`,
+        [table],
+      );
+      const cols = colRows.map((r) => String(r.column_name));
+      if (cols.length === 0) throw new Error("table not found in source");
+      const hasId = cols.includes("id");
+      const rows = hasId
+        ? await src.query(`SELECT * FROM "${table}" WHERE id > $1 ORDER BY id ASC LIMIT $2`, [afterId, limit])
+        : await src.query(`SELECT * FROM "${table}"`);
+      if (rows.length === 0) {
+        return toolText({ ok: true, table, copied: 0, done: true, last_id: afterId });
+      }
+      // Multi-row INSERT with $-placeholders. jsonb/objects → keep as-is
+      // (pg serialises objects to json); Date/primitives pass through.
+      const colList = cols.map((c) => `"${c}"`).join(", ");
+      const params: unknown[] = [];
+      const tuples = rows.map((r) => {
+        const ph = cols.map((c) => {
+          const v = r[c];
+          params.push(v != null && typeof v === "object" && !(v instanceof Date) ? JSON.stringify(v) : v);
+          return `$${params.length}`;
+        });
+        return `(${ph.join(",")})`;
+      });
+      await target.query(
+        `INSERT INTO "${table}" (${colList}) VALUES ${tuples.join(",")} ON CONFLICT DO NOTHING`,
+        params,
+      );
+      const lastId = hasId ? Number(rows[rows.length - 1]!.id) : afterId;
+      return toolText({ ok: true, table, copied: rows.length, last_id: lastId, done: hasId ? rows.length < limit : true });
+    }
+
+    case "pg_counts": {
+      const target = await getPgPool(String(args.url ?? ""));
+      const one = args.table ? String(args.table) : null;
+      const tables = one
+        ? [one]
+        : (
+            await runSql(`SELECT c.relname AS table FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' ORDER BY c.relname`)
+          ).rows.map((r) => String((r as { table: string }).table));
+      const src = sql() as unknown as {
+        query: (t: string, p?: unknown[]) => Promise<Record<string, unknown>[]>;
+      };
+      const out: Array<Record<string, unknown>> = [];
+      for (const table of tables) {
+        if (!/^[a-z_][a-z0-9_]*$/.test(table)) continue;
+        let s: number | string = "?", d: number | string = "?";
+        try { s = Number((await src.query(`SELECT COUNT(*)::int AS n FROM "${table}"`))[0]?.n ?? 0); } catch { s = "err"; }
+        try { d = Number((await target.query(`SELECT COUNT(*)::int AS n FROM "${table}"`)).rows[0]?.n ?? 0); } catch { d = "missing"; }
+        out.push({ table, source: s, target: d, match: s === d });
+      }
+      return toolText(out);
     }
 
     case "tidb_probe": {
