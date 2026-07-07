@@ -1,6 +1,7 @@
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 import { config } from "./config";
 import { driverKind, makeMysqlClient } from "./sql-driver";
+import { makePgClient } from "./pg-driver";
 
 let cached: NeonQueryFunction<false, false> | null = null;
 let schemaPromise: Promise<void> | null = null;
@@ -19,10 +20,16 @@ export function sql(): NeonQueryFunction<false, false> {
     throw new Error("DATABASE_URL is not configured");
   }
   if (!cached) {
-    cached =
-      driverKind() === "mysql"
-        ? (makeMysqlClient() as unknown as NeonQueryFunction<false, false>)
-        : neon(config.databaseUrl);
+    const kind = driverKind();
+    if (kind === "mysql") {
+      cached = makeMysqlClient() as unknown as NeonQueryFunction<false, false>;
+    } else if (kind === "pg") {
+      cached = makePgClient(
+        config.databaseUrl,
+      ) as unknown as NeonQueryFunction<false, false>;
+    } else {
+      cached = neon(config.databaseUrl);
+    }
   }
   return cached;
 }

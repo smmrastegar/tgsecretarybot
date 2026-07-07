@@ -27,13 +27,22 @@ export type SqlTagged = {
   query: (text: string, params?: unknown[]) => Promise<Record<string, unknown>[]>;
 };
 
-export function driverKind(): "postgres" | "mysql" {
+// "neon"     → @neondatabase/serverless HTTP driver (Neon only)
+// "pg"       → node-postgres (any standard/self-hosted Postgres)
+// "mysql"    → mysql2 + dialect translation (TiDB/MySQL)
+export function driverKind(): "neon" | "pg" | "mysql" {
   const forced = (process.env.DB_DRIVER ?? "").toLowerCase();
   if (forced === "mysql" || forced === "tidb") return "mysql";
-  if (forced === "postgres" || forced === "pg") return "postgres";
+  if (forced === "pg" || forced === "postgres") return "pg";
+  if (forced === "neon") return "neon";
   const url = config.databaseUrl ?? "";
   if (/^mysql:\/\//i.test(url)) return "mysql";
-  return "postgres";
+  // A Postgres URL that isn't a Neon host → use node-postgres. Neon
+  // hosts (neon.tech / neon.build) keep the HTTP driver.
+  if (/^postgres(ql)?:\/\//i.test(url) && !/neon\.(tech|build|com)/i.test(url)) {
+    return "pg";
+  }
+  return "neon";
 }
 
 // ── Postgres → MySQL dialect translation ────────────────────────
