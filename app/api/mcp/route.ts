@@ -1055,9 +1055,13 @@ async function callTool(
       const cols = colRows.map((r) => String(r.column_name));
       if (cols.length === 0) throw new Error("table not found in source");
       const hasId = cols.includes("id");
+      // Cap batch so total placeholders stay under Postgres' 65535
+      // param limit (rows × columns).
+      const safeLimit = Math.max(1, Math.min(limit, Math.floor(60000 / Math.max(cols.length, 1))));
       const rows = hasId
-        ? await src.query(`SELECT * FROM "${table}" WHERE id > $1 ORDER BY id ASC LIMIT $2`, [afterId, limit])
-        : await src.query(`SELECT * FROM "${table}"`);
+        ? await src.query(`SELECT * FROM "${table}" WHERE id > $1 ORDER BY id ASC LIMIT $2`, [afterId, safeLimit])
+        : // no id → OFFSET pagination (after_id doubles as the offset)
+          await src.query(`SELECT * FROM "${table}" OFFSET $1 LIMIT $2`, [afterId, safeLimit]);
       if (rows.length === 0) {
         return toolText({ ok: true, table, copied: 0, done: true, last_id: afterId });
       }
@@ -1077,8 +1081,15 @@ async function callTool(
         `INSERT INTO "${table}" (${colList}) VALUES ${tuples.join(",")} ON CONFLICT DO NOTHING`,
         params,
       );
-      const lastId = hasId ? Number(rows[rows.length - 1]!.id) : afterId;
-      return toolText({ ok: true, table, copied: rows.length, last_id: lastId, done: hasId ? rows.length < limit : true });
+      // Cursor for the next batch: last id (keyset) or offset+copied.
+      const nextCursor = hasId ? Number(rows[rows.length - 1]!.id) : afterId + rows.length;
+      return toolText({
+        ok: true,
+        table,
+        copied: rows.length,
+        last_id: nextCursor,
+        done: rows.length < safeLimit,
+      });
     }
 
     case "pg_counts": {
