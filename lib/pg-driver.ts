@@ -12,16 +12,20 @@ export async function getPgPool(url: string): Promise<PgPool> {
   if (!p) {
     p = (async () => {
       const { Pool } = await import("pg");
+      const disableSsl = /sslmode=disable/i.test(url);
+      // Strip sslmode from the URL — otherwise node-postgres enforces
+      // cert verification from the connection string and ignores the
+      // ssl option below, failing on the server's self-signed cert.
+      const clean = url
+        .replace(/([?&])sslmode=[^&]*/gi, "$1")
+        .replace(/[?&]+$/,"")
+        .replace(/([?&])&+/g, "$1");
       return new Pool({
-        connectionString: url,
+        connectionString: clean,
         max: 4,
         connectionTimeoutMillis: 20000,
         idleTimeoutMillis: 15000,
-        // Self-hosted PG with sslmode=require but often a self-signed
-        // cert — don't fail verification.
-        ssl: /sslmode=disable/i.test(url)
-          ? false
-          : { rejectUnauthorized: false },
+        ssl: disableSsl ? false : { rejectUnauthorized: false },
       });
     })();
     pools.set(url, p);
