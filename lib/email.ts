@@ -6,6 +6,7 @@ import {
   listChatsByFunction,
   setEmailTelegramRef,
   type EmailAccount,
+  type EmailAttachment,
   type EmailRow,
 } from "./db";
 import { getSettings } from "./settings";
@@ -70,12 +71,18 @@ export async function postIncomingEmailToChannel(
     ? `${email.fromName} <${email.fromEmail ?? ""}>`
     : email.fromEmail ?? "?";
   const preview = (email.textBody ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+  const attachments = email.attachments ?? [];
   const text =
     `📧 <b>ایمیل جدید</b>${account ? ` — ${esc(account.name)}` : ""}\n` +
     `از: <b>${esc(from)}</b>\n` +
     (email.toEmails ? `به: ${esc(email.toEmails)}\n` : "") +
-    `موضوع: <b>${esc(email.subject ?? "(بدون موضوع)")}</b>\n\n` +
-    `${esc(preview)}${preview.length >= 300 ? "…" : ""}`;
+    `موضوع: <b>${esc(email.subject ?? "(بدون موضوع)")}</b>\n` +
+    (attachments.length
+      ? `📎 ${attachments.length} پیوست: ${esc(
+          attachments.map((a) => a.filename || "file").join("، "),
+        )}\n`
+      : "") +
+    `\n${esc(preview)}${preview.length >= 300 ? "…" : ""}`;
 
   const base = `${appUrl()}/emails/${emailId}`;
   const keyboard = {
@@ -111,6 +118,40 @@ export async function postIncomingEmailToChannel(
   };
   if (j.ok && j.result) {
     await setEmailTelegramRef(emailId, chatId, j.result.message_id).catch(() => {});
+  }
+
+  // Forward each attachment as a Telegram photo/document. We resolve a
+  // short-lived signed URL per attachment from Resend and let Telegram
+  // fetch it directly (works for files up to Telegram's 20MB URL limit).
+  if (attachments.length && email.resendId) {
+    const s = await getSettings().catch(() => null);
+    const apiKey = (account?.resendApiKey || s?.resendApiKey || "").trim();
+    if (apiKey) {
+      for (const att of attachments) {
+        const signed = await fetchReceivedEmailAttachmentUrl(
+          apiKey,
+          email.resendId,
+          att.id,
+        ).catch(() => null);
+        if (!signed) continue;
+        const isImage = (signed.contentType || att.contentType || "").startsWith("image/");
+        const method = isImage ? "sendPhoto" : "sendDocument";
+        const field = isImage ? "photo" : "document";
+        await fetch(
+          `https://api.telegram.org/bot${config.telegramBotToken}/${method}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              [field]: signed.url,
+              caption: `📎 ${signed.filename || att.filename || "file"}`,
+              reply_to_message_id: j.result?.message_id,
+            }),
+          },
+        ).catch(() => {});
+      }
+    }
   }
   return { ok: Boolean(j.ok), chatId };
 }
@@ -215,21 +256,79 @@ export async function replyToEmail(
   return { ok: r.ok, error: r.error };
 }
 
-// Fetch the actual body of a received email. Resend's inbound webhook
-// only carries metadata — the text/html live behind the Received
-// Emails API (GET /emails/receiving/{id}).
+function normalizeAttachments(v: unknown): EmailAttachment[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => (x && typeof x === "object" ? (x as Record<string, unknown>) : null))
+    .filter((x): x is Record<string, unknown> => x != null)
+    .map((x) => ({
+      id: String(x.id ?? ""),
+      filename: (x.filename as string) ?? null,
+      contentType: (x.content_type ?? x.contentType ?? null) as string | null,
+      size: x.size != null ? Number(x.size) : null,
+      contentDisposition: (x.content_disposition ?? x.contentDisposition ?? null) as string | null,
+      contentId: (x.content_id ?? x.contentId ?? null) as string | null,
+    }))
+    .filter((x) => x.id);
+}
+
+// Fetch the actual body + attachments of a received email. Resend's
+// inbound webhook only carries metadata — text/html/attachments live
+// behind the Received Emails API (GET /emails/receiving/{id}).
 export async function fetchReceivedEmailBody(
   apiKey: string,
   emailId: string,
-): Promise<{ text: string | null; html: string | null } | null> {
+): Promise<{
+  text: string | null;
+  html: string | null;
+  attachments: EmailAttachment[];
+} | null> {
   if (!apiKey || !emailId) return null;
   try {
     const res = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     if (!res.ok) return null;
-    const j = (await res.json()) as { text?: string | null; html?: string | null };
-    return { text: j.text ?? null, html: j.html ?? null };
+    const j = (await res.json()) as {
+      text?: string | null;
+      html?: string | null;
+      attachments?: unknown;
+    };
+    return {
+      text: j.text ?? null,
+      html: j.html ?? null,
+      attachments: normalizeAttachments(j.attachments),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Resolve a short-lived signed download URL for one attachment of a
+// received email (GET /emails/receiving/{id}/attachments/{aid}).
+export async function fetchReceivedEmailAttachmentUrl(
+  apiKey: string,
+  emailId: string,
+  attachmentId: string,
+): Promise<{ url: string; filename: string | null; contentType: string | null } | null> {
+  if (!apiKey || !emailId || !attachmentId) return null;
+  try {
+    const res = await fetch(
+      `https://api.resend.com/emails/receiving/${emailId}/attachments/${attachmentId}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    );
+    if (!res.ok) return null;
+    const j = (await res.json()) as {
+      download_url?: string;
+      filename?: string | null;
+      content_type?: string | null;
+    };
+    if (!j.download_url) return null;
+    return {
+      url: j.download_url,
+      filename: j.filename ?? null,
+      contentType: j.content_type ?? null,
+    };
   } catch {
     return null;
   }
@@ -246,6 +345,7 @@ export function parseInboundEmail(payload: unknown): {
   messageId: string | null;
   inReplyTo: string | null;
   emailId: string | null;
+  attachments: EmailAttachment[];
 } {
   const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
   const d = (p.data && typeof p.data === "object" ? (p.data as Record<string, unknown>) : p) as Record<string, unknown>;
@@ -280,6 +380,7 @@ export function parseInboundEmail(payload: unknown): {
     messageId: asStr(d.message_id) ?? asStr(headers["message-id"] ?? headers["Message-ID"]),
     inReplyTo: asStr(d.in_reply_to) ?? asStr(headers["in-reply-to"] ?? headers["In-Reply-To"]),
     emailId: asStr(d.email_id) ?? asStr(d.id),
+    attachments: normalizeAttachments(d.attachments),
   };
 }
 

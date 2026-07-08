@@ -17,10 +17,25 @@ type Email = {
   textBody: string | null;
   htmlBody: string | null;
   summary: string | null;
+  attachments: EmailAttachment[] | null;
   status: string | null;
   error: string | null;
   createdAt: string;
 };
+
+type EmailAttachment = {
+  id: string;
+  filename: string | null;
+  contentType: string | null;
+  size: number | null;
+};
+
+function humanSize(n: number | null): string {
+  if (!n || n <= 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function EmailDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -130,6 +145,30 @@ export default function EmailDetailPage({ params }: { params: Promise<{ id: stri
             ) : (
               <button onClick={genSummary} className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white">🧠 خلاصه‌سازی با AI</button>
             )}
+          </Card>
+        )}
+
+        {email.attachments && email.attachments.length > 0 && (
+          <Card className="mb-3">
+            <div className="text-sm font-medium mb-2">📎 پیوست‌ها ({email.attachments.length})</div>
+            <div className="flex flex-col gap-1.5">
+              {email.attachments.map((a) => (
+                <a
+                  key={a.id}
+                  href={`/api/emails/${email.id}/attachment/${a.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 text-xs px-2.5 py-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                  dir="ltr"
+                >
+                  <span>📄</span>
+                  <span className="flex-1 truncate">{a.filename || "file"}</span>
+                  {a.contentType && <span className="text-[var(--color-text-dim)]">{a.contentType}</span>}
+                  {a.size ? <span className="text-[var(--color-text-dim)]">{humanSize(a.size)}</span> : null}
+                  <span className="text-[var(--color-accent)]">دانلود ↓</span>
+                </a>
+              ))}
+            </div>
           </Card>
         )}
 

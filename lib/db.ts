@@ -409,6 +409,7 @@ export async function ensureSchema(
         text_body          TEXT,
         html_body          TEXT,
         summary            TEXT,                    -- AI summary (lazy)
+        attachments        JSONB,                   -- [{id,filename,contentType,size,...}]
         tg_chat_id         BIGINT,                  -- channel it was posted to
         tg_message_id      BIGINT,                  -- message id in that channel
         status             TEXT,                    -- outgoing: 'sent' | 'failed'
@@ -417,6 +418,7 @@ export async function ensureSchema(
       )`;
     await q`CREATE INDEX IF NOT EXISTS emails_created_idx ON emails (created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS emails_thread_idx ON emails (thread_key)`;
+    await q`ALTER TABLE emails ADD COLUMN IF NOT EXISTS attachments JSONB`;
     // Multiple email accounts: each has its own Resend API key, from
     // address, inbound token (routes inbound webhooks), and Telegram
     // channel/group where its mail is posted + operated from.
@@ -10320,12 +10322,46 @@ export type EmailRow = {
   textBody: string | null;
   htmlBody: string | null;
   summary: string | null;
+  attachments: EmailAttachment[] | null;
   tgChatId: number | null;
   tgMessageId: number | null;
   status: string | null;
   error: string | null;
   createdAt: Date;
 };
+
+export type EmailAttachment = {
+  id: string;
+  filename: string | null;
+  contentType: string | null;
+  size: number | null;
+  contentDisposition: string | null;
+  contentId: string | null;
+};
+
+function parseAttachments(v: unknown): EmailAttachment[] | null {
+  let arr: unknown = v;
+  if (typeof v === "string") {
+    try {
+      arr = JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  return arr
+    .map((x) => (x && typeof x === "object" ? (x as Record<string, unknown>) : null))
+    .filter((x): x is Record<string, unknown> => x != null)
+    .map((x) => ({
+      id: String(x.id ?? ""),
+      filename: (x.filename as string) ?? null,
+      contentType: (x.contentType ?? x.content_type ?? null) as string | null,
+      size: x.size != null ? Number(x.size) : null,
+      contentDisposition: (x.contentDisposition ?? x.content_disposition ?? null) as string | null,
+      contentId: (x.contentId ?? x.content_id ?? null) as string | null,
+    }))
+    .filter((x) => x.id);
+}
 
 function rowToEmail(r: Record<string, unknown>): EmailRow {
   return {
@@ -10344,6 +10380,7 @@ function rowToEmail(r: Record<string, unknown>): EmailRow {
     textBody: (r.text_body as string) ?? null,
     htmlBody: (r.html_body as string) ?? null,
     summary: (r.summary as string) ?? null,
+    attachments: parseAttachments(r.attachments),
     tgChatId: r.tg_chat_id != null ? Number(r.tg_chat_id) : null,
     tgMessageId: r.tg_message_id != null ? Number(r.tg_message_id) : null,
     status: (r.status as string) ?? null,
@@ -10366,22 +10403,25 @@ export async function insertEmail(e: {
   subject?: string | null;
   textBody?: string | null;
   htmlBody?: string | null;
+  attachments?: EmailAttachment[] | null;
   status?: string | null;
   error?: string | null;
 }): Promise<number> {
   if (!hasDb()) throw new Error("no db");
   await ensureSchema();
+  const attachments =
+    e.attachments && e.attachments.length ? JSON.stringify(e.attachments) : null;
   const rows = await sql()`
     INSERT INTO emails
       (direction, account_id, resend_id, message_id, in_reply_to, thread_key,
        from_email, from_name, to_emails, cc_emails, subject,
-       text_body, html_body, status, error)
+       text_body, html_body, attachments, status, error)
     VALUES
       (${e.direction}, ${e.accountId ?? null}, ${e.resendId ?? null},
        ${e.messageId ?? null}, ${e.inReplyTo ?? null}, ${e.threadKey ?? null},
        ${e.fromEmail ?? null}, ${e.fromName ?? null}, ${e.toEmails ?? null},
        ${e.ccEmails ?? null}, ${e.subject ?? null}, ${e.textBody ?? null},
-       ${e.htmlBody ?? null}, ${e.status ?? null}, ${e.error ?? null})
+       ${e.htmlBody ?? null}, ${attachments}::jsonb, ${e.status ?? null}, ${e.error ?? null})
     RETURNING id`;
   return Number((rows[0] as { id: string | number }).id);
 }

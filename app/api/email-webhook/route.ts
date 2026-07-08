@@ -53,13 +53,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   // Resend key.
   let text = e.text;
   let html = e.html;
-  if ((!text && !html) && e.emailId) {
+  let attachments = e.attachments;
+  if ((!text && !html || attachments.length === 0) && e.emailId) {
     const s = await getSettings().catch(() => null);
     const apiKey = (account?.resendApiKey || s?.resendApiKey || "").trim();
     const body = await fetchReceivedEmailBody(apiKey, e.emailId);
     if (body) {
-      text = body.text;
-      html = body.html;
+      if (!text && !html) {
+        text = body.text;
+        html = body.html;
+      }
+      if (attachments.length === 0) attachments = body.attachments;
     }
   }
   const id = await insertEmail({
@@ -76,6 +80,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     subject: e.subject,
     textBody: text,
     htmlBody: html,
+    attachments,
   });
   const posted = await postIncomingEmailToChannel(id).catch(() => ({ ok: false, chatId: null }));
   return NextResponse.json({ ok: true, id, account: account?.name ?? null, posted });
