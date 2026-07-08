@@ -7,6 +7,7 @@ import {
 } from "@/lib/db";
 import {
   emailThreadKey,
+  fetchReceivedEmailBody,
   parseInboundEmail,
   postIncomingEmailToChannel,
 } from "@/lib/email";
@@ -44,12 +45,27 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "invalid json" }, { status: 400 });
   }
   const e = parseInboundEmail(payload);
-  if (!e.fromEmail && !e.subject && !e.text && !e.html) {
+  if (!e.fromEmail && !e.subject && !e.text && !e.html && !e.emailId) {
     return NextResponse.json({ ok: true, ignored: true });
+  }
+  // Resend's inbound webhook is metadata-only — the body lives behind
+  // the Received Emails API. Fetch it with the account's (or global)
+  // Resend key.
+  let text = e.text;
+  let html = e.html;
+  if ((!text && !html) && e.emailId) {
+    const s = await getSettings().catch(() => null);
+    const apiKey = (account?.resendApiKey || s?.resendApiKey || "").trim();
+    const body = await fetchReceivedEmailBody(apiKey, e.emailId);
+    if (body) {
+      text = body.text;
+      html = body.html;
+    }
   }
   const id = await insertEmail({
     direction: "in",
     accountId: account?.id ?? null,
+    resendId: e.emailId,
     messageId: e.messageId,
     inReplyTo: e.inReplyTo,
     threadKey: emailThreadKey(e.subject),
@@ -58,8 +74,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     toEmails: e.toEmails,
     ccEmails: e.ccEmails,
     subject: e.subject,
-    textBody: e.text,
-    htmlBody: e.html,
+    textBody: text,
+    htmlBody: html,
   });
   const posted = await postIncomingEmailToChannel(id).catch(() => ({ ok: false, chatId: null }));
   return NextResponse.json({ ok: true, id, account: account?.name ?? null, posted });

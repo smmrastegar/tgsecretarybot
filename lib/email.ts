@@ -215,6 +215,26 @@ export async function replyToEmail(
   return { ok: r.ok, error: r.error };
 }
 
+// Fetch the actual body of a received email. Resend's inbound webhook
+// only carries metadata — the text/html live behind the Received
+// Emails API (GET /emails/receiving/{id}).
+export async function fetchReceivedEmailBody(
+  apiKey: string,
+  emailId: string,
+): Promise<{ text: string | null; html: string | null } | null> {
+  if (!apiKey || !emailId) return null;
+  try {
+    const res = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { text?: string | null; html?: string | null };
+    return { text: j.text ?? null, html: j.html ?? null };
+  } catch {
+    return null;
+  }
+}
+
 export function parseInboundEmail(payload: unknown): {
   fromEmail: string | null;
   fromName: string | null;
@@ -225,6 +245,7 @@ export function parseInboundEmail(payload: unknown): {
   html: string | null;
   messageId: string | null;
   inReplyTo: string | null;
+  emailId: string | null;
 } {
   const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
   const d = (p.data && typeof p.data === "object" ? (p.data as Record<string, unknown>) : p) as Record<string, unknown>;
@@ -258,6 +279,7 @@ export function parseInboundEmail(payload: unknown): {
     html: asStr(d.html),
     messageId: asStr(d.message_id) ?? asStr(headers["message-id"] ?? headers["Message-ID"]),
     inReplyTo: asStr(d.in_reply_to) ?? asStr(headers["in-reply-to"] ?? headers["In-Reply-To"]),
+    emailId: asStr(d.email_id) ?? asStr(d.id),
   };
 }
 
