@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSettings } from "@/lib/settings";
 import {
+  getEmailAccountByRecipientDomain,
   getEmailAccountByToken,
   hasDb,
   insertEmail,
@@ -48,6 +49,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!e.fromEmail && !e.subject && !e.text && !e.html && !e.emailId) {
     return NextResponse.json({ ok: true, ignored: true });
   }
+  // If the webhook wasn't scoped by a per-account token, link the mail
+  // to an account by its recipient domain (e.g. admin@rateklend.ir →
+  // the RatekLend account) so its card opens on that account's domain.
+  const matchedAccount =
+    account ?? (await getEmailAccountByRecipientDomain(e.toEmails).catch(() => null));
   // Resend's inbound webhook is metadata-only — the body lives behind
   // the Received Emails API. Fetch it with the account's (or global)
   // Resend key.
@@ -56,7 +62,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   let attachments = e.attachments;
   if ((!text && !html || attachments.length === 0) && e.emailId) {
     const s = await getSettings().catch(() => null);
-    const apiKey = (account?.resendApiKey || s?.resendApiKey || "").trim();
+    const apiKey = (matchedAccount?.resendApiKey || s?.resendApiKey || "").trim();
     const body = await fetchReceivedEmailBody(apiKey, e.emailId);
     if (body) {
       if (!text && !html) {
@@ -68,7 +74,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const id = await insertEmail({
     direction: "in",
-    accountId: account?.id ?? null,
+    accountId: matchedAccount?.id ?? null,
     resendId: e.emailId,
     messageId: e.messageId,
     inReplyTo: e.inReplyTo,
@@ -83,7 +89,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     attachments,
   });
   const posted = await postIncomingEmailToChannel(id).catch(() => ({ ok: false, chatId: null }));
-  return NextResponse.json({ ok: true, id, account: account?.name ?? null, posted });
+  return NextResponse.json({ ok: true, id, account: matchedAccount?.name ?? null, posted });
 }
 
 export async function GET(): Promise<NextResponse> {

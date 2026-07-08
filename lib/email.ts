@@ -2,6 +2,7 @@ import { config } from "./config";
 import {
   getEmail,
   getEmailAccount,
+  getEmailAccountByRecipientDomain,
   insertEmail,
   listChatsByFunction,
   setEmailTelegramRef,
@@ -9,6 +10,7 @@ import {
   type EmailAttachment,
   type EmailRow,
 } from "./db";
+import { emailLinkToken } from "./email-link";
 import { getSettings } from "./settings";
 
 const RESEND_API = "https://api.resend.com/emails";
@@ -65,15 +67,21 @@ async function resolveChannelId(account: EmailAccount | null): Promise<number | 
   return null;
 }
 
-// Post an incoming email to its account's channel with buttons.
-// Preview / Text / HTML open the dashboard (URL buttons); Summary +
-// Reply are CALLBACK buttons so the operator can work from Telegram.
+// Post an incoming email to its account's channel. All the open-in-
+// browser links (Preview / Text / HTML / attachments) are PUBLIC:
+// they carry a per-email HMAC token (?t=) and open without a dashboard
+// login, on the account's own public domain. Summary + Reply are
+// CALLBACK buttons so the operator works from Telegram.
 export async function postIncomingEmailToChannel(
   emailId: number,
 ): Promise<{ ok: boolean; chatId: number | null }> {
   const email = await getEmail(emailId);
   if (!email) return { ok: false, chatId: null };
-  const account = email.accountId ? await getEmailAccount(email.accountId) : null;
+  // Prefer the linked account; fall back to matching the recipient
+  // domain so a card still opens on the right domain even if the row
+  // was never linked to an account.
+  let account = email.accountId ? await getEmailAccount(email.accountId) : null;
+  if (!account) account = await getEmailAccountByRecipientDomain(email.toEmails);
   const chatId = await resolveChannelId(account);
   if (!chatId) return { ok: false, chatId: null };
 
@@ -82,20 +90,27 @@ export async function postIncomingEmailToChannel(
     : email.fromEmail ?? "?";
   const preview = (email.textBody ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
   const attachments = email.attachments ?? [];
+  const site = accountBaseUrl(account);
+  const token = emailLinkToken(emailId);
+
+  // Attachments as clickable links inside the card (not separate
+  // messages). Each opens the public download endpoint.
+  const attachmentLines = attachments
+    .map((a) => {
+      const url = `${site}/api/public/emails/${emailId}/attachment/${a.id}?t=${token}`;
+      return `📎 <a href="${esc(url)}">${esc(a.filename || "file")}</a>`;
+    })
+    .join("\n");
+
   const text =
     `📧 <b>ایمیل جدید</b>${account ? ` — ${esc(account.name)}` : ""}\n` +
     `از: <b>${esc(from)}</b>\n` +
     (email.toEmails ? `به: ${esc(email.toEmails)}\n` : "") +
     `موضوع: <b>${esc(email.subject ?? "(بدون موضوع)")}</b>\n` +
-    (attachments.length
-      ? `📎 ${attachments.length} پیوست: ${esc(
-          attachments.map((a) => a.filename || "file").join("، "),
-        )}\n`
-      : "") +
+    (attachmentLines ? `${attachmentLines}\n` : "") +
     `\n${esc(preview)}${preview.length >= 300 ? "…" : ""}`;
 
-  const site = accountBaseUrl(account);
-  const base = `${site}/emails/${emailId}`;
+  const base = `${site}/e/${emailId}?t=${token}`;
   const keyboard = {
     inline_keyboard: [
       [
@@ -103,8 +118,8 @@ export async function postIncomingEmailToChannel(
         { text: "🧠 خلاصه", callback_data: `em:sum:${emailId}` },
       ],
       [
-        { text: "Text ↗", url: `${site}/api/emails/${emailId}/raw?format=text` },
-        { text: "HTML ↗", url: `${site}/api/emails/${emailId}/raw?format=html` },
+        { text: "Text ↗", url: `${site}/api/public/emails/${emailId}/raw?format=text&t=${token}` },
+        { text: "HTML ↗", url: `${site}/api/public/emails/${emailId}/raw?format=html&t=${token}` },
       ],
       [{ text: "↩️ پاسخ", callback_data: `em:reply:${emailId}` }],
     ],
@@ -129,40 +144,6 @@ export async function postIncomingEmailToChannel(
   };
   if (j.ok && j.result) {
     await setEmailTelegramRef(emailId, chatId, j.result.message_id).catch(() => {});
-  }
-
-  // Forward each attachment as a Telegram photo/document. We resolve a
-  // short-lived signed URL per attachment from Resend and let Telegram
-  // fetch it directly (works for files up to Telegram's 20MB URL limit).
-  if (attachments.length && email.resendId) {
-    const s = await getSettings().catch(() => null);
-    const apiKey = (account?.resendApiKey || s?.resendApiKey || "").trim();
-    if (apiKey) {
-      for (const att of attachments) {
-        const signed = await fetchReceivedEmailAttachmentUrl(
-          apiKey,
-          email.resendId,
-          att.id,
-        ).catch(() => null);
-        if (!signed) continue;
-        const isImage = (signed.contentType || att.contentType || "").startsWith("image/");
-        const method = isImage ? "sendPhoto" : "sendDocument";
-        const field = isImage ? "photo" : "document";
-        await fetch(
-          `https://api.telegram.org/bot${config.telegramBotToken}/${method}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: chatId,
-              [field]: signed.url,
-              caption: `📎 ${signed.filename || att.filename || "file"}`,
-              reply_to_message_id: j.result?.message_id,
-            }),
-          },
-        ).catch(() => {});
-      }
-    }
   }
   return { ok: Boolean(j.ok), chatId };
 }

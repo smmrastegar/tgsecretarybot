@@ -23,6 +23,9 @@ const PUBLIC_PREFIXES = [
   // that chat but cannot trigger a recompute or modify anything.
   "/api/public",
   "/share",
+  // Public email view — the ?t= HMAC token in the URL is the auth, so
+  // Telegram email-card links open without a dashboard login.
+  "/e",
   // MCP endpoint — authed by its own Authorization: Bearer <MCP_SECRET>
   // check, not the dashboard session cookie. Session-gating it would
   // break every MCP client (which sends a bearer token, not a cookie).

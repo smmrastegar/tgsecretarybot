@@ -131,13 +131,14 @@ type Account = {
   inboundToken: string | null;
   tgChannelId: number | null;
   publicUrl: string | null;
+  inboundDomains: string | null;
   enabled: boolean;
   hasApiKey: boolean;
 };
 
 function AccountsManager({ origin }: { origin: string }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [form, setForm] = useState({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "", publicUrl: "" });
+  const [form, setForm] = useState({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "", publicUrl: "", inboundDomains: "" });
   const load = useCallback(async () => {
     const r = await fetch("/api/email-accounts");
     const j = (await r.json()) as { accounts: Account[] };
@@ -149,11 +150,11 @@ function AccountsManager({ origin }: { origin: string }) {
   const create = async () => {
     if (!form.name) return;
     await fetch("/api/email-accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
-    setForm({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "", publicUrl: "" });
+    setForm({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "", publicUrl: "", inboundDomains: "" });
     await load();
   };
-  const savePublicUrl = async (id: number, publicUrl: string) => {
-    await fetch(`/api/email-accounts/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ publicUrl }) });
+  const patch = async (id: number, body: Record<string, string>) => {
+    await fetch(`/api/email-accounts/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     await load();
   };
   const del = async (id: number) => {
@@ -186,7 +187,8 @@ function AccountsManager({ origin }: { origin: string }) {
                     {origin}/api/email-webhook?token={a.inboundToken}
                   </code>
                 )}
-                <PublicUrlEditor value={a.publicUrl} onSave={(u) => savePublicUrl(a.id, u)} />
+                <InlineField label="🔗 دومین دکمه‌ها:" value={a.publicUrl} placeholder="rateklend.text.bz" onSave={(u) => patch(a.id, { publicUrl: u })} />
+                <InlineField label="📥 دومین‌های ورودی:" value={a.inboundDomains} placeholder="rateklend.ir, mail.rateklend.ir" onSave={(u) => patch(a.id, { inboundDomains: u })} />
               </div>
               <button onClick={() => del(a.id)} className="text-[11px] px-2 py-1 rounded-md border border-rose-500/40 text-rose-200 shrink-0">🗑</button>
             </div>
@@ -198,7 +200,8 @@ function AccountsManager({ origin }: { origin: string }) {
         <input dir="ltr" value={form.fromEmail} onChange={(e) => setForm((f) => ({ ...f, fromEmail: e.target.value }))} placeholder="From: Sales <sales@domain.com>" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
         <input dir="ltr" value={form.resendApiKey} onChange={(e) => setForm((f) => ({ ...f, resendApiKey: e.target.value }))} placeholder="Resend API key (re_...)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
         <input dir="ltr" value={form.tgChannelId} onChange={(e) => setForm((f) => ({ ...f, tgChannelId: e.target.value }))} placeholder="Channel ID تلگرام (-100...)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-        <input dir="ltr" value={form.publicUrl} onChange={(e) => setForm((f) => ({ ...f, publicUrl: e.target.value }))} placeholder="دومین اکانت (مثلاً rateklend.text.bz)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] md:col-span-2" />
+        <input dir="ltr" value={form.publicUrl} onChange={(e) => setForm((f) => ({ ...f, publicUrl: e.target.value }))} placeholder="دومین دکمه‌ها (مثلاً rateklend.text.bz)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
+        <input dir="ltr" value={form.inboundDomains} onChange={(e) => setForm((f) => ({ ...f, inboundDomains: e.target.value }))} placeholder="دومین‌های ورودی (مثلاً rateklend.ir)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
         <div className="flex gap-1.5 md:col-span-2">
           <input dir="ltr" value={form.inboundToken} onChange={(e) => setForm((f) => ({ ...f, inboundToken: e.target.value }))} placeholder="Inbound token (برای وب‌هوک ورودی)" className="flex-1 text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
           <button onClick={genToken} className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)]">🎲 ساخت</button>
@@ -209,7 +212,7 @@ function AccountsManager({ origin }: { origin: string }) {
   );
 }
 
-function PublicUrlEditor({ value, onSave }: { value: string | null; onSave: (u: string) => Promise<void> }) {
+function InlineField({ label, value, placeholder, onSave }: { label: string; value: string | null; placeholder: string; onSave: (u: string) => Promise<void> }) {
   const [v, setV] = useState(value ?? "");
   const [saving, setSaving] = useState(false);
   const dirty = (v.trim() || null) !== (value || null);
@@ -220,12 +223,12 @@ function PublicUrlEditor({ value, onSave }: { value: string | null; onSave: (u: 
   };
   return (
     <div className="flex items-center gap-1.5 mt-1">
-      <span className="text-[9px] text-[var(--color-text-dim)] shrink-0">🔗 دومین دکمه‌ها:</span>
+      <span className="text-[9px] text-[var(--color-text-dim)] shrink-0">{label}</span>
       <input
         dir="ltr"
         value={v}
         onChange={(e) => setV(e.target.value)}
-        placeholder="rateklend.text.bz"
+        placeholder={placeholder}
         className="flex-1 min-w-0 text-[10px] px-1.5 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)]"
       />
       {dirty && (

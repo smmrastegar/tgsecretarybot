@@ -431,11 +431,13 @@ export async function ensureSchema(
         inbound_token   TEXT UNIQUE,
         tg_channel_id   BIGINT,
         public_url      TEXT,                       -- per-account dashboard base URL for TG buttons
+        inbound_domains TEXT,                       -- comma-separated recipient domains that route here
         enabled         BOOLEAN NOT NULL DEFAULT TRUE,
         created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await q`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS public_url TEXT`;
+    await q`ALTER TABLE email_accounts ADD COLUMN IF NOT EXISTS inbound_domains TEXT`;
     await q`ALTER TABLE emails ADD COLUMN IF NOT EXISTS account_id BIGINT`;
     // Telegram-native reply flow: when the operator taps ↩️ پاسخ on an
     // email card in the group, the bot posts a force-reply prompt and
@@ -10481,6 +10483,7 @@ export type EmailAccount = {
   inboundToken: string | null;
   tgChannelId: number | null;
   publicUrl: string | null;
+  inboundDomains: string | null;
   enabled: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -10495,6 +10498,7 @@ function rowToEmailAccount(r: Record<string, unknown>): EmailAccount {
     inboundToken: (r.inbound_token as string) ?? null,
     tgChannelId: r.tg_channel_id != null ? Number(r.tg_channel_id) : null,
     publicUrl: (r.public_url as string) ?? null,
+    inboundDomains: (r.inbound_domains as string) ?? null,
     enabled: Boolean(r.enabled),
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
@@ -10538,6 +10542,43 @@ export async function getEmailAccountByChannel(
   return r ? rowToEmailAccount(r) : null;
 }
 
+// Resolve the account that owns an inbound email by its recipient
+// domain. Matches (in order of specificity) the account's
+// inbound_domains list, its from_email domain, or its name treated as
+// a domain (e.g. account "RatekLend.ir" ← admin@rateklend.ir).
+export async function getEmailAccountByRecipientDomain(
+  toEmails: string | null,
+): Promise<EmailAccount | null> {
+  if (!hasDb() || !toEmails) return null;
+  const domains = Array.from(
+    new Set(
+      (toEmails.toLowerCase().match(/@([a-z0-9.-]+)/g) ?? []).map((d) =>
+        d.slice(1),
+      ),
+    ),
+  );
+  if (domains.length === 0) return null;
+  await ensureSchema();
+  const accounts = await listEmailAccounts();
+  for (const domain of domains) {
+    const hit = accounts.find((a) => {
+      if (!a.enabled) return false;
+      const inbound = (a.inboundDomains ?? "")
+        .toLowerCase()
+        .split(/[\s,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (inbound.includes(domain)) return true;
+      const fromDomain = (a.fromEmail ?? "").toLowerCase().split("@")[1]?.trim();
+      if (fromDomain && fromDomain === domain) return true;
+      if ((a.name ?? "").toLowerCase().trim() === domain) return true;
+      return false;
+    });
+    if (hit) return hit;
+  }
+  return null;
+}
+
 export async function createEmailAccount(a: {
   name: string;
   resendApiKey?: string | null;
@@ -10545,13 +10586,15 @@ export async function createEmailAccount(a: {
   inboundToken?: string | null;
   tgChannelId?: number | null;
   publicUrl?: string | null;
+  inboundDomains?: string | null;
 }): Promise<number> {
   if (!hasDb()) throw new Error("no db");
   await ensureSchema();
   const rows = await sql()`
-    INSERT INTO email_accounts (name, resend_api_key, from_email, inbound_token, tg_channel_id, public_url)
+    INSERT INTO email_accounts (name, resend_api_key, from_email, inbound_token, tg_channel_id, public_url, inbound_domains)
     VALUES (${a.name}, ${a.resendApiKey ?? null}, ${a.fromEmail ?? null},
-            ${a.inboundToken ?? null}, ${a.tgChannelId ?? null}, ${a.publicUrl ?? null})
+            ${a.inboundToken ?? null}, ${a.tgChannelId ?? null}, ${a.publicUrl ?? null},
+            ${a.inboundDomains ?? null})
     RETURNING id`;
   return Number((rows[0] as { id: string | number }).id);
 }
@@ -10565,6 +10608,7 @@ export async function updateEmailAccount(
     inboundToken: string | null;
     tgChannelId: number | null;
     publicUrl: string | null;
+    inboundDomains: string | null;
     enabled: boolean;
   }>,
 ): Promise<void> {
@@ -10584,6 +10628,8 @@ export async function updateEmailAccount(
     tgChannelId:
       patch.tgChannelId === undefined ? cur.tgChannelId : patch.tgChannelId,
     publicUrl: patch.publicUrl === undefined ? cur.publicUrl : patch.publicUrl,
+    inboundDomains:
+      patch.inboundDomains === undefined ? cur.inboundDomains : patch.inboundDomains,
     enabled: patch.enabled === undefined ? cur.enabled : patch.enabled,
   };
   await sql()`
@@ -10591,7 +10637,7 @@ export async function updateEmailAccount(
       name = ${v.name}, resend_api_key = ${v.resendApiKey},
       from_email = ${v.fromEmail}, inbound_token = ${v.inboundToken},
       tg_channel_id = ${v.tgChannelId}, public_url = ${v.publicUrl},
-      enabled = ${v.enabled}, updated_at = NOW()
+      inbound_domains = ${v.inboundDomains}, enabled = ${v.enabled}, updated_at = NOW()
     WHERE id = ${id}`;
 }
 

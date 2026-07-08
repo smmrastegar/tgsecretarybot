@@ -31,6 +31,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     inboundToken: b.inboundToken ? String(b.inboundToken) : null,
     tgChannelId: b.tgChannelId != null && b.tgChannelId !== "" ? Number(b.tgChannelId) : null,
     publicUrl: b.publicUrl ? String(b.publicUrl) : null,
+    inboundDomains: b.inboundDomains ? String(b.inboundDomains) : null,
   });
   return NextResponse.json({ ok: true, id });
 }
