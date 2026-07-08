@@ -23,6 +23,16 @@ function appUrl(): string {
   return (config.publicAppUrl ?? "https://tgsecretarybot.vercel.app").replace(/\/$/, "");
 }
 
+// Base URL for an account's Telegram button links. Each account can
+// have its own public domain (e.g. rateklend.text.bz) so its email
+// cards open on that domain instead of the shared app URL.
+function accountBaseUrl(account: EmailAccount | null): string {
+  const raw = (account?.publicUrl ?? "").trim();
+  if (!raw) return appUrl();
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  return withScheme.replace(/\/$/, "");
+}
+
 // Resolve the API key + from-address to use: an explicit account wins,
 // otherwise the global resend* settings (single-account fallback).
 async function resolveCreds(
@@ -84,7 +94,8 @@ export async function postIncomingEmailToChannel(
       : "") +
     `\n${esc(preview)}${preview.length >= 300 ? "…" : ""}`;
 
-  const base = `${appUrl()}/emails/${emailId}`;
+  const site = accountBaseUrl(account);
+  const base = `${site}/emails/${emailId}`;
   const keyboard = {
     inline_keyboard: [
       [
@@ -92,8 +103,8 @@ export async function postIncomingEmailToChannel(
         { text: "🧠 خلاصه", callback_data: `em:sum:${emailId}` },
       ],
       [
-        { text: "Text ↗", url: `${appUrl()}/api/emails/${emailId}/raw?format=text` },
-        { text: "HTML ↗", url: `${appUrl()}/api/emails/${emailId}/raw?format=html` },
+        { text: "Text ↗", url: `${site}/api/emails/${emailId}/raw?format=text` },
+        { text: "HTML ↗", url: `${site}/api/emails/${emailId}/raw?format=html` },
       ],
       [{ text: "↩️ پاسخ", callback_data: `em:reply:${emailId}` }],
     ],

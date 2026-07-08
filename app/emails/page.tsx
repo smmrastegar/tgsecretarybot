@@ -130,13 +130,14 @@ type Account = {
   fromEmail: string | null;
   inboundToken: string | null;
   tgChannelId: number | null;
+  publicUrl: string | null;
   enabled: boolean;
   hasApiKey: boolean;
 };
 
 function AccountsManager({ origin }: { origin: string }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [form, setForm] = useState({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "" });
+  const [form, setForm] = useState({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "", publicUrl: "" });
   const load = useCallback(async () => {
     const r = await fetch("/api/email-accounts");
     const j = (await r.json()) as { accounts: Account[] };
@@ -148,7 +149,11 @@ function AccountsManager({ origin }: { origin: string }) {
   const create = async () => {
     if (!form.name) return;
     await fetch("/api/email-accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
-    setForm({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "" });
+    setForm({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "", publicUrl: "" });
+    await load();
+  };
+  const savePublicUrl = async (id: number, publicUrl: string) => {
+    await fetch(`/api/email-accounts/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ publicUrl }) });
     await load();
   };
   const del = async (id: number) => {
@@ -181,6 +186,7 @@ function AccountsManager({ origin }: { origin: string }) {
                     {origin}/api/email-webhook?token={a.inboundToken}
                   </code>
                 )}
+                <PublicUrlEditor value={a.publicUrl} onSave={(u) => savePublicUrl(a.id, u)} />
               </div>
               <button onClick={() => del(a.id)} className="text-[11px] px-2 py-1 rounded-md border border-rose-500/40 text-rose-200 shrink-0">🗑</button>
             </div>
@@ -192,6 +198,7 @@ function AccountsManager({ origin }: { origin: string }) {
         <input dir="ltr" value={form.fromEmail} onChange={(e) => setForm((f) => ({ ...f, fromEmail: e.target.value }))} placeholder="From: Sales <sales@domain.com>" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
         <input dir="ltr" value={form.resendApiKey} onChange={(e) => setForm((f) => ({ ...f, resendApiKey: e.target.value }))} placeholder="Resend API key (re_...)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
         <input dir="ltr" value={form.tgChannelId} onChange={(e) => setForm((f) => ({ ...f, tgChannelId: e.target.value }))} placeholder="Channel ID تلگرام (-100...)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
+        <input dir="ltr" value={form.publicUrl} onChange={(e) => setForm((f) => ({ ...f, publicUrl: e.target.value }))} placeholder="دومین اکانت (مثلاً rateklend.text.bz)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] md:col-span-2" />
         <div className="flex gap-1.5 md:col-span-2">
           <input dir="ltr" value={form.inboundToken} onChange={(e) => setForm((f) => ({ ...f, inboundToken: e.target.value }))} placeholder="Inbound token (برای وب‌هوک ورودی)" className="flex-1 text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
           <button onClick={genToken} className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)]">🎲 ساخت</button>
@@ -199,6 +206,34 @@ function AccountsManager({ origin }: { origin: string }) {
       </div>
       <button onClick={create} disabled={!form.name} className="mt-2 text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-40">+ افزودن اکانت</button>
     </Card>
+  );
+}
+
+function PublicUrlEditor({ value, onSave }: { value: string | null; onSave: (u: string) => Promise<void> }) {
+  const [v, setV] = useState(value ?? "");
+  const [saving, setSaving] = useState(false);
+  const dirty = (v.trim() || null) !== (value || null);
+  useEffect(() => { setV(value ?? ""); }, [value]);
+  const save = async () => {
+    setSaving(true);
+    try { await onSave(v.trim()); } finally { setSaving(false); }
+  };
+  return (
+    <div className="flex items-center gap-1.5 mt-1">
+      <span className="text-[9px] text-[var(--color-text-dim)] shrink-0">🔗 دومین دکمه‌ها:</span>
+      <input
+        dir="ltr"
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        placeholder="rateklend.text.bz"
+        className="flex-1 min-w-0 text-[10px] px-1.5 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+      />
+      {dirty && (
+        <button onClick={save} disabled={saving} className="text-[10px] px-2 py-1 rounded border border-[var(--color-accent)] text-[var(--color-accent)] shrink-0 disabled:opacity-40">
+          {saving ? "…" : "ذخیره"}
+        </button>
+      )}
+    </div>
   );
 }
 

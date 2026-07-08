@@ -30,6 +30,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     fromEmail: b.fromEmail ? String(b.fromEmail) : null,
     inboundToken: b.inboundToken ? String(b.inboundToken) : null,
     tgChannelId: b.tgChannelId != null && b.tgChannelId !== "" ? Number(b.tgChannelId) : null,
+    publicUrl: b.publicUrl ? String(b.publicUrl) : null,
   });
   return NextResponse.json({ ok: true, id });
 }

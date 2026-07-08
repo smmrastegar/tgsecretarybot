@@ -17,6 +17,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   if ("inboundToken" in b) patch.inboundToken = b.inboundToken === null ? null : String(b.inboundToken);
   if ("resendApiKey" in b && b.resendApiKey !== "********") patch.resendApiKey = b.resendApiKey === null ? null : String(b.resendApiKey);
   if ("tgChannelId" in b) patch.tgChannelId = b.tgChannelId === null || b.tgChannelId === "" ? null : Number(b.tgChannelId);
+  if ("publicUrl" in b) patch.publicUrl = b.publicUrl === null || b.publicUrl === "" ? null : String(b.publicUrl);
   if ("enabled" in b) patch.enabled = Boolean(b.enabled);
   await updateEmailAccount(mid, patch);
   return NextResponse.json({ ok: true });
