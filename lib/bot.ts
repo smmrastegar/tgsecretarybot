@@ -833,9 +833,29 @@ async function handleEmailCallback(
     return;
   }
   if (action === "sum") {
-    await ctx.answerCallbackQuery({ text: "در حال خلاصه‌سازی…" }).catch(() => {});
     const e = await getEmail(emailId).catch(() => null);
-    if (!e) return;
+    if (!e) {
+      await ctx.answerCallbackQuery().catch(() => {});
+      return;
+    }
+    // Already summarized → the button is "spent". Don't re-run; just
+    // acknowledge, and make sure the card shows the ✓ state.
+    if ((e.summary ?? "").trim()) {
+      await ctx.answerCallbackQuery({ text: "قبلاً خلاصه شده ✓" }).catch(() => {});
+      const account = await resolveEmailAccount(e).catch(() => null);
+      const card = buildEmailCard(e, account, { summary: e.summary });
+      if (cardMsgId) {
+        await ctx.api
+          .editMessageText(chatId, cardMsgId, card.text, {
+            parse_mode: "HTML",
+            link_preview_options: { is_disabled: true },
+            reply_markup: card.reply_markup,
+          })
+          .catch(() => {});
+      }
+      return;
+    }
+    await ctx.answerCallbackQuery({ text: "در حال خلاصه‌سازی…" }).catch(() => {});
     const r = await summarizeEmail({ subject: e.subject, from: e.fromEmail, text: e.textBody }).catch(() => null);
     if (!r) {
       await ctx.answerCallbackQuery({ text: "خلاصه‌سازی ناموفق بود.", show_alert: true }).catch(() => {});
