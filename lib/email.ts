@@ -67,6 +67,73 @@ async function resolveChannelId(account: EmailAccount | null): Promise<number | 
   return null;
 }
 
+// Resolve the account that owns an email: the linked account, else a
+// match on the recipient domain (so a card still resolves the right
+// account/domain even if the row was never linked).
+export async function resolveEmailAccount(
+  email: EmailRow,
+): Promise<EmailAccount | null> {
+  const linked = email.accountId ? await getEmailAccount(email.accountId) : null;
+  if (linked) return linked;
+  return getEmailAccountByRecipientDomain(email.toEmails);
+}
+
+// Build the Telegram card (text + inline keyboard) for an email. When
+// `summary` is passed it's appended inline to the SAME card, so the
+// 🧠 خلاصه button can edit the card in place instead of posting a
+// separate message.
+type InlineBtn =
+  | { text: string; url: string }
+  | { text: string; callback_data: string };
+
+export function buildEmailCard(
+  email: EmailRow,
+  account: EmailAccount | null,
+  opts?: { summary?: string | null },
+): { text: string; reply_markup: { inline_keyboard: InlineBtn[][] } } {
+  const emailId = email.id;
+  const from = email.fromName
+    ? `${email.fromName} <${email.fromEmail ?? ""}>`
+    : email.fromEmail ?? "?";
+  const preview = (email.textBody ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+  const attachments = email.attachments ?? [];
+  const site = accountBaseUrl(account);
+  const token = emailLinkToken(emailId);
+
+  const attachmentLines = attachments
+    .map((a) => {
+      const url = `${site}/api/public/emails/${emailId}/attachment/${a.id}?t=${token}`;
+      return `📎 <a href="${esc(url)}">${esc(a.filename || "file")}</a>`;
+    })
+    .join("\n");
+
+  const summary = (opts?.summary ?? "").trim();
+  const text =
+    `📧 <b>ایمیل جدید</b>${account ? ` — ${esc(account.name)}` : ""}\n` +
+    `از: <b>${esc(from)}</b>\n` +
+    (email.toEmails ? `به: ${esc(email.toEmails)}\n` : "") +
+    `موضوع: <b>${esc(email.subject ?? "(بدون موضوع)")}</b>\n` +
+    (attachmentLines ? `${attachmentLines}\n` : "") +
+    `\n${esc(preview)}${preview.length >= 300 ? "…" : ""}` +
+    (summary ? `\n\n🧠 <b>خلاصه</b>\n${esc(summary)}` : "");
+
+  const base = `${site}/e/${emailId}?t=${token}`;
+  const reply_markup: { inline_keyboard: InlineBtn[][] } = {
+    inline_keyboard: [
+      [
+        { text: "Preview", url: base },
+        { text: summary ? "🧠 خلاصه ✓" : "🧠 خلاصه", callback_data: `em:sum:${emailId}` },
+      ],
+      [
+        { text: "Text ↗", url: `${site}/api/public/emails/${emailId}/raw?format=text&t=${token}` },
+        { text: "HTML ↗", url: `${site}/api/public/emails/${emailId}/raw?format=html&t=${token}` },
+      ],
+      [{ text: "↩️ پاسخ", callback_data: `em:reply:${emailId}` }],
+    ],
+  };
+  return { text: text.slice(0, 4096), reply_markup };
+}
+
 // Post an incoming email to its account's channel. All the open-in-
 // browser links (Preview / Text / HTML / attachments) are PUBLIC:
 // they carry a per-email HMAC token (?t=) and open without a dashboard
@@ -77,53 +144,11 @@ export async function postIncomingEmailToChannel(
 ): Promise<{ ok: boolean; chatId: number | null }> {
   const email = await getEmail(emailId);
   if (!email) return { ok: false, chatId: null };
-  // Prefer the linked account; fall back to matching the recipient
-  // domain so a card still opens on the right domain even if the row
-  // was never linked to an account.
-  let account = email.accountId ? await getEmailAccount(email.accountId) : null;
-  if (!account) account = await getEmailAccountByRecipientDomain(email.toEmails);
+  const account = await resolveEmailAccount(email);
   const chatId = await resolveChannelId(account);
   if (!chatId) return { ok: false, chatId: null };
 
-  const from = email.fromName
-    ? `${email.fromName} <${email.fromEmail ?? ""}>`
-    : email.fromEmail ?? "?";
-  const preview = (email.textBody ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
-  const attachments = email.attachments ?? [];
-  const site = accountBaseUrl(account);
-  const token = emailLinkToken(emailId);
-
-  // Attachments as clickable links inside the card (not separate
-  // messages). Each opens the public download endpoint.
-  const attachmentLines = attachments
-    .map((a) => {
-      const url = `${site}/api/public/emails/${emailId}/attachment/${a.id}?t=${token}`;
-      return `📎 <a href="${esc(url)}">${esc(a.filename || "file")}</a>`;
-    })
-    .join("\n");
-
-  const text =
-    `📧 <b>ایمیل جدید</b>${account ? ` — ${esc(account.name)}` : ""}\n` +
-    `از: <b>${esc(from)}</b>\n` +
-    (email.toEmails ? `به: ${esc(email.toEmails)}\n` : "") +
-    `موضوع: <b>${esc(email.subject ?? "(بدون موضوع)")}</b>\n` +
-    (attachmentLines ? `${attachmentLines}\n` : "") +
-    `\n${esc(preview)}${preview.length >= 300 ? "…" : ""}`;
-
-  const base = `${site}/e/${emailId}?t=${token}`;
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: "Preview", url: base },
-        { text: "🧠 خلاصه", callback_data: `em:sum:${emailId}` },
-      ],
-      [
-        { text: "Text ↗", url: `${site}/api/public/emails/${emailId}/raw?format=text&t=${token}` },
-        { text: "HTML ↗", url: `${site}/api/public/emails/${emailId}/raw?format=html&t=${token}` },
-      ],
-      [{ text: "↩️ پاسخ", callback_data: `em:reply:${emailId}` }],
-    ],
-  };
+  const card = buildEmailCard(email, account, { summary: email.summary });
   const res = await fetch(
     `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`,
     {
@@ -131,10 +156,10 @@ export async function postIncomingEmailToChannel(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text: text.slice(0, 4096),
+        text: card.text,
         parse_mode: "HTML",
         disable_web_page_preview: true,
-        reply_markup: keyboard,
+        reply_markup: card.reply_markup,
       }),
     },
   );

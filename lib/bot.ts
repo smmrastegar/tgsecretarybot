@@ -97,12 +97,13 @@ import {
   recordOwnerReaction,
   upsertChatMember,
   getEmail,
+  setEmailSummary,
   getEmailAccountByChannel,
   createEmailPendingReply,
   getEmailPendingReply,
   deleteEmailPendingReply,
 } from "./db";
-import { replyToEmail, sendEmail } from "./email";
+import { buildEmailCard, replyToEmail, resolveEmailAccount, sendEmail } from "./email";
 import { summarizeEmail } from "./classifier";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -836,15 +837,25 @@ async function handleEmailCallback(
     const e = await getEmail(emailId).catch(() => null);
     if (!e) return;
     const r = await summarizeEmail({ subject: e.subject, from: e.fromEmail, text: e.textBody }).catch(() => null);
-    const body = r
-      ? `🧠 <b>خلاصه</b>\n${r.summary}${r.keyPoints.length ? "\n\n• " + r.keyPoints.join("\n• ") : ""}`
-      : "خلاصه‌سازی ناموفق بود.";
-    await ctx.api
-      .sendMessage(chatId, body.slice(0, 4096), {
-        parse_mode: "HTML",
-        reply_parameters: cardMsgId ? { message_id: cardMsgId } : undefined,
-      })
-      .catch(() => {});
+    if (!r) {
+      await ctx.answerCallbackQuery({ text: "خلاصه‌سازی ناموفق بود.", show_alert: true }).catch(() => {});
+      return;
+    }
+    const summary = `${r.summary}${r.keyPoints.length ? "\n\n• " + r.keyPoints.join("\n• ") : ""}`;
+    await setEmailSummary(emailId, summary).catch(() => {});
+    // Append the summary to the SAME card message in place (don't post
+    // a separate message).
+    const account = await resolveEmailAccount(e).catch(() => null);
+    const card = buildEmailCard({ ...e, summary }, account);
+    if (cardMsgId) {
+      await ctx.api
+        .editMessageText(chatId, cardMsgId, card.text, {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+          reply_markup: card.reply_markup,
+        })
+        .catch(() => {});
+    }
     return;
   }
   if (action === "reply") {
