@@ -102,6 +102,7 @@ export default function RuleDetailPage() {
   const [testResults, setTestResults] = useState<TestResult[] | null>(null);
 
   const MATCH_PAGE = 10;
+  const [matchFilter, setMatchFilter] = useState<"active" | "expired">("active");
   const [hasMoreMatches, setHasMoreMatches] = useState(true);
   const [loadingMoreMatches, setLoadingMoreMatches] = useState(false);
   const [matchesError, setMatchesError] = useState<string | null>(null);
@@ -475,11 +476,27 @@ export default function RuleDetailPage() {
     );
   }
 
+  // A match is expired when it's past the rule's window and wasn't
+  // fully delivered — it can never be sent again (auto OR force).
+  const matchExpired = (m: Match): boolean => {
+    const deliveredSet = new Set(m.forwardedTo);
+    const allDelivered =
+      recipients.length > 0 &&
+      recipients.every((r) => deliveredSet.has(r.recipientChatId));
+    const windowMs = (rule.requestWindowSeconds ?? 0) * 1000;
+    const ageMs = Date.now() - new Date(m.matchedAt).getTime();
+    return !allDelivered && windowMs > 0 && ageMs > windowMs;
+  };
+  const activeMatches = matches.filter((m) => !matchExpired(m));
+  const expiredMatches = matches.filter((m) => matchExpired(m));
+  const visibleMatches =
+    matchFilter === "expired" ? expiredMatches : activeMatches;
+
   return (
     <Shell>
       <PageTitle
         title={`📐 ${rule.name}`}
-        subtitle={`ساخته شده ${relTime(rule.createdAt)} · last update ${relTime(rule.updatedAt)}`}
+        subtitle={`ساخته شده ${relTime(rule.createdAt)} · آخرین ویرایش ${relTime(rule.updatedAt)}`}
         actions={
           <Link href="/rules" className="text-xs underline-offset-2 underline">
             ← rules
@@ -996,17 +1013,41 @@ export default function RuleDetailPage() {
       </Card>
 
       <Card>
-        <div className="text-xs font-medium mb-2">
-          🕐 تاریخچه match ({matches.length})
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <div className="text-xs font-medium">🕐 تاریخچه تطبیق‌ها</div>
+          <div className="flex gap-1.5">
+            {([
+              { key: "active", label: `🟢 فعال (${activeMatches.length})` },
+              { key: "expired", label: `⌛ منقضی (${expiredMatches.length})` },
+            ] as const).map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setMatchFilter(t.key)}
+                className={`text-[11px] px-2.5 py-1 rounded-md border ${
+                  matchFilter === t.key
+                    ? "bg-[var(--color-accent)] text-white border-transparent"
+                    : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
         {matches.length === 0 ? (
           <p className="text-xs text-[var(--color-text-dim)]">
             هنوز هیچ پیامی به این rule نخورده.
           </p>
+        ) : visibleMatches.length === 0 ? (
+          <p className="text-xs text-[var(--color-text-dim)]">
+            {matchFilter === "expired"
+              ? "هیچ تطبیق منقضی‌ای نیست."
+              : "تطبیق فعالی نیست — همه منقضی شدن (تب «منقضی» رو ببین)."}
+          </p>
         ) : (
           <>
             <div className="flex flex-col gap-1">
-              {matches.map((m) => {
+              {visibleMatches.map((m) => {
                 const deliveredSet = new Set(m.forwardedTo);
                 const rowsByRecipient = recipients.map((r) => {
                   const got = deliveredSet.has(r.recipientChatId);
@@ -1024,16 +1065,16 @@ export default function RuleDetailPage() {
                 const someFailed = rowsByRecipient.some(
                   (r) => !r.got && r.err,
                 );
-                // A gate-held match is only releasable while it's inside
-                // the rule's window (findPendingMatchesForRecipient
-                // requires matched_at > now-window). Past that it can
-                // NEVER auto-send — it's expired, not "waiting". Show
-                // that honestly so "held" doesn't look like it'll still
-                // go through.
+                // Once a match is past the rule's window it can NEVER be
+                // delivered again — not auto-released, and force-send is
+                // refused server-side. Any match that isn't fully
+                // delivered by then is expired (whether it was fully
+                // held OR only partially delivered / failed). Show that
+                // honestly and drop the force-send button.
                 const windowMs = (rule.requestWindowSeconds ?? 0) * 1000;
                 const ageMs = Date.now() - new Date(m.matchedAt).getTime();
-                const expiredHold =
-                  noneDelivered && !someFailed && windowMs > 0 && ageMs > windowMs;
+                const pastWindow = windowMs > 0 && ageMs > windowMs;
+                const expired = !allDelivered && pastWindow;
                 return (
                   <div
                     key={m.id}
@@ -1049,14 +1090,13 @@ export default function RuleDetailPage() {
                           ✓ همه گرفتن ({m.forwardedTo.length}/
                           {recipients.length})
                         </Badge>
+                      ) : expired ? (
+                        <Badge tone="neutral">
+                          ⌛ منقضی ({m.forwardedTo.length}/{recipients.length})
+                          — دیگه ارسال نمی‌شه
+                        </Badge>
                       ) : noneDelivered && !someFailed ? (
-                        expiredHold ? (
-                          <Badge tone="neutral">
-                            ⌛ منقضی شد (gate) — دیگه خودکار ارسال نمی‌شه
-                          </Badge>
-                        ) : (
-                          <Badge tone="warn">⏸ نگه‌داشته (gate)</Badge>
-                        )
+                        <Badge tone="warn">⏸ نگه‌داشته (gate)</Badge>
                       ) : someFailed ? (
                         <Badge tone="danger">
                           ✗ ناقص ({m.forwardedTo.length}/{recipients.length})
@@ -1081,7 +1121,7 @@ export default function RuleDetailPage() {
                                   : "bg-[var(--color-surface)] text-[var(--color-text-dim)]"
                             }`}
                           >
-                            {r.got ? "✓" : r.err ? "✗" : expiredHold ? "⌛" : "⏸"}{" "}
+                            {r.got ? "✓" : expired ? "⌛" : r.err ? "✗" : "⏸"}{" "}
                             {r.label
                               ? `${r.label}`
                               : String(r.recipientChatId)}
@@ -1110,12 +1150,12 @@ export default function RuleDetailPage() {
                         </div>
                       </div>
                     )}
-                    {!allDelivered && expiredHold && (
+                    {expired && (
                       <div className="mt-2 text-[10px] text-[var(--color-text-dim)]">
-                        ⌛ منقضی — دیگه قابل ارسال نیست (پنجره‌ی گیت گذشته).
+                        ⌛ منقضی — پنجره‌ی زمانی گذشته، دیگه قابل ارسال نیست.
                       </div>
                     )}
-                    {!allDelivered && !expiredHold && (
+                    {!allDelivered && !expired && (
                       <div className="mt-2 flex flex-col gap-1.5">
                         <button
                           onClick={() => forceSend(m.id)}
