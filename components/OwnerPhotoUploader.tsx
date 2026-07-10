@@ -116,7 +116,7 @@ export default function OwnerPhotoUploader() {
   return (
     <Card>
       <h2 className="text-sm font-semibold mb-1">
-        🖼 Owner reference photo (تولید عکس AI)
+        🖼 عکس مرجع صاحب (تولید عکس AI)
       </h2>
       <p className="text-[11px] text-[var(--color-text-dim)] mb-3">
         عکس مرجع تو که AI به‌عنوان «همون آدم» توی تولید عکس‌ها استفاده می‌کنه.
@@ -128,7 +128,7 @@ export default function OwnerPhotoUploader() {
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={`/api/settings/owner-photo?t=${nonce}`}
-            alt="owner reference"
+            alt="عکس مرجع صاحب"
             className="w-24 h-24 rounded-md object-cover border border-[var(--color-border)] bg-[var(--color-surface-2)]"
           />
         ) : (

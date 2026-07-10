@@ -316,8 +316,8 @@ export default function UrgentPage() {
   return (
     <Shell>
       <PageTitle
-        title="Urgent inbox"
-        subtitle="Messages the AI flagged as urgent and concerning you."
+        title="صندوق فوری"
+        subtitle="پیام‌هایی که AI به‌عنوان فوری و مربوط به تو علامت زده."
         actions={
           <label className="text-xs text-[var(--color-text-dim)] flex items-center gap-2">
             <input
@@ -325,17 +325,17 @@ export default function UrgentPage() {
               checked={showHandled}
               onChange={(e) => setShowHandled(e.target.checked)}
             />
-            Show handled
+            نمایش رسیدگی‌شده‌ها
           </label>
         }
       />
 
       {loading ? (
-        <Card>Loading…</Card>
+        <Card>در حال بارگذاری…</Card>
       ) : messages.length === 0 ? (
         <Card>
           <p className="text-sm text-[var(--color-text-dim)]">
-            Inbox zero. No urgent messages pending.
+            صندوق خالیه. هیچ پیام فوری‌ای در انتظار نیست.
           </p>
         </Card>
       ) : (
@@ -351,7 +351,7 @@ export default function UrgentPage() {
               className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm"
             />
             <div className="flex items-center gap-2 flex-wrap text-xs">
-              <span className="text-[var(--color-text-dim)]">Mode:</span>
+              <span className="text-[var(--color-text-dim)]">حالت:</span>
               <select
                 value={modeFilter}
                 onChange={(e) =>
@@ -381,21 +381,21 @@ export default function UrgentPage() {
                   disabled={bulking}
                   className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                 >
-                  Clear
+                  پاک کردن
                 </button>
                 <button
                   onClick={() => runBulk("handle")}
                   disabled={bulking}
                   className="px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
                 >
-                  ✓ Mark handled
+                  ✓ علامت رسیدگی‌شده
                 </button>
                 <button
                   onClick={() => runBulk("unhandle")}
                   disabled={bulking}
                   className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                 >
-                  Un-handle
+                  لغو رسیدگی
                 </button>
               </div>
             )}
@@ -457,7 +457,7 @@ export default function UrgentPage() {
                   {m.transcript && (
                     <div className="mt-2 p-2 rounded-md bg-[var(--color-surface-2)] text-sm">
                       <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
-                        transcript
+                        رونویسی
                       </div>
                       <div
                         dir="auto"
@@ -476,21 +476,21 @@ export default function UrgentPage() {
                     {m.reason}
                   </div>
                   <div className="mt-3 flex gap-2 flex-wrap items-center">
-                    <Badge tone="danger">imp {m.importance}/10</Badge>
+                    <Badge tone="danger">اهمیت {m.importance}/10</Badge>
                     <Badge tone={MODE_LABEL[m.chatMode].tone}>
                       {MODE_LABEL[m.chatMode].label}
                     </Badge>
-                    {m.alerted && <Badge tone="warn">alerted</Badge>}
-                    {m.autoReplied && <Badge tone="info">auto-replied</Badge>}
+                    {m.alerted && <Badge tone="warn">هشدار داده شد</Badge>}
+                    {m.autoReplied && <Badge tone="info">پاسخ خودکار</Badge>}
                     {m.mediaKind && <Badge tone="neutral">{m.mediaKind}</Badge>}
-                    {m.handledAt && <Badge tone="success">handled</Badge>}
+                    {m.handledAt && <Badge tone="success">رسیدگی شد</Badge>}
                     {canTranscribe(m.mediaKind) && !m.transcript && (
                       <button
                         onClick={() => transcribe(m.id)}
                         disabled={transcribing.has(m.id)}
                         className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                       >
-                        {transcribing.has(m.id) ? "Transcribing…" : "🎙 Transcribe"}
+                        {transcribing.has(m.id) ? "در حال رونویسی…" : "🎙 رونویسی"}
                       </button>
                     )}
                   </div>
@@ -503,7 +503,7 @@ export default function UrgentPage() {
                   {drafts[m.id] !== undefined && (
                     <div className="mt-3 p-2 rounded-md bg-[var(--color-surface-2)]">
                       <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
-                        AI suggested reply (you can edit)
+                        پاسخ پیشنهادی AI (قابل ویرایش)
                       </div>
                       <textarea
                         dir="auto"
@@ -520,14 +520,14 @@ export default function UrgentPage() {
                           disabled={sending.has(m.id) || !drafts[m.id]?.trim()}
                           className="text-xs px-3 py-1.5 rounded-md bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-50"
                         >
-                          {sending.has(m.id) ? "Sending…" : "✅ Send as me"}
+                          {sending.has(m.id) ? "در حال ارسال…" : "✅ ارسال به‌جای من"}
                         </button>
                         <button
                           onClick={() => suggest(m.id)}
                           disabled={suggesting.has(m.id)}
                           className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                         >
-                          {suggesting.has(m.id) ? "…" : "🔁 Regenerate"}
+                          {suggesting.has(m.id) ? "…" : "🔁 تولید دوباره"}
                         </button>
                         <button
                           onClick={() =>
@@ -539,7 +539,7 @@ export default function UrgentPage() {
                           }
                           className="text-xs px-3 py-1.5 rounded-md text-[var(--color-text-dim)]"
                         >
-                          Cancel
+                          لغو
                         </button>
                       </div>
                     </div>
@@ -552,7 +552,7 @@ export default function UrgentPage() {
                       disabled={suggesting.has(m.id)}
                       className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
                     >
-                      {suggesting.has(m.id) ? "Suggesting…" : "🤖 AI suggest"}
+                      {suggesting.has(m.id) ? "در حال پیشنهاد…" : "🤖 پیشنهاد AI"}
                     </button>
                   )}
                   {!m.handledAt && secretaries.length > 0 && (
@@ -567,7 +567,7 @@ export default function UrgentPage() {
                       className="text-xs px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
                     >
                       <option value="" disabled>
-                        {forwarding.has(m.id) ? "Forwarding…" : "↗ Forward to…"}
+                        {forwarding.has(m.id) ? "در حال فوروارد…" : "↗ فوروارد به…"}
                       </option>
                       {secretaries.map((s) => (
                         <option key={s.userId} value={s.userId}>
@@ -579,7 +579,7 @@ export default function UrgentPage() {
                   {!m.handledAt &&
                     (m.chatMode === "ai_chat" ? (
                       <span className="text-xs px-3 py-1.5 rounded-md border border-emerald-700 bg-emerald-900/30 text-emerald-300">
-                        ✓ AI handling
+                        ✓ در دست AI
                       </span>
                     ) : (
                       <button
@@ -587,7 +587,7 @@ export default function UrgentPage() {
                         disabled={handingOver.has(m.id)}
                         className="text-xs px-3 py-1.5 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
                       >
-                        {handingOver.has(m.id) ? "Switching…" : "🤖 Full AI"}
+                        {handingOver.has(m.id) ? "در حال تغییر…" : "🤖 کامل AI"}
                       </button>
                     ))}
                   {m.handledAt ? (
@@ -595,14 +595,14 @@ export default function UrgentPage() {
                       onClick={() => setHandled(m.id, false)}
                       className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
                     >
-                      Unhandle
+                      لغو رسیدگی
                     </button>
                   ) : (
                     <button
                       onClick={() => setHandled(m.id, true)}
                       className="text-xs px-3 py-1.5 rounded-md bg-emerald-700 hover:bg-emerald-600 text-white"
                     >
-                      Mark handled
+                      علامت رسیدگی‌شده
                     </button>
                   )}
                 </div>

@@ -86,7 +86,7 @@ export default function SmsBlockRulesPage() {
     <Shell>
       <div dir="rtl">
         <PageTitle
-          title="🚫 SMS Block Rules"
+          title="🚫 قوانین بلاک SMS"
           subtitle="نمونه‌هایی از پیام‌هایی که نمی‌خوای ببینی — هر SMS جدیدی که AI تشخیص بده «از همین مدله» قبل از رسیدن به inbox فیلتر می‌شه."
         />
 
@@ -120,7 +120,7 @@ export default function SmsBlockRulesPage() {
         </Card>
 
         {loading ? (
-          <Card>Loading…</Card>
+          <Card>در حال بارگذاری…</Card>
         ) : rules.length === 0 ? (
           <Card>
             <p className="text-sm text-[var(--color-text-dim)]">
@@ -145,12 +145,12 @@ export default function SmsBlockRulesPage() {
                       className="text-sm font-medium bg-transparent border-b border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-accent)] focus:outline-none px-1 py-0.5"
                     />
                     {r.enabled ? (
-                      <Badge tone="success">on</Badge>
+                      <Badge tone="success">روشن</Badge>
                     ) : (
-                      <Badge tone="neutral">off</Badge>
+                      <Badge tone="neutral">خاموش</Badge>
                     )}
                     {r.hitCount > 0 && (
-                      <Badge tone="info">{r.hitCount} hit</Badge>
+                      <Badge tone="info">{r.hitCount} بار</Badge>
                     )}
                     {r.lastHitAt && (
                       <span className="text-[10px] text-[var(--color-text-dim)]">
@@ -167,7 +167,7 @@ export default function SmsBlockRulesPage() {
                           update(r.id, { enabled: e.target.checked })
                         }
                       />
-                      enabled
+                      فعال
                     </label>
                     <button
                       onClick={() => remove(r.id)}

@@ -19,13 +19,13 @@ const TILES: Array<{
   {
     href: "/settings/edit",
     emoji: "⚙️",
-    label: "Settings",
+    label: "تنظیمات",
     desc: "همه‌ی تنظیمات (owner، AI models، auto-reply، grace، debug، حداقل importance، ...)",
   },
   {
     href: "/rules",
     emoji: "📐",
-    label: "Rules",
+    label: "قوانین",
     desc: "قانون‌های تشخیص پیام (مثلاً OTP) + فوروارد خودکار با format دلخواه",
   },
   {
@@ -43,7 +43,7 @@ const TILES: Array<{
   {
     href: "/secretary-relays",
     emoji: "🧑‍💼",
-    label: "Secretary Routes",
+    label: "مسیرهای منشی",
     desc: "هر Route یه لیست فرستنده + گیرنده داره؛ پیام DM به چند تا منشی فوروارد می‌شه و جواب اون‌ها مستقیم برمی‌گرده.",
   },
   {
@@ -55,25 +55,25 @@ const TILES: Array<{
   {
     href: "/follow-up",
     emoji: "⏰",
-    label: "Follow-up",
+    label: "پیگیری",
     desc: "چت‌هایی که جوابشون رو ندادی — با فیلتر بر اساس وضعیت، جستجو، و دکمه اجرای فوری cron.",
   },
   {
     href: "/chat-profiles",
     emoji: "👤",
-    label: "Chat Profiles",
+    label: "پروفایل چت‌ها",
     desc: "قالب‌های تنظیمات follow-up (کاری / دوستانه / صمیمی / پاسخ سریع / ...). هر چت رو می‌تونی به یه پروفایل assign کنی.",
   },
   {
     href: "/debug-log",
     emoji: "🪵",
-    label: "Debug Log",
+    label: "لاگ دیباگ",
     desc: "هر Update که Telegram به webhook فرستاده — با تایم، چت، نوع، payload کامل. مخصوصاً MessageReactionUpdated برای دیباگ ری‌اکشن.",
   },
   {
     href: "/ask",
     emoji: "🔎",
-    label: "Ask",
+    label: "پرسش",
     desc: "سوال طبیعی از همه‌ی پیام‌ها (مثلاً «ساعت کاری بچه‌ها رو بگو»)",
   },
   {
@@ -85,7 +85,7 @@ const TILES: Array<{
   {
     href: "/site-monitors",
     emoji: "🌐",
-    label: "Site Monitor",
+    label: "پایش سایت",
     desc: "سایت‌های با لاگین (آدرس + یوزر/پسورد) که سر ساعت‌های مشخص به‌وقت تهران چک می‌شن؛ اگه نتیجه‌ای بود با تحلیل AI توی Note Inbox می‌آد.",
   },
   {
@@ -97,7 +97,7 @@ const TILES: Array<{
   {
     href: "/groups",
     emoji: "📊",
-    label: "Groups",
+    label: "گروه‌ها",
     desc: "خلاصه‌های روزانه‌ی گروه‌ها",
   },
   {
@@ -109,13 +109,13 @@ const TILES: Array<{
   {
     href: "/knowledge",
     emoji: "📘",
-    label: "Knowledge",
+    label: "دانش‌نامه",
     desc: "اصطلاحات و توضیحاتی که به AI تزریق می‌شه",
   },
   {
     href: "/notes",
     emoji: "📒",
-    label: "Notes",
+    label: "یادداشت‌ها",
     desc: "تب «یادداشت‌ها» (استخراج‌شده از هر چت) + تب «مفاهیم» (global Watchlist) + تب «تنظیمات» پیشرفته (cooldown / digest / archive).",
   },
   {
@@ -127,19 +127,19 @@ const TILES: Array<{
   {
     href: "/costs",
     emoji: "💵",
-    label: "Costs",
+    label: "هزینه‌ها",
     desc: "هزینه‌ی AI و توکن‌ها",
   },
   {
     href: "/audit",
     emoji: "🪵",
-    label: "System Log",
+    label: "لاگ سیستم",
     desc: "خطاهای سیستم + لاگ تغییرات audit. هر خطا دکمه کپی داره با stack trace کامل.",
   },
   {
     href: "/health",
     emoji: "🩺",
-    label: "Health",
+    label: "سلامت",
     desc: "وضعیت webhook، business connections، DB",
   },
 ];
@@ -173,7 +173,7 @@ export default function SettingsTilesPage() {
   return (
     <Shell>
       <PageTitle
-        title="Settings"
+        title="تنظیمات"
         subtitle="ابزارها و پنل‌های مدیریتی. روی هر کارت کلیک کن تا وارد بشی."
       />
 

@@ -110,7 +110,7 @@ export default function MediaRoutingPage() {
   return (
     <Shell>
       <PageTitle
-        title="🛰 Media routing log"
+        title="🛰 لاگ مسیریابی مدیا"
         subtitle="هر voice/video/photo که router تصمیم گرفت روش، اینجا ثبت می‌شه — حتی اگه روت نشده. برای debug «چرا کپی نشد؟»"
       />
 

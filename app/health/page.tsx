@@ -28,15 +28,15 @@ const CHECK_LABELS: Record<string, string> = {
   database: "Database (Neon)",
   telegram: "Telegram Bot API",
   openrouter: "OpenRouter (AI)",
-  activity: "DB activity query",
+  activity: "کوئری فعالیت DB",
 };
 
 const CHECK_HINT: Record<string, string> = {
-  database: "If this is red, nothing else works.",
-  telegram: "If red: BOT_TOKEN bad or Telegram unreachable. Bot can't send/receive.",
+  database: "اگه این قرمز باشه، هیچ‌چیز دیگه کار نمی‌کنه.",
+  telegram: "اگه قرمز: BOT_TOKEN اشتباهه یا Telegram در دسترس نیست. ربات نمی‌تونه ارسال/دریافت کنه.",
   openrouter:
-    "If red: AI key invalid or OOM. AI suggest / Full AI / Friendly auto-reply will all fail.",
-  activity: "Reads message_log/ai_usage counters for the dashboards below.",
+    "اگه قرمز: کلید AI نامعتبره یا اعتبار تمومه. AI suggest / Full AI / پاسخ خودکار دوستانه همه fail می‌شن.",
+  activity: "شمارنده‌های message_log/ai_usage رو برای داشبوردهای پایین می‌خونه.",
 };
 
 function fmtTimestamp(v: unknown): string {
@@ -93,24 +93,24 @@ export default function HealthPage() {
   return (
     <Shell>
       <PageTitle
-        title="Health"
-        subtitle="Live status of every external dependency. If the bot 'just stopped working', the red light is usually here."
+        title="سلامت"
+        subtitle="وضعیت زنده‌ی همه‌ی وابستگی‌های خارجی. اگه ربات «یهو از کار افتاد»، معمولاً چراغ قرمز اینجاست."
         actions={
           <div className="flex gap-2">
             <button
               onClick={refreshWebhook}
               disabled={refreshingWebhook}
               className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-              title="Re-subscribe to all Telegram update types (use this if delete/edit events aren't being received)"
+              title="دوباره به همه‌ی نوع‌های update تلگرام subscribe کن (اگه رویدادهای حذف/ویرایش دریافت نمی‌شن از این استفاده کن)"
             >
-              {refreshingWebhook ? "Refreshing…" : "Re-register webhook"}
+              {refreshingWebhook ? "در حال رفرش…" : "ثبت دوباره‌ی webhook"}
             </button>
             <button
               onClick={load}
               disabled={loading}
               className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
             >
-              {loading ? "Checking…" : "Re-check"}
+              {loading ? "در حال بررسی…" : "بررسی دوباره"}
             </button>
           </div>
         }
@@ -119,7 +119,7 @@ export default function HealthPage() {
       {error && (
         <Card className="mb-4 border-red-800">
           <div className="text-red-300 text-sm font-medium mb-1">
-            Health endpoint itself failed
+            خود endpoint سلامت خطا داد
           </div>
           <div className="text-xs text-[var(--color-text-dim)] break-all">
             {error}
@@ -139,12 +139,12 @@ export default function HealthPage() {
               <div className="flex-1">
                 <div className="text-sm font-medium">
                   {data.ok
-                    ? "All systems operational"
-                    : "Something is broken — see below"}
+                    ? "همه‌ی سیستم‌ها سالم"
+                    : "یه چیزی خرابه — پایین رو ببین"}
                 </div>
                 {lastChecked && (
                   <div className="text-[11px] text-[var(--color-text-dim)] mt-0.5">
-                    last checked {lastChecked.toLocaleTimeString()}
+                    آخرین بررسی {lastChecked.toLocaleTimeString()}
                   </div>
                 )}
               </div>
@@ -166,7 +166,7 @@ export default function HealthPage() {
                     )}
                   </div>
                   <Badge tone={c.ok ? "success" : "danger"}>
-                    {c.ok ? "ok" : "fail"}
+                    {c.ok ? "سالم" : "خطا"}
                   </Badge>
                 </div>
                 {c.detail && (
@@ -189,16 +189,16 @@ export default function HealthPage() {
 
           {data.activity && Object.keys(data.activity).length > 0 && (
             <Card>
-              <div className="text-sm font-medium mb-3">Recent activity</div>
+              <div className="text-sm font-medium mb-3">فعالیت اخیر</div>
               <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                 <div>
                   <dt className="text-[var(--color-text-dim)]">
-                    Last incoming message
+                    آخرین پیام ورودی
                   </dt>
                   <dd>{fmtTimestamp(data.activity.last_msg_at)}</dd>
                 </div>
                 <div>
-                  <dt className="text-[var(--color-text-dim)]">Last AI call</dt>
+                  <dt className="text-[var(--color-text-dim)]">آخرین call به AI</dt>
                   <dd>{fmtTimestamp(data.activity.last_ai_at)}</dd>
                 </div>
                 <div>

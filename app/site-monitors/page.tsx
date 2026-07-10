@@ -174,7 +174,7 @@ export default function SiteMonitorsPage() {
     <Shell>
       <div dir="rtl">
         <PageTitle
-          title="🌐 Site Monitor"
+          title="🌐 پایش سایت"
           subtitle="سایت‌های با لاگین رو سر ساعت‌های مشخص (به‌وقت تهران) چک می‌کنه؛ اگه نتیجه‌ای بود با تحلیل AI توی Note Inbox می‌فرسته."
         />
 

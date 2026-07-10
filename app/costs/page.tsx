@@ -155,17 +155,17 @@ export default function CostsPage() {
   return (
     <Shell>
       <PageTitle
-        title="AI costs"
-        subtitle="Where the OpenRouter / Groq spend goes."
+        title="هزینه‌های AI"
+        subtitle="خرج OpenRouter / Groq کجا می‌ره."
         actions={
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
             className="text-xs px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
           >
-            <option value={7}>last 7 days</option>
-            <option value={30}>last 30 days</option>
-            <option value={90}>last 90 days</option>
+            <option value={7}>۷ روز اخیر</option>
+            <option value={30}>۳۰ روز اخیر</option>
+            <option value={90}>۹۰ روز اخیر</option>
           </select>
         }
       />
@@ -173,20 +173,20 @@ export default function CostsPage() {
       {overview && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
           <StatCard
-            label="Total cost"
+            label="هزینه کل"
             value={`$${overview.totalCostUsd.toFixed(4)}`}
-            hint={`${overview.totalCalls} calls all-time`}
+            hint={`${overview.totalCalls} call در کل`}
           />
           <StatCard
-            label="Last 24h"
+            label="۲۴ ساعت اخیر"
             value={`$${overview.last24hCostUsd.toFixed(4)}`}
           />
           <StatCard
-            label="Avg / call"
+            label="میانگین / call"
             value={`$${avgCostPerCall.toFixed(5)}`}
           />
           <StatCard
-            label="Tokens (period)"
+            label="توکن (بازه)"
             value={`${(byPurpose.reduce((s, r) => s + r.totalTokens, 0) / 1000).toFixed(1)}k`}
           />
         </div>
@@ -387,14 +387,14 @@ export default function CostsPage() {
         />
       )}
 
-      {loading && <Card className="mb-4">Loading…</Card>}
+      {loading && <Card className="mb-4">بارگذاری…</Card>}
 
       <Card className="mb-4">
         <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
-          Cost prediction
+          پیش‌بینی هزینه
         </div>
         <div className="flex items-center gap-2 flex-wrap text-sm">
-          <span>If</span>
+          <span>اگه</span>
           <input
             type="number"
             min={1}
@@ -405,24 +405,25 @@ export default function CostsPage() {
             }
             className="w-24 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
           />
-          <span>more incoming messages arrive →</span>
+          <span>پیام ورودی دیگه بیاد →</span>
           <Badge tone="info">
-            estimated ${predictedCost.toFixed(4)}
+            تخمین ${predictedCost.toFixed(4)}
           </Badge>
         </div>
         <p className="text-xs text-[var(--color-text-dim)] mt-2">
-          Uses the per-call averages from the selected period (classify cost
-          per message × N, plus the AI-reply share × N × avg AI reply cost).
+          از میانگین هر call در بازه‌ی انتخاب‌شده استفاده می‌کنه (هزینه‌ی
+          دسته‌بندی هر پیام × N، به‌علاوه‌ی سهم پاسخ AI × N × میانگین هزینه‌ی
+          پاسخ AI).
         </p>
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <Card>
           <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
-            By purpose
+            بر اساس هدف
           </div>
           {byPurpose.length === 0 ? (
-            <p className="text-sm text-[var(--color-text-dim)]">No usage yet.</p>
+            <p className="text-sm text-[var(--color-text-dim)]">هنوز مصرفی نیست.</p>
           ) : (
             <table className="w-full text-sm">
               <tbody>
@@ -449,10 +450,10 @@ export default function CostsPage() {
 
         <Card>
           <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
-            By model
+            بر اساس مدل
           </div>
           {byModel.length === 0 ? (
-            <p className="text-sm text-[var(--color-text-dim)]">No usage yet.</p>
+            <p className="text-sm text-[var(--color-text-dim)]">هنوز مصرفی نیست.</p>
           ) : (
             <table className="w-full text-sm">
               <tbody>
@@ -480,10 +481,10 @@ export default function CostsPage() {
 
       <Card>
         <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
-          Daily spend
+          خرج روزانه
         </div>
         {byDay.length === 0 ? (
-          <p className="text-sm text-[var(--color-text-dim)]">No usage yet.</p>
+          <p className="text-sm text-[var(--color-text-dim)]">هنوز مصرفی نیست.</p>
         ) : (
           <div className="flex flex-col gap-1">
             {byDay.map((d) => (

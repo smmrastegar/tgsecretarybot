@@ -116,7 +116,7 @@ export default function MediaView({
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={src}
-          alt="media"
+          alt="رسانه"
           className={`max-h-72 rounded-md ${isSticker ? "p-2 bg-[var(--color-surface-2)]/60" : ""}`}
           loading="eager"
           onLoad={() => setState("loaded")}

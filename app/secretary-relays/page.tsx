@@ -90,7 +90,7 @@ export default function SecretaryRelaysPage() {
     async (id: number, name: string) => {
       if (
         !confirm(
-          `«${name}» پاک بشه؟ هر پیامی که از مبدا این Route می‌اومد دیگه فوروارد نمی‌شه.`,
+          `«${name}» پاک بشه؟ هر پیامی که از مبدا این مسیر می‌اومد دیگه فوروارد نمی‌شه.`,
         )
       )
         return;
@@ -103,18 +103,18 @@ export default function SecretaryRelaysPage() {
   return (
     <Shell>
       <PageTitle
-        title="🧑‍💼 Secretary Routes"
+        title="🧑‍💼 مسیرهای منشی"
         subtitle="ارتباط مستقیم از طریق اکانت Telegram شما — نه از طریق بات. پیام فرستنده‌ها توی چت معمولی شما با گیرنده‌ها (از طرف خودتون) ظاهر می‌شه. گیرنده هم توی همون چت معمولی جواب می‌ده و جوابش مستقیم برای فرستنده ارسال می‌شه. پیش‌شرط: هم گیرنده هم فرستنده باید قبلاً توی DM‌های شما باشن."
       />
 
       <Card className="mb-4">
-        <div className="text-xs font-medium mb-2">+ Route جدید</div>
+        <div className="text-xs font-medium mb-2">+ مسیر جدید</div>
         <div className="flex gap-2 flex-wrap">
           <input
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            placeholder="اسم Route (مثلاً «منشی‌های کاری»)"
+            placeholder="اسم مسیر (مثلاً «منشی‌های کاری»)"
             className="flex-1 min-w-[200px] text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5"
             onKeyDown={(e) => {
               if (e.key === "Enter") create();
@@ -131,11 +131,11 @@ export default function SecretaryRelaysPage() {
       </Card>
 
       {loading ? (
-        <Card>Loading…</Card>
+        <Card>در حال بارگذاری…</Card>
       ) : list.length === 0 ? (
         <Card>
           <p className="text-sm text-[var(--color-text-dim)]">
-            هیچ Route ای ساخته نشده. بالا اولیشو بساز.
+            هیچ مسیری ساخته نشده. بالا اولیشو بساز.
           </p>
         </Card>
       ) : (
@@ -183,9 +183,9 @@ function RelayCard({
             className="text-sm font-medium bg-transparent border-b border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-accent)] focus:outline-none px-1 py-0.5"
           />
           {relay.enabled ? (
-            <Badge tone="success">on</Badge>
+            <Badge tone="success">روشن</Badge>
           ) : (
-            <Badge tone="neutral">off</Badge>
+            <Badge tone="neutral">خاموش</Badge>
           )}
         </div>
         <div className="flex items-center gap-1.5">
@@ -195,7 +195,7 @@ function RelayCard({
               checked={relay.enabled}
               onChange={(e) => onToggle(relay.id, e.target.checked)}
             />
-            enabled
+            فعال
           </label>
           <button
             onClick={() => onDelete(relay.id, relay.name)}

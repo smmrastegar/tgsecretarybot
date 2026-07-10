@@ -296,24 +296,24 @@ export default function MessageActions({
             onClick={() => setHandled(false)}
             className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
           >
-            Unhandle
+            برگردون به نرسیدگی
           </button>
         ) : (
           <button
             onClick={() => setHandled(true)}
             className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
           >
-            Mark handled
+            علامت‌گذاری به‌عنوان رسیدگی‌شده
           </button>
         )}
-        {m.handledAt && <Badge tone="success">handled</Badge>}
+        {m.handledAt && <Badge tone="success">رسیدگی‌شده</Badge>}
         <AddToRuleButton messageLogId={m.id} />
       </div>
 
       {draft !== null && (
         <div className="mt-2 p-2 rounded-md bg-[var(--color-surface-2)]">
           <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
-            AI suggested reply (you can edit)
+            پاسخ پیشنهادی AI (می‌تونی ویرایش کنی)
           </div>
           <textarea
             dir="auto"
@@ -328,20 +328,20 @@ export default function MessageActions({
               disabled={sending || !draft.trim()}
               className="text-xs px-3 py-1.5 rounded-md bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-50"
             >
-              {sending ? "Sending…" : "✅ Send as me"}
+              {sending ? "در حال ارسال…" : "✅ ارسال از طرف من"}
             </button>
             <button
               onClick={suggest}
               disabled={suggesting}
               className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
             >
-              {suggesting ? "…" : "🔁 Regenerate"}
+              {suggesting ? "…" : "🔁 تولید مجدد"}
             </button>
             <button
               onClick={() => setDraft(null)}
               className="text-xs px-3 py-1.5 rounded-md text-[var(--color-text-dim)]"
             >
-              Cancel
+              انصراف
             </button>
           </div>
         </div>

@@ -160,7 +160,7 @@ export default function WatchlistPanel() {
         <div>
           <h2 className="text-sm font-medium mb-2">مفاهیم تعریف‌شده</h2>
           {loading ? (
-            <Card>Loading…</Card>
+            <Card>در حال بارگذاری…</Card>
           ) : items.length === 0 ? (
             <Card>
               <p className="text-sm text-[var(--color-text-dim)]">
@@ -290,12 +290,12 @@ function ItemCard({
             className="text-sm font-medium bg-transparent border-b border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-accent)] focus:outline-none px-1 py-0.5 min-w-0 flex-1"
           />
           {item.enabled ? (
-            <Badge tone="success">on</Badge>
+            <Badge tone="success">روشن</Badge>
           ) : (
-            <Badge tone="neutral">off</Badge>
+            <Badge tone="neutral">خاموش</Badge>
           )}
-          {item.priority === "high" && <Badge tone="danger">🚨 high</Badge>}
-          {item.priority === "low" && <Badge tone="neutral">🔅 low</Badge>}
+          {item.priority === "high" && <Badge tone="danger">🚨 بالا</Badge>}
+          {item.priority === "low" && <Badge tone="neutral">🔅 پایین</Badge>}
           {item.matchCount > 0 && (
             <Badge tone="info">{item.matchCount} match</Badge>
           )}
@@ -307,7 +307,7 @@ function ItemCard({
               checked={item.enabled}
               onChange={(e) => onUpdate({ enabled: e.target.checked })}
             />
-            enabled
+            فعال
           </label>
           <button
             onClick={onDelete}

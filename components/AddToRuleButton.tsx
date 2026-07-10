@@ -113,7 +113,7 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
         className="text-[10px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text-dim)]"
         title="این پیام رو به یه rule اضافه کن یا یه rule جدید با این به‌عنوان مثال بساز"
       >
-        📐 to rule
+        📐 به rule
       </button>
     );
   }
@@ -121,7 +121,7 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
   return (
     <div className="w-full mt-2 p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]">
       <div className="flex items-center justify-between mb-2">
-        <div className="text-[11px] font-medium">📐 Add to rule</div>
+        <div className="text-[11px] font-medium">📐 افزودن به rule</div>
         <button
           onClick={() => setOpen(false)}
           className="text-[10px] text-[var(--color-text-dim)] hover:text-white"

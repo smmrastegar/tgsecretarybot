@@ -56,7 +56,7 @@ export default function DebugModeToggle() {
 
   return (
     <section className="mb-6">
-      <h2 className="text-sm font-semibold mb-1">🔬 Debug mode (admin)</h2>
+      <h2 className="text-sm font-semibold mb-1">🔬 حالت Debug (ادمین)</h2>
       <p className="text-[11px] text-[var(--color-text-dim)] mb-2">
         وقتی روشن باشه، widget شناور پایین-راست هر fetch روی صفحه رو با
         duration و status نشون می‌ده. تا زمانی که خاموش نکنی روشن می‌مونه

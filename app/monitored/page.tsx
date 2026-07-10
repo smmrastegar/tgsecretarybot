@@ -649,7 +649,7 @@ export default function MonitoredPage() {
   return (
     <Shell>
       <PageTitle
-        title="📸 Instagram Monitor"
+        title="📸 پایش اینستاگرام"
         subtitle="استوری / پست / ریلز اکانت‌های public اینستاگرام رو دانلود و توی کانال storage پست می‌کنه."
       />
 
@@ -662,7 +662,7 @@ export default function MonitoredPage() {
       >
         <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
           <div className="text-sm font-medium">
-            {usageOutOfCredits ? "💸 HikerAPI پاسخ ۴۰۲ می‌ده" : "💳 HikerAPI usage"}
+            {usageOutOfCredits ? "💸 HikerAPI پاسخ ۴۰۲ می‌ده" : "💳 مصرف HikerAPI"}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {keyPrefix ? (
@@ -776,7 +776,7 @@ export default function MonitoredPage() {
             )}
             {usage.rateLimitPerSec != null && (
               <span>
-                <span className="text-[var(--color-text-dim)]">rate:</span>{" "}
+                <span className="text-[var(--color-text-dim)]">نرخ:</span>{" "}
                 <strong className="tabular-nums">
                   {usage.rateLimitPerSec}/sec
                 </strong>
@@ -1269,7 +1269,7 @@ export default function MonitoredPage() {
             disabled={selected.size === 0}
             className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
           >
-            Clear
+            پاک کردن
           </button>
           <span className="text-[var(--color-text-dim)]">
             {selected.size} انتخاب شده
@@ -1356,7 +1356,7 @@ export default function MonitoredPage() {
       </Card>
 
       {loading ? (
-        <Card>Loading…</Card>
+        <Card>در حال بارگذاری…</Card>
       ) : accounts.length === 0 ? (
         <Card>
           <p className="text-sm text-[var(--color-text-dim)]">

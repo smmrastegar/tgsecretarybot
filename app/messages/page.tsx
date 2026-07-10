@@ -36,11 +36,11 @@ function groupByChat(messages: Message[]): Array<{
 }
 
 const SOURCE_LABEL: Record<string, { label: string; tone: "info" | "success" | "warn" | "neutral" }> = {
-  ai_chat: { label: "AI (auto)", tone: "success" },
-  ai_dashboard: { label: "AI (manual)", tone: "success" },
-  friendly_reply: { label: "Friendly", tone: "info" },
-  auto_reply: { label: "Auto-reply", tone: "info" },
-  owner_dashboard: { label: "Dashboard", tone: "neutral" },
+  ai_chat: { label: "AI (خودکار)", tone: "success" },
+  ai_dashboard: { label: "AI (دستی)", tone: "success" },
+  friendly_reply: { label: "صمیمی", tone: "info" },
+  auto_reply: { label: "پاسخ خودکار", tone: "info" },
+  owner_dashboard: { label: "داشبورد", tone: "neutral" },
 };
 
 // Prefer the per-chat custom label (firstName + lastName / nickname /
