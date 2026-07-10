@@ -968,6 +968,16 @@ export default function RuleDetailPage() {
                 const someFailed = rowsByRecipient.some(
                   (r) => !r.got && r.err,
                 );
+                // A gate-held match is only releasable while it's inside
+                // the rule's window (findPendingMatchesForRecipient
+                // requires matched_at > now-window). Past that it can
+                // NEVER auto-send — it's expired, not "waiting". Show
+                // that honestly so "held" doesn't look like it'll still
+                // go through.
+                const windowMs = (rule.requestWindowSeconds ?? 0) * 1000;
+                const ageMs = Date.now() - new Date(m.matchedAt).getTime();
+                const expiredHold =
+                  noneDelivered && !someFailed && windowMs > 0 && ageMs > windowMs;
                 return (
                   <div
                     key={m.id}
@@ -984,7 +994,13 @@ export default function RuleDetailPage() {
                           {recipients.length})
                         </Badge>
                       ) : noneDelivered && !someFailed ? (
-                        <Badge tone="warn">⏸ نگه‌داشته (gate)</Badge>
+                        expiredHold ? (
+                          <Badge tone="neutral">
+                            ⌛ منقضی شد (gate) — دیگه خودکار ارسال نمی‌شه
+                          </Badge>
+                        ) : (
+                          <Badge tone="warn">⏸ نگه‌داشته (gate)</Badge>
+                        )
                       ) : someFailed ? (
                         <Badge tone="danger">
                           ✗ ناقص ({m.forwardedTo.length}/{recipients.length})
@@ -1009,7 +1025,7 @@ export default function RuleDetailPage() {
                                   : "bg-[var(--color-surface)] text-[var(--color-text-dim)]"
                             }`}
                           >
-                            {r.got ? "✓" : r.err ? "✗" : "⏸"}{" "}
+                            {r.got ? "✓" : r.err ? "✗" : expiredHold ? "⌛" : "⏸"}{" "}
                             {r.label
                               ? `${r.label}`
                               : String(r.recipientChatId)}
