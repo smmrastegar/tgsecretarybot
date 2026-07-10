@@ -204,12 +204,12 @@ export async function matchRules(
   // for a single MATCHED: <comma list> line and parse with regex.
   const systemPrompt = `You are a strict routing classifier. The operator has a list of rules. Each rule has an id, a name, a primary description, positive examples (messages that SHOULD match) and counter-examples (messages that must NOT match).
 
-A rule MATCHES the incoming message ONLY when the message CLEARLY fits the rule's described KIND of message. Judge by MEANING/INTENT, not by surface features.
+A rule MATCHES the incoming message ONLY when the message CLEARLY fits THAT rule's described KIND of message. Judge by MEANING/INTENT, not by surface features.
 
-Be conservative — when in doubt, do NOT match. Specifically:
-- The mere presence of digits/numbers is NOT enough. A message matches a "bank card / account number" rule only if it actually contains a real bank card / account / IBAN number, NOT a reservation code, ticket/booking id, tracking number, phone number, OTP/verification code, date, price, or order id.
-- If the message resembles ANY counter-example, do NOT match that rule.
-- A rule with NO clear positive fit must not be matched just because a number appears.
+Be conservative — when in doubt, do NOT match. Rules to apply PER-RULE (never globally):
+- The mere presence of digits/numbers is NOT enough on its own. A number counts only if it is the SPECIFIC kind the rule's description asks for. E.g. a rule about "bank card / account / IBAN numbers" matches a real card/account/IBAN but NOT an unrelated reservation/ticket/order/phone number; a rule about "OTP / verification / dynamic password (رمز پویا)" matches exactly those codes.
+- Decide what counts using ONLY this rule's own description, positive examples, and counter-examples — do NOT import assumptions from other rules. A category that is a counter-example for one rule may be the target of another.
+- If the message resembles ANY of THIS rule's counter-examples, do NOT match it.
 
 Reply with EXACTLY one line, no preamble, no markdown:
 
@@ -312,10 +312,11 @@ export async function batchTestRule(args: {
     .slice(0, 8)
     .map((e, i) => `  counter_example${i + 1} (must NOT match): "${e.text.slice(0, 200)}"`)
     .join("\n");
-  const systemPrompt = `You are testing a single routing rule against multiple historical messages. A message MATCHES ONLY when it CLEARLY fits the rule's described KIND of message, judged by MEANING/INTENT — not by surface features.
+  const systemPrompt = `You are testing a single routing rule against multiple historical messages. A message MATCHES ONLY when it CLEARLY fits THIS rule's described KIND of message, judged by MEANING/INTENT — not by surface features.
 
-Be conservative — when in doubt, mark NO. Specifically:
-- The mere presence of digits/numbers is NOT enough. A "bank card / account number" rule matches only a real bank card / account / IBAN number, NOT a reservation code, ticket/booking id, tracking number, phone number, OTP/verification code, date, price, or order id.
+Be conservative — when in doubt, mark NO. Apply these per THIS rule (not globally):
+- The mere presence of digits/numbers is NOT enough on its own. A number counts only if it is the SPECIFIC kind this rule's description asks for. A "bank card / account / IBAN" rule matches a real card/account/IBAN but not an unrelated number; an "OTP / verification / dynamic password (رمز پویا)" rule matches exactly those codes.
+- Use ONLY this rule's own description, positive examples, and counter-examples. A category that's a counter-example for another rule may be this rule's target.
 - If a message resembles ANY counter-example, mark NO.
 
 Reply with EXACTLY one MATCHED line listing the indexes that matched:
