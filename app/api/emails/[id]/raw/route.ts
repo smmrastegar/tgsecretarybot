@@ -12,7 +12,22 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   const format = new URL(request.url).searchParams.get("format") === "html" ? "html" : "text";
   if (format === "html") {
     const html = e.htmlBody || `<pre>${(e.textBody ?? "").replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"))}</pre>`;
-    return new Response(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+    return new Response(html, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        // Attacker-controlled email HTML — sandbox it so its scripts
+        // can't run with our session cookie on our own origin.
+        "Content-Security-Policy": "sandbox; default-src 'none'; img-src data: https:; style-src 'unsafe-inline'",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
   }
-  return new Response(e.textBody ?? "(no text part)", { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  return new Response(e.textBody ?? "(no text part)", {
+    status: 200,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }

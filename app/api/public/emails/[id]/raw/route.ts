@@ -26,11 +26,22 @@ export async function GET(
       `<pre>${(e.textBody ?? "").replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"))}</pre>`;
     return new Response(html, {
       status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        // Email HTML is attacker-controlled. Serving it as a top-level
+        // document on our own origin would let its scripts run with our
+        // cookies. `CSP: sandbox` makes the browser treat the response
+        // like a sandboxed iframe — no scripts, no same-origin access.
+        "Content-Security-Policy": "sandbox; default-src 'none'; img-src data: https:; style-src 'unsafe-inline'",
+        "X-Content-Type-Options": "nosniff",
+      },
     });
   }
   return new Response(e.textBody ?? "(no text part)", {
     status: 200,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+    },
   });
 }
