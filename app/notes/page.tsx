@@ -62,7 +62,7 @@ export default function NotesPage() {
   return (
     <Shell>
       <PageTitle
-        title="📒 Notes"
+        title="📒 یادداشت‌ها"
         subtitle="نکات استخراج‌شده + مفاهیم Watchlist + تنظیمات پیشرفته‌ی همه‌ی پیام‌ها."
       />
       <div className="flex gap-2 mb-4 flex-wrap" role="tablist">
@@ -407,7 +407,7 @@ function SettingsTab() {
     }
   };
 
-  if (loading || !s) return <Card>Loading…</Card>;
+  if (loading || !s) return <Card>در حال بارگذاری…</Card>;
 
   const asBool = (v: string) => v.toLowerCase() !== "false" && v !== "";
 

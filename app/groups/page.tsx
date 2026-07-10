@@ -204,7 +204,7 @@ export default function GroupsPage() {
     lines.push("");
     for (const c of filtered) {
       lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      lines.push(`📁 ${c.chatTitle ?? `chat ${c.chatId}`}`);
+      lines.push(`📁 ${c.chatTitle ?? `چت ${c.chatId}`}`);
       lines.push(
         `   ${c.totalMessages} پیام · ${c.peakActiveSenders} نفر · ${c.summaryCount} خلاصه روزانه`,
       );
@@ -240,7 +240,7 @@ export default function GroupsPage() {
   return (
     <Shell>
       <PageTitle
-        title="📊 Group analyzer"
+        title="📊 تحلیلگر گروه"
         subtitle="خلاصه‌های روزانه AI گروه‌ها — همه خلاصه‌های یک گروه روی هم ادغام می‌شن."
         actions={
           <button
@@ -318,7 +318,7 @@ export default function GroupsPage() {
                       href={`/groups/${c.chatId}`}
                       className="font-medium hover:underline text-[var(--color-accent)]"
                     >
-                      {c.chatTitle ?? `chat ${c.chatId}`}
+                      {c.chatTitle ?? `چت ${c.chatId}`}
                     </Link>
                     <div className="text-[10px] text-[var(--color-text-dim)] mt-0.5">
                       {c.earliestPeriodStart.toLocaleDateString("fa-IR")} →{" "}

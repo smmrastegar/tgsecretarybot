@@ -37,12 +37,12 @@ type Profile = {
 };
 
 const MODES = [
-  { v: "off", label: "Off" },
-  { v: "secretary", label: "Secretary" },
-  { v: "auto_reply", label: "Auto-reply" },
-  { v: "friendly_reply", label: "Friendly auto-reply (AI)" },
-  { v: "ai_chat", label: "AI chat (full)" },
-  { v: "ai_listen", label: "AI listen (silent)" },
+  { v: "off", label: "خاموش" },
+  { v: "secretary", label: "منشی" },
+  { v: "auto_reply", label: "پاسخ خودکار" },
+  { v: "friendly_reply", label: "پاسخ خودکار دوستانه (AI)" },
+  { v: "ai_chat", label: "گفتگوی AI (کامل)" },
+  { v: "ai_listen", label: "شنود AI (بی‌صدا)" },
 ];
 
 export default function ChatProfileDetailPage({
@@ -199,7 +199,7 @@ export default function ChatProfileDetailPage({
               onChange={(v) => update("vip", v)}
             />
             <TriToggle
-              label="Muted"
+              label="بی‌صدا"
               value={draft.muted}
               onChange={(v) => update("muted", v)}
             />

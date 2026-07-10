@@ -178,7 +178,7 @@ export default function AskPage() {
         <Card className="mb-4">
           <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge tone="neutral">{scanned} پیام scan</Badge>
+              <Badge tone="neutral">{scanned} پیام اسکن‌شده</Badge>
               {cached ? (
                 <Badge tone="info">💾 از cache</Badge>
               ) : (

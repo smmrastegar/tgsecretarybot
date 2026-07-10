@@ -180,7 +180,7 @@ export default function ProfileChatsPage({
                     />
                     <div className="flex-1 min-w-0">
                       <div className="text-xs">
-                        {c.name || `chat ${c.chatId}`}
+                        {c.name || `چت ${c.chatId}`}
                       </div>
                       <div className="text-[10px] text-[var(--color-text-dim)]">
                         {c.chatType} · {c.chatId}
@@ -236,7 +236,7 @@ export default function ProfileChatsPage({
                   href={`/chats/${c.chatId}`}
                   className="flex-1 min-w-0 hover:text-[var(--color-accent)]"
                 >
-                  <div>{c.name || `chat ${c.chatId}`}</div>
+                  <div>{c.name || `چت ${c.chatId}`}</div>
                   <div className="text-[10px] text-[var(--color-text-dim)]">
                     {c.chatType} · {c.chatId}
                   </div>

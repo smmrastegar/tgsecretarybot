@@ -38,12 +38,12 @@ type Row = {
 type DayRow = { day: string; totalCostUsd: number; calls: number };
 
 const PURPOSE_LABEL: Record<string, string> = {
-  classify: "Classify (urgent detection)",
-  summary: "Group summaries",
-  ai_chat: "AI chat replies",
-  friendly_reply: "Friendly auto-reply",
-  transcribe: "Voice transcription",
-  describe_media: "Image / GIF / sticker description",
+  classify: "دسته‌بندی (تشخیص فوریت)",
+  summary: "خلاصه‌ی گروه‌ها",
+  ai_chat: "پاسخ‌های چت AI",
+  friendly_reply: "پاسخ خودکار دوستانه",
+  transcribe: "رونویسی صدا",
+  describe_media: "توضیح عکس / گیف / استیکر",
 };
 
 export default function CostsPage() {

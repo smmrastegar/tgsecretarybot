@@ -690,7 +690,7 @@ function RawMessagesModal({
                         }`}
                       >
                         <div className="text-[10px] text-[var(--color-text-dim)] mb-0.5">
-                          {m.fromOwner ? "you" : m.sender} ·{" "}
+                          {m.fromOwner ? "شما" : m.sender} ·{" "}
                           {new Date(m.at).toLocaleString()}
                         </div>
                         <div

@@ -55,8 +55,8 @@ function googleCalendarUrl(it: Item): string {
   }
   const details: string[] = [];
   if (it.description) details.push(it.description);
-  if (it.senderName) details.push(`From: ${it.senderName}`);
-  if (it.sourceText) details.push(`\nOriginal:\n${it.sourceText}`);
+  if (it.senderName) details.push(`از: ${it.senderName}`);
+  if (it.sourceText) details.push(`\nمتن اصلی:\n${it.sourceText}`);
   if (details.length > 0) params.set("details", details.join("\n"));
   if (it.location) params.set("location", it.location);
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
@@ -66,12 +66,12 @@ const KIND_LABEL: Record<
   string,
   { label: string; tone: "info" | "warn" | "success" | "danger" | "neutral" }
 > = {
-  event: { label: "📅 Event", tone: "info" },
-  task: { label: "✅ Task", tone: "warn" },
-  reminder: { label: "🔔 Reminder", tone: "warn" },
-  deadline: { label: "⏳ Deadline", tone: "danger" },
-  decision: { label: "🗳 Decision", tone: "neutral" },
-  note: { label: "📝 Note", tone: "neutral" },
+  event: { label: "📅 رویداد", tone: "info" },
+  task: { label: "✅ کار", tone: "warn" },
+  reminder: { label: "🔔 یادآوری", tone: "warn" },
+  deadline: { label: "⏳ ددلاین", tone: "danger" },
+  decision: { label: "🗳 تصمیم", tone: "neutral" },
+  note: { label: "📝 نکته", tone: "neutral" },
 };
 
 function fmtDue(s: string | null): string | null {
@@ -86,10 +86,10 @@ function dueChip(s: string | null): { text: string; tone: "danger" | "warn" | "n
   const d = new Date(s);
   const ms = d.getTime() - Date.now();
   const days = ms / 86_400_000;
-  if (days < 0) return { text: "overdue", tone: "danger" };
-  if (days < 1) return { text: "today", tone: "warn" };
-  if (days < 2) return { text: "tomorrow", tone: "warn" };
-  if (days < 7) return { text: `in ${Math.ceil(days)}d`, tone: "neutral" };
+  if (days < 0) return { text: "عقب‌افتاده", tone: "danger" };
+  if (days < 1) return { text: "امروز", tone: "warn" };
+  if (days < 2) return { text: "فردا", tone: "warn" };
+  if (days < 7) return { text: `${Math.ceil(days)} روز دیگه`, tone: "neutral" };
   return null;
 }
 
@@ -195,7 +195,7 @@ export default function RemindersPage() {
   return (
     <Shell>
       <PageTitle
-        title="Actions"
+        title="کارها"
         subtitle="کارها، رویدادها، یادآوری‌ها و نکته‌هایی که از پیام‌ها استخراج شده. ریمایندر فقط یک نوع از actionهاست."
         actions={
           <div className="flex gap-2 flex-wrap items-center">
@@ -239,12 +239,12 @@ export default function RemindersPage() {
       />
 
       {loading ? (
-        <Card>Loading…</Card>
+        <Card>در حال بارگذاری…</Card>
       ) : items.length === 0 ? (
         <Card>
           <p className="text-sm text-[var(--color-text-dim)]">
-            Nothing yet. Tap "🧠 Extract" on any message in All Messages or
-            Urgent to have the AI pull dates, tasks and reminders out of it.
+            هنوز چیزی نیست. روی هر پیامی توی «همه‌ی پیام‌ها» یا «فوری» دکمه‌ی
+            «🧠 استخراج» رو بزن تا AI تاریخ‌ها، کارها و یادآوری‌ها رو ازش بیرون بکشه.
           </p>
         </Card>
       ) : (
@@ -256,17 +256,17 @@ export default function RemindersPage() {
                 disabled={bulking}
                 className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
               >
-                Select all ({items.length})
+                انتخاب همه ({items.length})
               </button>
               <button
                 onClick={selectNone}
                 disabled={bulking || selected.size === 0}
                 className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
               >
-                Clear
+                پاک کردن
               </button>
               <span className="text-[var(--color-text-dim)]">
-                {selected.size} selected
+                {selected.size} انتخاب‌شده
               </span>
               <span className="text-[var(--color-text-dim)] mx-1">|</span>
               <button
@@ -274,21 +274,21 @@ export default function RemindersPage() {
                 disabled={bulking || selected.size === 0}
                 className="px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
               >
-                ✓ Mark done
+                ✓ انجام شد
               </button>
               <button
                 onClick={() => runBulk("undone")}
                 disabled={bulking || selected.size === 0}
                 className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
               >
-                Mark undone
+                برگرداندن به انجام‌نشده
               </button>
               <button
                 onClick={() => runBulk("delete")}
                 disabled={bulking || selected.size === 0}
                 className="px-2 py-1 rounded-md border border-red-800 text-red-300 hover:bg-red-900/30 disabled:opacity-50"
               >
-                🗑 Delete
+                🗑 حذف
               </button>
               <select
                 disabled={bulking || selected.size === 0}
@@ -301,7 +301,7 @@ export default function RemindersPage() {
                 className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
                 defaultValue=""
               >
-                <option value="">Change kind to…</option>
+                <option value="">تغییر نوع به…</option>
                 {BULK_KIND_OPTIONS.map((k) => (
                   <option key={k} value={k}>
                     {k}
@@ -346,7 +346,7 @@ export default function RemindersPage() {
                         </Badge>
                       )}
                       {due && <Badge tone={due.tone}>{due.text}</Badge>}
-                      {it.doneAt && <Badge tone="success">done</Badge>}
+                      {it.doneAt && <Badge tone="success">انجام‌شده</Badge>}
                     </div>
                     <div
                       dir="auto"
@@ -370,7 +370,7 @@ export default function RemindersPage() {
                       )}
                       {it.chatId && it.senderName && (
                         <span>
-                          from{" "}
+                          از{" "}
                           <Link
                             href={`/chats/${it.chatId}`}
                             className="underline"
@@ -388,8 +388,8 @@ export default function RemindersPage() {
                           className="text-[11px] text-[var(--color-text-dim)] hover:text-white underline-offset-2 hover:underline"
                         >
                           {expandedSource.has(it.id)
-                            ? "Hide original message ▴"
-                            : "Show original message ▾"}
+                            ? "مخفی کردن پیام اصلی ▴"
+                            : "نمایش پیام اصلی ▾"}
                         </button>
                         {expandedSource.has(it.id) && (
                           <div
@@ -407,9 +407,9 @@ export default function RemindersPage() {
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                        title="Open prefilled Google Calendar event in a new tab"
+                        title="باز کردن رویداد ازپیش‌پرشده‌ی Google Calendar در تب جدید"
                       >
-                        📅 Add to Google Calendar
+                        📅 افزودن به Google Calendar
                       </a>
                     </div>
                   </div>
@@ -421,7 +421,7 @@ export default function RemindersPage() {
                         : "border-emerald-700 text-emerald-300 hover:bg-emerald-900/30"
                     }`}
                   >
-                    {it.doneAt ? "Mark undone" : "Mark done"}
+                    {it.doneAt ? "برگرداندن به انجام‌نشده" : "انجام شد"}
                   </button>
                 </div>
                 </div>

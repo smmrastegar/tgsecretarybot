@@ -18,12 +18,12 @@ const MODE_LABEL: Record<
   ChatMode,
   { label: string; tone: "success" | "warn" | "info" | "neutral" }
 > = {
-  off: { label: "Off", tone: "neutral" },
-  secretary: { label: "Secretary", tone: "warn" },
-  auto_reply: { label: "Auto-reply", tone: "info" },
-  friendly_reply: { label: "Friendly AI", tone: "info" },
-  ai_chat: { label: "AI chat", tone: "success" },
-  ai_listen: { label: "AI listen", tone: "info" },
+  off: { label: "خاموش", tone: "neutral" },
+  secretary: { label: "منشی", tone: "warn" },
+  auto_reply: { label: "پاسخ خودکار", tone: "info" },
+  friendly_reply: { label: "AI دوستانه", tone: "info" },
+  ai_chat: { label: "گفتگوی AI", tone: "success" },
+  ai_listen: { label: "شنود AI", tone: "info" },
 };
 
 type MessageLike = {
@@ -103,7 +103,7 @@ export default function MessageActions({
       const j = (await r.json()) as { error?: string };
       if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
       setDraft(null);
-      showToast("✅ Sent — AI will handle this chat from now on");
+      showToast("✅ ارسال شد — از این به بعد AI این چت رو مدیریت می‌کنه");
       onChange?.();
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
@@ -125,7 +125,7 @@ export default function MessageActions({
         secretary?: { name: string };
       };
       if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
-      showToast(`↗ Forwarded to ${j.secretary?.name ?? "secretary"}`);
+      showToast(`↗ فوروارد شد به ${j.secretary?.name ?? "منشی"}`);
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
     } finally {
@@ -149,8 +149,8 @@ export default function MessageActions({
       const preview = (j.reply ?? "").slice(0, 140);
       showToast(
         preview
-          ? `🤖 AI replied: ${preview}${(j.reply ?? "").length > 140 ? "…" : ""}`
-          : "🤖 AI handled this chat. Future messages will get AI replies too.",
+          ? `🤖 AI پاسخ داد: ${preview}${(j.reply ?? "").length > 140 ? "…" : ""}`
+          : "🤖 AI این چت رو مدیریت کرد. پیام‌های بعدی هم پاسخ AI می‌گیرن.",
       );
       onChange?.();
     } catch (err) {
@@ -193,11 +193,11 @@ export default function MessageActions({
       };
       if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
       if (!j.saved) {
-        showToast("🧠 Nothing actionable found in this message.");
+        showToast("🧠 چیز قابل‌اقدامی توی این پیام پیدا نشد.");
       } else {
         const first = j.items?.[0]?.title;
         showToast(
-          `🧠 Saved ${j.saved} item${j.saved === 1 ? "" : "s"}${first ? `: ${first}` : ""} → Reminders`,
+          `🧠 ${j.saved} مورد ذخیره شد${first ? `: ${first}` : ""} ← یادآوری‌ها`,
         );
       }
     } catch (err) {
@@ -227,7 +227,7 @@ export default function MessageActions({
       <div className="mt-2 flex gap-1.5 flex-wrap items-center justify-center">
         {m.chatMode && (
           <Badge tone={MODE_LABEL[m.chatMode].tone}>
-            mode: {MODE_LABEL[m.chatMode].label}
+            حالت: {MODE_LABEL[m.chatMode].label}
           </Badge>
         )}
         {canTranscribe(m.mediaKind) && !m.transcript && (
@@ -236,7 +236,7 @@ export default function MessageActions({
             disabled={transcribing}
             className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
           >
-            {transcribing ? "Transcribing…" : "🎙 Transcribe"}
+            {transcribing ? "در حال پیاده‌سازی…" : "🎙 پیاده‌سازی متن"}
           </button>
         )}
         <button
@@ -244,7 +244,7 @@ export default function MessageActions({
           disabled={extracting}
           className="text-[11px] px-2 py-1 rounded-md border border-purple-700 text-purple-300 hover:bg-purple-900/30 disabled:opacity-50"
         >
-          {extracting ? "Extracting…" : "🧠 Extract"}
+          {extracting ? "در حال استخراج…" : "🧠 استخراج"}
         </button>
         {!m.handledAt && draft === null && (
           <button
@@ -252,12 +252,12 @@ export default function MessageActions({
             disabled={suggesting}
             className="text-[11px] px-2 py-1 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
           >
-            {suggesting ? "…" : "🤖 AI suggest"}
+            {suggesting ? "…" : "🤖 پیشنهاد AI"}
           </button>
         )}
         {!m.handledAt && m.chatMode === "ai_chat" ? (
           <span className="text-[11px] px-2 py-1 rounded-md border border-emerald-700 bg-emerald-900/30 text-emerald-300">
-            ✓ AI handling
+            ✓ مدیریت با AI
           </span>
         ) : (
           !m.handledAt && (
@@ -266,7 +266,7 @@ export default function MessageActions({
               disabled={handing}
               className="text-[11px] px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
             >
-              {handing ? "…" : "🤖 Full AI"}
+              {handing ? "…" : "🤖 کامل با AI"}
             </button>
           )
         )}
@@ -282,7 +282,7 @@ export default function MessageActions({
             className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
           >
             <option value="" disabled>
-              {forwarding ? "…" : "↗ Forward to…"}
+              {forwarding ? "…" : "↗ فوروارد به…"}
             </option>
             {secretaries.map((s) => (
               <option key={s.userId} value={s.userId}>

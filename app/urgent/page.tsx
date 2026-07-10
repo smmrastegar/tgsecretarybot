@@ -18,12 +18,12 @@ const MODE_LABEL: Record<
   ChatMode,
   { label: string; tone: "success" | "warn" | "info" | "neutral" }
 > = {
-  off: { label: "Off", tone: "neutral" },
-  secretary: { label: "Secretary", tone: "warn" },
-  auto_reply: { label: "Auto-reply", tone: "info" },
-  friendly_reply: { label: "Friendly AI", tone: "info" },
-  ai_chat: { label: "AI chat", tone: "success" },
-  ai_listen: { label: "AI listen", tone: "info" },
+  off: { label: "خاموش", tone: "neutral" },
+  secretary: { label: "منشی", tone: "warn" },
+  auto_reply: { label: "پاسخ خودکار", tone: "info" },
+  friendly_reply: { label: "AI صمیمی", tone: "info" },
+  ai_chat: { label: "چت AI", tone: "success" },
+  ai_listen: { label: "شنود AI", tone: "info" },
 };
 
 type Message = {
@@ -215,7 +215,7 @@ export default function UrgentPage() {
         delete n[id];
         return n;
       });
-      showToast(id, "✅ Sent — AI will handle this chat from now on");
+      showToast(id, "✅ ارسال شد — از این به بعد AI این چت رو مدیریت می‌کنه");
       load();
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
@@ -241,7 +241,7 @@ export default function UrgentPage() {
         secretary?: { name: string };
       };
       if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
-      showToast(id, `↗ Forwarded to ${j.secretary?.name ?? "secretary"}`);
+      showToast(id, `↗ فوروارد شد به ${j.secretary?.name ?? "منشی"}`);
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
     } finally {
@@ -270,8 +270,8 @@ export default function UrgentPage() {
       showToast(
         id,
         preview
-          ? `🤖 AI replied: ${preview}${(j.reply ?? "").length > 140 ? "…" : ""}`
-          : "🤖 AI handled this chat. Future messages will get AI replies too.",
+          ? `🤖 AI جواب داد: ${preview}${(j.reply ?? "").length > 140 ? "…" : ""}`
+          : "🤖 AI به این چت رسیدگی کرد. پیام‌های بعدی هم پاسخ AI می‌گیرن.",
       );
       load();
     } catch (err) {

@@ -70,11 +70,11 @@ function LoginInner() {
         <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
           tgsecretarybot
         </div>
-        <h1 className="text-2xl font-semibold mt-1">Sign in with Telegram</h1>
+        <h1 className="text-2xl font-semibold mt-1">ورود با تلگرام</h1>
         <p className="text-sm text-[var(--color-text-dim)] mt-3 leading-relaxed">
-          Use the same Telegram account that you connected to the bot via
-          Telegram Business → Chatbots. Only connected accounts can access this
-          dashboard.
+          از همون اکانت تلگرامی استفاده کن که از طریق Telegram Business →
+          Chatbots به ربات وصل کردی. فقط اکانت‌های وصل‌شده به این داشبورد
+          دسترسی دارن.
         </p>
 
         <div ref={widgetRef} className="mt-6 flex justify-center">
@@ -91,7 +91,7 @@ function LoginInner() {
 
         {pending && (
           <p className="text-sm text-[var(--color-text-dim)] mt-4 text-center">
-            verifying…
+            در حال تأیید…
           </p>
         )}
         {error && (
@@ -102,10 +102,10 @@ function LoginInner() {
 
         <div className="mt-6 pt-6 border-t border-[var(--color-border)] text-xs text-[var(--color-text-dim)] leading-relaxed">
           <p className="mb-2 font-medium text-[var(--color-text)]">
-            Widget not working? Use a magic link instead.
+            ویجت کار نمی‌کنه؟ به‌جاش از لینک جادویی استفاده کن.
           </p>
           <p>
-            Open Telegram, message{" "}
+            تلگرام رو باز کن، به{" "}
             <a
               href={`https://t.me/${botUsername}`}
               target="_blank"
@@ -114,9 +114,10 @@ function LoginInner() {
             >
               @{botUsername}
             </a>{" "}
-            with <code className="bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">/login</code>
-            , and tap the link the bot replies with. Works around phone-OAuth
-            issues (e.g. some countries / restrictions).
+            پیام{" "}
+            <code className="bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">/login</code>{" "}
+            رو بفرست، و روی لینکی که ربات جواب می‌ده بزن. مشکلات ورود با شماره
+            (مثلاً بعضی کشورها / محدودیت‌ها) رو دور می‌زنه.
           </p>
         </div>
       </div>

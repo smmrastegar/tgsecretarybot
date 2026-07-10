@@ -54,11 +54,11 @@ function Inner() {
         <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
           tgsecretarybot
         </div>
-        <h1 className="text-2xl font-semibold mt-1">Confirm login</h1>
+        <h1 className="text-2xl font-semibold mt-1">تأیید ورود</h1>
         <p className="text-sm text-[var(--color-text-dim)] mt-3 leading-relaxed">
           {token
-            ? "Verifying your one-time link from Telegram…"
-            : "No token in URL. Send /login to the bot to get a fresh link."}
+            ? "در حال بررسی لینک یک‌بارمصرف شما از تلگرام…"
+            : "توکنی توی URL نیست. برای گرفتن لینک تازه، /login رو به ربات بفرست."}
         </p>
 
         {error && (
@@ -72,18 +72,18 @@ function Inner() {
             onClick={confirm}
             className="mt-5 w-full px-4 py-2 rounded-md bg-[var(--color-accent)] text-white"
           >
-            Try again
+            دوباره امتحان کن
           </button>
         )}
 
         {pending && (
           <p className="mt-5 text-sm text-[var(--color-text-dim)] text-center">
-            signing you in…
+            در حال ورود شما…
           </p>
         )}
 
         <div className="mt-8 text-xs text-[var(--color-text-dim)] leading-relaxed">
-          Magic links are valid for 5 minutes and one use only.
+          لینک‌های جادویی فقط ۵ دقیقه و یک‌بار مصرف معتبرن.
         </div>
       </div>
     </div>

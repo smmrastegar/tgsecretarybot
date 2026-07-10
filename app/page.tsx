@@ -58,15 +58,15 @@ export default async function OverviewPage() {
   return (
     <Shell>
       <PageTitle
-        title="Overview"
-        subtitle="What's been happening in your chats."
+        title="نمای کلی"
+        subtitle="چه اتفاقاتی توی چت‌هات افتاده."
       />
 
       {!stats && (
         <Card className="mb-6">
           <p className="text-sm text-amber-300">
-            Database is not configured. Set DATABASE_URL to enable persistence
-            and analytics.
+            دیتابیس پیکربندی نشده. برای فعال شدن ذخیره‌سازی و تحلیل‌ها،
+            DATABASE_URL رو تنظیم کن.
           </p>
         </Card>
       )}
@@ -74,23 +74,23 @@ export default async function OverviewPage() {
       {stats && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-8">
           <StatCard
-            label="Urgent unhandled"
+            label="فوری رسیدگی‌نشده"
             value={stats.urgentUnhandled}
-            hint={`of ${stats.urgentTotal} total flagged`}
+            hint={`از ${stats.urgentTotal} علامت‌خورده`}
           />
           <StatCard
-            label="Alerts (24h)"
+            label="هشدارها (۲۴ ساعت)"
             value={stats.alertsLast24h}
-            hint="fired to webhook"
+            hint="به webhook فرستاده شد"
           />
           <StatCard
-            label="Auto-replies (24h)"
+            label="پاسخ‌های خودکار (۲۴ ساعت)"
             value={stats.autoRepliesLast24h}
           />
           <StatCard
-            label="Connections"
+            label="اتصال‌ها"
             value={stats.connections}
-            hint="business accounts"
+            hint="اکانت‌های business"
           />
         </div>
       )}
@@ -98,12 +98,12 @@ export default async function OverviewPage() {
       {ai && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-8">
           <StatCard
-            label="AI cost total"
+            label="هزینه کل AI"
             value={`$${ai.totalCostUsd.toFixed(4)}`}
-            hint={`${ai.totalCalls} calls · ${(ai.totalTokens / 1000).toFixed(1)}k tokens`}
+            hint={`${ai.totalCalls} فراخوانی · ${(ai.totalTokens / 1000).toFixed(1)}k توکن`}
           />
           <StatCard
-            label="AI cost (24h)"
+            label="هزینه AI (۲۴ ساعت)"
             value={`$${ai.last24hCostUsd.toFixed(4)}`}
           />
         </div>
@@ -113,13 +113,13 @@ export default async function OverviewPage() {
         <Card className="mb-6">
           <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
             <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
-              Upcoming reminders ({dueCount})
+              یادآوری‌های پیش‌رو ({dueCount})
             </div>
             <Link
               href="/reminders"
               className="text-xs text-[var(--color-text-dim)] hover:text-white"
             >
-              See all →
+              دیدن همه →
             </Link>
           </div>
           <ul className="flex flex-col gap-1.5 text-sm">
@@ -133,7 +133,7 @@ export default async function OverviewPage() {
                   {r.kind} ·{" "}
                   {r.dueAt
                     ? new Date(r.dueAt).toLocaleString()
-                    : "no date"}
+                    : "بدون تاریخ"}
                 </span>
               </li>
             ))}
@@ -144,22 +144,22 @@ export default async function OverviewPage() {
       {modes && (
         <Card className="mb-6">
           <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
-            Chats by mode
+            چت‌ها بر اساس حالت
           </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
-            <ModePill label="Secretary" count={modes.secretary} tone="warn" />
-            <ModePill label="AI chat" count={modes.ai_chat} tone="success" />
+            <ModePill label="منشی" count={modes.secretary} tone="warn" />
+            <ModePill label="چت AI" count={modes.ai_chat} tone="success" />
             <ModePill
-              label="Friendly AI"
+              label="AI صمیمی"
               count={modes.friendly_reply}
               tone="info"
             />
             <ModePill
-              label="Auto-reply"
+              label="پاسخ خودکار"
               count={modes.auto_reply}
               tone="info"
             />
-            <ModePill label="Off" count={modes.off} tone="neutral" />
+            <ModePill label="خاموش" count={modes.off} tone="neutral" />
           </div>
         </Card>
       )}
@@ -167,7 +167,7 @@ export default async function OverviewPage() {
       {connections.length > 0 && (
         <Card className="mb-6">
           <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
-            Connected Telegram accounts
+            اکانت‌های تلگرام وصل‌شده
           </div>
           <div className="flex flex-col gap-2">
             {connections.map((c) => (
@@ -192,22 +192,23 @@ export default async function OverviewPage() {
                 </div>
                 <div className="flex items-center gap-2 text-[11px]">
                   {c.canReply ? (
-                    <span className="text-emerald-400">can reply ✓</span>
+                    <span className="text-emerald-400">امکان پاسخ ✓</span>
                   ) : (
-                    <span className="text-amber-400">no reply right</span>
+                    <span className="text-amber-400">بدون حق پاسخ</span>
                   )}
                   {c.isEnabled ? (
-                    <span className="text-emerald-400">active</span>
+                    <span className="text-emerald-400">فعال</span>
                   ) : (
-                    <span className="text-[var(--color-text-dim)]">disabled</span>
+                    <span className="text-[var(--color-text-dim)]">غیرفعال</span>
                   )}
                 </div>
               </div>
             ))}
           </div>
           <p className="text-[11px] text-[var(--color-text-dim)] mt-3">
-            Multiple Telegram users can connect this bot via Settings → Telegram
-            Business → Chatbots. The bot keeps a separate session per account.
+            چند کاربر تلگرام می‌تونن از طریق Settings → Telegram Business →
+            Chatbots این ربات رو وصل کنن. ربات برای هر اکانت یه session جدا نگه
+            می‌داره.
           </p>
         </Card>
       )}
@@ -215,17 +216,17 @@ export default async function OverviewPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         <Card>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold">Latest urgent</h2>
+            <h2 className="text-sm font-semibold">آخرین موارد فوری</h2>
             <Link
               href="/urgent"
               className="text-xs text-[var(--color-text-dim)] hover:text-white"
             >
-              See all →
+              دیدن همه →
             </Link>
           </div>
           {latestUrgent.length === 0 ? (
             <p className="text-sm text-[var(--color-text-dim)]">
-              Nothing urgent yet.
+              هنوز چیز فوری‌ای نیست.
             </p>
           ) : (
             <ul className="flex flex-col gap-3">
@@ -243,10 +244,10 @@ export default async function OverviewPage() {
                   </div>
                   <div className="text-sm">{truncate(m.messageText, 200)}</div>
                   <div className="mt-2 flex gap-2 items-center">
-                    <Badge tone="danger">imp {m.importance}</Badge>
-                    {m.alerted && <Badge tone="warn">alerted</Badge>}
-                    {m.autoReplied && <Badge tone="info">auto-replied</Badge>}
-                    {m.handledAt && <Badge tone="success">handled</Badge>}
+                    <Badge tone="danger">اهمیت {m.importance}</Badge>
+                    {m.alerted && <Badge tone="warn">هشدار داده شد</Badge>}
+                    {m.autoReplied && <Badge tone="info">پاسخ خودکار</Badge>}
+                    {m.handledAt && <Badge tone="success">رسیدگی شد</Badge>}
                   </div>
                 </li>
               ))}
@@ -256,17 +257,17 @@ export default async function OverviewPage() {
 
         <Card>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold">Recent activity</h2>
+            <h2 className="text-sm font-semibold">فعالیت اخیر</h2>
             <Link
               href="/messages"
               className="text-xs text-[var(--color-text-dim)] hover:text-white"
             >
-              See all →
+              دیدن همه →
             </Link>
           </div>
           {latest.length === 0 ? (
             <p className="text-sm text-[var(--color-text-dim)]">
-              No messages yet.
+              هنوز پیامی نیست.
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
