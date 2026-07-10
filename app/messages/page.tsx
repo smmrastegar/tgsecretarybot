@@ -544,13 +544,13 @@ export default function MessagesPage() {
                 <div className="flex gap-1 flex-wrap text-[10px]">
                   {!m.fromOwner && (
                     <span className="text-[var(--color-text-dim)]">
-                      imp {m.importance}
+                      اهمیت {m.importance}
                     </span>
                   )}
                   {srcInfo && <Badge tone={srcInfo.tone}>{srcInfo.label}</Badge>}
-                  {m.urgent && <Badge tone="danger">urgent</Badge>}
-                  {m.alerted && <Badge tone="warn">alert</Badge>}
-                  {m.autoReplied && <Badge tone="info">replied</Badge>}
+                  {m.urgent && <Badge tone="danger">فوری</Badge>}
+                  {m.alerted && <Badge tone="warn">هشدار</Badge>}
+                  {m.autoReplied && <Badge tone="info">پاسخ داده شد</Badge>}
                   {m.mediaKind && (
                     <Badge tone="neutral">{m.mediaKind}</Badge>
                   )}
@@ -586,7 +586,7 @@ export default function MessagesPage() {
               {m.transcript && (
                 <div className="mt-2 p-2 rounded-md bg-[var(--color-surface-2)] text-sm">
                   <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
-                    transcript
+                    رونویسی
                   </div>
                   <div
                     dir="auto"

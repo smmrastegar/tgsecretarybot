@@ -15,12 +15,12 @@ type ChatMode =
   | "ai_listen";
 
 const MODE_LABELS: Record<ChatMode, string> = {
-  off: "Off",
-  secretary: "Secretary",
-  auto_reply: "Auto-reply",
-  friendly_reply: "Friendly auto-reply (AI)",
-  ai_chat: "AI chat (full)",
-  ai_listen: "AI listen (silent, summarises)",
+  off: "خاموش",
+  secretary: "منشی",
+  auto_reply: "پاسخ خودکار",
+  friendly_reply: "پاسخ خودکار صمیمی (AI)",
+  ai_chat: "چت AI (کامل)",
+  ai_listen: "شنود AI (بی‌صدا، خلاصه می‌کنه)",
 };
 
 const MODE_TONES: Record<
@@ -496,12 +496,12 @@ export default function ChatsPage() {
   return (
     <Shell>
       <PageTitle
-        title="Chats"
-        subtitle="Tune per-chat behavior. VIP = always alert. Muted = ignore entirely."
+        title="چت‌ها"
+        subtitle="رفتار هر چت رو تنظیم کن. VIP = همیشه هشدار. Muted = کاملاً نادیده بگیر."
       />
 
       {loading && chats.length === 0 ? (
-        <Card>Loading…</Card>
+        <Card>در حال بارگذاری…</Card>
       ) : (
         <>
         <Card className="mb-3 !p-3">
@@ -515,7 +515,7 @@ export default function ChatsPage() {
               className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm"
             />
             <div className="flex items-center gap-2 flex-wrap text-xs">
-              <span className="text-[var(--color-text-dim)]">Mode:</span>
+              <span className="text-[var(--color-text-dim)]">حالت:</span>
               <select
                 value={modeFilter}
                 onChange={(e) =>
@@ -533,7 +533,7 @@ export default function ChatsPage() {
                   );
                 })}
               </select>
-              <span className="text-[var(--color-text-dim)]">Type:</span>
+              <span className="text-[var(--color-text-dim)]">نوع:</span>
               <select
                 value={typeFilter}
                 onChange={(e) =>

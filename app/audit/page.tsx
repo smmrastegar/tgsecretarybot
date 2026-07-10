@@ -127,7 +127,7 @@ export default function SystemLogPage() {
   return (
     <Shell>
       <PageTitle
-        title="🪵 System Log"
+        title="🪵 لاگ سیستم"
         subtitle="هم تغییرات audit (هرچی از طریق dashboard یا cron انجام شد) هم خطاهای سیستم — با فیلتر، جستجو، و دکمه کپی برای هر خطا."
         actions={
           <button
@@ -196,7 +196,7 @@ export default function SystemLogPage() {
                     : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
                 }`}
               >
-                همه subsystems
+                همه‌ی subsystemها
               </button>
               {sources.map((s) => (
                 <button
@@ -305,7 +305,7 @@ export default function SystemLogPage() {
                     {e.details != null && (
                       <details className="mt-1">
                         <summary className="text-[10px] text-[var(--color-text-dim)] cursor-pointer hover:text-white">
-                          ▾ details
+                          ▾ جزئیات
                         </summary>
                         <pre
                           dir="ltr"
@@ -343,7 +343,7 @@ export default function SystemLogPage() {
                         </Badge>
                         {r.target && (
                           <span className="text-xs text-[var(--color-text-dim)] font-mono">
-                            target: {r.target}
+                            هدف: {r.target}
                           </span>
                         )}
                       </div>

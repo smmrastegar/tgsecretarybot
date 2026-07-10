@@ -220,13 +220,13 @@ export default function WebhooksPage() {
                       {w.kind === "insta" ? "📷 insta" : "📱 sms"}
                     </Badge>
                     {w.enabled ? (
-                      <Badge tone="success">on</Badge>
+                      <Badge tone="success">روشن</Badge>
                     ) : (
-                      <Badge tone="neutral">off</Badge>
+                      <Badge tone="neutral">خاموش</Badge>
                     )}
                     {w.lastUsedAt && (
                       <Badge tone="info">
-                        last hit {relTime(w.lastUsedAt)}
+                        آخرین بار {relTime(w.lastUsedAt)}
                       </Badge>
                     )}
                   </div>
@@ -237,7 +237,7 @@ export default function WebhooksPage() {
                         checked={w.enabled}
                         onChange={(e) => toggle(w.id, e.target.checked)}
                       />
-                      enabled
+                      فعال
                     </label>
                     <button
                       onClick={() => remove(w.id, w.name)}

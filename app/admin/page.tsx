@@ -300,7 +300,7 @@ export default function AdminPage() {
                 disabled={selected.size === 0}
                 className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
               >
-                Clear
+                پاک کردن
               </button>
               <span className="text-[var(--color-text-dim)]">
                 {selected.size} انتخاب شده
@@ -552,8 +552,8 @@ export default function AdminPage() {
                 <span className="text-[10px] text-[var(--color-text-dim)]">
                   uid {c.userId}
                 </span>
-                {!c.isEnabled && <Badge tone="neutral">disabled</Badge>}
-                {c.canReply && <Badge tone="success">can reply</Badge>}
+                {!c.isEnabled && <Badge tone="neutral">غیرفعال</Badge>}
+                {c.canReply && <Badge tone="success">قابل پاسخ</Badge>}
                 <div className="flex-1" />
                 <select
                   value={c.tenantId ?? ""}
@@ -1245,7 +1245,7 @@ function ExternalMonitorPanel(props: {
             </div>
             <button
               onClick={onDismissSync}
-              aria-label="dismiss"
+              aria-label="بستن"
               className="text-[12px] opacity-60 hover:opacity-100 px-1"
             >
               ✕
@@ -1255,7 +1255,7 @@ function ExternalMonitorPanel(props: {
       )}
       <Card className="!p-3">
         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-          <div className="text-sm font-medium">🛰 External change detector</div>
+          <div className="text-sm font-medium">🛰 تشخیص‌دهنده‌ی تغییر خارجی</div>
           <div className="flex gap-2">
             <button
               onClick={onReload}
@@ -1270,7 +1270,7 @@ function ExternalMonitorPanel(props: {
               className="text-[10px] px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
               title="همه‌ی usernameهای فعال رو دوباره push کن"
             >
-              {syncing ? "Sync…" : "🔁 Sync all"}
+              {syncing ? "Sync…" : "🔁 Sync همه"}
             </button>
           </div>
         </div>
@@ -1364,7 +1364,7 @@ function ExternalMonitorPanel(props: {
       </Card>
 
       <Card className="!p-3">
-        <div className="text-xs font-medium mb-2">📋 Subscriptions</div>
+        <div className="text-xs font-medium mb-2">📋 اشتراک‌ها</div>
         {!data || data.subscriptions.length === 0 ? (
           <div className="text-[11px] text-[var(--color-text-dim)]">
             خالی. وقتی owner یه اکانت اضافه می‌کنه اینجا میاد.
@@ -1386,16 +1386,16 @@ function ExternalMonitorPanel(props: {
                     @{s.username}
                   </span>
                   {s.unregisteredAt ? (
-                    <Badge tone="neutral">unregistered</Badge>
+                    <Badge tone="neutral">لغو‌شده</Badge>
                   ) : pushOk ? (
                     <Badge tone="success">{s.lastStatus}</Badge>
                   ) : s.lastStatus ? (
                     <Badge tone="danger">{s.lastStatus}</Badge>
                   ) : (
-                    <Badge tone="info">pending</Badge>
+                    <Badge tone="info">در انتظار</Badge>
                   )}
                   <span className="text-[10px] text-[var(--color-text-dim)]">
-                    notified ×{s.notifyCount}
+                    notify‌شده ×{s.notifyCount}
                   </span>
                   <div className="flex-1" />
                   {s.lastNotifiedAt && (
