@@ -23,8 +23,10 @@ export function emailLinkToken(emailId: number): string {
     .slice(0, 24);
 }
 
-export function verifyEmailLink(emailId: number, token: string): boolean {
-  if (!token) return false;
+export function verifyEmailLink(emailId: number, token: unknown): boolean {
+  // A duplicated `?t=a&t=b` yields string[] in some callers; anything
+  // non-string is not a valid token.
+  if (typeof token !== "string" || !token) return false;
   const expected = emailLinkToken(emailId);
   if (token.length !== expected.length) return false;
   try {

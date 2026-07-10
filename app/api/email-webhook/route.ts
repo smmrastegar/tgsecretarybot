@@ -88,8 +88,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     htmlBody: html,
     attachments,
   });
-  const posted = await postIncomingEmailToChannel(id).catch(() => ({ ok: false, chatId: null }));
-  return NextResponse.json({ ok: true, id, account: matchedAccount?.name ?? null, posted });
+  await postIncomingEmailToChannel(id).catch(() => ({ ok: false, chatId: null }));
+  // Don't echo the account name / posting result: the caller is
+  // whoever holds the webhook token, and leaking the matched account
+  // name (or whether it posted) is needless disclosure. A flat ok is
+  // all Resend needs.
+  return NextResponse.json({ ok: true });
 }
 
 export async function GET(): Promise<NextResponse> {

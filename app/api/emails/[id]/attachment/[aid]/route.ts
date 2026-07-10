@@ -21,7 +21,7 @@ export async function GET(
   const { id, aid } = await ctx.params;
   const e = await getEmail(Number(id));
   if (!e || !e.resendId) return new Response("not found", { status: 404 });
-  const att = (e.attachments ?? []).find((a) => a.id === aid);
+  const att = (e.attachments ?? []).find((a) => String(a.id) === aid);
   if (!att) return new Response("attachment not found", { status: 404 });
 
   const account = e.accountId ? await getEmailAccount(e.accountId) : null;
