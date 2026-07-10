@@ -72,6 +72,8 @@ export default function RuleDetailPage() {
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [examples, setExamples] = useState<Example[]>([]);
   const [gateExamples, setGateExamples] = useState<Example[]>([]);
+  const [negExamples, setNegExamples] = useState<Example[]>([]);
+  const [newNegText, setNewNegText] = useState("");
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -111,11 +113,12 @@ export default function RuleDetailPage() {
     if (!Number.isFinite(id)) return;
     setLoading(true);
     try {
-      const [r1, r2, r3, r4] = await Promise.all([
+      const [r1, r2, r3, r4, r5] = await Promise.all([
         fetch(`/api/rules/${id}`),
         fetch(`/api/rules/${id}/matches?limit=${MATCH_PAGE}&offset=0`),
         fetch(`/api/rules/${id}/examples?purpose=rule_match`),
         fetch(`/api/rules/${id}/examples?purpose=gate_match`),
+        fetch(`/api/rules/${id}/examples?purpose=negative_match`),
       ]);
       if (r1.ok) {
         const j = (await r1.json()) as { rule: Rule; recipients: Recipient[] };
@@ -142,6 +145,10 @@ export default function RuleDetailPage() {
       if (r4.ok) {
         const j = (await r4.json()) as { examples: Example[] };
         setGateExamples(j.examples ?? []);
+      }
+      if (r5.ok) {
+        const j = (await r5.json()) as { examples: Example[] };
+        setNegExamples(j.examples ?? []);
       }
     } finally {
       setLoading(false);
@@ -437,6 +444,17 @@ export default function RuleDetailPage() {
     },
     [id, load],
   );
+
+  const addNegExample = useCallback(async () => {
+    if (!newNegText.trim()) return;
+    await fetch(`/api/rules/${id}/examples`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: newNegText, purpose: "negative_match" }),
+    });
+    setNewNegText("");
+    load();
+  }, [id, newNegText, load]);
 
   const runTest = useCallback(async () => {
     setTesting(true);
@@ -850,6 +868,58 @@ export default function RuleDetailPage() {
               + اضافه کن
             </button>
           </div>
+        </div>
+      </Card>
+
+      <Card className="mb-4">
+        <div className="text-xs font-medium mb-2">
+          🚫 نمونه‌های منفی ({negExamples.length}) — این‌ها <i>نباید</i> match
+          بشن
+        </div>
+        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+          اگه rule داره چیزی رو اشتباه می‌گیره، متنِ همون پیامِ اشتباه رو
+          اینجا پیست کن. matcher یاد می‌گیره پیام‌های شبیه این رو رد کنه —
+          بهترین راه برای جلوگیری از match اشتباه.
+        </p>
+        {negExamples.length > 0 && (
+          <div className="flex flex-col gap-1 mb-3">
+            {negExamples.map((e) => (
+              <div
+                key={e.id}
+                className="flex items-start gap-2 p-2 rounded-md bg-rose-500/5 border border-rose-500/20 text-xs"
+              >
+                <div
+                  dir="auto"
+                  style={{ unicodeBidi: "plaintext" }}
+                  className="flex-1 min-w-0 whitespace-pre-wrap break-words"
+                >
+                  {truncate(e.text, 400)}
+                </div>
+                <button
+                  onClick={() => removeExample(e.id)}
+                  className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2">
+          <textarea
+            value={newNegText}
+            onChange={(e) => setNewNegText(e.target.value)}
+            placeholder="متن یه پیامی که اشتباه match شده (مثلاً پیام رزرو/بلیط یا OTP)"
+            rows={2}
+            className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+          />
+          <button
+            onClick={addNegExample}
+            disabled={!newNegText.trim()}
+            className="text-xs px-3 py-1.5 rounded-md bg-rose-600 text-white disabled:opacity-50 self-start"
+          >
+            + منفی
+          </button>
         </div>
       </Card>
 

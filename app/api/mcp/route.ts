@@ -149,6 +149,23 @@ const TOOLS = [
     },
   },
   {
+    name: "rule_test",
+    description:
+      "Run a message rule's LLM matcher against the most recent N non-owner messages and return which ones match — the same classifier the live pipeline uses (honours positive examples, counter-examples, and the rule description). Use to verify a rule isn't over/under-matching after editing it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        rule_id: { type: "number", description: "id of the message rule" },
+        limit: {
+          type: "number",
+          description: "how many recent messages to test (default 30, max 100)",
+        },
+      },
+      required: ["rule_id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "execute",
     description:
       "Run a WRITE SQL statement (INSERT / UPDATE / DELETE / DDL). DANGEROUS — this mutates the production database and is NOT reversible. Only use when the user has explicitly asked to change data. Returns affected rows when the statement uses RETURNING.",
@@ -591,6 +608,48 @@ async function callTool(
       }
       const r = await runSql(text);
       return toolText({ rowCount: r.rowCount, returned: r.rows });
+    }
+    case "rule_test": {
+      const ruleId = Number(args.rule_id);
+      if (!Number.isFinite(ruleId)) throw new Error("rule_id required");
+      const lim = Math.min(Math.max(Number(args.limit) || 30, 1), 100);
+      const { getMessageRule, listRecentMessagesForTest, listRuleExamples } =
+        await import("@/lib/db");
+      const { batchTestRule } = await import("@/lib/rules");
+      const rule = await getMessageRule(ruleId);
+      if (!rule) throw new Error(`rule ${ruleId} not found`);
+      const [messages, examples, negatives] = await Promise.all([
+        listRecentMessagesForTest(lim),
+        listRuleExamples(ruleId),
+        listRuleExamples(ruleId, "negative_match"),
+      ]);
+      const flags = await batchTestRule({
+        rule,
+        examples,
+        negatives,
+        messages: messages.map((m) => ({
+          id: m.id,
+          text: m.messageText,
+          sender: m.senderName,
+        })),
+      });
+      const results = messages.map((m, i) => ({
+        matched: flags[i] ?? false,
+        sender: m.senderName,
+        chatId: m.chatId,
+        text: m.messageText.slice(0, 160).replace(/\s+/g, " "),
+      }));
+      return toolText({
+        rule: { id: rule.id, name: rule.name, description: rule.description },
+        counts: {
+          tested: results.length,
+          matched: results.filter((r) => r.matched).length,
+          positives: examples.length,
+          negatives: negatives.length,
+        },
+        matched: results.filter((r) => r.matched),
+        not_matched: results.filter((r) => !r.matched),
+      });
     }
 
     // ─── Curated group tools ─────────────────────────────────────

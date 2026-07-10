@@ -9878,7 +9878,10 @@ export async function listRuleMatches(args: {
   }));
 }
 
-export type RuleExamplePurpose = "rule_match" | "gate_match";
+// rule_match  = positive: messages that SHOULD match (forward).
+// negative_match = counter-examples: messages that must NOT match.
+// gate_match   = phrasings that OPEN the request gate ("send me the code").
+export type RuleExamplePurpose = "rule_match" | "gate_match" | "negative_match";
 
 export type RuleExample = {
   id: number;

@@ -36,14 +36,16 @@ export async function POST(
   }
   const body = (await request.json().catch(() => ({}))) as { limit?: number };
   const limit = Math.min(Math.max(Number(body.limit) || 30, 1), 100);
-  const [messages, examples] = await Promise.all([
+  const [messages, examples, negatives] = await Promise.all([
     listRecentMessagesForTest(limit),
     listRuleExamples(ruleId),
+    listRuleExamples(ruleId, "negative_match"),
   ]);
 
   const flags = await batchTestRule({
     rule,
     examples,
+    negatives,
     messages: messages.map((m) => ({
       id: m.id,
       text: m.messageText,

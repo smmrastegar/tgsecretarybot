@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 
 function parsePurpose(v: string | null): RuleExamplePurpose | "all" {
   if (v === "gate_match") return "gate_match";
+  if (v === "negative_match") return "negative_match";
   if (v === "all") return "all";
   return "rule_match";
 }
@@ -61,7 +62,11 @@ export async function POST(
     return NextResponse.json({ error: "text required" }, { status: 400 });
   }
   const purpose: RuleExamplePurpose =
-    body.purpose === "gate_match" ? "gate_match" : "rule_match";
+    body.purpose === "gate_match"
+      ? "gate_match"
+      : body.purpose === "negative_match"
+        ? "negative_match"
+        : "rule_match";
   const ex = await addRuleExample({
     ruleId,
     text: body.text.trim(),

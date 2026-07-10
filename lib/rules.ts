@@ -186,15 +186,30 @@ export async function matchRules(
   if (rules.length === 0) return [];
   if (!ctx.messageText.trim()) return [];
   const examplesMap: Record<number, RuleExample[]> = examplesByRule ?? {};
+  const negativesMap: Record<number, RuleExample[]> = {};
   if (!examplesByRule) {
     for (const r of rules) {
       examplesMap[r.id] = await listRuleExamples(r.id).catch(() => []);
     }
   }
+  // Counter-examples (must NOT match) are always fetched — they're the
+  // main lever against over-matching a vague description.
+  for (const r of rules) {
+    negativesMap[r.id] = await listRuleExamples(r.id, "negative_match").catch(
+      () => [],
+    );
+  }
   // Plain-text reply (JSON mode kept coming back as "{}" on Gemini —
   // every message would silently look like "no rules matched"). We ask
   // for a single MATCHED: <comma list> line and parse with regex.
-  const systemPrompt = `You are a routing classifier. The operator has a list of rules. Each rule has an id, a name, a primary description, and zero or more example messages. A rule MATCHES the incoming message when the message satisfies the description OR resembles ANY example — a disjunction. Be conservative; include a rule only when the match is clear.
+  const systemPrompt = `You are a strict routing classifier. The operator has a list of rules. Each rule has an id, a name, a primary description, positive examples (messages that SHOULD match) and counter-examples (messages that must NOT match).
+
+A rule MATCHES the incoming message ONLY when the message CLEARLY fits the rule's described KIND of message. Judge by MEANING/INTENT, not by surface features.
+
+Be conservative — when in doubt, do NOT match. Specifically:
+- The mere presence of digits/numbers is NOT enough. A message matches a "bank card / account number" rule only if it actually contains a real bank card / account / IBAN number, NOT a reservation code, ticket/booking id, tracking number, phone number, OTP/verification code, date, price, or order id.
+- If the message resembles ANY counter-example, do NOT match that rule.
+- A rule with NO clear positive fit must not be matched just because a number appears.
 
 Reply with EXACTLY one line, no preamble, no markdown:
 
@@ -214,9 +229,13 @@ Never explain. Never wrap in code fences.`;
     .map((r) => {
       const exs = (examplesMap[r.id] ?? [])
         .slice(0, 6)
-        .map((e, i) => `    example${i + 1}: "${e.text.slice(0, 200)}"`)
+        .map((e, i) => `    positive_example${i + 1}: "${e.text.slice(0, 200)}"`)
         .join("\n");
-      return `- id=${r.id}\n  name: "${r.name.slice(0, 60)}"\n  description: "${r.description.slice(0, 400)}"${exs ? "\n" + exs : ""}`;
+      const negs = (negativesMap[r.id] ?? [])
+        .slice(0, 8)
+        .map((e, i) => `    counter_example${i + 1} (must NOT match): "${e.text.slice(0, 200)}"`)
+        .join("\n");
+      return `- id=${r.id}\n  name: "${r.name.slice(0, 60)}"\n  description: "${r.description.slice(0, 400)}"${exs ? "\n" + exs : ""}${negs ? "\n" + negs : ""}`;
     })
     .join("\n");
   const userPrompt = [
@@ -280,15 +299,24 @@ Never explain. Never wrap in code fences.`;
 export async function batchTestRule(args: {
   rule: MessageRule;
   examples: RuleExample[];
+  negatives?: RuleExample[];
   messages: { id: number; text: string; sender: string }[];
 }): Promise<boolean[]> {
   const out = new Array<boolean>(args.messages.length).fill(false);
   if (args.messages.length === 0) return out;
   const exs = args.examples
     .slice(0, 6)
-    .map((e, i) => `  example${i + 1}: "${e.text.slice(0, 200)}"`)
+    .map((e, i) => `  positive_example${i + 1}: "${e.text.slice(0, 200)}"`)
     .join("\n");
-  const systemPrompt = `You are testing a single routing rule against multiple historical messages. The rule MATCHES a message when the message satisfies the description OR resembles ANY example (disjunction). Be conservative; only mark YES when the match is clear.
+  const negs = (args.negatives ?? [])
+    .slice(0, 8)
+    .map((e, i) => `  counter_example${i + 1} (must NOT match): "${e.text.slice(0, 200)}"`)
+    .join("\n");
+  const systemPrompt = `You are testing a single routing rule against multiple historical messages. A message MATCHES ONLY when it CLEARLY fits the rule's described KIND of message, judged by MEANING/INTENT — not by surface features.
+
+Be conservative — when in doubt, mark NO. Specifically:
+- The mere presence of digits/numbers is NOT enough. A "bank card / account number" rule matches only a real bank card / account / IBAN number, NOT a reservation code, ticket/booking id, tracking number, phone number, OTP/verification code, date, price, or order id.
+- If a message resembles ANY counter-example, mark NO.
 
 Reply with EXACTLY one MATCHED line listing the indexes that matched:
 
@@ -303,7 +331,8 @@ Indexes are 1-based and refer to the "MESSAGES" list below. Never explain, never
     "RULE:",
     `  name: "${args.rule.name}"`,
     `  description: "${args.rule.description}"`,
-    exs ? `  examples:\n${exs}` : "  (no extra examples)",
+    exs ? `  positive examples:\n${exs}` : "  (no positive examples)",
+    negs ? `  counter-examples:\n${negs}` : "",
     "",
     "MESSAGES:",
     ...args.messages.map(
