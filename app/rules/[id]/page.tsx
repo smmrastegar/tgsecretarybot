@@ -729,185 +729,9 @@ export default function RuleDetailPage() {
       })()}
 
       <Card className="mb-4">
-        <div className="text-xs font-medium mb-2">تعریف rule</div>
-        <div className="flex flex-col gap-2">
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="اسم rule"
-            className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-          />
-          <textarea
-            value={desc}
-            onChange={(e) => setDesc(e.target.value)}
-            placeholder="توصیف اصلی: چه پیام‌هایی باید match بشن؟"
-            rows={3}
-            className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-          />
-          <div>
-            <input
-              type="text"
-              dir="ltr"
-              value={sourceChats}
-              onChange={(e) => setSourceChats(e.target.value)}
-              placeholder="🎯 فقط از این چت‌ها (chat_id با کاما) — خالی = همه چت‌ها"
-              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-            />
-            <p className="text-[10px] text-[var(--color-text-dim)] mt-1">
-              🎯 محدودیت مبدأ: فقط پیام‌هایی که از این chat_id ها میان می‌تونن
-              match بشن. برای rule کد بانکی، chat_id چتی که پیامک‌های بانک توش
-              میاد رو بذار تا کد از هیچ چت دیگه‌ای برداشته نشه.
-            </p>
-            <label className="flex items-center gap-2 text-[11px] cursor-pointer mt-2">
-              <input
-                type="checkbox"
-                checked={matchAllFromSource}
-                disabled={!sourceChats.trim()}
-                onChange={(e) => setMatchAllFromSource(e.target.checked)}
-              />
-              <span className={!sourceChats.trim() ? "opacity-50" : ""}>
-                📩 <b>هر پیامی از این چت‌ها رو بگیر</b> (بدون بررسی محتوا با AI).
-                برای فیدهای اختصاصی مثل پیامک بانک — چون همه‌ی پیام‌هاش کد
-                بانکیه و تشخیص محتوایی غیرقابل‌اتکاست. تو حالت OTP، پیام‌های
-                بدون کد موقع ارسال رد می‌شن.
-              </span>
-            </label>
-          </div>
-          <textarea
-            value={format}
-            onChange={(e) => setFormat(e.target.value)}
-            placeholder="(اختیاری) format فوروارد — مثلاً «فقط عدد کد رو با emoji 🔑 بفرست» — خالی = پیام اصلی"
-            rows={2}
-            disabled={formatAsOtp}
-            className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 disabled:opacity-50"
-          />
-          <div className="flex flex-col gap-1.5 pt-1">
-            <label className="flex items-center gap-2 text-[11px] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showRulePrefix}
-                onChange={(e) => setShowRulePrefix(e.target.checked)}
-              />
-              <span>
-                🏷 prefix اول پیام بیاد («[rule: …] · از …»). خاموش
-                کنی، فقط بدنه فوروارد می‌شه.
-              </span>
-            </label>
-            <label className="flex items-center gap-2 text-[11px] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={formatAsOtp}
-                onChange={(e) => setFormatAsOtp(e.target.checked)}
-              />
-              <span>
-                🔑 <b>OTP mode</b> — کد رو از متن استخراج کن و به‌صورت
-                <code className="mx-1 px-1 bg-[var(--color-surface-2)] rounded">
-                  tap-to-copy
-                </code>
-                بفرست. وقتی روشن باشه، format بالا نادیده گرفته می‌شه.
-              </span>
-            </label>
-          </div>
-          <div className="pt-2 border-t border-[var(--color-border)] mt-1">
-            <div className="text-[11px] font-medium mb-1">
-              ⏸ Gate درخواست (اختیاری)
-            </div>
-            <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-              اگه ست شد، پیام‌های منطبق <i>فقط</i> وقتی فوروارد می‌شن که
-              گیرنده تو پنجره‌ی زمانی پایین یه پیامی بفرسته که با این توصیف
-              جور دربیاد (مثلاً «میشه کد رو بخونی؟»). پیام‌های match‌شده تو
-              همون پنجره قبل از درخواست هم بعد از درخواست ارسال می‌شن
-              (با تلرانس زمانی).
-            </p>
-            <textarea
-              value={requestTrigger}
-              onChange={(e) => setRequestTrigger(e.target.value)}
-              placeholder="توصیف درخواست — مثلاً «پیامی که می‌پرسه کد رو برام بفرست یا میخواد کد تایید رو بدونه»"
-              rows={2}
-              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 mb-2"
-            />
-            <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-              <button
-                onClick={generateVariations}
-                disabled={generating || !requestTrigger.trim()}
-                className="text-[11px] px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/40 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                title="با AI پاراف‌رازهای متن بالا رو به‌عنوان نمونه‌ی Gate ذخیره کن"
-              >
-                {generating ? "..." : "🤖 ساخت نمونه‌های Gate با AI"}
-              </button>
-              {variationStatus && (
-                <span className="text-[10px] text-[var(--color-text-dim)]">
-                  {variationStatus}
-                </span>
-              )}
-            </div>
-            {gateExamples.length > 0 && (
-              <div className="mb-2">
-                <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
-                  📋 نمونه‌های Gate ({gateExamples.length}) — پیام ورودی
-                  باید با توصیف بالا <i>یا</i> یکی از این‌ها بخوره
-                </div>
-                <div className="flex flex-col gap-1">
-                  {gateExamples.map((g) => (
-                    <div
-                      key={g.id}
-                      className="flex items-start gap-2 p-1.5 rounded-md bg-amber-500/5 border border-amber-500/20 text-xs"
-                    >
-                      <div className="flex-1 min-w-0">
-                        {g.label && (
-                          <div className="text-[9px] text-amber-300 mb-0.5">
-                            {g.label}
-                          </div>
-                        )}
-                        <div
-                          dir="auto"
-                          style={{ unicodeBidi: "plaintext" }}
-                          className="break-words"
-                        >
-                          {g.text}
-                        </div>
-                      </div>
-                      <button
-                        onClick={async () => {
-                          await fetch(
-                            `/api/rules/${id}/examples?exampleId=${g.id}`,
-                            { method: "DELETE" },
-                          );
-                          load();
-                        }}
-                        className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="flex items-center gap-2 text-[11px]">
-              <span className="text-[var(--color-text-dim)]">پنجره:</span>
-              <select
-                value={requestWindow ?? ""}
-                onChange={(e) =>
-                  setRequestWindow(
-                    e.target.value === "" ? null : Number(e.target.value),
-                  )
-                }
-                className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
-              >
-                {WINDOW_OPTIONS.map((o) => (
-                  <option
-                    key={o.value ?? "always"}
-                    value={o.value ?? ""}
-                  >
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="text-xs font-medium">✏️ اسم rule</div>
+          <div className="flex gap-2">
             <button
               onClick={remove}
               className="text-xs px-3 py-1.5 rounded-md border border-red-700 text-red-300 hover:bg-red-900/30"
@@ -919,23 +743,37 @@ export default function RuleDetailPage() {
               disabled={saving}
               className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
             >
-              {saving ? "ذخیره…" : "ذخیره"}
+              {saving ? "ذخیره…" : "💾 ذخیره"}
             </button>
           </div>
         </div>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="اسم rule"
+          className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+        />
+        <p className="text-[10px] text-[var(--color-text-dim)] mt-2 leading-relaxed">
+          🧠 این rule <b>با نمونه</b> کار می‌کنه: پایین نمونه‌ی پیام‌هایی که باید
+          بگیره رو بده (یا با «🤖 بساز» چندتا بساز). هرچی بیشتر بدی دقیق‌تر می‌شه؛
+          هر پیامی که مثل نمونه‌هات باشه match می‌شه — حتی همون پیامی که ازش
+          نمونه ساختی. اگه چیزی رو اشتباه گرفت، به «نمونه‌های منفی» اضافه‌اش کن.
+          تنظیمات فوروارد، گیت و مبدأ پایین‌ترن.
+        </p>
       </Card>
 
       <Card className="mb-4">
         <div className="flex items-center justify-between mb-2">
           <div className="text-xs font-medium">
-            📋 نمونه‌های اضافی ({examples.length}) — match وقتی اتفاق می‌افته
-            که پیام به <i>هر کدوم</i> از این‌ها (یا توصیف اصلی بالا) بخوره
+            ✅ نمونه‌های مثبت ({examples.length}) — این‌ها و هر پیامِ شبیهشون
+            match می‌شن
           </div>
         </div>
         {examples.length === 0 ? (
-          <p className="text-xs text-[var(--color-text-dim)] mb-2">
-            هنوز نمونه‌ای اضافه نشده. می‌تونی متن یه پیام واقعی رو پیست کنی
-            تا rule بفهمه «این مدل پیام‌ها رو هم بگیر».
+          <p className="text-xs text-amber-300/90 mb-2">
+            ⚠️ هنوز نمونه‌ای نداری — این rule هیچی نمی‌گیره. متنِ یه پیام واقعی
+            که باید بگیره رو پیست کن (یا با «🤖 بساز» بساز).
           </p>
         ) : (
           <div className="flex flex-col gap-1 mb-3">
@@ -1107,6 +945,162 @@ export default function RuleDetailPage() {
           >
             + منفی
           </button>
+        </div>
+      </Card>
+
+      <Card className="mb-4">
+        <div className="text-xs font-medium mb-3">⚙️ تنظیمات فوروارد و گیت</div>
+        <div className="flex flex-col gap-3">
+          {/* how the forwarded message looks */}
+          <div className="flex flex-col gap-1.5">
+            <label className="flex items-center gap-2 text-[11px] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formatAsOtp}
+                onChange={(e) => setFormatAsOtp(e.target.checked)}
+              />
+              <span>
+                🔑 <b>حالت OTP</b> — کد رو از متن استخراج کن و به‌صورت
+                <code className="mx-1 px-1 bg-[var(--color-surface-2)] rounded">tap-to-copy</code>
+                بفرست.
+              </span>
+            </label>
+            <label className="flex items-center gap-2 text-[11px] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showRulePrefix}
+                onChange={(e) => setShowRulePrefix(e.target.checked)}
+              />
+              <span>🏷 prefix اول پیام بیاد («[rule: …] · از …»).</span>
+            </label>
+            <textarea
+              value={format}
+              onChange={(e) => setFormat(e.target.value)}
+              placeholder="(اختیاری) format فوروارد — مثلاً «فقط عدد کد رو با emoji 🔑 بفرست» — خالی = پیام اصلی"
+              rows={2}
+              disabled={formatAsOtp}
+              className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 disabled:opacity-50"
+            />
+          </div>
+
+          {/* source scope */}
+          <div className="pt-2 border-t border-[var(--color-border)]">
+            <div className="text-[11px] font-medium mb-1">🎯 محدودیت مبدأ</div>
+            <input
+              type="text"
+              dir="ltr"
+              value={sourceChats}
+              onChange={(e) => setSourceChats(e.target.value)}
+              placeholder="فقط از این چت‌ها (chat_id با کاما) — خالی = همه چت‌ها"
+              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+            />
+            <label className="flex items-center gap-2 text-[11px] cursor-pointer mt-2">
+              <input
+                type="checkbox"
+                checked={matchAllFromSource}
+                disabled={!sourceChats.trim()}
+                onChange={(e) => setMatchAllFromSource(e.target.checked)}
+              />
+              <span className={!sourceChats.trim() ? "opacity-50" : ""}>
+                📩 <b>هر پیامی از این چت‌ها رو بگیر</b> (بدون بررسی نمونه). برای
+                فیدهای اختصاصی مثل پیامک بانک. تو حالت OTP، پیام‌های بدون کد رد
+                می‌شن.
+              </span>
+            </label>
+          </div>
+
+          {/* request gate */}
+          <div className="pt-2 border-t border-[var(--color-border)]">
+            <div className="text-[11px] font-medium mb-1">⏸ گیت درخواست (اختیاری)</div>
+            <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+              اگه ست شد، پیام‌های منطبق فقط وقتی فوروارد می‌شن که گیرنده تو
+              پنجره‌ی زمانی یه پیامی بفرسته که با این توصیف یا نمونه‌های زیر بخوره.
+            </p>
+            <textarea
+              value={requestTrigger}
+              onChange={(e) => setRequestTrigger(e.target.value)}
+              placeholder="توصیف درخواست — مثلاً «کد رو برام بفرست»"
+              rows={2}
+              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 mb-2"
+            />
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+              <button
+                onClick={generateVariations}
+                disabled={generating || !requestTrigger.trim()}
+                className="text-[11px] px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/40 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+                title="با AI پاراف‌رازهای متن بالا رو به‌عنوان نمونه‌ی گیت ذخیره کن"
+              >
+                {generating ? "..." : "🤖 ساخت نمونه‌های گیت با AI"}
+              </button>
+              {variationStatus && (
+                <span className="text-[10px] text-[var(--color-text-dim)]">{variationStatus}</span>
+              )}
+            </div>
+            {gateExamples.length > 0 && (
+              <div className="mb-2 flex flex-col gap-1">
+                {gateExamples.map((g) => (
+                  <div
+                    key={g.id}
+                    className="flex items-start gap-2 p-1.5 rounded-md bg-amber-500/5 border border-amber-500/20 text-xs"
+                  >
+                    <div dir="auto" style={{ unicodeBidi: "plaintext" }} className="flex-1 min-w-0 break-words">
+                      {g.text}
+                    </div>
+                    <button
+                      onClick={async () => {
+                        await fetch(`/api/rules/${id}/examples?exampleId=${g.id}`, { method: "DELETE" });
+                        load();
+                      }}
+                      className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className="text-[var(--color-text-dim)]">پنجره:</span>
+              <select
+                value={requestWindow ?? ""}
+                onChange={(e) => setRequestWindow(e.target.value === "" ? null : Number(e.target.value))}
+                className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+              >
+                {WINDOW_OPTIONS.map((o) => (
+                  <option key={o.value ?? "always"} value={o.value ?? ""}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* optional description — fallback only */}
+          <div className="pt-2 border-t border-[var(--color-border)]">
+            <div className="text-[11px] font-medium mb-1">
+              📝 توصیف (اختیاری)
+            </div>
+            <p className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
+              فقط وقتی به کار می‌آد که <b>هیچ نمونه‌ی مثبتی نداری</b> — اون‌وقت
+              rule از روی این توصیف با AI تصمیم می‌گیره. اگه نمونه داری، این
+              نادیده گرفته می‌شه.
+            </p>
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              placeholder="مثلاً «پیام‌هایی که خبر ارز دیجیتال دارن»"
+              rows={2}
+              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+            />
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              onClick={save}
+              disabled={saving}
+              className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+            >
+              {saving ? "ذخیره…" : "💾 ذخیره تنظیمات"}
+            </button>
+          </div>
         </div>
       </Card>
 
