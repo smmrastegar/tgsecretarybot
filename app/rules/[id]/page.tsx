@@ -716,6 +716,24 @@ export default function RuleDetailPage() {
           aiGenerate
           onSaved={load}
         />
+
+        <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+          <div className="text-[11px] font-medium mb-1">
+            📝 یا توصیف بده (اختیاری)
+          </div>
+          <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+            فقط وقتی به کار می‌آد که <b>هیچ نمونه‌ای نداری</b> — اون‌وقت rule از
+            روی این توصیف با AI تصمیم می‌گیره. اگه نمونه داری، این نادیده گرفته
+            می‌شه. (با «💾 ذخیره تنظیمات» پایین ذخیره می‌شه.)
+          </p>
+          <textarea
+            value={desc}
+            onChange={(e) => setDesc(e.target.value)}
+            placeholder="مثلاً «پیام‌هایی که خبر ارز دیجیتال دارن»"
+            rows={2}
+            className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+          />
+        </div>
       </Card>
 
       <Card className="mb-4">
@@ -734,22 +752,6 @@ export default function RuleDetailPage() {
           tone="neg"
           placeholder="متن یه پیامی که اشتباه match شده (مثلاً رزرو/بلیط یا OTP)"
           onSaved={load}
-        />
-      </Card>
-
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-1">📝 توصیف (اختیاری)</div>
-        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-          فقط وقتی به کار می‌آد که <b>هیچ نمونه‌ی مثبتی نداری</b> — اون‌وقت rule
-          از روی این توصیف با AI تصمیم می‌گیره. اگه نمونه داری، این نادیده
-          گرفته می‌شه. (با دکمه‌ی «ذخیره تنظیمات» پایین ذخیره می‌شه.)
-        </p>
-        <textarea
-          value={desc}
-          onChange={(e) => setDesc(e.target.value)}
-          placeholder="مثلاً «پیام‌هایی که خبر ارز دیجیتال دارن»"
-          rows={2}
-          className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
         />
       </Card>
 
