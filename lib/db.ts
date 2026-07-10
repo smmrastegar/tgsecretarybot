@@ -1504,6 +1504,9 @@ export async function ensureSchema(
     // last_request_at + window also forwards immediately. Without
     // this column we'd only support lookback.
     await q`ALTER TABLE message_rule_recipients ADD COLUMN IF NOT EXISTS last_request_at TIMESTAMPTZ`;
+    // Temporary pause: a paused recipient stays configured but receives
+    // no forwards until resumed (distinct from delete).
+    await q`ALTER TABLE message_rule_recipients ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT FALSE`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
     // recent push so the admin can see drift.
@@ -9596,6 +9599,7 @@ export type RuleRecipient = {
   ruleId: number;
   recipientChatId: number;
   recipientLabel: string | null;
+  paused: boolean;
   createdAt: Date;
 };
 
@@ -9761,7 +9765,7 @@ export async function listRuleRecipients(
   if (!hasDb()) return [];
   await ensureSchema();
   const rows = await sql()`
-    SELECT rule_id, recipient_chat_id, recipient_label, created_at
+    SELECT rule_id, recipient_chat_id, recipient_label, paused, created_at
     FROM message_rule_recipients
     WHERE rule_id = ${ruleId}
     ORDER BY created_at ASC`;
@@ -9769,8 +9773,25 @@ export async function listRuleRecipients(
     ruleId: Number(r.rule_id),
     recipientChatId: Number(r.recipient_chat_id),
     recipientLabel: (r.recipient_label as string) ?? null,
+    paused: Boolean(r.paused),
     createdAt: r.created_at as Date,
   }));
+}
+
+// Pause / resume a recipient without deleting it. Paused recipients
+// keep their config + history but receive no new forwards.
+export async function setRuleRecipientPaused(args: {
+  ruleId: number;
+  recipientChatId: number;
+  paused: boolean;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE message_rule_recipients
+    SET paused = ${args.paused}
+    WHERE rule_id = ${args.ruleId}
+      AND recipient_chat_id = ${args.recipientChatId}`;
 }
 
 export async function addRuleRecipient(args: {

@@ -3510,6 +3510,75 @@ Rules:
 Reply with STRICT JSON only:
 {"paraphrases": ["...", "...", ...]}`;
 
+// Generates realistic VARIANTS of an example carrier message, to seed a
+// rule's positive (rule_match) examples. Unlike the gate paraphraser
+// (which varies a REQUEST), this varies an actual message of the kind
+// the rule should forward — different numbers, phrasings, senders.
+const MESSAGE_VARIATION_PROMPT = `You're helping the operator train a Telegram forwarding rule. They pasted ONE real example of the kind of message that SHOULD match the rule. Generate realistic VARIATIONS of that same kind of message — messages a real person would actually send that a human would clearly file under the same category.
+
+Rules:
+  - Output full MESSAGES (what a real human would send), NOT descriptions.
+  - Keep the SAME category/intent as the example. If it contains an identifier like a card/account/IBAN/order number, produce DIFFERENT but realistically-formatted fake ones (never reuse the exact original).
+  - Vary phrasing, length, surrounding text, and language (Persian / English / mixed) the way real users do.
+  - Do NOT drift into a different category. If unsure, stay close to the example.
+  - 6-12 variations, each on its own line. No bullets, numbering, quotes, or extra prose.
+
+Reply with STRICT JSON only:
+{"paraphrases": ["...", "...", ...]}`;
+
+export async function generateMessageVariations(input: {
+  sample: string;
+  ruleDescription?: string;
+}): Promise<string[]> {
+  if (!input.sample.trim()) return [];
+  let raw: string;
+  try {
+    raw = await callOpenRouter(
+      [
+        { role: "system", content: MESSAGE_VARIATION_PROMPT },
+        {
+          role: "user",
+          content:
+            (input.ruleDescription
+              ? `rule description:\n${input.ruleDescription.slice(0, 300)}\n\n`
+              : "") + `example message:\n${input.sample.slice(0, 800)}`,
+        },
+      ],
+      {
+        maxTokens: 600,
+        jsonObject: true,
+        temperature: 0.8,
+        purpose: "rule_example_gen",
+      },
+    );
+  } catch (err) {
+    console.warn("[rule-example-gen] generation failed:", err);
+    return [];
+  }
+  const json = extractJson(raw);
+  if (!json) return [];
+  let parsed: { paraphrases?: unknown } = {};
+  try {
+    parsed = JSON.parse(json) as { paraphrases?: unknown };
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed.paraphrases)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of parsed.paraphrases) {
+    if (typeof p !== "string") continue;
+    const t = p.trim().replace(/^["«»']+|["«»']+$/g, "").trim();
+    if (!t) continue;
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t.slice(0, 400));
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
 export async function generateRequestTriggerVariations(input: {
   trigger: string;
 }): Promise<string[]> {

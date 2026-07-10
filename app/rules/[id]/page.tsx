@@ -33,6 +33,7 @@ type Recipient = {
   ruleId: number;
   recipientChatId: number;
   recipientLabel: string | null;
+  paused: boolean;
   createdAt: string;
 };
 type Example = {
@@ -381,6 +382,87 @@ export default function RuleDetailPage() {
     [id, load],
   );
 
+  const setRecipientPaused = useCallback(
+    async (chatId: number, paused: boolean) => {
+      await fetch(`/api/rules/${id}/recipients`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipientChatId: chatId, paused }),
+      });
+      load();
+    },
+    [id, load],
+  );
+
+  // AI: generate positive examples from a seed message (📋 section).
+  const [genExampleSeed, setGenExampleSeed] = useState("");
+  const [genExampleStatus, setGenExampleStatus] = useState<string | null>(null);
+  const [genExampleBusy, setGenExampleBusy] = useState(false);
+  const generateExamples = useCallback(async () => {
+    if (!genExampleSeed.trim()) return;
+    setGenExampleBusy(true);
+    setGenExampleStatus(null);
+    try {
+      const r = await fetch(`/api/rules/${id}/generate-examples`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sample: genExampleSeed }),
+      });
+      const j = (await r.json()) as { inserted?: number[]; error?: string };
+      if (r.ok && j.inserted) {
+        setGenExampleStatus(`✅ ${j.inserted.length} نمونه ساخته شد`);
+        setGenExampleSeed("");
+        load();
+      } else setGenExampleStatus(`❌ ${j.error ?? `HTTP ${r.status}`}`);
+    } finally {
+      setGenExampleBusy(false);
+      setTimeout(() => setGenExampleStatus(null), 8000);
+    }
+  }, [id, genExampleSeed, load]);
+
+  // Manual test/execute: run the real matcher on typed input; forward if
+  // it matches.
+  const [simText, setSimText] = useState("");
+  const [simBusy, setSimBusy] = useState(false);
+  const [simResult, setSimResult] = useState<string | null>(null);
+  const runSimulate = useCallback(async () => {
+    if (!simText.trim()) return;
+    setSimBusy(true);
+    setSimResult(null);
+    try {
+      const r = await fetch(`/api/rules/${id}/simulate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: simText }),
+      });
+      const j = (await r.json()) as {
+        matched?: boolean;
+        delivered?: Array<{ chatId: number; label: string | null }>;
+        failures?: Array<{ chatId: number; error: string }>;
+        note?: string;
+        error?: string;
+      };
+      if (!r.ok) setSimResult(`❌ ${j.error ?? `HTTP ${r.status}`}`);
+      else if (!j.matched) setSimResult("⚪️ match نشد — این rule این پیام رو نمی‌گیره.");
+      else {
+        const d = (j.delivered ?? [])
+          .map((x) => x.label || x.chatId)
+          .join("، ");
+        const f = (j.failures ?? []).length;
+        setSimResult(
+          `✅ match شد و اجرا شد${d ? ` → ارسال به: ${d}` : ""}${
+            f ? ` · ${f} ناموفق` : ""
+          }${j.note ? ` · ${j.note}` : ""}`,
+        );
+        load();
+      }
+    } catch (e) {
+      setSimResult(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSimBusy(false);
+    }
+  }, [id, simText, load]);
+
   const generateVariations = useCallback(async () => {
     if (!requestTrigger.trim()) return;
     setGenerating(true);
@@ -571,8 +653,13 @@ export default function RuleDetailPage() {
                 {recipients.map((r) => (
                   <span
                     key={r.recipientChatId}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--color-surface)] text-[10px]"
+                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] ${
+                      r.paused
+                        ? "bg-amber-500/10 text-amber-200 line-through"
+                        : "bg-[var(--color-surface)]"
+                    }`}
                   >
+                    {r.paused && <span className="no-underline">⏸</span>}
                     <span>{r.recipientLabel || "بدون‌نام"}</span>
                     <span dir="ltr" className="text-[var(--color-text-dim)] tabular-nums">
                       {r.recipientChatId}
@@ -881,6 +968,69 @@ export default function RuleDetailPage() {
             </button>
           </div>
         </div>
+
+        <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+          <div className="text-[11px] font-medium mb-1">
+            🤖 ساخت خودکار نمونه با AI
+          </div>
+          <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+            یه نمونه پیام بنویس، از روش چند نمونه‌ی مشابه ساخته می‌شه و
+            به‌عنوان نمونه‌ی مثبت ذخیره می‌شه (مثل ساخت نمونه‌های Gate).
+          </p>
+          <div className="flex gap-2">
+            <textarea
+              value={genExampleSeed}
+              onChange={(e) => setGenExampleSeed(e.target.value)}
+              placeholder="یه نمونه پیام واقعی از این نوع بنویس…"
+              rows={2}
+              className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+            />
+            <button
+              onClick={generateExamples}
+              disabled={genExampleBusy || !genExampleSeed.trim()}
+              className="text-[11px] px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/40 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50 self-start"
+            >
+              {genExampleBusy ? "..." : "🤖 بساز"}
+            </button>
+          </div>
+          {genExampleStatus && (
+            <div className="text-[10px] text-[var(--color-text-dim)] mt-1">
+              {genExampleStatus}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card className="mb-4">
+        <div className="text-xs font-medium mb-2">
+          🧪 تست/اجرای دستی — یه پیام بده، اگه match شد واقعاً اجرا می‌شه
+        </div>
+        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+          دقیقاً مثل یه پیام ورودی با این rule سنجیده می‌شه. اگه match بشه،
+          <b> واقعاً به گیرنده‌های فعال فوروارد می‌شه</b> (گیت رد می‌شه چون
+          دستیه؛ گیرنده‌های متوقف‌شده رد می‌شن).
+        </p>
+        <div className="flex gap-2">
+          <textarea
+            value={simText}
+            onChange={(e) => setSimText(e.target.value)}
+            placeholder="متن پیام تستی…"
+            rows={2}
+            className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+          />
+          <button
+            onClick={runSimulate}
+            disabled={simBusy || !simText.trim()}
+            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50 self-start"
+          >
+            {simBusy ? "…" : "▶️ اجرا"}
+          </button>
+        </div>
+        {simResult && (
+          <div className="text-[11px] mt-2 p-2 rounded-md bg-[var(--color-surface-2)] leading-relaxed">
+            {simResult}
+          </div>
+        )}
       </Card>
 
       <Card className="mb-4">
@@ -952,7 +1102,11 @@ export default function RuleDetailPage() {
             {recipients.map((r) => (
               <div
                 key={r.recipientChatId}
-                className="flex items-center gap-2 p-2 rounded-md bg-[var(--color-surface-2)] text-xs"
+                className={`flex items-center gap-2 p-2 rounded-md text-xs ${
+                  r.paused
+                    ? "bg-amber-500/5 border border-amber-500/30"
+                    : "bg-[var(--color-surface-2)]"
+                }`}
               >
                 <span className="flex-1 tabular-nums">
                   {r.recipientLabel ? (
@@ -964,6 +1118,11 @@ export default function RuleDetailPage() {
                     </>
                   ) : (
                     r.recipientChatId
+                  )}
+                  {r.paused && (
+                    <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200">
+                      ⏸ متوقف
+                    </span>
                   )}
                   {testStatus[r.recipientChatId] && (
                     <span
@@ -977,6 +1136,17 @@ export default function RuleDetailPage() {
                     </span>
                   )}
                 </span>
+                <button
+                  onClick={() => setRecipientPaused(r.recipientChatId, !r.paused)}
+                  className={`text-[10px] px-2 py-0.5 rounded-md border ${
+                    r.paused
+                      ? "border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10"
+                      : "border-amber-500/40 text-amber-200 hover:bg-amber-500/10"
+                  }`}
+                  title={r.paused ? "ادامه‌ی ارسال به این گیرنده" : "توقف موقت ارسال به این گیرنده (بدون حذف)"}
+                >
+                  {r.paused ? "▶️ ادامه" : "⏸ توقف"}
+                </button>
                 <button
                   onClick={() => testRecipient(r.recipientChatId)}
                   className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"

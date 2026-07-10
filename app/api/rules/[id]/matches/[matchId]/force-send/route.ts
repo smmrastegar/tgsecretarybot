@@ -86,7 +86,10 @@ export async function POST(
   const alreadyDelivered = new Set<number>(
     (m.forwarded_to ?? []).map((n) => Number(n)),
   );
-  const allRecipients = await listRuleRecipients(ruleId);
+  // Paused recipients are excluded even from a manual force-send.
+  const allRecipients = (await listRuleRecipients(ruleId)).filter(
+    (r) => !r.paused,
+  );
   const body = (await request.json().catch(() => ({}))) as {
     recipients?: number[];
   };

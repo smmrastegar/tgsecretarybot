@@ -3489,7 +3489,10 @@ async function maybeApplyMessageRules(args: {
     for (const ruleId of matched) {
       const rule = rules.find((r) => r.id === ruleId);
       if (!rule) continue;
-      const recipients = await listRuleRecipients(ruleId);
+      // Paused recipients keep their config but receive no forwards.
+      const recipients = (await listRuleRecipients(ruleId)).filter(
+        (r) => !r.paused,
+      );
       if (recipients.length === 0) {
         await recordRuleMatch({
           ruleId,
@@ -3680,7 +3683,13 @@ async function maybeReleaseGatedRules(args: {
         r.requestWindowSeconds > 0,
     );
     if (candidates.length === 0) return;
+    const { listRuleRecipients: listRecips } = await import("./db");
     for (const rule of candidates) {
+      // A paused recipient must not have codes released to them either.
+      const myRecip = (await listRecips(rule.id).catch(() => [])).find(
+        (r) => r.recipientChatId === args.senderChatId,
+      );
+      if (myRecip?.paused) continue;
       // Gate-side example phrasings (the "🤖 ساخت پاراف‌راز با AI"
       // output) widen the gate's understanding beyond the one-line
       // description.
