@@ -29,7 +29,10 @@ export async function POST(
   if (!Number.isFinite(ruleId)) {
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
   }
-  const body = (await request.json().catch(() => ({}))) as { sample?: string };
+  const body = (await request.json().catch(() => ({}))) as {
+    sample?: string;
+    save?: boolean;
+  };
   const sample = (body.sample ?? "").trim();
   if (!sample) {
     return NextResponse.json(
@@ -47,6 +50,11 @@ export async function POST(
       { ok: false, error: "AI پاسخی برنگشت — یه بار دیگه امتحان کن." },
       { status: 500 },
     );
+  }
+  // Preview mode: just return the generated variations so the operator
+  // can review + save them explicitly (no auto-insert).
+  if (body.save === false) {
+    return NextResponse.json({ ok: true, variations, inserted: [] });
   }
   const inserted: number[] = [];
   for (const v of variations) {

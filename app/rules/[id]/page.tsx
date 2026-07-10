@@ -75,7 +75,6 @@ export default function RuleDetailPage() {
   const [examples, setExamples] = useState<Example[]>([]);
   const [gateExamples, setGateExamples] = useState<Example[]>([]);
   const [negExamples, setNegExamples] = useState<Example[]>([]);
-  const [newNegText, setNewNegText] = useState("");
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -96,10 +95,6 @@ export default function RuleDetailPage() {
   // recipient form
   const [newChat, setNewChat] = useState("");
   const [newLabel, setNewLabel] = useState("");
-
-  // example form
-  const [newExampleText, setNewExampleText] = useState("");
-  const [newExampleLabel, setNewExampleLabel] = useState("");
 
   // test
   const [testLimit, setTestLimit] = useState(30);
@@ -399,32 +394,6 @@ export default function RuleDetailPage() {
     [id, load],
   );
 
-  // AI: generate positive examples from a seed message (📋 section).
-  const [genExampleSeed, setGenExampleSeed] = useState("");
-  const [genExampleStatus, setGenExampleStatus] = useState<string | null>(null);
-  const [genExampleBusy, setGenExampleBusy] = useState(false);
-  const generateExamples = useCallback(async () => {
-    if (!genExampleSeed.trim()) return;
-    setGenExampleBusy(true);
-    setGenExampleStatus(null);
-    try {
-      const r = await fetch(`/api/rules/${id}/generate-examples`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sample: genExampleSeed }),
-      });
-      const j = (await r.json()) as { inserted?: number[]; error?: string };
-      if (r.ok && j.inserted) {
-        setGenExampleStatus(`✅ ${j.inserted.length} نمونه ساخته شد`);
-        setGenExampleSeed("");
-        load();
-      } else setGenExampleStatus(`❌ ${j.error ?? `HTTP ${r.status}`}`);
-    } finally {
-      setGenExampleBusy(false);
-      setTimeout(() => setGenExampleStatus(null), 8000);
-    }
-  }, [id, genExampleSeed, load]);
-
   // Manual test/execute: run the real matcher on typed input; forward if
   // it matches.
   const [simText, setSimText] = useState("");
@@ -508,42 +477,6 @@ export default function RuleDetailPage() {
       setTimeout(() => setVariationStatus(null), 8000);
     }
   }, [id, requestTrigger, load]);
-
-  const addExample = useCallback(async () => {
-    if (!newExampleText.trim()) return;
-    await fetch(`/api/rules/${id}/examples`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: newExampleText,
-        label: newExampleLabel || undefined,
-      }),
-    });
-    setNewExampleText("");
-    setNewExampleLabel("");
-    load();
-  }, [id, newExampleText, newExampleLabel, load]);
-
-  const removeExample = useCallback(
-    async (exampleId: number) => {
-      await fetch(`/api/rules/${id}/examples?exampleId=${exampleId}`, {
-        method: "DELETE",
-      });
-      load();
-    },
-    [id, load],
-  );
-
-  const addNegExample = useCallback(async () => {
-    if (!newNegText.trim()) return;
-    await fetch(`/api/rules/${id}/examples`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: newNegText, purpose: "negative_match" }),
-    });
-    setNewNegText("");
-    load();
-  }, [id, newNegText, load]);
 
   const runTest = useCallback(async () => {
     setTesting(true);
@@ -764,104 +697,25 @@ export default function RuleDetailPage() {
       </Card>
 
       <Card className="mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-xs font-medium">
-            ✅ نمونه‌های مثبت ({examples.length}) — این‌ها و هر پیامِ شبیهشون
-            match می‌شن
-          </div>
+        <div className="text-xs font-medium mb-2">
+          ✅ نمونه‌های مثبت ({examples.length}) — این‌ها و هر پیامِ شبیهشون match
+          می‌شن
         </div>
-        {examples.length === 0 ? (
+        {examples.length === 0 && (
           <p className="text-xs text-amber-300/90 mb-2">
-            ⚠️ هنوز نمونه‌ای نداری — این rule هیچی نمی‌گیره. متنِ یه پیام واقعی
-            که باید بگیره رو پیست کن (یا با «🤖 بساز» بساز).
+            ⚠️ هنوز نمونه‌ای نداری — این rule هیچی نمی‌گیره. یه پیام واقعی که
+            باید بگیره اضافه کن (یا با «🤖 بساز» بساز) و ذخیره بزن.
           </p>
-        ) : (
-          <div className="flex flex-col gap-1 mb-3">
-            {examples.map((e) => (
-              <div
-                key={e.id}
-                className="flex items-start gap-2 p-2 rounded-md bg-[var(--color-surface-2)] text-xs"
-              >
-                <div className="flex-1 min-w-0">
-                  {e.label && (
-                    <div className="text-[10px] text-[var(--color-text-dim)] mb-0.5">
-                      {e.label}
-                    </div>
-                  )}
-                  <div
-                    dir="auto"
-                    style={{ unicodeBidi: "plaintext" }}
-                    className="whitespace-pre-wrap break-words"
-                  >
-                    {truncate(e.text, 400)}
-                  </div>
-                </div>
-                <button
-                  onClick={() => removeExample(e.id)}
-                  className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
         )}
-        <div className="flex flex-col gap-2">
-          <textarea
-            value={newExampleText}
-            onChange={(e) => setNewExampleText(e.target.value)}
-            placeholder="متن یه نمونه پیام (مثلاً پیام OTP واقعی رو پیست کن)"
-            rows={2}
-            className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-          />
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newExampleLabel}
-              onChange={(e) => setNewExampleLabel(e.target.value)}
-              placeholder="label (اختیاری)"
-              className="flex-1 text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5"
-            />
-            <button
-              onClick={addExample}
-              disabled={!newExampleText.trim()}
-              className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-            >
-              + اضافه کن
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-          <div className="text-[11px] font-medium mb-1">
-            🤖 ساخت خودکار نمونه با AI
-          </div>
-          <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-            یه نمونه پیام بنویس، از روش چند نمونه‌ی مشابه ساخته می‌شه و
-            به‌عنوان نمونه‌ی مثبت ذخیره می‌شه (مثل ساخت نمونه‌های Gate).
-          </p>
-          <div className="flex gap-2">
-            <textarea
-              value={genExampleSeed}
-              onChange={(e) => setGenExampleSeed(e.target.value)}
-              placeholder="یه نمونه پیام واقعی از این نوع بنویس…"
-              rows={2}
-              className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-            />
-            <button
-              onClick={generateExamples}
-              disabled={genExampleBusy || !genExampleSeed.trim()}
-              className="text-[11px] px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/40 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50 self-start"
-            >
-              {genExampleBusy ? "..." : "🤖 بساز"}
-            </button>
-          </div>
-          {genExampleStatus && (
-            <div className="text-[10px] text-[var(--color-text-dim)] mt-1">
-              {genExampleStatus}
-            </div>
-          )}
-        </div>
+        <ExampleEditor
+          ruleId={id}
+          items={examples}
+          purpose="rule_match"
+          tone="pos"
+          placeholder="متن یه نمونه پیام که باید match بشه…"
+          aiGenerate
+          onSaved={load}
+        />
       </Card>
 
       <Card className="mb-4">
@@ -871,49 +725,32 @@ export default function RuleDetailPage() {
         </div>
         <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
           اگه rule داره چیزی رو اشتباه می‌گیره، متنِ همون پیامِ اشتباه رو
-          اینجا پیست کن. matcher یاد می‌گیره پیام‌های شبیه این رو رد کنه —
-          بهترین راه برای جلوگیری از match اشتباه.
+          اینجا اضافه کن و ذخیره بزن — دیگه پیام‌های شبیهش رو نمی‌گیره.
         </p>
-        {negExamples.length > 0 && (
-          <div className="flex flex-col gap-1 mb-3">
-            {negExamples.map((e) => (
-              <div
-                key={e.id}
-                className="flex items-start gap-2 p-2 rounded-md bg-rose-500/5 border border-rose-500/20 text-xs"
-              >
-                <div
-                  dir="auto"
-                  style={{ unicodeBidi: "plaintext" }}
-                  className="flex-1 min-w-0 whitespace-pre-wrap break-words"
-                >
-                  {truncate(e.text, 400)}
-                </div>
-                <button
-                  onClick={() => removeExample(e.id)}
-                  className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="flex gap-2">
-          <textarea
-            value={newNegText}
-            onChange={(e) => setNewNegText(e.target.value)}
-            placeholder="متن یه پیامی که اشتباه match شده (مثلاً پیام رزرو/بلیط یا OTP)"
-            rows={2}
-            className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-          />
-          <button
-            onClick={addNegExample}
-            disabled={!newNegText.trim()}
-            className="text-xs px-3 py-1.5 rounded-md bg-rose-600 text-white disabled:opacity-50 self-start"
-          >
-            + منفی
-          </button>
-        </div>
+        <ExampleEditor
+          ruleId={id}
+          items={negExamples}
+          purpose="negative_match"
+          tone="neg"
+          placeholder="متن یه پیامی که اشتباه match شده (مثلاً رزرو/بلیط یا OTP)"
+          onSaved={load}
+        />
+      </Card>
+
+      <Card className="mb-4">
+        <div className="text-xs font-medium mb-1">📝 توصیف (اختیاری)</div>
+        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+          فقط وقتی به کار می‌آد که <b>هیچ نمونه‌ی مثبتی نداری</b> — اون‌وقت rule
+          از روی این توصیف با AI تصمیم می‌گیره. اگه نمونه داری، این نادیده
+          گرفته می‌شه. (با دکمه‌ی «ذخیره تنظیمات» پایین ذخیره می‌شه.)
+        </p>
+        <textarea
+          value={desc}
+          onChange={(e) => setDesc(e.target.value)}
+          placeholder="مثلاً «پیام‌هایی که خبر ارز دیجیتال دارن»"
+          rows={2}
+          className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+        />
       </Card>
 
       <Card className="mb-4">
@@ -1071,25 +908,6 @@ export default function RuleDetailPage() {
                 ))}
               </select>
             </div>
-          </div>
-
-          {/* optional description — fallback only */}
-          <div className="pt-2 border-t border-[var(--color-border)]">
-            <div className="text-[11px] font-medium mb-1">
-              📝 توصیف (اختیاری)
-            </div>
-            <p className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
-              فقط وقتی به کار می‌آد که <b>هیچ نمونه‌ی مثبتی نداری</b> — اون‌وقت
-              rule از روی این توصیف با AI تصمیم می‌گیره. اگه نمونه داری، این
-              نادیده گرفته می‌شه.
-            </p>
-            <textarea
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-              placeholder="مثلاً «پیام‌هایی که خبر ارز دیجیتال دارن»"
-              rows={2}
-              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-            />
           </div>
 
           <div className="flex justify-end">
@@ -1479,5 +1297,211 @@ export default function RuleDetailPage() {
         )}
       </Card>
     </Shell>
+  );
+}
+
+// Staged example editor: adds/removals are collected LOCALLY and only
+// committed on 💾 ذخیره — nothing auto-applies. AI generation previews
+// into the pending list for review before saving.
+function ExampleEditor({
+  ruleId,
+  items,
+  purpose,
+  tone,
+  placeholder,
+  aiGenerate,
+  onSaved,
+}: {
+  ruleId: number;
+  items: Example[];
+  purpose: "rule_match" | "negative_match";
+  tone: "pos" | "neg";
+  placeholder: string;
+  aiGenerate?: boolean;
+  onSaved: () => void;
+}) {
+  const [adds, setAdds] = useState<string[]>([]);
+  const [dels, setDels] = useState<Set<number>>(new Set());
+  const [draft, setDraft] = useState("");
+  const [seed, setSeed] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const dirty = adds.length > 0 || dels.size > 0;
+  const accent = tone === "neg" ? "bg-rose-600" : "bg-[var(--color-accent)]";
+  const chipBg =
+    tone === "neg"
+      ? "bg-rose-500/5 border-rose-500/20"
+      : "bg-[var(--color-surface-2)] border-transparent";
+
+  const addDraft = () => {
+    const t = draft.trim();
+    if (!t) return;
+    setAdds((a) => [...a, t]);
+    setDraft("");
+  };
+  const toggleDel = (exId: number) =>
+    setDels((d) => {
+      const n = new Set(d);
+      n.has(exId) ? n.delete(exId) : n.add(exId);
+      return n;
+    });
+  const aiGen = async () => {
+    if (!seed.trim()) return;
+    setAiBusy(true);
+    setMsg(null);
+    try {
+      const r = await fetch(`/api/rules/${ruleId}/generate-examples`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sample: seed, save: false }),
+      });
+      const j = (await r.json()) as { variations?: string[]; error?: string };
+      if (r.ok && j.variations?.length) {
+        setAdds((a) => [...a, ...j.variations!]);
+        setSeed("");
+        setMsg(`✅ ${j.variations.length} نمونه ساخته شد — بازبینی کن، بعد ذخیره بزن`);
+      } else setMsg(`❌ ${j.error ?? "خطا"}`);
+    } finally {
+      setAiBusy(false);
+      setTimeout(() => setMsg(null), 8000);
+    }
+  };
+  const save = async () => {
+    setSaving(true);
+    try {
+      for (const text of adds)
+        await fetch(`/api/rules/${ruleId}/examples`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, purpose }),
+        });
+      for (const exId of dels)
+        await fetch(`/api/rules/${ruleId}/examples?exampleId=${exId}`, {
+          method: "DELETE",
+        });
+      setAdds([]);
+      setDels(new Set());
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  };
+  const discard = () => {
+    setAdds([]);
+    setDels(new Set());
+    setDraft("");
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      {(items.length > 0 || adds.length > 0) && (
+        <div className="flex flex-col gap-1">
+          {items.map((e) => {
+            const marked = dels.has(e.id);
+            return (
+              <div
+                key={e.id}
+                className={`flex items-start gap-2 p-2 rounded-md border text-xs ${chipBg} ${marked ? "opacity-50" : ""}`}
+              >
+                <div
+                  dir="auto"
+                  style={{ unicodeBidi: "plaintext" }}
+                  className={`flex-1 min-w-0 whitespace-pre-wrap break-words ${marked ? "line-through" : ""}`}
+                >
+                  {truncate(e.text, 400)}
+                </div>
+                <button
+                  onClick={() => toggleDel(e.id)}
+                  title={marked ? "برگردون" : "برای حذف علامت بزن"}
+                  className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
+                >
+                  {marked ? "↩︎" : "✕"}
+                </button>
+              </div>
+            );
+          })}
+          {adds.map((t, i) => (
+            <div
+              key={`add-${i}`}
+              className="flex items-start gap-2 p-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 text-xs"
+            >
+              <span className="text-[9px] text-emerald-300 shrink-0 mt-0.5">جدید</span>
+              <div dir="auto" style={{ unicodeBidi: "plaintext" }} className="flex-1 min-w-0 whitespace-pre-wrap break-words">
+                {truncate(t, 400)}
+              </div>
+              <button
+                onClick={() => setAdds((a) => a.filter((_, j) => j !== i))}
+                className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={placeholder}
+          rows={2}
+          className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+        />
+        <button
+          onClick={addDraft}
+          disabled={!draft.trim()}
+          className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 self-start"
+        >
+          + به لیست
+        </button>
+      </div>
+
+      {aiGenerate && (
+        <div className="flex gap-2">
+          <input
+            dir="auto"
+            value={seed}
+            onChange={(e) => setSeed(e.target.value)}
+            placeholder="🤖 یه نمونه بده تا چندتای مشابه بسازه…"
+            className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+          />
+          <button
+            onClick={aiGen}
+            disabled={aiBusy || !seed.trim()}
+            className="text-[11px] px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/40 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50 self-start"
+          >
+            {aiBusy ? "..." : "🤖 بساز"}
+          </button>
+        </div>
+      )}
+      {msg && <div className="text-[10px] text-[var(--color-text-dim)]">{msg}</div>}
+
+      <div className="flex items-center gap-2 justify-end">
+        {dirty && (
+          <>
+            <span className="text-[10px] text-amber-300 me-auto">
+              {adds.length ? `${adds.length} افزودن` : ""}
+              {adds.length && dels.size ? " · " : ""}
+              {dels.size ? `${dels.size} حذف` : ""} — ذخیره نشده
+            </span>
+            <button
+              onClick={discard}
+              className="text-[11px] px-2.5 py-1 rounded-md border border-[var(--color-border)]"
+            >
+              انصراف
+            </button>
+          </>
+        )}
+        <button
+          onClick={save}
+          disabled={!dirty || saving}
+          className={`text-xs px-3 py-1.5 rounded-md text-white disabled:opacity-40 ${accent}`}
+        >
+          {saving ? "ذخیره…" : "💾 ذخیره"}
+        </button>
+      </div>
+    </div>
   );
 }
