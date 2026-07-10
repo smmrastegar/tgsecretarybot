@@ -104,7 +104,9 @@ export default function RuleDetailPage() {
   const [testResults, setTestResults] = useState<TestResult[] | null>(null);
 
   const MATCH_PAGE = 10;
-  const [matchFilter, setMatchFilter] = useState<"active" | "expired">("active");
+  const [matchFilter, setMatchFilter] = useState<"active" | "done" | "expired">(
+    "active",
+  );
   const [hasMoreMatches, setHasMoreMatches] = useState(true);
   const [loadingMoreMatches, setLoadingMoreMatches] = useState(false);
   const [matchesError, setMatchesError] = useState<string | null>(null);
@@ -494,21 +496,31 @@ export default function RuleDetailPage() {
     );
   }
 
-  // A match is expired when it's past the rule's window and wasn't
-  // fully delivered — it can never be sent again (auto OR force).
-  const matchExpired = (m: Match): boolean => {
+  // Three mutually-exclusive states:
+  //  done    → fully delivered to everyone (historical; can't re-run)
+  //  expired → not fully delivered AND past the window (dead; can't send)
+  //  active  → still pending inside the window (the only ones that can
+  //            still fire). "Active" must NOT include already-delivered
+  //            matches — those are done, not live.
+  const matchStatus = (m: Match): "active" | "done" | "expired" => {
     const deliveredSet = new Set(m.forwardedTo);
     const allDelivered =
       recipients.length > 0 &&
       recipients.every((r) => deliveredSet.has(r.recipientChatId));
+    if (allDelivered) return "done";
     const windowMs = (rule.requestWindowSeconds ?? 0) * 1000;
     const ageMs = Date.now() - new Date(m.matchedAt).getTime();
-    return !allDelivered && windowMs > 0 && ageMs > windowMs;
+    return windowMs > 0 && ageMs > windowMs ? "expired" : "active";
   };
-  const activeMatches = matches.filter((m) => !matchExpired(m));
-  const expiredMatches = matches.filter((m) => matchExpired(m));
+  const activeMatches = matches.filter((m) => matchStatus(m) === "active");
+  const doneMatches = matches.filter((m) => matchStatus(m) === "done");
+  const expiredMatches = matches.filter((m) => matchStatus(m) === "expired");
   const visibleMatches =
-    matchFilter === "expired" ? expiredMatches : activeMatches;
+    matchFilter === "expired"
+      ? expiredMatches
+      : matchFilter === "done"
+        ? doneMatches
+        : activeMatches;
 
   return (
     <Shell>
@@ -1085,9 +1097,10 @@ export default function RuleDetailPage() {
       <Card>
         <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
           <div className="text-xs font-medium">🕐 تاریخچه تطبیق‌ها</div>
-          <div className="flex gap-1.5">
+          <div className="flex gap-1.5 flex-wrap">
             {([
               { key: "active", label: `🟢 فعال (${activeMatches.length})` },
+              { key: "done", label: `✓ انجام‌شده (${doneMatches.length})` },
               { key: "expired", label: `⌛ منقضی (${expiredMatches.length})` },
             ] as const).map((t) => (
               <button
@@ -1112,7 +1125,9 @@ export default function RuleDetailPage() {
           <p className="text-xs text-[var(--color-text-dim)]">
             {matchFilter === "expired"
               ? "هیچ تطبیق منقضی‌ای نیست."
-              : "تطبیق فعالی نیست — همه منقضی شدن (تب «منقضی» رو ببین)."}
+              : matchFilter === "done"
+                ? "هنوز چیزی کامل تحویل نشده."
+                : "تطبیق فعالی نیست — یعنی چیزی در حال انتظارِ ارسال نیست. تب‌های «انجام‌شده» و «منقضی» رو ببین."}
           </p>
         ) : (
           <>
