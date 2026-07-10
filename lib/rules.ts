@@ -187,9 +187,107 @@ export type MatchContext = {
   businessConnectionId?: string | null;
 };
 
-// Returns the ids of the rules that match. Empty array = nothing
-// matched (or the LLM call failed — we swallow errors so a flaky
-// model doesn't break the message pipeline).
+// ── Deterministic, example-driven matching ──────────────────────
+// The operator's mental model: "the message I built this rule from
+// MUST match, and every message like it; if one slips through, I paste
+// it and it's covered." An LLM classifier can't honour that — it
+// rejected messages verbatim-present in a rule's own examples. So the
+// PRIMARY matcher is deterministic similarity to the stored examples.
+// The LLM is only a fallback for rules that have a description but no
+// positive examples yet.
+
+const MATCH_STOP = new Set([
+  "به","از","را","که","تا","با","در","این","یا","هم","رو","یه","شما","برای",
+  "و","بر","بی","تو","من","ما","اون","اینو","های","ها","شده","شد","می","نمی",
+  "the","a","an","to","of","is","are","your","you","for","and","or","in","on",
+  "please","this","that","با سلام","سلام",
+]);
+
+// Normalise for matching: ASCII digits, digit-runs → "#", drop
+// punctuation, lowercase. So "رمز: 709145" and "رمز: 445566" both
+// become "رمز #" and compare as identical.
+function normForMatch(t: string): string {
+  return normaliseDigits(t)
+    .toLowerCase()
+    .replace(/[0-9]+/g, "#")
+    .replace(/[^\p{L}\p{N}#]+/gu, " ")
+    .trim();
+}
+
+// Distinctive NUMBER-SHAPE features. Free-form messages that carry a
+// card / IBAN share little wording but the same shape — so a shape is a
+// strong signal, weighted well above ordinary words. (Amounts and short
+// codes stay as "#" words so they don't cross-match card↔code.)
+const PATTERN_WEIGHT = 5;
+function shapeFeatures(t: string): string[] {
+  const n = normaliseDigits(t);
+  const feats: string[] = [];
+  // 16-ish card: one 13-19 digit run, or four groups of four.
+  if (/(?<!\d)\d{13,19}(?!\d)/.test(n) || /(?:\d{4}[ \-]){3}\d{4}/.test(n))
+    feats.push("«card»");
+  // Iran IBAN: IR + ~24 digits (tolerate spaces between groups).
+  if (/ir\d{20,26}/i.test(n.replace(/[ \-]/g, ""))) feats.push("«iban»");
+  return feats;
+}
+// Feature set = distinctive words (numbers masked) + number-shape tags.
+function matchTokens(t: string): Set<string> {
+  const words = normForMatch(t)
+    .split(/\s+/)
+    .filter((w) => w && w.length >= 2 && !MATCH_STOP.has(w));
+  return new Set([...words, ...shapeFeatures(t)]);
+}
+function weight(tk: string): number {
+  return tk.startsWith("«") ? PATTERN_WEIGHT : 1;
+}
+// Weighted containment: how much of `exText`'s distinctive content is
+// present in the message. 1.0 = fully present. Shape features dominate.
+function exampleScore(
+  exText: string,
+  msgFeatures: Set<string>,
+  msgNorm: string,
+): number {
+  const ef = matchTokens(exText);
+  if (ef.size < 1) {
+    const en = normForMatch(exText);
+    return en.length >= 2 && msgNorm.includes(en) ? 1 : 0;
+  }
+  let matchedW = 0;
+  let totalW = 0;
+  for (const tk of ef) {
+    const w = weight(tk);
+    totalW += w;
+    if (msgFeatures.has(tk)) matchedW += w;
+  }
+  return totalW === 0 ? 0 : matchedW / totalW;
+}
+
+const MATCH_THRESHOLD = 0.6;
+
+// Decide a rule by its examples. Returns true/false when there is at
+// least one positive example; null when there are none (→ caller may
+// fall back to the LLM/description path).
+export function classifyByExamples(
+  messageText: string,
+  positives: RuleExample[],
+  negatives: RuleExample[],
+): boolean | null {
+  if (positives.length === 0) return null;
+  const msgFeatures = matchTokens(messageText);
+  const msgNorm = normForMatch(messageText);
+  let pos = 0;
+  for (const p of positives)
+    pos = Math.max(pos, exampleScore(p.text, msgFeatures, msgNorm));
+  let neg = 0;
+  for (const n of negatives)
+    neg = Math.max(neg, exampleScore(n.text, msgFeatures, msgNorm));
+  // Match when the message is clearly like a positive AND not more like
+  // a counter-example. Guarantees a verbatim example scores 1.0 → match.
+  return pos >= MATCH_THRESHOLD && pos > neg;
+}
+
+// Returns the ids of the rules that match. Example-driven and
+// deterministic for rules that have positive examples; LLM fallback
+// only for description-only rules.
 export async function matchRules(
   ctx: MatchContext,
   rules: MessageRule[],
@@ -204,48 +302,72 @@ export async function matchRules(
       examplesMap[r.id] = await listRuleExamples(r.id).catch(() => []);
     }
   }
-  // Counter-examples (must NOT match) are always fetched — they're the
-  // main lever against over-matching a vague description.
   for (const r of rules) {
     negativesMap[r.id] = await listRuleExamples(r.id, "negative_match").catch(
       () => [],
     );
   }
-  // Plain-text reply (JSON mode kept coming back as "{}" on Gemini —
-  // every message would silently look like "no rules matched"). We ask
-  // for a single MATCHED: <comma list> line and parse with regex.
-  const systemPrompt = `You are a strict routing classifier. The operator has a list of rules. Each rule has an id, a name, a primary description, positive examples (messages that SHOULD match) and counter-examples (messages that must NOT match).
 
-A rule MATCHES the incoming message ONLY when the message CLEARLY fits THAT rule's described KIND of message. Judge by MEANING/INTENT, not by surface features.
+  const matched: number[] = [];
+  const llmRules: MessageRule[] = [];
+  for (const r of rules) {
+    const verdict = classifyByExamples(
+      ctx.messageText,
+      examplesMap[r.id] ?? [],
+      negativesMap[r.id] ?? [],
+    );
+    if (verdict === true) matched.push(r.id);
+    else if (verdict === false) {
+      /* examples say no — done, no LLM */
+    } else {
+      // No positive examples → this rule can only be judged from its
+      // description. Hand it to the LLM fallback.
+      llmRules.push(r);
+    }
+  }
 
-Be conservative — when in doubt, do NOT match. Rules to apply PER-RULE (never globally):
-- The mere presence of digits/numbers is NOT enough on its own. A number counts only if it is the SPECIFIC kind the rule's description asks for. E.g. a rule about "bank card / account / IBAN numbers" matches a real card/account/IBAN but NOT an unrelated reservation/ticket/order/phone number; a rule about "OTP / verification / dynamic password (رمز پویا)" matches exactly those codes.
-- Decide what counts using ONLY this rule's own description, positive examples, and counter-examples — do NOT import assumptions from other rules. A category that is a counter-example for one rule may be the target of another.
-- If the message resembles ANY of THIS rule's counter-examples, do NOT match it.
+  if (llmRules.length > 0) {
+    const llmIds = await llmMatchRules(ctx, llmRules, negativesMap).catch(
+      (err) => {
+        console.warn("[rules] LLM fallback failed:", err);
+        return [] as number[];
+      },
+    );
+    matched.push(...llmIds);
+  }
+
+  const unique = Array.from(new Set(matched));
+  if (unique.length > 0) {
+    console.log(`[rules] match ids=[${unique.join(",")}] for chat=${ctx.chatId}`);
+  }
+  return unique;
+}
+
+// LLM fallback for description-only rules (no positive examples). Same
+// conservative prompt as before, but now it only ever sees rules the
+// operator hasn't taught by example.
+async function llmMatchRules(
+  ctx: MatchContext,
+  rules: MessageRule[],
+  negativesMap: Record<number, RuleExample[]>,
+): Promise<number[]> {
+  const systemPrompt = `You are a strict routing classifier. Each rule has an id, a name, a description, and counter-examples (messages that must NOT match).
+
+A rule MATCHES the incoming message ONLY when the message CLEARLY fits THAT rule's described KIND of message, judged by MEANING/INTENT. Be conservative — when in doubt, do NOT match. The mere presence of digits is not enough. If the message resembles any of a rule's counter-examples, do NOT match it.
 
 Reply with EXACTLY one line, no preamble, no markdown:
 
 MATCHED: <comma-separated ids>
 
-If nothing matches, reply exactly:
-
-MATCHED: none
-
-Examples:
-  MATCHED: 12
-  MATCHED: 7, 19
-  MATCHED: none
+If nothing matches, reply exactly: MATCHED: none
 
 Never explain. Never wrap in code fences.`;
   const rulesBlock = rules
     .map((r) => {
-      const exs = pickDiverse(examplesMap[r.id] ?? [], 8)
-        .map((e, i) => `    positive_example${i + 1}: "${e.text.slice(0, 200)}"`)
-        .join("\n");
       const negs = pickDiverse(negativesMap[r.id] ?? [], 8)
         .map((e, i) => `    counter_example${i + 1} (must NOT match): "${e.text.slice(0, 200)}"`)
         .join("\n");
-      return `- id=${r.id}\n  name: "${r.name.slice(0, 60)}"\n  description: "${r.description.slice(0, 400)}"${exs ? "\n" + exs : ""}${negs ? "\n" + negs : ""}`;
+      return `- id=${r.id}\n  name: "${r.name.slice(0, 60)}"\n  description: "${r.description.slice(0, 400)}"${negs ? "\n" + negs : ""}`;
     })
     .join("\n");
   const userPrompt = [
@@ -253,53 +375,34 @@ Never explain. Never wrap in code fences.`;
     rulesBlock,
     "",
     "Incoming message:",
-    `chat: ${ctx.chatTitle ?? ctx.senderName} (id=${ctx.chatId})`,
     `from: ${ctx.senderName}`,
     `text:`,
     ctx.messageText.slice(0, 1500),
   ].join("\n");
 
-  let raw: string;
-  try {
-    const out = await callLlm({
-      models: MATCH_MODELS,
-      systemPrompt,
-      userPrompt,
-      jsonObject: false,
-      purpose: "rule_match",
-      chatId: ctx.chatId,
-      businessConnectionId: ctx.businessConnectionId ?? null,
-      costUsd: COST_PER_MATCH_USD,
-      timeoutMs: MATCH_TIMEOUT_MS,
-    });
-    raw = out.text;
-  } catch (err) {
-    console.warn("[rules] match call failed:", err);
-    return [];
-  }
+  const out = await callLlm({
+    models: MATCH_MODELS,
+    systemPrompt,
+    userPrompt,
+    jsonObject: false,
+    purpose: "rule_match",
+    chatId: ctx.chatId,
+    businessConnectionId: ctx.businessConnectionId ?? null,
+    costUsd: COST_PER_MATCH_USD,
+    timeoutMs: MATCH_TIMEOUT_MS,
+  });
   const validIds = new Set(rules.map((r) => r.id));
-  // FAIL CLOSED: only accept ids from an explicit "MATCHED:" line.
-  // The old fallback plucked every \d+ out of the WHOLE reply when the
-  // line was missing — a verbose model answer like "rule id=2 does not
-  // apply" became a match for rule 2 and forwarded a message to real
-  // people. No MATCHED line → treat as no match, log for diagnosis.
-  const matchedLine = raw.match(/MATCHED\s*:\s*([^\n]+)/i);
-  if (!matchedLine) {
-    console.warn(
-      `[rules] match output had no MATCHED line — treating as no-match. raw: ${raw.slice(0, 300)}`,
-    );
-    return [];
-  }
+  const matchedLine = out.text.match(/MATCHED\s*:\s*([^\n]+)/i);
+  if (!matchedLine) return [];
   const searchSpace = matchedLine[1] ?? "";
   if (/\bnone\b/i.test(searchSpace)) return [];
-  const ids = (searchSpace.match(/\d+/g) ?? [])
-    .map((t) => Number(t))
-    .filter((n) => Number.isFinite(n) && validIds.has(n));
-  const unique = Array.from(new Set(ids));
-  if (unique.length > 0) {
-    console.log(`[rules] match ids=[${unique.join(",")}] for chat=${ctx.chatId}`);
-  }
-  return unique;
+  return Array.from(
+    new Set(
+      (searchSpace.match(/\d+/g) ?? [])
+        .map((t) => Number(t))
+        .filter((n) => Number.isFinite(n) && validIds.has(n)),
+    ),
+  );
 }
 
 // Batch test: classify whether each of `messages` matches `rule`. One
@@ -314,33 +417,37 @@ export async function batchTestRule(args: {
 }): Promise<boolean[]> {
   const out = new Array<boolean>(args.messages.length).fill(false);
   if (args.messages.length === 0) return out;
-  const exs = pickDiverse(args.examples, 8)
-    .map((e, i) => `  positive_example${i + 1}: "${e.text.slice(0, 200)}"`)
-    .join("\n");
-  const negs = pickDiverse(args.negatives ?? [], 8)
+  const negatives = args.negatives ?? [];
+
+  // Example-driven (deterministic) when the rule has positive examples —
+  // identical to the live matcher, so the test reflects reality and a
+  // message present in the examples always shows as a match.
+  if (args.examples.length > 0) {
+    for (let i = 0; i < args.messages.length; i++) {
+      out[i] =
+        classifyByExamples(args.messages[i]!.text, args.examples, negatives) ===
+        true;
+    }
+    return out;
+  }
+
+  // Description-only rule → LLM fallback (batched).
+  const negs = pickDiverse(negatives, 8)
     .map((e, i) => `  counter_example${i + 1} (must NOT match): "${e.text.slice(0, 200)}"`)
     .join("\n");
-  const systemPrompt = `You are testing a single routing rule against multiple historical messages. A message MATCHES ONLY when it CLEARLY fits THIS rule's described KIND of message, judged by MEANING/INTENT — not by surface features.
-
-Be conservative — when in doubt, mark NO. Apply these per THIS rule (not globally):
-- The mere presence of digits/numbers is NOT enough on its own. A number counts only if it is the SPECIFIC kind this rule's description asks for. A "bank card / account / IBAN" rule matches a real card/account/IBAN but not an unrelated number; an "OTP / verification / dynamic password (رمز پویا)" rule matches exactly those codes.
-- Use ONLY this rule's own description, positive examples, and counter-examples. A category that's a counter-example for another rule may be this rule's target.
-- If a message resembles ANY counter-example, mark NO.
+  const systemPrompt = `You are testing a single routing rule against multiple historical messages. A message MATCHES ONLY when it CLEARLY fits THIS rule's described KIND of message, judged by MEANING/INTENT. Be conservative — when in doubt, mark NO. If a message resembles ANY counter-example, mark NO.
 
 Reply with EXACTLY one MATCHED line listing the indexes that matched:
 
 MATCHED: <comma-separated indexes>
 
-If nothing matched, reply:
-
-MATCHED: none
+If nothing matched, reply: MATCHED: none
 
 Indexes are 1-based and refer to the "MESSAGES" list below. Never explain, never wrap in code fences.`;
   const userPrompt = [
     "RULE:",
     `  name: "${args.rule.name}"`,
     `  description: "${args.rule.description}"`,
-    exs ? `  positive examples:\n${exs}` : "  (no positive examples)",
     negs ? `  counter-examples:\n${negs}` : "",
     "",
     "MESSAGES:",
@@ -368,18 +475,11 @@ Indexes are 1-based and refer to the "MESSAGES" list below. Never explain, never
     return out;
   }
   const matchedLine = raw.match(/MATCHED\s*:\s*([^\n]+)/i);
-  const searchSpace = matchedLine?.[1] ?? raw;
-  if (/\bnone\b/i.test(searchSpace) || /MATCHED:\s*$/i.test(raw)) {
-    return out;
-  }
+  const searchSpace = matchedLine?.[1] ?? "";
+  if (!matchedLine || /\bnone\b/i.test(searchSpace)) return out;
   for (const tok of searchSpace.match(/\d+/g) ?? []) {
     const n = Number(tok);
     if (Number.isFinite(n) && n >= 1 && n <= out.length) out[n - 1] = true;
-  }
-  if (!matchedLine && !out.some(Boolean)) {
-    console.warn(
-      `[rules] batch test had no MATCHED line + no parseable ids — raw: ${raw.slice(0, 300)}`,
-    );
   }
   return out;
 }
