@@ -105,9 +105,9 @@ export default function RuleDetailPage() {
   const [testResults, setTestResults] = useState<TestResult[] | null>(null);
 
   const MATCH_PAGE = 10;
-  const [matchFilter, setMatchFilter] = useState<"active" | "done" | "expired">(
-    "active",
-  );
+  const [matchFilter, setMatchFilter] = useState<
+    "active" | "partial" | "done" | "expired"
+  >("active");
   const [hasMoreMatches, setHasMoreMatches] = useState(true);
   const [loadingMoreMatches, setLoadingMoreMatches] = useState(false);
   const [matchesError, setMatchesError] = useState<string | null>(null);
@@ -578,23 +578,27 @@ export default function RuleDetailPage() {
     );
   }
 
-  // Three mutually-exclusive states:
-  //  done    → fully delivered to everyone (historical; can't re-run)
-  //  expired → not fully delivered AND past the window (dead; can't send)
-  //  active  → still pending inside the window (the only ones that can
-  //            still fire). "Active" must NOT include already-delivered
-  //            matches — those are done, not live.
-  const matchStatus = (m: Match): "active" | "done" | "expired" => {
-    const deliveredSet = new Set(m.forwardedTo);
-    const allDelivered =
-      recipients.length > 0 &&
-      recipients.every((r) => deliveredSet.has(r.recipientChatId));
-    if (allDelivered) return "done";
+  const matchPastWindow = (m: Match): boolean => {
     const windowMs = (rule.requestWindowSeconds ?? 0) * 1000;
     const ageMs = Date.now() - new Date(m.matchedAt).getTime();
-    return windowMs > 0 && ageMs > windowMs ? "expired" : "active";
+    return windowMs > 0 && ageMs > windowMs;
+  };
+  // Four mutually-exclusive states:
+  //  done    → every recipient got it (historical; can't re-run)
+  //  partial → SOME got it but not all (the delivered went; the rest
+  //            won't once the window passes)
+  //  active  → nobody got it yet, still inside the window (pending — the
+  //            only ones that can still fire on their own)
+  //  expired → nobody got it AND past the window (fully dead)
+  const matchStatus = (m: Match): "active" | "done" | "partial" | "expired" => {
+    const deliveredSet = new Set(m.forwardedTo);
+    const got = recipients.filter((r) => deliveredSet.has(r.recipientChatId)).length;
+    if (recipients.length > 0 && got === recipients.length) return "done";
+    if (got > 0) return "partial";
+    return matchPastWindow(m) ? "expired" : "active";
   };
   const activeMatches = matches.filter((m) => matchStatus(m) === "active");
+  const partialMatches = matches.filter((m) => matchStatus(m) === "partial");
   const doneMatches = matches.filter((m) => matchStatus(m) === "done");
   const expiredMatches = matches.filter((m) => matchStatus(m) === "expired");
   const visibleMatches =
@@ -602,7 +606,9 @@ export default function RuleDetailPage() {
       ? expiredMatches
       : matchFilter === "done"
         ? doneMatches
-        : activeMatches;
+        : matchFilter === "partial"
+          ? partialMatches
+          : activeMatches;
 
   return (
     <Shell>
@@ -1270,6 +1276,7 @@ export default function RuleDetailPage() {
           <div className="flex gap-1.5 flex-wrap">
             {([
               { key: "active", label: `🟢 فعال (${activeMatches.length})` },
+              { key: "partial", label: `⚠️ ناقص (${partialMatches.length})` },
               { key: "done", label: `✓ انجام‌شده (${doneMatches.length})` },
               { key: "expired", label: `⌛ منقضی (${expiredMatches.length})` },
             ] as const).map((t) => (
@@ -1295,9 +1302,11 @@ export default function RuleDetailPage() {
           <p className="text-xs text-[var(--color-text-dim)]">
             {matchFilter === "expired"
               ? "هیچ تطبیق منقضی‌ای نیست."
-              : matchFilter === "done"
-                ? "هنوز چیزی کامل تحویل نشده."
-                : "تطبیق فعالی نیست — یعنی چیزی در حال انتظارِ ارسال نیست. تب‌های «انجام‌شده» و «منقضی» رو ببین."}
+              : matchFilter === "partial"
+                ? "هیچ تطبیق ناقصی نیست."
+                : matchFilter === "done"
+                  ? "هنوز چیزی کامل تحویل نشده."
+                  : "تطبیق فعالی نیست — چیزی در حال انتظارِ ارسال نیست. تب‌های دیگه رو ببین."}
           </p>
         ) : (
           <>
@@ -1315,17 +1324,14 @@ export default function RuleDetailPage() {
                     err,
                   };
                 });
-                const allDelivered = rowsByRecipient.every((r) => r.got);
-                const noneDelivered = rowsByRecipient.every((r) => !r.got);
-                const someFailed = rowsByRecipient.some(
-                  (r) => !r.got && r.err,
-                );
-                // Once a match is past the rule's window it can NEVER be
-                // delivered again — not auto-released, and force-send is
-                // refused server-side. Any match that isn't fully
-                // delivered by then is expired (whether it was fully
-                // held OR only partially delivered / failed). Show that
-                // honestly and drop the force-send button.
+                const total = rowsByRecipient.length;
+                const gotCount = rowsByRecipient.filter((r) => r.got).length;
+                const allDelivered = total > 0 && gotCount === total;
+                const partial = gotCount > 0 && gotCount < total;
+                // Past the window a match can NEVER be delivered again —
+                // not auto-released, and force-send is refused server-
+                // side. `expired` = not-fully-delivered AND past window;
+                // it drives the "no more sending" note + hidden button.
                 const windowMs = (rule.requestWindowSeconds ?? 0) * 1000;
                 const ageMs = Date.now() - new Date(m.matchedAt).getTime();
                 const pastWindow = windowMs > 0 && ageMs > windowMs;
@@ -1342,24 +1348,19 @@ export default function RuleDetailPage() {
                       <span>·</span>
                       {allDelivered ? (
                         <Badge tone="success">
-                          ✓ همه گرفتن ({m.forwardedTo.length}/
-                          {recipients.length})
+                          ✓ همه گرفتن ({gotCount}/{total})
                         </Badge>
-                      ) : expired ? (
-                        <Badge tone="neutral">
-                          ⌛ منقضی ({m.forwardedTo.length}/{recipients.length})
-                          — دیگه ارسال نمی‌شه
-                        </Badge>
-                      ) : noneDelivered && !someFailed ? (
-                        <Badge tone="warn">⏸ نگه‌داشته (gate)</Badge>
-                      ) : someFailed ? (
+                      ) : partial ? (
                         <Badge tone="danger">
-                          ✗ ناقص ({m.forwardedTo.length}/{recipients.length})
+                          ⚠️ ناقص ({gotCount}/{total})
+                          {pastWindow ? " — بقیه دیگه نمی‌ره" : ""}
+                        </Badge>
+                      ) : pastWindow ? (
+                        <Badge tone="neutral">
+                          ⌛ منقضی — دیگه ارسال نمی‌شه
                         </Badge>
                       ) : (
-                        <Badge tone="info">
-                          ↗ {m.forwardedTo.length}/{recipients.length}
-                        </Badge>
+                        <Badge tone="warn">⏸ نگه‌داشته (gate)</Badge>
                       )}
                     </div>
                     {rowsByRecipient.length > 0 && (
