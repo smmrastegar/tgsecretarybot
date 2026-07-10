@@ -484,11 +484,14 @@ If there is NO verification code in the message reply with:
 
   CODE: none
 
-The "code" is whatever the message identifies as a one-time login / verification / OTP / PIN value, even when it's surrounded by greeting text or service branding. Do NOT return phone numbers, dates, years, message ids, or fragments of URLs. Persian, Arabic, English — all fine.
+The "code" is whatever the message identifies as a one-time login / verification / OTP / PIN / dynamic password (رمز پویا / رمز یکبار مصرف / رمز دوم) value, even when it's surrounded by greeting text or service branding. Do NOT return phone numbers, dates, years, message ids, fragments of URLs, card/account numbers, or MONEY AMOUNTS (numbers next to مبلغ / ریال / تومان / IRR). When a message has both an amount and a code, return the CODE (the value labelled رمز / کد / password), never the amount. Persian, Arabic, English — all fine.
 
 Examples:
 input: "977487 is your Call.com verification code."
 output: CODE: 977487
+
+input: "بلو\\nبفرمایید رمز پویا خرید اسنپ فود\\nمبلغ: 24,090,000 ریال\\nرمز: 709145"
+output: CODE: 709145
 
 input: "Your code is 123456. Don't share with anyone."
 output: CODE: 123456
