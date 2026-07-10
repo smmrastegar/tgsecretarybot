@@ -192,7 +192,7 @@ export default function WebhooksPage() {
       </Card>
 
       {loading ? (
-        <Card>Loading…</Card>
+        <Card>بارگذاری…</Card>
       ) : list.length === 0 ? (
         <Card>
           <p className="text-sm text-[var(--color-text-dim)]">

@@ -19,33 +19,33 @@ const ROLE_INFO: Record<
   { title: string; description: string; emoji: string }
 > = {
   downloader: {
-    title: "Downloader bots",
+    title: "بات‌های Downloader",
     emoji: "📥",
     description:
       "بات‌هایی که لینک اینستاگرام / یوتیوب / توییتر / ساندکلاد / اسپاتیفای می‌گیرن و فایل دانلود شده برمی‌گردونن.",
   },
   sms_inbox: {
-    title: "SMS inbox channels",
+    title: "کانال‌های SMS inbox",
     emoji: "📱",
     description: "کانال‌هایی که SMS گوشی توشون فوروارد می‌شه.",
   },
   download_archive: {
-    title: "Download archive",
+    title: "آرشیو دانلود",
     emoji: "🗄",
     description: "آرشیو محتوای دانلود‌شده. برای جست‌وجوی بعدی توی پیام‌های ذخیره شده.",
   },
   news: {
-    title: "News sources",
+    title: "منابع خبری",
     emoji: "📰",
     description: "کانال‌ها و گروه‌های خبری مهم.",
   },
   summary_inbox: {
-    title: "Summary inbox",
+    title: "صندوق خلاصه‌ها",
     emoji: "📬",
     description: "کانال یا گروهی که خلاصه‌های auto-summary رو دریافت می‌کنه.",
   },
   storage: {
-    title: "Storage (Instagram media)",
+    title: "Storage (مدیای اینستاگرام)",
     emoji: "📦",
     description: "کانالی که استوری/پست/ریلز دانلودشده رو دریافت می‌کنه.",
   },
@@ -161,7 +161,7 @@ export default function FunctionsPage() {
   return (
     <Shell>
       <PageTitle
-        title="Functions"
+        title="قابلیت‌ها"
         subtitle="هر نقش (downloader / news / ...) می‌تونه چند چت داشته باشه که توی گروه‌های متفاوت سازماندهی شدن. مثلاً «downloader» می‌تونه گروه «default»، «work»، «news» داشته باشه و هرکدوم چت‌های جدا."
       />
 
@@ -221,7 +221,7 @@ export default function FunctionsPage() {
         </div>
       </Card>
 
-      {loading && <Card>Loading…</Card>}
+      {loading && <Card>بارگذاری…</Card>}
       {byRole && (
         <div className="flex flex-col gap-3">
           {ROLES_IN_ORDER.map((role) => {

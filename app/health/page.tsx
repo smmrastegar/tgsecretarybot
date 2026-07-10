@@ -203,19 +203,19 @@ export default function HealthPage() {
                 </div>
                 <div>
                   <dt className="text-[var(--color-text-dim)]">
-                    Messages last 1h
+                    پیام‌های ۱ ساعت اخیر
                   </dt>
                   <dd>{data.activity.msgs_1h ?? 0}</dd>
                 </div>
                 <div>
                   <dt className="text-[var(--color-text-dim)]">
-                    AI calls last 1h
+                    call‌های AI در ۱ ساعت اخیر
                   </dt>
                   <dd>{data.activity.ai_1h ?? 0}</dd>
                 </div>
                 <div>
                   <dt className="text-[var(--color-text-dim)]">
-                    AI cost last 24h
+                    هزینه AI در ۲۴ ساعت اخیر
                   </dt>
                   <dd>
                     ${Number(data.activity.ai_cost_24h ?? 0).toFixed(4)}
@@ -223,13 +223,13 @@ export default function HealthPage() {
                 </div>
                 <div>
                   <dt className="text-[var(--color-text-dim)]">
-                    Updates last 1h
+                    Updateهای ۱ ساعت اخیر
                   </dt>
                   <dd>{data.activity.updates_1h ?? 0}</dd>
                 </div>
                 <div>
                   <dt className="text-[var(--color-text-dim)]">
-                    Active business connections
+                    business connectionهای فعال
                   </dt>
                   <dd>{data.activity.bcs_enabled ?? 0}</dd>
                 </div>
@@ -240,18 +240,17 @@ export default function HealthPage() {
           {data.updates && (
             <Card className="mt-4">
               <div className="text-sm font-medium mb-1">
-                Telegram updates received (last 1h)
+                Updateهای Telegram دریافت‌شده (۱ ساعت اخیر)
               </div>
               <div className="text-[11px] text-[var(--color-text-dim)] mb-3">
-                If this list doesn&apos;t include channel_post but the bot
-                IS in a channel, the bot probably isn&apos;t an
-                administrator there. Telegram only delivers channel
-                posts to admin bots.
+                اگه توی این لیست channel_post نیست ولی ربات توی یه کانال
+                هست، احتمالاً ربات اونجا administrator نیست. تلگرام
+                پست‌های کانال رو فقط به بات‌های ادمین می‌فرسته.
               </div>
               <div className="flex flex-wrap gap-1.5 mb-3">
                 {Object.keys(data.updates.byType).length === 0 ? (
                   <span className="text-xs text-[var(--color-text-dim)]">
-                    no Telegram updates in the last hour
+                    هیچ update ای از Telegram توی یک ساعت اخیر نیست
                   </span>
                 ) : (
                   Object.entries(data.updates.byType).map(([t, n]) => (
@@ -304,7 +303,7 @@ export default function HealthPage() {
         </>
       )}
 
-      {loading && !data && <Card>Checking…</Card>}
+      {loading && !data && <Card>در حال بررسی…</Card>}
     </Shell>
   );
 }

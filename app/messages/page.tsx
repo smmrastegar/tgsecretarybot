@@ -252,8 +252,8 @@ export default function MessagesPage() {
   return (
     <Shell>
       <PageTitle
-        title="All messages"
-        subtitle="Every classified message the bot has seen."
+        title="همه پیام‌ها"
+        subtitle="هر پیام دسته‌بندی‌شده‌ای که ربات دیده."
       />
 
       <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mb-4 sm:items-center">
@@ -261,7 +261,7 @@ export default function MessagesPage() {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search text or sender…"
+          placeholder="جستجو در متن یا فرستنده…"
           className="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm placeholder:text-[var(--color-text-dim)]"
         />
         <div
@@ -296,7 +296,7 @@ export default function MessagesPage() {
             checked={urgentOnly}
             onChange={(e) => setUrgentOnly(e.target.checked)}
           />
-          Urgent only
+          فقط فوری‌ها
         </label>
         <label className="text-xs text-[var(--color-text-dim)] flex items-center gap-2 px-3 py-2 border border-[var(--color-border)] rounded-md cursor-pointer hover:bg-[var(--color-surface-2)]">
           <input
@@ -304,18 +304,18 @@ export default function MessagesPage() {
             checked={threaded}
             onChange={(e) => setThreaded(e.target.checked)}
           />
-          Group by chat
+          گروه‌بندی بر اساس چت
         </label>
       </div>
 
       {loading ? (
         <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">Loading…</p>
+          <p className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری…</p>
         </Card>
       ) : messages.length === 0 ? (
         <Card>
           <p className="text-sm text-[var(--color-text-dim)]">
-            No messages match.
+            هیچ پیامی مطابقت نداره.
           </p>
         </Card>
       ) : threaded ? (
@@ -334,9 +334,9 @@ export default function MessagesPage() {
                   {group.chatTitle ?? group.senderName}
                 </Link>
                 <div className="flex gap-1 flex-wrap items-center text-[10px]">
-                  <Badge tone="neutral">{group.messages.length} msg</Badge>
+                  <Badge tone="neutral">{group.messages.length} پیام</Badge>
                   <Badge tone="neutral">
-                    last {relTime(group.messages[0]!.createdAt)}
+                    آخرین {relTime(group.messages[0]!.createdAt)}
                   </Badge>
                   {group.messages.some(
                     (m) =>
@@ -351,7 +351,7 @@ export default function MessagesPage() {
                     >
                       {transcribing.has(group.chatId)
                         ? "در حال..."
-                        : "🎙 Transcribe همه"}
+                        : "🎙 رونویسی همه"}
                     </button>
                   )}
                 </div>
@@ -392,7 +392,7 @@ export default function MessagesPage() {
                   >
                     <div className="text-[10px] text-[var(--color-text-dim)] flex items-center gap-1.5 flex-wrap">
                       <span>
-                        {m.fromOwner ? "you" : displaySender(m)} ·{" "}
+                        {m.fromOwner ? "شما" : displaySender(m)} ·{" "}
                         {relTime(m.createdAt)}
                       </span>
                       {m.mediaKind && (
@@ -405,12 +405,12 @@ export default function MessagesPage() {
                       )}
                       {m.deletedAt && (
                         <Badge tone="danger">
-                          🗑 Deleted {relTime(m.deletedAt)}
+                          🗑 پاک‌شده {relTime(m.deletedAt)}
                         </Badge>
                       )}
                       {m.editCount > 0 && (
                         <Badge tone="warn">
-                          ✎ edited ({m.editCount})
+                          ✎ ویرایش‌شده ({m.editCount})
                         </Badge>
                       )}
                     </div>
@@ -476,13 +476,13 @@ export default function MessagesPage() {
                   href={`/chats/${group.chatId}`}
                   className="block mt-2 text-[11px] text-[var(--color-text-dim)] hover:text-white"
                 >
-                  View all {group.messages.length} messages →
+                  دیدن همه {group.messages.length} پیام →
                 </Link>
               )}
               <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
                 <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
-                  Reply to last message from{" "}
-                  {target.fromOwner ? "you" : displaySender(target)}
+                  پاسخ به آخرین پیام از{" "}
+                  {target.fromOwner ? "شما" : displaySender(target)}
                 </div>
                 <MessageActions
                   message={{
@@ -529,7 +529,7 @@ export default function MessagesPage() {
                   >
                     {displaySender(m)}
                   </Link>
-                  {m.fromOwner && <Badge tone="info">you</Badge>}
+                  {m.fromOwner && <Badge tone="info">شما</Badge>}
                   <span>·</span>
                   <Link
                     href={`/chats/${m.chatId}`}
