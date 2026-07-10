@@ -1287,7 +1287,7 @@ export default function ChatDetailPage() {
                     className="px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
                   >
                     <option value="">
-                      Default ({secretaries[0]?.name ?? "—"})
+                      پیش‌فرض ({secretaries[0]?.name ?? "—"})
                     </option>
                     {secretaries.map((s) => (
                       <option key={s.userId} value={s.userId}>
@@ -1297,7 +1297,7 @@ export default function ChatDetailPage() {
                   </select>
                   {rule?.secretaryUserId && (
                     <span className="text-[10px] text-[var(--color-text-dim)]">
-                      override active
+                      override فعال
                     </span>
                   )}
                 </div>
@@ -1359,7 +1359,7 @@ export default function ChatDetailPage() {
               {rule?.mode === "ai_listen" && (
                 <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
                   <div className="text-xs font-medium mb-1.5">
-                    📬 Auto-summarize threads
+                    📬 خلاصه‌سازی خودکار thread‌ها
                   </div>
                   <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
                     وقتی یه thread با گپ سکوت بسته بشه، خلاصه‌اش خودکار
@@ -1385,7 +1385,7 @@ export default function ChatDetailPage() {
                           }).then(() => load())
                         }
                       />
-                      Auto-summarize روشن
+                      خلاصه‌سازی خودکار روشن
                     </label>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
@@ -1757,7 +1757,7 @@ export default function ChatDetailPage() {
           </Card>
 
           <PageTitle
-            title="Threads"
+            title="Thread‌ها"
             subtitle="هر فاصله‌ی سکوتِ بیشتر از چند دقیقه یه thread جدید درست می‌کنه. خلاصه‌ی هر کدوم رو با AI بگیر — اکشن‌های پیشنهادی به Actions اضافه می‌شن."
             actions={
               <div className="flex items-center gap-2 flex-wrap">
@@ -1798,10 +1798,10 @@ export default function ChatDetailPage() {
                   className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                 >
                   {threadsLoading
-                    ? "Loading…"
+                    ? "در حال بارگذاری…"
                     : threads
-                      ? "Refresh"
-                      : "Load threads"}
+                      ? "بازخوانی"
+                      : "بارگذاری thread‌ها"}
                 </button>
               </div>
             }
@@ -1810,7 +1810,7 @@ export default function ChatDetailPage() {
           {!threads && !threadsLoading && (
             <Card>
               <p className="text-sm text-[var(--color-text-dim)]">
-                هنوز thread‌ها لود نشدن. روی «Load threads» بزن.
+                هنوز thread‌ها لود نشدن. روی «بارگذاری thread‌ها» بزن.
               </p>
             </Card>
           )}
@@ -1835,12 +1835,12 @@ export default function ChatDetailPage() {
                 const sum = t.summary;
                 const summarising = summarizing.has(t.threadNo);
                 const summariseLabel = summarising
-                  ? "Summarising…"
+                  ? "در حال خلاصه‌سازی…"
                   : !sum
-                    ? "Summarise"
+                    ? "خلاصه کن"
                     : sum.stale
-                      ? "🔄 Update summary"
-                      : "✓ Re-summarise";
+                      ? "🔄 به‌روزرسانی خلاصه"
+                      : "✓ خلاصه‌سازی دوباره";
                 return (
                   <Card key={t.threadNo} className="!p-3">
                     <div className="flex items-start justify-between gap-2 flex-wrap">
@@ -1954,9 +1954,9 @@ export default function ChatDetailPage() {
                           >
                             <div className="flex justify-between gap-2 text-[10px] text-[var(--color-text-dim)]">
                               <span>
-                                {m.fromOwner ? "you" : m.senderName}
+                                {m.fromOwner ? "شما" : m.senderName}
                                 {m.urgent && (
-                                  <Badge tone="danger">urgent</Badge>
+                                  <Badge tone="danger">فوری</Badge>
                                 )}
                               </span>
                               <span>{relTime(m.createdAt)}</span>
@@ -1974,7 +1974,7 @@ export default function ChatDetailPage() {
                                 ? m.transcript
                                 : m.mediaDescription
                                   ? m.mediaDescription
-                                  : m.messageText || "(no text)"}
+                                  : m.messageText || "(بدون متن)"}
                             </div>
                             {m.mediaKind && (
                               <MediaView messageId={m.id} kind={m.mediaKind} />
@@ -1989,12 +1989,12 @@ export default function ChatDetailPage() {
             </div>
           )}
 
-          <PageTitle title="Conversation" />
+          <PageTitle title="گفتگو" />
 
           {messages.length === 0 ? (
             <Card>
               <p className="text-sm text-[var(--color-text-dim)]">
-                No messages logged for this chat yet.
+                هنوز هیچ پیامی برای این چت ثبت نشده.
               </p>
             </Card>
           ) : (
@@ -2005,7 +2005,7 @@ export default function ChatDetailPage() {
                   disabled={loadingMore}
                   className="self-center text-xs px-4 py-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 mb-2"
                 >
-                  {loadingMore ? "Loading…" : "↑ Load 10 more older messages"}
+                  {loadingMore ? "در حال بارگذاری…" : "↑ بارگذاری ۱۰ پیام قدیمی‌تر"}
                 </button>
               )}
               {[...messages].reverse().map((m) => {
@@ -2045,11 +2045,11 @@ export default function ChatDetailPage() {
             <div className="grid grid-cols-2 gap-2 mb-3 text-sm">
               {(
                 [
-                  ["First name", suggestion.firstName],
-                  ["Last name", suggestion.lastName],
-                  ["Nickname", suggestion.nickname],
+                  ["نام", suggestion.firstName],
+                  ["نام خانوادگی", suggestion.lastName],
+                  ["اسم خودمونی", suggestion.nickname],
                   [
-                    "Relationship",
+                    "رابطه",
                     suggestion.relationship
                       ? RELATIONSHIP_LABELS[
                           suggestion.relationship as keyof typeof RELATIONSHIP_LABELS
@@ -2189,7 +2189,7 @@ function MediaRoutingLog({ chatId }: { chatId: number }) {
           className="text-xs font-medium flex items-center gap-2 hover:text-white text-[var(--color-text-dim)]"
         >
           <span>{open ? "▼" : "▶"}</span>
-          🛰 Media routing log
+          🛰 لاگ مسیریابی رسانه
           <span className="text-[10px]">
             (دلیل اینکه چرا voice/video/photo رفت یا نرفت)
           </span>
