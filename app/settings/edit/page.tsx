@@ -965,7 +965,7 @@ function HeadersEditor({
     <div className="flex flex-col gap-2">
       {value.length === 0 && (
         <p className="text-xs text-[var(--color-text-dim)]">
-          No extra headers.
+          هدر اضافه‌ای نیست.
         </p>
       )}
       {value.map((p, idx) => (
@@ -977,7 +977,7 @@ function HeadersEditor({
             type="text"
             disabled={disabled}
             value={p.key}
-            placeholder="Header name (e.g. X-Auth)"
+            placeholder="نام هدر (مثلاً X-Auth)"
             onChange={(e) => update(idx, { key: e.target.value })}
             className="w-40 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
           />
@@ -985,7 +985,7 @@ function HeadersEditor({
             type="text"
             disabled={disabled}
             value={p.value}
-            placeholder="Value"
+            placeholder="مقدار"
             onChange={(e) => update(idx, { value: e.target.value })}
             className="flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
           />
@@ -993,7 +993,7 @@ function HeadersEditor({
             disabled={disabled}
             onClick={() => remove(idx)}
             className="text-xs px-2 py-1 rounded text-red-400 hover:bg-red-900/30 disabled:opacity-30"
-            aria-label="remove"
+            aria-label="حذف"
           >
             ✕
           </button>
@@ -1004,7 +1004,7 @@ function HeadersEditor({
         onClick={add}
         className="text-xs px-3 py-2 rounded-md border border-dashed border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 self-start"
       >
-        + Add header
+        + افزودن هدر
       </button>
     </div>
   );
@@ -1023,7 +1023,7 @@ function InviteLinkPanel({ disabled }: { disabled: boolean }) {
     try {
       const r = await fetch("/api/secretaries/invite", { method: "POST" });
       const j = (await r.json()) as { url?: string; error?: string };
-      if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
+      if (!r.ok) throw new Error(j.error ?? `ناموفق (${r.status})`);
       setUrl(j.url ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1039,7 +1039,7 @@ function InviteLinkPanel({ disabled }: { disabled: boolean }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      setError("Copy failed; select the link manually.");
+      setError("کپی ناموفق بود؛ لینک رو دستی انتخاب کن.");
     }
   }
 
@@ -1052,11 +1052,11 @@ function InviteLinkPanel({ disabled }: { disabled: boolean }) {
           disabled={disabled || pending}
           className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
         >
-          {pending ? "Generating…" : "🔗 Generate invite link"}
+          {pending ? "در حال ساخت…" : "🔗 ساخت لینک دعوت"}
         </button>
         <span className="text-[11px] text-[var(--color-text-dim)]">
-          Valid for 7 days, single use. Share it on Telegram to add a new
-          secretary.
+          ۷ روز معتبره و یک‌بارمصرفه. توی تلگرام به اشتراک بذار تا یه منشی جدید
+          اضافه بشه.
         </span>
       </div>
       {url && (
@@ -1072,7 +1072,7 @@ function InviteLinkPanel({ disabled }: { disabled: boolean }) {
             onClick={copy}
             className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
           >
-            {copied ? "Copied ✓" : "Copy"}
+            {copied ? "کپی شد ✓" : "کپی"}
           </button>
           <a
             href={url}
@@ -1080,7 +1080,7 @@ function InviteLinkPanel({ disabled }: { disabled: boolean }) {
             rel="noreferrer"
             className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
           >
-            Open
+            باز کردن
           </a>
         </div>
       )}

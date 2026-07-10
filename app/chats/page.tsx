@@ -1369,7 +1369,7 @@ export default function ChatsPage() {
                   className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm mb-4"
                 >
                   <option value="">
-                    Default ({secretaries[0]?.name ?? "—"})
+                    پیش‌فرض ({secretaries[0]?.name ?? "—"})
                   </option>
                   {secretaries.map((s) => (
                     <option key={s.userId} value={s.userId}>
@@ -1388,7 +1388,7 @@ export default function ChatsPage() {
                   setEdit({ ...edit, vip: e.target.checked, muted: e.target.checked ? false : edit.muted })
                 }
               />
-              VIP — always alert regardless of classification
+              VIP — همیشه هشدار، فارغ از دسته‌بندی
             </label>
             <label className="flex items-center gap-2 mb-4 text-sm">
               <input
@@ -1398,18 +1398,18 @@ export default function ChatsPage() {
                   setEdit({ ...edit, muted: e.target.checked, vip: e.target.checked ? false : edit.vip })
                 }
               />
-              Muted — ignore this chat entirely
+              بی‌صدا — این چت رو کاملاً نادیده بگیر
             </label>
 
             <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-              Custom auto-reply (optional, overrides default)
+              پاسخ خودکار سفارشی (اختیاری، جای پیش‌فرض رو می‌گیره)
             </label>
             <textarea
               dir="auto"
               value={edit.customReply ?? ""}
               onChange={(e) => setEdit({ ...edit, customReply: e.target.value })}
               rows={3}
-              placeholder={truncate("Leave empty to use the default auto-reply.", 50)}
+              placeholder={truncate("خالی بذار تا پاسخ خودکار پیش‌فرض استفاده بشه.", 50)}
               className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm"
             />
 
@@ -1418,13 +1418,13 @@ export default function ChatsPage() {
                 onClick={() => setEdit(null)}
                 className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
               >
-                Cancel
+                لغو
               </button>
               <button
                 onClick={() => save(edit)}
                 className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90"
               >
-                Save
+                ذخیره
               </button>
             </div>
           </div>
