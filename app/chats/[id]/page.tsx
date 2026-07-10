@@ -21,12 +21,12 @@ type ChatMode =
   | "ai_listen";
 
 const MODE_LABELS: Record<ChatMode, string> = {
-  off: "Off",
-  secretary: "Secretary",
-  auto_reply: "Auto-reply",
-  friendly_reply: "Friendly auto-reply (AI)",
-  ai_chat: "AI chat (full)",
-  ai_listen: "AI listen (silent, summarises)",
+  off: "خاموش",
+  secretary: "منشی",
+  auto_reply: "پاسخ خودکار",
+  friendly_reply: "پاسخ خودکار صمیمی (AI)",
+  ai_chat: "چت AI (کامل)",
+  ai_listen: "شنود AI (بی‌صدا، خلاصه می‌کنه)",
 };
 
 type Relationship =
@@ -272,17 +272,17 @@ function EditHistoryToggle({
       <button
         onClick={toggle}
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-900/40 text-amber-300 border border-amber-800 hover:bg-amber-900/60"
-        title={editedAt ? `last edited ${relTime(editedAt)}` : undefined}
+        title={editedAt ? `آخرین ویرایش ${relTime(editedAt)}` : undefined}
       >
-        ✎ edited ({count})
+        ✎ ویرایش‌شده ({count})
       </button>
       {open && (
         <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md p-2 text-[11px] max-w-md">
           {loading && (
-            <span className="text-[var(--color-text-dim)]">loading…</span>
+            <span className="text-[var(--color-text-dim)]">در حال بارگذاری…</span>
           )}
           {edits && edits.length === 0 && (
-            <span className="text-[var(--color-text-dim)]">no history</span>
+            <span className="text-[var(--color-text-dim)]">تاریخچه‌ای نیست</span>
           )}
           {edits && edits.length > 0 && (
             <div className="flex flex-col gap-1.5">
@@ -292,20 +292,20 @@ function EditHistoryToggle({
                   className="border-l-2 border-amber-700 pl-2"
                 >
                   <div className="text-[10px] text-[var(--color-text-dim)]">
-                    before {relTime(e.editedAt)}:
+                    قبل از {relTime(e.editedAt)}:
                   </div>
                   <div
                     dir="auto"
                     className="whitespace-pre-wrap line-through opacity-80"
                   >
-                    {e.previousText || "(empty)"}
+                    {e.previousText || "(خالی)"}
                   </div>
                   {e.previousTranscript && (
                     <div
                       dir="auto"
                       className="mt-1 text-[10px] text-[var(--color-text-dim)] line-through"
                     >
-                      transcript: {e.previousTranscript}
+                      رونویسی: {e.previousTranscript}
                     </div>
                   )}
                 </div>
@@ -541,7 +541,7 @@ export default function ChatDetailPage() {
         setFineTuneMsg(j.error ?? `error ${r.status}`);
       } else {
         setFineTuneMsg(
-          `Tone profile updated from ${j.sampleCount ?? "?"} owner messages.`,
+          `پروفایل لحن از ${j.sampleCount ?? "?"} پیام خودت به‌روزرسانی شد (updated).`,
         );
         await load();
       }
@@ -2514,7 +2514,7 @@ function ChatBubble({
       }`}
     >
       <div className="text-[10px] text-[var(--color-text-dim)] px-1">
-        {mine ? "You" : m.senderName} · {relTime(m.createdAt)}
+        {mine ? "شما" : m.senderName} · {relTime(m.createdAt)}
       </div>
       {hidden ? (
         <div className="p-3 rounded-2xl text-sm bg-amber-500/5 border border-amber-500/30 max-w-full">
@@ -2563,7 +2563,7 @@ function ChatBubble({
               className="mt-2 pt-2 border-t border-white/10 text-[12px]"
             >
               <span className="opacity-70 text-[10px] uppercase">
-                transcript
+                رونویسی
               </span>
               <div
                 dir="auto"
@@ -2595,7 +2595,7 @@ function ChatBubble({
       )}
       <div className="flex gap-1 flex-wrap text-[10px] px-1 items-center">
         {m.deletedAt && (
-          <Badge tone="danger">🗑 Deleted {relTime(m.deletedAt)}</Badge>
+          <Badge tone="danger">🗑 پاک‌شده {relTime(m.deletedAt)}</Badge>
         )}
         {m.editCount > 0 && (
           <EditHistoryToggle
@@ -2604,13 +2604,13 @@ function ChatBubble({
             editedAt={m.editedAt}
           />
         )}
-        {m.urgent && <Badge tone="danger">urgent</Badge>}
-        {m.alerted && <Badge tone="warn">alert</Badge>}
-        {m.autoReplied && <Badge tone="info">replied</Badge>}
+        {m.urgent && <Badge tone="danger">فوری</Badge>}
+        {m.alerted && <Badge tone="warn">هشدار</Badge>}
+        {m.autoReplied && <Badge tone="info">پاسخ داده شد</Badge>}
         {m.mediaKind && <Badge tone="neutral">{m.mediaKind}</Badge>}
         {!mine && (
           <span className="text-[var(--color-text-dim)]">
-            imp {m.importance}
+            اهمیت {m.importance}
           </span>
         )}
         {!hidden &&

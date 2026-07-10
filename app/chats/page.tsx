@@ -829,7 +829,7 @@ export default function ChatsPage() {
                   className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
                   title="Bulk Auto-summarize — وقتی روشن باشه، threadهای ساکت‌شده توی summary_inbox خلاصه می‌شن"
                 >
-                  <option value="">📬 Auto-summarize…</option>
+                  <option value="">📬 خلاصه‌سازی خودکار…</option>
                   <option value="2">روشن، گپ ۲ دقیقه</option>
                   <option value="5">روشن، گپ ۵ دقیقه</option>
                   <option value="10">روشن، گپ ۱۰ دقیقه</option>
@@ -855,7 +855,7 @@ export default function ChatsPage() {
                   className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
                   title="Bulk اتومیشن — voice/video/photo/location → storage channels، یا استخراج خودکار Notes"
                 >
-                  <option value="">🤖 Automation…</option>
+                  <option value="">🤖 اتومیشن…</option>
                   <option value="autoForwardVoice:on">
                     🎤 voice/video-note → on
                   </option>
@@ -891,7 +891,7 @@ export default function ChatsPage() {
                   className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
                   title="چت‌های انتخاب‌شده رو به‌عنوان گیرنده‌ی این rule اضافه کن"
                 >
-                  <option value="">📐 Add to rule…</option>
+                  <option value="">📐 افزودن به rule…</option>
                   {bulkRules.map((r) => (
                     <option key={r.id} value={r.id}>
                       → {r.name}
@@ -910,7 +910,7 @@ export default function ChatsPage() {
                   className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
                   title="پروفایل رو روی چت‌های انتخاب‌شده اعمال کن"
                 >
-                  <option value="">👤 assign profile…</option>
+                  <option value="">👤 تخصیص پروفایل…</option>
                   {bulkProfiles.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.emoji ?? ""} {p.name}
