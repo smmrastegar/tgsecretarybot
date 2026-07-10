@@ -3463,9 +3463,16 @@ async function maybeApplyMessageRules(args: {
       recordRuleMatch,
     } = await import("./db");
     const { matchRules, formatMessageForRule } = await import("./rules");
-    const rules = await listMessageRules({ enabledOnly: true });
+    const allRules = await listMessageRules({ enabledOnly: true });
+    // Source allowlist: a rule with source_chat_ids set can ONLY match
+    // messages arriving from those chats. Deterministic scoping so a
+    // broad description ("any message with a code") can't grab numbers
+    // out of unrelated conversations.
+    const rules = allRules.filter(
+      (r) => !r.sourceChatIds || r.sourceChatIds.includes(args.chatId),
+    );
     console.log(
-      `[rules] eval chat=${args.chatId} log=${args.logId} enabledRules=${rules.length} text="${args.messageText.slice(0, 80).replace(/\n/g, " ")}"`,
+      `[rules] eval chat=${args.chatId} log=${args.logId} enabledRules=${rules.length}/${allRules.length} text="${args.messageText.slice(0, 80).replace(/\n/g, " ")}"`,
     );
     if (rules.length === 0) return;
     const matched = await matchRules(
@@ -3542,17 +3549,29 @@ async function maybeApplyMessageRules(args: {
       const outText = built.text;
       const outParseMode = built.parseMode;
 
-      // Request-gate: if the rule has request_trigger + a finite window,
-      // hold the forward for each recipient until they've sent a
-      // trigger-matching message within the window.
-      const gated =
-        !!rule.requestTrigger &&
-        rule.requestTrigger.trim().length > 0 &&
+      // Request-gate: hold the forward for each recipient until they've
+      // sent a trigger-matching message within the window. The gate is
+      // ACTIVE when the window is set AND there's either a trigger
+      // description OR saved gate examples. (Previously only the
+      // trigger text counted — an operator who generated gate examples
+      // but never saved the description silently ran WITHOUT a gate and
+      // codes forwarded to everyone immediately.)
+      const { listRuleExamples: listExamplesForGate } = await import("./db");
+      const gateExampleCount =
+        !rule.requestTrigger?.trim() &&
         rule.requestWindowSeconds != null &&
-        rule.requestWindowSeconds > 0;
+        rule.requestWindowSeconds > 0
+          ? (await listExamplesForGate(ruleId, "gate_match").catch(() => []))
+              .length
+          : 0;
+      const gated =
+        rule.requestWindowSeconds != null &&
+        rule.requestWindowSeconds > 0 &&
+        (!!rule.requestTrigger?.trim() || gateExampleCount > 0);
 
       const { sendRuleForward } = await import("./rule-delivery");
-      const { recipientRequestedRecently } = await import("./db");
+      const { recipientRequestedRecently, clearRecipientRequest } =
+        await import("./db");
       const delivered: number[] = [];
       const failures: Array<{ chatId: number; reason: string }> = [];
       for (const r of recipients) {
@@ -3576,6 +3595,15 @@ async function maybeApplyMessageRules(args: {
         });
         if (out.ok) {
           delivered.push(r.recipientChatId);
+          // One request = one delivery. Consume the stamp so the next
+          // code needs a fresh ask — otherwise every code arriving in
+          // the window would keep flowing to this recipient.
+          if (gated) {
+            await clearRecipientRequest({
+              ruleId,
+              recipientChatId: r.recipientChatId,
+            }).catch(() => {});
+          }
           console.log(
             `[rules] forward sent rule=${ruleId} → chat=${r.recipientChatId} mode=${out.mode} msg_id=${out.sentMessageId} bcId=${out.businessConnectionId ?? "—"}${gated ? " (gate: recipient requested recently)" : ""}`,
           );
@@ -3633,34 +3661,40 @@ async function maybeReleaseGatedRules(args: {
       findPendingMatchesForRecipient,
       markMatchForwardedTo,
       markRecipientRequestedNow,
+      clearRecipientRequest,
+      listRuleExamples,
     } = await import("./db");
     const { checkRequestTriggerMatch } = await import("./rules");
     const rules = await listRulesForRecipient(args.senderChatId);
-    const gated = rules.filter(
+    // Same gate-activation logic as the forward path: window set AND
+    // (trigger description OR gate examples). Rules whose gate is
+    // active only via examples must still be releasable here.
+    const candidates = rules.filter(
       (r) =>
         r.enabled &&
-        r.requestTrigger &&
-        r.requestTrigger.trim() &&
         r.requestWindowSeconds != null &&
         r.requestWindowSeconds > 0,
     );
-    if (gated.length === 0) return;
-    const { listRuleExamples } = await import("./db");
-    for (const rule of gated) {
+    if (candidates.length === 0) return;
+    for (const rule of candidates) {
       // Gate-side example phrasings (the "🤖 ساخت پاراف‌راز با AI"
       // output) widen the gate's understanding beyond the one-line
       // description.
       const gateExamples = await listRuleExamples(rule.id, "gate_match")
         .then((rows) => rows.map((r) => r.text))
         .catch(() => []);
+      const hasGate =
+        !!rule.requestTrigger?.trim() || gateExamples.length > 0;
+      if (!hasGate) continue;
       const isTrigger = await checkRequestTriggerMatch(
         args.messageText,
         rule.requestTrigger ?? "",
         gateExamples,
       );
       if (!isTrigger) continue;
-      // Stamp the trigger so any FUTURE match within the window
-      // forwards immediately (bidirectional gate).
+      // Stamp the trigger so a match arriving RIGHT AFTER this ask
+      // (bidirectional gate) forwards immediately. Consumed on
+      // delivery — one ask, one code.
       await markRecipientRequestedNow({
         ruleId: rule.id,
         recipientChatId: args.senderChatId,
@@ -3675,7 +3709,14 @@ async function maybeReleaseGatedRules(args: {
         "./rule-delivery"
       );
       const { extractOtpCodeAi } = await import("./rules");
-      for (const p of pending) {
+      // Release ONLY the newest pending match — one ask, one code. The
+      // old behavior dumped every held match in the window at once,
+      // which could leak several unrelated codes on a single request.
+      const newestFirst = [...pending].sort(
+        (a, b) =>
+          new Date(b.matchedAt).getTime() - new Date(a.matchedAt).getTime(),
+      );
+      for (const p of newestFirst) {
         // Same rule-flag-aware build as the forward path. OTP mode
         // re-extracts the code from formatted_text (or messageText)
         // — we don't trust whatever was held to be already OTP-shaped.
@@ -3688,7 +3729,8 @@ async function maybeReleaseGatedRules(args: {
           : null;
         // OTP mode without an extractable code: the held message
         // was a false positive (asker, not OTP carrier). Drop it
-        // silently instead of releasing "🔑 <raw text>".
+        // silently instead of releasing "🔑 <raw text>" and try the
+        // next-newest held match instead.
         if (rule.formatAsOtp && !otpCode) {
           console.log(
             `[rule] gate-release skip — formatAsOtp=true but no code ` +
@@ -3716,13 +3758,21 @@ async function maybeReleaseGatedRules(args: {
             matchId: p.matchId,
             recipientChatId: args.senderChatId,
           });
+          // Delivered — consume the request stamp and stop. One ask
+          // releases exactly one code.
+          await clearRecipientRequest({
+            ruleId: rule.id,
+            recipientChatId: args.senderChatId,
+          }).catch(() => {});
           console.log(
             `[rules] released held match=${p.matchId} → ${args.senderChatId} mode=${out.mode} (rule=${rule.id})`,
           );
+          break;
         } else {
           console.warn(
             `[rules] release-forward to ${args.senderChatId} failed: ${out.error}`,
           );
+          break;
         }
       }
     }

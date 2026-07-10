@@ -12,7 +12,7 @@ async function authorized(request: Request): Promise<boolean> {
   const session = await getCurrentSession().catch(() => null);
   if (session) return true;
   const secret = config.cronSecret;
-  if (!secret) return true;
+  if (!secret) return false; // fail closed: unset secret = locked, not open
   if (request.headers.get("authorization") === `Bearer ${secret}`) return true;
   return new URL(request.url).searchParams.get("secret") === secret;
 }

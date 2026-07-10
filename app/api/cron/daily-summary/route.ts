@@ -26,7 +26,7 @@ async function authorized(request: Request): Promise<boolean> {
   const session = await getCurrentSession().catch(() => null);
   if (session) return true;
   const secret = config.cronSecret;
-  if (!secret) return true;
+  if (!secret) return false; // fail closed: unset secret = locked, not open
   const header = request.headers.get("authorization");
   if (header === `Bearer ${secret}`) return true;
   const url = new URL(request.url);

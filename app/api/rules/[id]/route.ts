@@ -54,6 +54,7 @@ export async function PUT(
     forwardFormat?: string | null;
     requestTrigger?: string | null;
     requestWindowSeconds?: number | null;
+    sourceChatIds?: string | null;
     showRulePrefix?: boolean;
     formatAsOtp?: boolean;
     enabled?: boolean;
@@ -77,6 +78,18 @@ export async function PUT(
     const n = Number(body.requestWindowSeconds);
     patch.requestWindowSeconds =
       Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+  }
+  if (body.sourceChatIds !== undefined) {
+    // Normalise: keep only valid numeric ids, comma-joined; empty → NULL.
+    const cleaned =
+      typeof body.sourceChatIds === "string"
+        ? body.sourceChatIds
+            .split(/[\s,]+/)
+            .map((s) => s.trim())
+            .filter((s) => s && Number.isFinite(Number(s)) && Number(s) !== 0)
+            .join(",")
+        : "";
+    patch.sourceChatIds = cleaned || null;
   }
   if (body.showRulePrefix != null)
     patch.showRulePrefix = Boolean(body.showRulePrefix);

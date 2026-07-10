@@ -12,11 +12,17 @@ export type Session = {
 };
 
 function sessionSecret(): string {
-  return (
-    process.env.SESSION_SECRET ||
-    process.env.WEBHOOK_SECRET_TOKEN ||
-    "dev-session-secret-change-me"
-  );
+  const s = process.env.SESSION_SECRET || process.env.WEBHOOK_SECRET_TOKEN;
+  if (s) return s;
+  // In production a missing secret means the JWT would be signed with a
+  // publicly-known constant — anyone could forge a session for any
+  // userId. Refuse rather than run with a guessable key.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "SESSION_SECRET (or WEBHOOK_SECRET_TOKEN) must be set in production",
+    );
+  }
+  return "dev-session-secret-change-me";
 }
 
 function secretKey(): Uint8Array {

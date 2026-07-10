@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "crypto";
 import { config } from "@/lib/config";
 import {
   ensureSchema,
@@ -1419,12 +1420,19 @@ async function callTool(
   }
 }
 
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
 function authorized(request: Request): boolean {
   const secret = config.mcpSecret;
   if (!secret) return false; // hard-disabled until MCP_SECRET is set
   const header = request.headers.get("authorization") ?? "";
   const m = header.match(/^Bearer\s+(.+)$/i);
-  return m != null && m[1] === secret;
+  return m != null && safeEqual(m[1] ?? "", secret);
 }
 
 export async function POST(request: Request): Promise<Response> {

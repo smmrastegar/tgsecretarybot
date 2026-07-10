@@ -26,15 +26,15 @@ export async function POST(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const token = url.searchParams.get("token") ?? request.headers.get("x-webhook-token") ?? "";
 
-  // Prefer a per-account token; else the global secret.
+  // Prefer a per-account token; else the global secret. FAIL CLOSED:
+  // the token must match an account row OR the (non-empty) global
+  // secret. Previously a bogus token with an empty global secret fell
+  // through and let anyone inject fake emails into the channel.
   const account = token ? await getEmailAccountByToken(token).catch(() => null) : null;
   if (!account) {
     const s = await getSettings().catch(() => null);
     const globalSecret = (s?.resendInboundSecret ?? "").trim();
-    if (globalSecret && token !== globalSecret) {
-      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-    }
-    if (!globalSecret && !token) {
+    if (!globalSecret || token !== globalSecret) {
       return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
     }
   }

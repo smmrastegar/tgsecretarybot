@@ -4,11 +4,14 @@ import type { Session } from "./session";
 const MAGIC_TTL_SECONDS = 5 * 60;
 
 function key(): Uint8Array {
-  return new TextEncoder().encode(
-    process.env.SESSION_SECRET ||
-      process.env.WEBHOOK_SECRET_TOKEN ||
-      "dev-session-secret-change-me",
-  );
+  const s = process.env.SESSION_SECRET || process.env.WEBHOOK_SECRET_TOKEN;
+  if (!s && process.env.NODE_ENV === "production") {
+    // A constant fallback would let anyone forge a login magic link.
+    throw new Error(
+      "SESSION_SECRET (or WEBHOOK_SECRET_TOKEN) must be set in production",
+    );
+  }
+  return new TextEncoder().encode(s || "dev-session-secret-change-me");
 }
 
 export async function createMagicToken(session: Session): Promise<string> {

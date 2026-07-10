@@ -1486,6 +1486,11 @@ export async function ensureSchema(
     // `request_window_seconds` seconds. NULL window = "always" (no gate).
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS request_trigger TEXT`;
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS request_window_seconds INT`;
+    // Optional source allowlist: comma-separated chat_ids. When set,
+    // ONLY messages arriving from these chats can match the rule —
+    // deterministic scoping so a broad description can't grab codes
+    // from unrelated conversations.
+    await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS source_chat_ids TEXT`;
     // Optional "🏷 [rule: …]" prefix on the forwarded message.
     // Default TRUE for backward compat with existing rules.
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS show_rule_prefix BOOLEAN NOT NULL DEFAULT TRUE`;
@@ -9578,6 +9583,7 @@ export type MessageRule = {
   forwardFormat: string | null;
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
+  sourceChatIds: number[] | null;
   showRulePrefix: boolean;
   formatAsOtp: boolean;
   enabled: boolean;
@@ -9602,6 +9608,15 @@ export type RuleMatch = {
   matchedAt: Date;
 };
 
+function parseSourceChatIds(v: unknown): number[] | null {
+  if (typeof v !== "string" || !v.trim()) return null;
+  const ids = v
+    .split(/[\s,]+/)
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n !== 0);
+  return ids.length > 0 ? ids : null;
+}
+
 function rowToRule(r: Record<string, unknown>): MessageRule {
   return {
     id: Number(r.id),
@@ -9614,6 +9629,7 @@ function rowToRule(r: Record<string, unknown>): MessageRule {
       r.request_window_seconds != null
         ? Number(r.request_window_seconds)
         : null,
+    sourceChatIds: parseSourceChatIds(r.source_chat_ids),
     showRulePrefix:
       r.show_rule_prefix == null ? true : Boolean(r.show_rule_prefix),
     formatAsOtp: Boolean(r.format_as_otp),
@@ -9634,7 +9650,7 @@ export async function listMessageRules(args?: {
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
     SELECT id, tenant_id, name, description, forward_format,
-           request_trigger, request_window_seconds,
+           request_trigger, request_window_seconds, source_chat_ids,
            show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
     FROM message_rules
@@ -9649,7 +9665,7 @@ export async function getMessageRule(id: number): Promise<MessageRule | null> {
   await ensureSchema();
   const rows = await sql()`
     SELECT id, tenant_id, name, description, forward_format,
-           request_trigger, request_window_seconds,
+           request_trigger, request_window_seconds, source_chat_ids,
            show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
     FROM message_rules WHERE id = ${id} LIMIT 1`;
@@ -9678,7 +9694,7 @@ export async function createMessageRule(args: {
       ${args.createdBy ?? null}
     )
     RETURNING id, tenant_id, name, description, forward_format,
-              request_trigger, request_window_seconds,
+              request_trigger, request_window_seconds, source_chat_ids,
               show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
   return rowToRule(rows[0] as Record<string, unknown>);
@@ -9692,6 +9708,7 @@ export async function updateMessageRule(
     forwardFormat: string | null;
     requestTrigger: string | null;
     requestWindowSeconds: number | null;
+    sourceChatIds: string | null;
     showRulePrefix: boolean;
     formatAsOtp: boolean;
     enabled: boolean;
@@ -9707,6 +9724,8 @@ export async function updateMessageRule(
   const rtValue = patch.requestTrigger ?? null;
   const rwMarker = patch.requestWindowSeconds === undefined ? 0 : 1;
   const rwValue = patch.requestWindowSeconds ?? null;
+  const scMarker = patch.sourceChatIds === undefined ? 0 : 1;
+  const scValue = patch.sourceChatIds ?? null;
   const rows = await sql()`
     UPDATE message_rules SET
       name = COALESCE(${patch.name ?? null}, name),
@@ -9714,13 +9733,14 @@ export async function updateMessageRule(
       forward_format = CASE WHEN ${ffMarker}::int = 1 THEN ${ffValue} ELSE forward_format END,
       request_trigger = CASE WHEN ${rtMarker}::int = 1 THEN ${rtValue} ELSE request_trigger END,
       request_window_seconds = CASE WHEN ${rwMarker}::int = 1 THEN ${rwValue}::int ELSE request_window_seconds END,
+      source_chat_ids = CASE WHEN ${scMarker}::int = 1 THEN ${scValue} ELSE source_chat_ids END,
       show_rule_prefix = COALESCE(${patch.showRulePrefix ?? null}::boolean, show_rule_prefix),
       format_as_otp = COALESCE(${patch.formatAsOtp ?? null}::boolean, format_as_otp),
       enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id, tenant_id, name, description, forward_format,
-              request_trigger, request_window_seconds,
+              request_trigger, request_window_seconds, source_chat_ids,
               show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;
@@ -10061,6 +10081,23 @@ export async function recipientRequestedRecently(args: {
       AND last_request_at > NOW() - (${args.windowSeconds}::int || ' seconds')::interval
     LIMIT 1`;
   return rows.length > 0;
+}
+
+// Consume the recipient's request stamp after a code has actually
+// been delivered to them. One request = one delivery: without this a
+// single "کد بده" opens the gate for the whole window and EVERY code
+// arriving in that window (from any chat) leaks to the recipient.
+export async function clearRecipientRequest(args: {
+  ruleId: number;
+  recipientChatId: number;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE message_rule_recipients
+    SET last_request_at = NULL
+    WHERE rule_id = ${args.ruleId}
+      AND recipient_chat_id = ${args.recipientChatId}`;
 }
 
 // Append a recipient chat_id to a match's forwarded_to array — used

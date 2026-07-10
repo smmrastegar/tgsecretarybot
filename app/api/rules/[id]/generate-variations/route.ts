@@ -7,6 +7,7 @@ import {
   deleteRuleExample,
   getMessageRule,
   listRuleExamples,
+  updateMessageRule,
 } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -46,14 +47,23 @@ export async function POST(
   const mode = body.mode === "append" ? "append" : "replace";
 
   let trigger = (body.trigger ?? "").trim();
+  const rule = await getMessageRule(ruleId).catch(() => null);
   if (!trigger) {
-    const rule = await getMessageRule(ruleId).catch(() => null);
     trigger = (rule?.requestTrigger ?? "").trim();
   }
   if (!trigger) {
     return NextResponse.json(
       { error: "ابتدا یه توصیف برای Gate وارد کن (مثلاً «کد بده»)." },
       { status: 400 },
+    );
+  }
+  // Persist the trigger onto the rule itself. Operators used to type
+  // the trigger, click "generate", get examples saved — and leave the
+  // page without hitting ذخیره, so request_trigger stayed NULL and the
+  // gate silently ran OFF (codes forwarded to everyone immediately).
+  if ((rule?.requestTrigger ?? "").trim() !== trigger) {
+    await updateMessageRule(ruleId, { requestTrigger: trigger }).catch(
+      (err) => console.warn("[rule-paraphrase] trigger persist failed:", err),
     );
   }
 

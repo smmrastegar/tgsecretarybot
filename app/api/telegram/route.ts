@@ -138,6 +138,15 @@ function summariseUpdate(raw: string): {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  // FAIL CLOSED: without a configured secret, grammy skips verifying
+  // X-Telegram-Bot-Api-Secret-Token and anyone can POST forged
+  // updates (spoofed messages/commands driving real bot sends).
+  if (!config.webhookSecretToken) {
+    console.error(
+      "[webhook] WEBHOOK_SECRET_TOKEN is not set — rejecting update",
+    );
+    return new Response("webhook secret not configured", { status: 503 });
+  }
   const text = await request.text();
   const meta = summariseUpdate(text);
   if (meta.updateId !== null) {

@@ -14,6 +14,7 @@ type Rule = {
   forwardFormat: string | null;
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
+  sourceChatIds: number[] | null;
   showRulePrefix: boolean;
   formatAsOtp: boolean;
   enabled: boolean;
@@ -22,7 +23,7 @@ type Rule = {
 };
 
 const WINDOW_OPTIONS: { value: number | null; label: string }[] = [
-  { value: null, label: "همیشه (بدون gate)" },
+  { value: null, label: "⚠️ بدون gate — ارسال فوری" },
   { value: 60, label: "۱ دقیقه" },
   { value: 120, label: "۲ دقیقه" },
   { value: 300, label: "۵ دقیقه" },
@@ -81,6 +82,7 @@ export default function RuleDetailPage() {
   const [format, setFormat] = useState("");
   const [requestTrigger, setRequestTrigger] = useState("");
   const [requestWindow, setRequestWindow] = useState<number | null>(null);
+  const [sourceChats, setSourceChats] = useState("");
   const [generating, setGenerating] = useState(false);
   const [variationStatus, setVariationStatus] = useState<string | null>(null);
   const [showRulePrefix, setShowRulePrefix] = useState(true);
@@ -123,6 +125,7 @@ export default function RuleDetailPage() {
         setFormat(j.rule.forwardFormat ?? "");
         setRequestTrigger(j.rule.requestTrigger ?? "");
         setRequestWindow(j.rule.requestWindowSeconds);
+        setSourceChats((j.rule.sourceChatIds ?? []).join(", "));
         setShowRulePrefix(j.rule.showRulePrefix !== false);
         setFormatAsOtp(!!j.rule.formatAsOtp);
       }
@@ -250,6 +253,7 @@ export default function RuleDetailPage() {
           forwardFormat: format || null,
           requestTrigger: requestTrigger || null,
           requestWindowSeconds: requestWindow,
+          sourceChatIds: sourceChats || null,
           showRulePrefix,
           formatAsOtp,
         }),
@@ -265,6 +269,7 @@ export default function RuleDetailPage() {
     format,
     requestTrigger,
     requestWindow,
+    sourceChats,
     showRulePrefix,
     formatAsOtp,
     load,
@@ -482,6 +487,46 @@ export default function RuleDetailPage() {
         }
       />
 
+      {(() => {
+        const gateActive =
+          requestWindow != null &&
+          requestWindow > 0 &&
+          (requestTrigger.trim().length > 0 || gateExamples.length > 0);
+        return (
+          <div
+            className={`mb-4 p-3 rounded-md border text-xs leading-relaxed ${
+              gateActive
+                ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-200"
+                : "bg-rose-500/10 border-rose-500/40 text-rose-200"
+            }`}
+          >
+            {gateActive ? (
+              <>
+                🔒 <b>گیت فعاله.</b> پیام‌های match‌شده نگه داشته می‌شن و فقط
+                وقتی گیرنده خودش درخواست بده (تو پنجره‌ی{" "}
+                {requestWindow === 3600
+                  ? "۱ ساعته"
+                  : `${Math.round((requestWindow ?? 0) / 60)} دقیقه‌ای`}
+                ) ارسال می‌شن. هر درخواست فقط <b>یک</b> پیام آزاد می‌کنه.
+              </>
+            ) : (
+              <>
+                🔓 <b>گیت غیرفعاله — هر پیامِ match‌شده فوراً به همه‌ی
+                گیرنده‌ها فوروارد می‌شه.</b> برای فعال‌کردن گیت، هم پنجره‌ی
+                زمانی رو ست کن هم توصیف درخواست (یا نمونه‌های Gate) رو.
+              </>
+            )}
+            {!sourceChats.trim() && (
+              <div className="mt-1.5 text-amber-200">
+                ⚠️ محدودیت چت مبدأ ست نشده — پیام <b>هر</b> چتی می‌تونه match
+                بشه. برای دقت، پایین chat_id مبدأ (مثلاً چت پیامک بانک) رو
+                وارد کن.
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       <Card className="mb-4">
         <div className="text-xs font-medium mb-2">تعریف rule</div>
         <div className="flex flex-col gap-2">
@@ -499,6 +544,21 @@ export default function RuleDetailPage() {
             rows={3}
             className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
           />
+          <div>
+            <input
+              type="text"
+              dir="ltr"
+              value={sourceChats}
+              onChange={(e) => setSourceChats(e.target.value)}
+              placeholder="🎯 فقط از این چت‌ها (chat_id با کاما) — خالی = همه چت‌ها"
+              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+            />
+            <p className="text-[10px] text-[var(--color-text-dim)] mt-1">
+              🎯 محدودیت مبدأ: فقط پیام‌هایی که از این chat_id ها میان می‌تونن
+              match بشن. برای rule کد بانکی، chat_id چتی که پیامک‌های بانک توش
+              میاد رو بذار تا کد از هیچ چت دیگه‌ای برداشته نشه.
+            </p>
+          </div>
           <textarea
             value={format}
             onChange={(e) => setFormat(e.target.value)}

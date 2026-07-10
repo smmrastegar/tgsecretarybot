@@ -249,24 +249,25 @@ Never explain. Never wrap in code fences.`;
     return [];
   }
   const validIds = new Set(rules.map((r) => r.id));
-  // Find the MATCHED: line if present; otherwise fall back to plucking
-  // numbers out of the whole reply. Models sometimes return things like
-  // "MATCHED: [12, 14]", "MATCHED: rule 12", or just "12" — extracting
-  // every \d+ run handles all of them.
+  // FAIL CLOSED: only accept ids from an explicit "MATCHED:" line.
+  // The old fallback plucked every \d+ out of the WHOLE reply when the
+  // line was missing — a verbose model answer like "rule id=2 does not
+  // apply" became a match for rule 2 and forwarded a message to real
+  // people. No MATCHED line → treat as no match, log for diagnosis.
   const matchedLine = raw.match(/MATCHED\s*:\s*([^\n]+)/i);
-  const searchSpace = matchedLine?.[1] ?? raw;
-  if (/\bnone\b/i.test(searchSpace) || /MATCHED:\s*$/i.test(raw)) {
+  if (!matchedLine) {
+    console.warn(
+      `[rules] match output had no MATCHED line — treating as no-match. raw: ${raw.slice(0, 300)}`,
+    );
     return [];
   }
+  const searchSpace = matchedLine[1] ?? "";
+  if (/\bnone\b/i.test(searchSpace)) return [];
   const ids = (searchSpace.match(/\d+/g) ?? [])
     .map((t) => Number(t))
     .filter((n) => Number.isFinite(n) && validIds.has(n));
   const unique = Array.from(new Set(ids));
-  if (unique.length === 0 && !matchedLine) {
-    console.warn(
-      `[rules] match output had no MATCHED line + no parseable ids — raw: ${raw.slice(0, 300)}`,
-    );
-  } else if (unique.length > 0) {
+  if (unique.length > 0) {
     console.log(`[rules] match ids=[${unique.join(",")}] for chat=${ctx.chatId}`);
   }
   return unique;
@@ -490,8 +491,10 @@ output: CODE: 738261`;
   const m = raw.match(/CODE\s*[:：]\s*([^\s\n]+)/i);
   const code = (m?.[1] ?? "").trim().replace(/^["'«»]|["'«»]$/g, "");
   if (!code || /^none$/i.test(code)) return null;
-  // Sanity: codes are short, no whitespace, not absurdly long URLs.
-  if (code.length < 3 || code.length > 24) return null;
+  // Sanity: real OTPs are 4-10 chars. Anything longer is a card
+  // number (16), IBAN (24+), tracking id, or phone — all of which
+  // have leaked through here before. Reject, don't forward.
+  if (code.length < 4 || code.length > 10) return null;
   if (/\s/.test(code)) return null;
   return code;
 }

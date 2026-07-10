@@ -5,11 +5,15 @@ import { createHmac, timingSafeEqual } from "crypto";
 // same idea as the /share group links. The token is an HMAC of the
 // email id, so it never expires and needs no DB row.
 function secret(): string {
-  return (
-    process.env.SESSION_SECRET ||
-    process.env.WEBHOOK_SECRET_TOKEN ||
-    "dev-session-secret-change-me"
-  );
+  const s = process.env.SESSION_SECRET || process.env.WEBHOOK_SECRET_TOKEN;
+  if (s) return s;
+  // A constant fallback would let anyone forge public email-view links.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "SESSION_SECRET (or WEBHOOK_SECRET_TOKEN) must be set in production",
+    );
+  }
+  return "dev-session-secret-change-me";
 }
 
 export function emailLinkToken(emailId: number): string {
