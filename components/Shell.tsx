@@ -26,13 +26,13 @@ type User = {
 };
 
 const NAV = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
-  { href: "/urgent", label: "Urgent", icon: AlertOctagon },
-  { href: "/messages", label: "Messages", icon: MessageSquare },
-  { href: "/chats", label: "Chats", icon: Users2 },
-  { href: "/reminders", label: "Actions", icon: Bell },
-  { href: "/notes", label: "Notes", icon: NotebookText },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/", label: "نمای کلی", icon: LayoutDashboard },
+  { href: "/urgent", label: "فوری", icon: AlertOctagon },
+  { href: "/messages", label: "پیام‌ها", icon: MessageSquare },
+  { href: "/chats", label: "چت‌ها", icon: Users2 },
+  { href: "/reminders", label: "کارها", icon: Bell },
+  { href: "/notes", label: "یادداشت‌ها", icon: NotebookText },
+  { href: "/settings", label: "تنظیمات", icon: Settings },
 ] as const;
 
 function isActive(pathname: string, href: string): boolean {
@@ -73,7 +73,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const navItems = isAdmin
-    ? [...NAV, { href: "/admin", label: "Admin", icon: Shield }]
+    ? [...NAV, { href: "/admin", label: "مدیریت", icon: Shield }]
     : NAV;
 
   async function fixWebhook() {
@@ -98,7 +98,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen flex-col md:flex-row">
       <RouteProgress />
       <DebugTimings />
-      <aside className="hidden md:flex w-60 shrink-0 border-r border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex-col">
+      <aside className="hidden md:flex w-60 shrink-0 border-l border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex-col">
         <div className="px-2 pb-4 mb-4 border-b border-[var(--color-border)]">
           <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
             tgsecretarybot
@@ -130,7 +130,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)] hover:text-white"
         >
           <LogOut size={16} />
-          Logout
+          خروج
         </button>
       </aside>
 
@@ -143,8 +143,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <button
           onClick={logout}
-          aria-label="Logout"
-          className="p-2 -mr-2 rounded-md text-[var(--color-text-dim)] hover:text-white"
+          aria-label="خروج"
+          className="p-2 -ml-2 rounded-md text-[var(--color-text-dim)] hover:text-white"
         >
           <LogOut size={18} />
         </button>
@@ -154,12 +154,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         {webhook && (!webhook.ok || webhook.missing.length > 0) && (
           <div className="mb-4 p-3 rounded-lg border border-amber-800 bg-amber-900/30 text-amber-100">
             <div className="text-sm font-medium">
-              ⚠️ Webhook out of sync
+              ⚠️ وب‌هوک هماهنگ نیست
             </div>
             <div className="text-xs mt-1 opacity-90 break-words">
               {webhook.usingDefault
-                ? "بات روی default Telegram updates ست شده — channel posts / business / reactions نمیان."
-                : `Missing: ${webhook.missing.join(", ")}`}
+                ? "بات روی حالت پیش‌فرض تلگرام ست شده — پست کانال / بیزنس / ری‌اکشن‌ها نمیان."
+                : `موارد ناقص: ${webhook.missing.join("، ")}`}
             </div>
             <div className="mt-2 flex gap-2 flex-wrap">
               <button
@@ -167,13 +167,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
                 disabled={fixingWebhook}
                 className="text-xs px-3 py-1.5 rounded-md bg-amber-700 text-white hover:bg-amber-600 disabled:opacity-50"
               >
-                {fixingWebhook ? "در حال ست…" : "Re-register webhook"}
+                {fixingWebhook ? "در حال ست…" : "ثبت دوباره‌ی وب‌هوک"}
               </button>
               <Link
                 href="/health"
                 className="text-xs px-3 py-1.5 rounded-md border border-amber-700 hover:bg-amber-900/40"
               >
-                Details
+                جزئیات
               </Link>
             </div>
           </div>

@@ -46,7 +46,7 @@ export async function POST(
     return NextResponse.json({ error: "rule not found" }, { status: 404 });
   }
   const matchRows = await sql()`
-    SELECT m.id, m.formatted_text, m.forwarded_to,
+    SELECT m.id, m.formatted_text, m.forwarded_to, m.matched_at,
            l.message_text, l.sender_name
     FROM message_rule_matches m
     LEFT JOIN messages_log l ON l.id = m.message_log_id
@@ -57,12 +57,31 @@ export async function POST(
         id: string;
         formatted_text: string | null;
         forwarded_to: unknown[];
+        matched_at: string | Date;
         message_text: string;
         sender_name: string;
       }
     | undefined;
   if (!m) {
     return NextResponse.json({ error: "match not found" }, { status: 404 });
+  }
+  // EXPIRY HARD-STOP: a gated match that's already past its window can
+  // never auto-release; force-send must not become a backdoor that
+  // ships a stale (often already-expired-at-source) code. Once the
+  // window has passed, the match is dead — refuse to send it.
+  const windowSec = rule.requestWindowSeconds ?? 0;
+  if (windowSec > 0) {
+    const ageSec = (Date.now() - new Date(m.matched_at).getTime()) / 1000;
+    if (ageSec > windowSec) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "این match منقضی شده — پنجره‌ی زمانی گیت گذشته و دیگه (حتی با ارسال اجباری) فرستاده نمی‌شه. کدِ قدیمی معمولاً سمت سرویس هم منقضیه.",
+        },
+        { status: 409 },
+      );
+    }
   }
   const alreadyDelivered = new Set<number>(
     (m.forwarded_to ?? []).map((n) => Number(n)),

@@ -487,6 +487,62 @@ export default function RuleDetailPage() {
         }
       />
 
+      <Card className="mb-4">
+        <div className="text-xs font-medium mb-3">🔗 این rule به کجا وصله؟</div>
+        <div className="flex flex-col sm:flex-row items-stretch gap-3">
+          <div className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 p-3">
+            <div className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
+              📥 می‌شنوه از
+            </div>
+            {rule.sourceChatIds && rule.sourceChatIds.length > 0 ? (
+              <div className="flex flex-wrap gap-1">
+                {rule.sourceChatIds.map((cid) => (
+                  <span
+                    key={cid}
+                    dir="ltr"
+                    className="inline-flex items-center px-1.5 py-0.5 rounded bg-[var(--color-surface)] text-[10px] tabular-nums"
+                  >
+                    {cid}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[11px] text-amber-300">
+                همه‌ی چت‌ها (بدون محدودیت مبدأ)
+              </div>
+            )}
+          </div>
+          <div className="hidden sm:flex items-center text-[var(--color-text-dim)]">
+            ←
+          </div>
+          <div className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 p-3">
+            <div className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
+              📤 می‌فرسته به ({recipients.length})
+            </div>
+            {recipients.length > 0 ? (
+              <div className="flex flex-wrap gap-1">
+                {recipients.map((r) => (
+                  <span
+                    key={r.recipientChatId}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--color-surface)] text-[10px]"
+                  >
+                    <span>{r.recipientLabel || "بدون‌نام"}</span>
+                    <span dir="ltr" className="text-[var(--color-text-dim)] tabular-nums">
+                      {r.recipientChatId}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[11px] text-[var(--color-text-dim)]">
+                هیچ گیرنده‌ای — پیام‌های match‌شده فقط لاگ می‌شن، جایی فرستاده
+                نمی‌شن.
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
+
       {(() => {
         const gateActive =
           requestWindow != null &&
@@ -1054,7 +1110,12 @@ export default function RuleDetailPage() {
                         </div>
                       </div>
                     )}
-                    {!allDelivered && (
+                    {!allDelivered && expiredHold && (
+                      <div className="mt-2 text-[10px] text-[var(--color-text-dim)]">
+                        ⌛ منقضی — دیگه قابل ارسال نیست (پنجره‌ی گیت گذشته).
+                      </div>
+                    )}
+                    {!allDelivered && !expiredHold && (
                       <div className="mt-2 flex flex-col gap-1.5">
                         <button
                           onClick={() => forceSend(m.id)}
