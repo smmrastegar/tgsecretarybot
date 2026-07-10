@@ -138,6 +138,18 @@ async function callLlm(args: {
   );
 }
 
+// Pick a DIVERSE sample of at most n items — head + tail — so the
+// classifier sees both the oldest and the newest examples. A plain
+// slice(0,n) showed only the oldest, so newer example kinds (e.g. a
+// bank "رمز پویا" added after 13 card-number examples) were invisible
+// and the rule silently narrowed to the old kind.
+function pickDiverse<T>(arr: T[], n: number): T[] {
+  if (arr.length <= n) return arr;
+  const head = Math.ceil(n / 2);
+  const tail = n - head;
+  return [...arr.slice(0, head), ...arr.slice(arr.length - tail)];
+}
+
 function extractJson(s: string): string {
   const trimmed = s.trim();
   if (trimmed.startsWith("{")) return trimmed;
@@ -227,12 +239,10 @@ Examples:
 Never explain. Never wrap in code fences.`;
   const rulesBlock = rules
     .map((r) => {
-      const exs = (examplesMap[r.id] ?? [])
-        .slice(0, 6)
+      const exs = pickDiverse(examplesMap[r.id] ?? [], 8)
         .map((e, i) => `    positive_example${i + 1}: "${e.text.slice(0, 200)}"`)
         .join("\n");
-      const negs = (negativesMap[r.id] ?? [])
-        .slice(0, 8)
+      const negs = pickDiverse(negativesMap[r.id] ?? [], 8)
         .map((e, i) => `    counter_example${i + 1} (must NOT match): "${e.text.slice(0, 200)}"`)
         .join("\n");
       return `- id=${r.id}\n  name: "${r.name.slice(0, 60)}"\n  description: "${r.description.slice(0, 400)}"${exs ? "\n" + exs : ""}${negs ? "\n" + negs : ""}`;
@@ -304,12 +314,10 @@ export async function batchTestRule(args: {
 }): Promise<boolean[]> {
   const out = new Array<boolean>(args.messages.length).fill(false);
   if (args.messages.length === 0) return out;
-  const exs = args.examples
-    .slice(0, 6)
+  const exs = pickDiverse(args.examples, 8)
     .map((e, i) => `  positive_example${i + 1}: "${e.text.slice(0, 200)}"`)
     .join("\n");
-  const negs = (args.negatives ?? [])
-    .slice(0, 8)
+  const negs = pickDiverse(args.negatives ?? [], 8)
     .map((e, i) => `  counter_example${i + 1} (must NOT match): "${e.text.slice(0, 200)}"`)
     .join("\n");
   const systemPrompt = `You are testing a single routing rule against multiple historical messages. A message MATCHES ONLY when it CLEARLY fits THIS rule's described KIND of message, judged by MEANING/INTENT — not by surface features.
