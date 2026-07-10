@@ -55,6 +55,7 @@ export async function PUT(
     requestTrigger?: string | null;
     requestWindowSeconds?: number | null;
     sourceChatIds?: string | null;
+    matchAllFromSource?: boolean;
     showRulePrefix?: boolean;
     formatAsOtp?: boolean;
     enabled?: boolean;
@@ -91,6 +92,8 @@ export async function PUT(
         : "";
     patch.sourceChatIds = cleaned || null;
   }
+  if (body.matchAllFromSource != null)
+    patch.matchAllFromSource = Boolean(body.matchAllFromSource);
   if (body.showRulePrefix != null)
     patch.showRulePrefix = Boolean(body.showRulePrefix);
   if (body.formatAsOtp != null)

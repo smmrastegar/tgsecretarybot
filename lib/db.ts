@@ -1491,6 +1491,13 @@ export async function ensureSchema(
     // deterministic scoping so a broad description can't grab codes
     // from unrelated conversations.
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS source_chat_ids TEXT`;
+    // When ON together with source_chat_ids, EVERY message from an
+    // allowed source chat matches — no LLM content check. For a
+    // dedicated feed (e.g. a bank's SMS-forwarder chat) content
+    // classification is both unnecessary and unreliable; the source IS
+    // the signal. In OTP mode, code-less messages are still skipped at
+    // forward time, so only the ones carrying a code go out.
+    await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS match_all_from_source BOOLEAN NOT NULL DEFAULT FALSE`;
     // Optional "🏷 [rule: …]" prefix on the forwarded message.
     // Default TRUE for backward compat with existing rules.
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS show_rule_prefix BOOLEAN NOT NULL DEFAULT TRUE`;
@@ -9587,6 +9594,7 @@ export type MessageRule = {
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
   sourceChatIds: number[] | null;
+  matchAllFromSource: boolean;
   showRulePrefix: boolean;
   formatAsOtp: boolean;
   enabled: boolean;
@@ -9634,6 +9642,7 @@ function rowToRule(r: Record<string, unknown>): MessageRule {
         ? Number(r.request_window_seconds)
         : null,
     sourceChatIds: parseSourceChatIds(r.source_chat_ids),
+    matchAllFromSource: Boolean(r.match_all_from_source),
     showRulePrefix:
       r.show_rule_prefix == null ? true : Boolean(r.show_rule_prefix),
     formatAsOtp: Boolean(r.format_as_otp),
@@ -9654,7 +9663,7 @@ export async function listMessageRules(args?: {
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
     SELECT id, tenant_id, name, description, forward_format,
-           request_trigger, request_window_seconds, source_chat_ids,
+           request_trigger, request_window_seconds, source_chat_ids, match_all_from_source,
            show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
     FROM message_rules
@@ -9669,7 +9678,7 @@ export async function getMessageRule(id: number): Promise<MessageRule | null> {
   await ensureSchema();
   const rows = await sql()`
     SELECT id, tenant_id, name, description, forward_format,
-           request_trigger, request_window_seconds, source_chat_ids,
+           request_trigger, request_window_seconds, source_chat_ids, match_all_from_source,
            show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
     FROM message_rules WHERE id = ${id} LIMIT 1`;
@@ -9698,7 +9707,7 @@ export async function createMessageRule(args: {
       ${args.createdBy ?? null}
     )
     RETURNING id, tenant_id, name, description, forward_format,
-              request_trigger, request_window_seconds, source_chat_ids,
+              request_trigger, request_window_seconds, source_chat_ids, match_all_from_source,
               show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
   return rowToRule(rows[0] as Record<string, unknown>);
@@ -9713,6 +9722,7 @@ export async function updateMessageRule(
     requestTrigger: string | null;
     requestWindowSeconds: number | null;
     sourceChatIds: string | null;
+    matchAllFromSource: boolean;
     showRulePrefix: boolean;
     formatAsOtp: boolean;
     enabled: boolean;
@@ -9738,13 +9748,14 @@ export async function updateMessageRule(
       request_trigger = CASE WHEN ${rtMarker}::int = 1 THEN ${rtValue} ELSE request_trigger END,
       request_window_seconds = CASE WHEN ${rwMarker}::int = 1 THEN ${rwValue}::int ELSE request_window_seconds END,
       source_chat_ids = CASE WHEN ${scMarker}::int = 1 THEN ${scValue} ELSE source_chat_ids END,
+      match_all_from_source = COALESCE(${patch.matchAllFromSource ?? null}::boolean, match_all_from_source),
       show_rule_prefix = COALESCE(${patch.showRulePrefix ?? null}::boolean, show_rule_prefix),
       format_as_otp = COALESCE(${patch.formatAsOtp ?? null}::boolean, format_as_otp),
       enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id, tenant_id, name, description, forward_format,
-              request_trigger, request_window_seconds, source_chat_ids,
+              request_trigger, request_window_seconds, source_chat_ids, match_all_from_source,
               show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;

@@ -15,6 +15,7 @@ type Rule = {
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
   sourceChatIds: number[] | null;
+  matchAllFromSource: boolean;
   showRulePrefix: boolean;
   formatAsOtp: boolean;
   enabled: boolean;
@@ -86,6 +87,7 @@ export default function RuleDetailPage() {
   const [requestTrigger, setRequestTrigger] = useState("");
   const [requestWindow, setRequestWindow] = useState<number | null>(null);
   const [sourceChats, setSourceChats] = useState("");
+  const [matchAllFromSource, setMatchAllFromSource] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [variationStatus, setVariationStatus] = useState<string | null>(null);
   const [showRulePrefix, setShowRulePrefix] = useState(true);
@@ -133,6 +135,7 @@ export default function RuleDetailPage() {
         setRequestTrigger(j.rule.requestTrigger ?? "");
         setRequestWindow(j.rule.requestWindowSeconds);
         setSourceChats((j.rule.sourceChatIds ?? []).join(", "));
+        setMatchAllFromSource(!!j.rule.matchAllFromSource);
         setShowRulePrefix(j.rule.showRulePrefix !== false);
         setFormatAsOtp(!!j.rule.formatAsOtp);
       }
@@ -265,6 +268,7 @@ export default function RuleDetailPage() {
           requestTrigger: requestTrigger || null,
           requestWindowSeconds: requestWindow,
           sourceChatIds: sourceChats || null,
+          matchAllFromSource,
           showRulePrefix,
           formatAsOtp,
         }),
@@ -281,6 +285,7 @@ export default function RuleDetailPage() {
     requestTrigger,
     requestWindow,
     sourceChats,
+    matchAllFromSource,
     showRulePrefix,
     formatAsOtp,
     load,
@@ -754,6 +759,20 @@ export default function RuleDetailPage() {
               match بشن. برای rule کد بانکی، chat_id چتی که پیامک‌های بانک توش
               میاد رو بذار تا کد از هیچ چت دیگه‌ای برداشته نشه.
             </p>
+            <label className="flex items-center gap-2 text-[11px] cursor-pointer mt-2">
+              <input
+                type="checkbox"
+                checked={matchAllFromSource}
+                disabled={!sourceChats.trim()}
+                onChange={(e) => setMatchAllFromSource(e.target.checked)}
+              />
+              <span className={!sourceChats.trim() ? "opacity-50" : ""}>
+                📩 <b>هر پیامی از این چت‌ها رو بگیر</b> (بدون بررسی محتوا با AI).
+                برای فیدهای اختصاصی مثل پیامک بانک — چون همه‌ی پیام‌هاش کد
+                بانکیه و تشخیص محتوایی غیرقابل‌اتکاست. تو حالت OTP، پیام‌های
+                بدون کد موقع ارسال رد می‌شن.
+              </span>
+            </label>
           </div>
           <textarea
             value={format}

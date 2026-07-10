@@ -3475,15 +3475,27 @@ async function maybeApplyMessageRules(args: {
       `[rules] eval chat=${args.chatId} log=${args.logId} enabledRules=${rules.length}/${allRules.length} text="${args.messageText.slice(0, 80).replace(/\n/g, " ")}"`,
     );
     if (rules.length === 0) return;
-    const matched = await matchRules(
-      {
-        chatId: args.chatId,
-        chatTitle: args.chatTitle,
-        senderName: args.senderName,
-        messageText: args.messageText,
-        businessConnectionId: args.businessConnectionId,
-      },
-      rules,
+    // Source-feed rules (match_all_from_source + source scope) matched by
+    // SOURCE alone — they already passed the source filter above, so no
+    // LLM check. The rest go through the content classifier.
+    const forced = rules.filter(
+      (r) => r.matchAllFromSource && r.sourceChatIds && r.sourceChatIds.length > 0,
+    );
+    const llmRules = rules.filter((r) => !forced.includes(r));
+    const matchedLlm = llmRules.length
+      ? await matchRules(
+          {
+            chatId: args.chatId,
+            chatTitle: args.chatTitle,
+            senderName: args.senderName,
+            messageText: args.messageText,
+            businessConnectionId: args.businessConnectionId,
+          },
+          llmRules,
+        )
+      : [];
+    const matched = Array.from(
+      new Set([...forced.map((r) => r.id), ...matchedLlm]),
     );
     if (matched.length === 0) return;
     for (const ruleId of matched) {

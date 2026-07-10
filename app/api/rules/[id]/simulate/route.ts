@@ -47,12 +47,20 @@ export async function POST(
   }
   const senderName = (body.sender ?? "تست دستی").trim() || "تست دستی";
 
-  // Real matcher — only this rule, honouring its examples/negatives.
-  const matched = await matchRules(
-    { chatId: 0, chatTitle: "manual-test", senderName, messageText: text },
-    [rule],
-  );
-  const isMatch = matched.includes(ruleId);
+  // A source-feed rule matches by source alone in production; for a
+  // manual test we take the operator's word that this text is from that
+  // feed and treat it as matched (the OTP step still gates code-less
+  // messages). Otherwise run the real content matcher.
+  let isMatch: boolean;
+  if (rule.matchAllFromSource && rule.sourceChatIds && rule.sourceChatIds.length) {
+    isMatch = true;
+  } else {
+    const matched = await matchRules(
+      { chatId: 0, chatTitle: "manual-test", senderName, messageText: text },
+      [rule],
+    );
+    isMatch = matched.includes(ruleId);
+  }
   if (!isMatch) {
     await audit({
       actorId: session.userId,
