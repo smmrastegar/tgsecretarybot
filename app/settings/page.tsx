@@ -31,13 +31,13 @@ const TILES: Array<{
   {
     href: "/webhooks",
     emoji: "📡",
-    label: "Webhooks",
+    label: "وب‌هوک‌ها",
     desc: "ورودی‌های مستقل SMS — هر کدوم اسم و URL خودش رو داره (برای SMS-Forwarder اندروید)",
   },
   {
     href: "/sms-block-rules",
     emoji: "🚫",
-    label: "SMS Blocks",
+    label: "بلاک پیامک",
     desc: "نمونه‌هایی از SMS که نمی‌خوای ببینی (تبلیغ ملک، آرایشی، حراج، ...). AI پیام‌های شبیه به این‌ها رو فیلتر می‌کنه.",
   },
   {
@@ -49,7 +49,7 @@ const TILES: Array<{
   {
     href: "/note-watchlist",
     emoji: "🕵️",
-    label: "Note Watchlist",
+    label: "دیده‌بان یادداشت",
     desc: "مفاهیم global برای همه‌ی چت‌ها (با aliases) — جدا از auto_extract_notes هر چت. اگه پیامی به مفهومی اشاره کنه، توی Notes + کانال notes_inbox ثبت می‌شه.",
   },
   {
@@ -79,7 +79,7 @@ const TILES: Array<{
   {
     href: "/monitored",
     emoji: "📸",
-    label: "IG Monitor",
+    label: "پایش اینستاگرام",
     desc: "اکانت‌های اینستاگرام که هر ۵ دقیقه چک می‌شن برای استوری جدید",
   },
   {
@@ -91,7 +91,7 @@ const TILES: Array<{
   {
     href: "/emails",
     emoji: "📧",
-    label: "Email (Resend)",
+    label: "ایمیل (Resend)",
     desc: "دریافت/ارسال ایمیل با Resend. ایمیل ورودی توی کانال ایمیل با دکمه‌های Preview/Summary/Text/HTML میاد؛ ریپلای و ساخت ایمیل جدید هم از همینجا.",
   },
   {
@@ -103,7 +103,7 @@ const TILES: Array<{
   {
     href: "/functions",
     emoji: "🧩",
-    label: "Functions",
+    label: "نقش‌ها",
     desc: "نقش هر چت (downloader, news, voice/video/photo storage, ...)",
   },
   {
@@ -121,7 +121,7 @@ const TILES: Array<{
   {
     href: "/media-routing",
     emoji: "🛰",
-    label: "Media routing",
+    label: "مسیریابی مدیا",
     desc: "debug: چرا یه voice/video/photo توی کانال هدف کپی نشد",
   },
   {
@@ -150,7 +150,7 @@ const TILES: Array<{
 const ADMIN_TILE: (typeof TILES)[number] = {
   href: "/admin",
   emoji: "🛡",
-  label: "Admin",
+  label: "مدیریت",
   desc: "tenants، کاربران ادمین، کلیدهای API، impersonation",
 };
 

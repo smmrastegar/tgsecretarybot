@@ -259,10 +259,10 @@ export default function AdminPage() {
       <div className="flex gap-1 mb-3 flex-wrap">
         {(
           [
-            ["tenants", "🏢 Tenants", tenants.length],
-            ["admins", "👮 Admins", admins.length],
-            ["connections", "🔗 Connections", connections.length],
-            ["external", "🛰 External monitor", external?.stats.activeSubscriptions ?? 0],
+            ["tenants", "🏢 مستأجرها", tenants.length],
+            ["admins", "👮 مدیرها", admins.length],
+            ["connections", "🔗 اتصال‌ها", connections.length],
+            ["external", "🛰 پایش خارجی", external?.stats.activeSubscriptions ?? 0],
           ] as const
         ).map(([key, label, count]) => (
           <button
