@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import { audit, getMessageRule, listRuleRecipients } from "@/lib/db";
+import {
+  audit,
+  consumeRecipientRequest,
+  getMessageRule,
+  listRuleExamples,
+  listRuleRecipients,
+  logMessage,
+  recipientRequestedRecently,
+  recordRuleMatch,
+} from "@/lib/db";
 import { getBot } from "@/lib/bot";
 import {
   extractOtpCodeAi,
@@ -14,10 +23,11 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // POST /api/rules/[id]/simulate  body: { text: string; sender?: string }
-// Runs the REAL matcher on a hand-typed message. If it matches, it
-// ACTUALLY forwards to the active recipients (gate bypassed — this is an
-// explicit operator-triggered execute, so they can see it land). Paused
-// recipients are still skipped. Use to sanity-check a rule end-to-end.
+// Runs a hand-typed message through the SAME pipeline a real incoming
+// message would take: match → (gate hold OR forward) → record. So if the
+// rule is gated, the message is HELD (shows up under «فعال / منتظر» in
+// the history) instead of being sent — exactly like production. Paused
+// recipients are skipped.
 export async function POST(
   request: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -47,10 +57,8 @@ export async function POST(
   }
   const senderName = (body.sender ?? "تست دستی").trim() || "تست دستی";
 
-  // A source-feed rule matches by source alone in production; for a
-  // manual test we take the operator's word that this text is from that
-  // feed and treat it as matched (the OTP step still gates code-less
-  // messages). Otherwise run the real content matcher.
+  // Match exactly like production: source-feed rules match by source;
+  // everything else by the content matcher.
   let isMatch: boolean;
   if (rule.matchAllFromSource && rule.sourceChatIds && rule.sourceChatIds.length) {
     isMatch = true;
@@ -72,7 +80,7 @@ export async function POST(
     return NextResponse.json({ ok: true, matched: false });
   }
 
-  // Build the forward text exactly like the live path.
+  // Build the forward text like the live path.
   const formatted = rule.formatAsOtp
     ? null
     : await formatMessageForRule(rule, {
@@ -110,11 +118,59 @@ export async function POST(
     });
   }
 
+  // Is the gate active? (window set AND a trigger OR gate examples.)
+  const windowed =
+    rule.requestWindowSeconds != null && rule.requestWindowSeconds > 0;
+  let gated = false;
+  if (windowed) {
+    if (rule.requestTrigger?.trim()) gated = true;
+    else {
+      const gex = await listRuleExamples(ruleId, "gate_match").catch(() => []);
+      gated = gex.length > 0;
+    }
+  }
+
+  // Record a real match row so this shows in the history, then hold or
+  // forward per the gate — just like a live message.
+  const logId = await logMessage({
+    businessConnectionId: null,
+    ownerUserId: null,
+    chatId: 0,
+    chatType: "private",
+    chatTitle: "🧪 تست دستی",
+    senderId: null,
+    senderUsername: null,
+    senderName,
+    messageId: Math.floor(Date.now() / 1000),
+    messageText: text,
+    importance: 0,
+    urgent: false,
+    concernsOwner: false,
+    reason: "manual rule simulate",
+    alerted: false,
+    autoReplied: false,
+    fromOwner: false,
+    source: "rule_simulate",
+  }).catch(() => 0);
+
   const recipients = (await listRuleRecipients(ruleId)).filter((r) => !r.paused);
   const bot = getBot();
   const delivered: Array<{ chatId: number; label: string | null }> = [];
-  const failures: Array<{ chatId: number; error: string }> = [];
+  const held: Array<{ chatId: number; label: string | null }> = [];
+  const failures: Record<string, string> = {};
   for (const r of recipients) {
+    let shouldForward = !gated;
+    if (gated) {
+      shouldForward = await consumeRecipientRequest({
+        ruleId,
+        recipientChatId: r.recipientChatId,
+        windowSeconds: rule.requestWindowSeconds ?? 0,
+      }).catch(() => false);
+    }
+    if (!shouldForward) {
+      held.push({ chatId: r.recipientChatId, label: r.recipientLabel });
+      continue;
+    }
     const out = await sendRuleForward({
       bot,
       chatId: r.recipientChatId,
@@ -122,21 +178,37 @@ export async function POST(
       parseMode: built.parseMode,
     });
     if (out.ok) delivered.push({ chatId: r.recipientChatId, label: r.recipientLabel });
-    else failures.push({ chatId: r.recipientChatId, error: out.error });
+    else failures[String(r.recipientChatId)] = out.error;
+  }
+  if (logId) {
+    await recordRuleMatch({
+      ruleId,
+      messageLogId: logId,
+      formattedText: formatted,
+      forwardedTo: delivered.map((d) => d.chatId),
+      forwardErrors: failures,
+    }).catch(() => {});
   }
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,
     action: "rule.simulate",
     target: String(ruleId),
-    details: { matched: true, delivered: delivered.length, failed: failures.length },
+    details: {
+      matched: true,
+      gated,
+      delivered: delivered.length,
+      held: held.length,
+      failed: Object.keys(failures).length,
+    },
   });
   return NextResponse.json({
     ok: true,
     matched: true,
+    gated,
     outText: built.text,
     delivered,
-    failures,
-    pausedSkipped: (await listRuleRecipients(ruleId)).filter((r) => r.paused).length,
+    held,
+    failures: Object.entries(failures).map(([chatId, error]) => ({ chatId, error })),
   });
 }

@@ -411,7 +411,9 @@ export default function RuleDetailPage() {
       });
       const j = (await r.json()) as {
         matched?: boolean;
+        gated?: boolean;
         delivered?: Array<{ chatId: number; label: string | null }>;
+        held?: Array<{ chatId: number; label: string | null }>;
         failures?: Array<{ chatId: number; error: string }>;
         note?: string;
         error?: string;
@@ -419,15 +421,17 @@ export default function RuleDetailPage() {
       if (!r.ok) setSimResult(`❌ ${j.error ?? `HTTP ${r.status}`}`);
       else if (!j.matched) setSimResult("⚪️ match نشد — این rule این پیام رو نمی‌گیره.");
       else {
-        const d = (j.delivered ?? [])
-          .map((x) => x.label || x.chatId)
-          .join("، ");
+        const names = (a?: Array<{ chatId: number; label: string | null }>) =>
+          (a ?? []).map((x) => x.label || x.chatId).join("، ");
+        const d = names(j.delivered);
+        const h = names(j.held);
         const f = (j.failures ?? []).length;
-        setSimResult(
-          `✅ match شد و اجرا شد${d ? ` → ارسال به: ${d}` : ""}${
-            f ? ` · ${f} ناموفق` : ""
-          }${j.note ? ` · ${j.note}` : ""}`,
-        );
+        const parts = [`✅ match شد`];
+        if (d) parts.push(`→ ارسال شد به: ${d}`);
+        if (h) parts.push(`⏸ نگه‌داشته شد (منتظر «کد بده») برای: ${h}`);
+        if (f) parts.push(`· ${f} ناموفق`);
+        if (!d && !h && !f && j.note) parts.push(`· ${j.note}`);
+        setSimResult(parts.join(" "));
         load();
       }
     } catch (e) {
@@ -760,9 +764,10 @@ export default function RuleDetailPage() {
           ▶️ تست/اجرای دستی — یه پیام بده، اگه match شد واقعاً اجرا می‌شه
         </div>
         <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-          دقیقاً مثل یه پیام ورودی با این rule سنجیده می‌شه. اگه match بشه،
-          <b> واقعاً به گیرنده‌های فعال فوروارد می‌شه</b> (گیت رد می‌شه چون
-          دستیه؛ گیرنده‌های متوقف‌شده رد می‌شن).
+          دقیقاً مثل یه پیام واقعی از همین مسیر رد می‌شه: اگه match بشه و گیت
+          فعال باشه، <b>نگه‌داشته می‌شه</b> و می‌ره تو تب «فعال (منتظر)» تا
+          گیرنده «کد بده» بفرسته. اگه گیت غیرفعال باشه، <b>واقعاً فوروارد
+          می‌شه</b>. (گیرنده‌های متوقف‌شده رد می‌شن.)
         </p>
         <div className="flex gap-2">
           <textarea
