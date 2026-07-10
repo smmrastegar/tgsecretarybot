@@ -1,3 +1,4 @@
+// matcher: deterministic example-driven (build marker v2)
 // LLM-backed rule matcher. The operator describes a rule in plain
 // language ("messages containing an OTP / verification code", "links
 // to crypto news", etc.). On each incoming message we ask the model
