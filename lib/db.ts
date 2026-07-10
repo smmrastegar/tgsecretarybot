@@ -6,6 +6,13 @@ import { makePgClient } from "./pg-driver";
 let cached: NeonQueryFunction<false, false> | null = null;
 let schemaPromise: Promise<void> | null = null;
 
+// Bump this whenever the DDL in ensureSchema changes (new table / column
+// / migration). ensureSchema runs ~350 idempotent DDL statements, each a
+// network round-trip (~28s cold-start on a remote DB). When the DB
+// already records this exact version, we skip all of them. If you add
+// schema and forget to bump this, the new DDL won't run — so BUMP IT.
+const SCHEMA_VERSION = "2026-07-10.match-all-source";
+
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
 }
@@ -43,6 +50,17 @@ export async function ensureSchema(
   if (!clientOverride && schemaPromise) return schemaPromise;
   const run = (async () => {
     const q = clientOverride ?? sql();
+    // Fast path: a DB already migrated to SCHEMA_VERSION skips the ~350
+    // idempotent DDL round-trips (the cold-start 28s). On a fresh DB the
+    // settings table doesn't exist yet → the query throws → we run the
+    // full DDL below (and stamp the version at the end).
+    if (!clientOverride) {
+      const done = await q`
+        SELECT 1 FROM settings WHERE key = 'schema.version' AND value = ${SCHEMA_VERSION} LIMIT 1`
+        .then((r) => (r as unknown[]).length > 0)
+        .catch(() => false);
+      if (done) return;
+    }
     await q`
       CREATE TABLE IF NOT EXISTS business_connections (
         id            TEXT PRIMARY KEY,
@@ -1661,6 +1679,12 @@ export async function ensureSchema(
                   ON CONFLICT (key) DO NOTHING`;
         }
       }
+    }
+    // Stamp the version so the next cold start takes the fast path.
+    if (!clientOverride) {
+      await q`
+        INSERT INTO settings (key, value) VALUES ('schema.version', ${SCHEMA_VERSION})
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`.catch(() => {});
     }
   })().catch((err) => {
     if (!clientOverride) schemaPromise = null;
