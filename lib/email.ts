@@ -92,28 +92,47 @@ export function buildEmailCard(
   opts?: { summary?: string | null },
 ): { text: string; reply_markup: { inline_keyboard: InlineBtn[][] } } {
   const emailId = email.id;
-  const from = email.fromName
+  // Every attacker-controlled field is bounded here so the final card
+  // stays well under Telegram's 4096 limit WITHOUT a blind slice that
+  // could cut an HTML tag/entity and make the whole send fail (which
+  // would silently drop the card). Caps are generous but hard.
+  const cap = (s: string, n: number): string =>
+    s.length > n ? s.slice(0, n) + "…" : s;
+  const fromRaw = email.fromName
     ? `${email.fromName} <${email.fromEmail ?? ""}>`
     : email.fromEmail ?? "?";
+  const from = cap(fromRaw, 150);
+  const subject = cap(email.subject ?? "(بدون موضوع)", 200);
+  const toEmails = email.toEmails ? cap(email.toEmails, 150) : "";
+  const accountName = account ? cap(account.name, 60) : "";
   const preview = (email.textBody ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
   const attachments = email.attachments ?? [];
   const site = accountBaseUrl(account);
   const token = emailLinkToken(emailId);
 
-  const attachmentLines = attachments
+  // Show at most 8 attachment links; note any overflow in plain text.
+  const MAX_ATT = 8;
+  const shown = attachments.slice(0, MAX_ATT);
+  const attachmentLines = shown
     .map((a) => {
-      const url = `${site}/api/public/emails/${emailId}/attachment/${a.id}?t=${token}`;
-      return `📎 <a href="${esc(url)}">${esc(a.filename || "file")}</a>`;
+      // encodeURIComponent the id so a stray quote can't break out of
+      // the href attribute (esc() doesn't escape ").
+      const url = `${site}/api/public/emails/${emailId}/attachment/${encodeURIComponent(String(a.id))}?t=${token}`;
+      return `📎 <a href="${esc(url)}">${esc(cap(a.filename || "file", 80))}</a>`;
     })
     .join("\n");
+  const attachmentExtra =
+    attachments.length > MAX_ATT
+      ? `\n… و ${attachments.length - MAX_ATT} پیوست دیگر`
+      : "";
 
-  const summary = (opts?.summary ?? "").trim();
+  const summary = cap((opts?.summary ?? "").trim(), 1000);
   const text =
-    `📧 <b>ایمیل جدید</b>${account ? ` — ${esc(account.name)}` : ""}\n` +
+    `📧 <b>ایمیل جدید</b>${accountName ? ` — ${esc(accountName)}` : ""}\n` +
     `از: <b>${esc(from)}</b>\n` +
-    (email.toEmails ? `به: ${esc(email.toEmails)}\n` : "") +
-    `موضوع: <b>${esc(email.subject ?? "(بدون موضوع)")}</b>\n` +
-    (attachmentLines ? `${attachmentLines}\n` : "") +
+    (toEmails ? `به: ${esc(toEmails)}\n` : "") +
+    `موضوع: <b>${esc(subject)}</b>\n` +
+    (attachmentLines ? `${attachmentLines}${attachmentExtra}\n` : "") +
     `\n${esc(preview)}${preview.length >= 300 ? "…" : ""}` +
     (summary ? `\n\n🧠 <b>خلاصه</b>\n${esc(summary)}` : "");
 
@@ -131,7 +150,16 @@ export function buildEmailCard(
       [{ text: "↩️ پاسخ", callback_data: `em:reply:${emailId}` }],
     ],
   };
-  return { text: text.slice(0, 4096), reply_markup };
+  // The bounded fields above keep `text` well under 4096. As a final
+  // net, if it still overflows, cut at the last NEWLINE before the
+  // limit — never mid-line — so we can't split an <b>/<a> tag or an
+  // &amp; entity (all of which live within a single line here). A blind
+  // character slice could, and Telegram rejects malformed HTML.
+  const safeText =
+    text.length <= 4096
+      ? text
+      : text.slice(0, text.lastIndexOf("\n", 4096) > 0 ? text.lastIndexOf("\n", 4096) : 4000);
+  return { text: safeText, reply_markup };
 }
 
 // Post an incoming email to its account's channel. All the open-in-
