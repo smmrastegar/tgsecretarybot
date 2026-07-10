@@ -76,8 +76,8 @@ const DECIDED_LABELS: Record<Decided, string> = {
   acked: "👌 متوجه شدم زدی",
   never_engaged: "🤷 یه‌بار هم جواب ندادی",
   is_bot: "🤖 بات",
-  chat_muted: "🔇 muted",
-  chat_ignored: "🙈 ignored",
+  chat_muted: "🔇 بی‌صدا",
+  chat_ignored: "🙈 نادیده‌گرفته‌شده",
   follow_up_disabled: "⛔ غیرفعال",
   no_customer_message: "— پیامی نیست",
 };

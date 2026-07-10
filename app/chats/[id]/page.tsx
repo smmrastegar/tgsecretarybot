@@ -709,7 +709,7 @@ export default function ChatDetailPage() {
       </div>
 
       {loading ? (
-        <Card>Loading…</Card>
+        <Card>در حال بارگذاری…</Card>
       ) : (
         <>
           {/* Hero: person header */}
@@ -743,19 +743,19 @@ export default function ChatDetailPage() {
                   {rule?.vip && <Badge tone="warn">⭐ VIP</Badge>}
                   {rule?.muted && <Badge tone="neutral">🔕 muted</Badge>}
                   {rule?.customReply && (
-                    <Badge tone="info">custom reply</Badge>
+                    <Badge tone="info">پاسخ سفارشی</Badge>
                   )}
                   {stats && stats.priorCount > 0 && (
                     <Badge tone="neutral">
-                      {stats.priorCount} messages
+                      {stats.priorCount} پیام
                     </Badge>
                   )}
                   {stats && stats.urgentCount > 0 && (
-                    <Badge tone="danger">{stats.urgentCount}× urgent</Badge>
+                    <Badge tone="danger">{stats.urgentCount}× فوری</Badge>
                   )}
                   {stats?.firstSeen && (
                     <Badge tone="neutral">
-                      since {relTime(stats.firstSeen)}
+                      از {relTime(stats.firstSeen)}
                     </Badge>
                   )}
                 </div>
@@ -777,7 +777,7 @@ export default function ChatDetailPage() {
                 <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
                   <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
                     <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)]">
-                      Personal info (used by AI to adjust tone)
+                      اطلاعات شخصی (AI ازش برای تنظیم لحن استفاده می‌کنه)
                     </div>
                     <button
                       onClick={async () => {
@@ -820,7 +820,7 @@ export default function ChatDetailPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
-                        First name
+                        نام
                       </label>
                       <input
                         dir="auto"
@@ -836,7 +836,7 @@ export default function ChatDetailPage() {
                     </div>
                     <div>
                       <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
-                        Last name
+                        نام خانوادگی
                       </label>
                       <input
                         dir="auto"
@@ -868,7 +868,7 @@ export default function ChatDetailPage() {
                     </div>
                     <div className="col-span-2">
                       <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
-                        Relationship
+                        رابطه
                       </label>
                       <select
                         disabled={saving}
@@ -951,16 +951,16 @@ export default function ChatDetailPage() {
                       disabled={saving || !personalDirty}
                       className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-40 hover:opacity-90"
                     >
-                      {saving ? "Saving…" : "Save"}
+                      {saving ? "در حال ذخیره…" : "ذخیره"}
                     </button>
                     {personalDirty && (
                       <span className="text-[10px] text-amber-400">
-                        unsaved changes
+                        تغییرات ذخیره‌نشده
                       </span>
                     )}
                     {personalSaved && !personalDirty && (
                       <span className="text-[10px] text-emerald-400">
-                        ✓ saved
+                        ✓ ذخیره شد
                       </span>
                     )}
                   </div>
@@ -1046,7 +1046,7 @@ export default function ChatDetailPage() {
                 {rule?.isBot && (
                   <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
                     <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
-                      🤖 Bot — independent settings
+                      🤖 بات — تنظیمات مستقل
                     </div>
                     <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
                       این چت با یک bot است. معمولاً نقش function (مثلاً
@@ -1087,16 +1087,16 @@ export default function ChatDetailPage() {
                         disabled={saving || !personalDirty}
                         className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-40 hover:opacity-90"
                       >
-                        {saving ? "Saving…" : "Save"}
+                        {saving ? "در حال ذخیره…" : "ذخیره"}
                       </button>
                       {personalDirty && (
                         <span className="text-[10px] text-amber-400">
-                          unsaved changes
+                          تغییرات ذخیره‌نشده
                         </span>
                       )}
                       {personalSaved && !personalDirty && (
                         <span className="text-[10px] text-emerald-400">
-                          ✓ saved
+                          ✓ ذخیره شد
                         </span>
                       )}
                     </div>
@@ -1106,7 +1106,7 @@ export default function ChatDetailPage() {
                 {rule?.chatType !== "private" && !rule?.isBot && (
                   <div className="mt-4 max-w-lg border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40">
                     <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-2">
-                      Channel / Group context
+                      زمینه کانال / گروه
                     </div>
                     <label className="block text-[10px] text-[var(--color-text-dim)] mb-1">
                       اسم سفارشی (اگه خالی بمونه، نام پیش‌فرض کانال/گروه استفاده می‌شه)
@@ -1145,16 +1145,16 @@ export default function ChatDetailPage() {
                         disabled={saving || !personalDirty}
                         className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-40 hover:opacity-90"
                       >
-                        {saving ? "Saving…" : "Save"}
+                        {saving ? "در حال ذخیره…" : "ذخیره"}
                       </button>
                       {personalDirty && (
                         <span className="text-[10px] text-amber-400">
-                          unsaved changes
+                          تغییرات ذخیره‌نشده
                         </span>
                       )}
                       {personalSaved && !personalDirty && (
                         <span className="text-[10px] text-emerald-400">
-                          ✓ saved
+                          ✓ ذخیره شد
                         </span>
                       )}
                     </div>
@@ -1208,7 +1208,7 @@ export default function ChatDetailPage() {
                   <div className="text-sm text-amber-200 flex-1 min-w-0">
                     ⏸ بات تا {remainingMin} دقیقه دیگه ساکته (شما{" "}
                     {relTime(grace!.lastOwnerSentAt!)} توی این چت پیام دادی).
-                    Mode "{MODE_LABELS[currentMode]}" بعد از این پنجره خودش
+                    حالت «{MODE_LABELS[currentMode]}» بعد از این پنجره خودش
                     دوباره فعال میشه.
                   </div>
                   <button
@@ -1216,7 +1216,7 @@ export default function ChatDetailPage() {
                     disabled={saving}
                     className="text-xs px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
                   >
-                    ▶ Resume bot now
+                    ▶ همین حالا بات رو فعال کن
                   </button>
                 </div>
               );
@@ -1224,7 +1224,7 @@ export default function ChatDetailPage() {
 
             <div className="mt-4 flex items-center gap-2 flex-wrap">
               <label className="text-xs text-[var(--color-text-dim)]">
-                Mode:
+                حالت:
               </label>
               <select
                 disabled={saving}
@@ -1242,7 +1242,7 @@ export default function ChatDetailPage() {
               </select>
               {rule?.modeChangedAt && (
                 <span className="text-[10px] text-[var(--color-text-dim)]">
-                  switched {relTime(rule.modeChangedAt)}
+                  تغییر یافت {relTime(rule.modeChangedAt)}
                 </span>
               )}
               <button
@@ -1254,7 +1254,7 @@ export default function ChatDetailPage() {
                     : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
                 }`}
               >
-                {rule?.vip ? "★ VIP on" : "Mark VIP"}
+                {rule?.vip ? "★ VIP روشن" : "علامت VIP"}
               </button>
               <button
                 disabled={saving}
@@ -1265,14 +1265,14 @@ export default function ChatDetailPage() {
                     : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
                 }`}
               >
-                {rule?.muted ? "🔕 muted" : "Mute"}
+                {rule?.muted ? "🔕 بی‌صدا" : "بی‌صدا کن"}
               </button>
             </div>
 
             {rule?.mode === "secretary" && secretaries.length > 0 && (
                 <div className="mt-3 flex items-center gap-2 flex-wrap text-xs">
                   <span className="text-[var(--color-text-dim)]">
-                    Forward to:
+                    فوروارد به:
                   </span>
                   <select
                     disabled={saving}

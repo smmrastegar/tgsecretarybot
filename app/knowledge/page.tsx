@@ -121,14 +121,14 @@ export default function KnowledgePage() {
   return (
     <Shell>
       <PageTitle
-        title="Knowledge base"
+        title="دانش‌نامه"
         subtitle="اصطلاحات، نام‌ها، توضیحات. هر چیزی که اینجا بنویسی، وقتی توی پیام دیده بشه به AI تزریق می‌شه."
         actions={
           <button
             onClick={startNew}
             className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90"
           >
-            + Add entry
+            + افزودن مورد
           </button>
         }
       />
@@ -145,12 +145,12 @@ export default function KnowledgePage() {
       </Card>
 
       {loading ? (
-        <Card>Loading…</Card>
+        <Card>در حال بارگذاری…</Card>
       ) : filtered.length === 0 ? (
         <Card>
           <p className="text-sm text-[var(--color-text-dim)]">
             {entries.length === 0
-              ? "هنوز چیزی اضافه نکردی. اولین entry رو با دکمه‌ی + Add entry بساز."
+              ? "هنوز چیزی اضافه نکردی. اولین entry رو با دکمه‌ی + افزودن مورد بساز."
               : "هیچ entry با این جستجو match نشد."}
           </p>
         </Card>
@@ -165,7 +165,7 @@ export default function KnowledgePage() {
                   </div>
                   {e.aliases.length > 0 && (
                     <div className="text-[10px] text-[var(--color-text-dim)] mt-0.5">
-                      aka: {e.aliases.join(" · ")}
+                      معروف به: {e.aliases.join(" · ")}
                     </div>
                   )}
                 </div>
@@ -177,13 +177,13 @@ export default function KnowledgePage() {
                     onClick={() => startEdit(e)}
                     className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
                   >
-                    Edit
+                    ویرایش
                   </button>
                   <button
                     onClick={() => remove(e.id)}
                     className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-red-900/40"
                   >
-                    Delete
+                    حذف
                   </button>
                 </div>
               </div>
@@ -217,11 +217,11 @@ export default function KnowledgePage() {
             className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-lg"
           >
             <h2 className="text-base font-semibold mb-3">
-              {draft.id ? "Edit entry" : "New entry"}
+              {draft.id ? "ویرایش مورد" : "مورد جدید"}
             </h2>
 
             <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-              Title (اصطلاح / نام / مفهوم)
+              عنوان (اصطلاح / نام / مفهوم)
             </label>
             <input
               dir="auto"
@@ -233,7 +233,7 @@ export default function KnowledgePage() {
             />
 
             <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-              Aliases (CSV — هر اسم/سرنام دیگری که ممکنه باهاش بیاد)
+              نام‌های مستعار (CSV — هر اسم/سرنام دیگری که ممکنه باهاش بیاد)
             </label>
             <input
               dir="auto"
@@ -247,7 +247,7 @@ export default function KnowledgePage() {
             />
 
             <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-              Body (توضیح / تعریف / context — هر چقدر می‌خوای)
+              متن (توضیح / تعریف / context — هر چقدر می‌خوای)
             </label>
             <textarea
               dir="auto"
@@ -259,7 +259,7 @@ export default function KnowledgePage() {
             />
 
             <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-              Tags (CSV — اختیاری)
+              برچسب‌ها (CSV — اختیاری)
             </label>
             <input
               dir="auto"
@@ -279,14 +279,14 @@ export default function KnowledgePage() {
                 onClick={() => setDraft(null)}
                 className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
               >
-                Cancel
+                لغو
               </button>
               <button
                 onClick={save}
                 disabled={saving}
                 className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
               >
-                {saving ? "Saving…" : "Save"}
+                {saving ? "در حال ذخیره…" : "ذخیره"}
               </button>
             </div>
           </div>
