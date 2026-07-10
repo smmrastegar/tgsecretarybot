@@ -221,7 +221,7 @@ export default function DebugLogPage() {
                 <th className="py-2 px-2">چت</th>
                 <th className="py-2 px-2">کاربر</th>
                 <th className="py-2 px-2">bcId</th>
-                <th className="py-2 px-2">preview</th>
+                <th className="py-2 px-2">پیش‌نمایش</th>
               </tr>
             </thead>
             <tbody>
@@ -290,7 +290,7 @@ export default function DebugLogPage() {
                       <td className="py-2 px-2 text-[var(--color-text-dim)]">
                         <div className="max-w-[40ch] truncate" title={r.preview ?? ""}>
                           {r.preview || (
-                            <span className="opacity-50">(empty)</span>
+                            <span className="opacity-50">(خالی)</span>
                           )}
                         </div>
                       </td>

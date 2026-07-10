@@ -66,165 +66,165 @@ type FieldConfig = {
 
 const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
   {
-    title: "Owner profile",
+    title: "پروفایل صاحب",
     fields: [
       {
         key: "ownerName",
-        label: "Your name",
-        hint: "How people address you in chats. Helps the classifier identify messages directed at you.",
+        label: "نام شما",
+        hint: "مردم توی چت‌ها چطور صدات می‌کنن. به دسته‌بند کمک می‌کنه پیام‌هایی که خطاب به توئه رو تشخیص بده.",
       },
       {
         key: "ownerDisplayName",
-        label: "Display name used in replies",
-        hint: "The name you sign as in conversations (used by AI / friendly auto-reply when signing). Defaults to Your name.",
+        label: "نامی که در پاسخ‌ها استفاده می‌شه",
+        hint: "نامی که توی گفتگوها باهاش امضا می‌کنی (AI / پاسخ خودکار دوستانه موقع امضا ازش استفاده می‌کنه). پیش‌فرض همون نام شماست.",
       },
       {
         key: "ownerContext",
-        label: "Personal context",
-        hint: "One or two sentences about you (role, family, common topics).",
+        label: "زمینه‌ی شخصی",
+        hint: "یکی دو جمله درباره‌ی خودت (نقش، خانواده، موضوعات رایج).",
         type: "textarea",
       },
       {
         key: "ownerAliasesCsv",
-        label: "Aliases / nicknames (comma-separated)",
-        hint: "Every variant people use to refer to you in groups — first name, family name, common typos, nicknames, @-handles without the @. Example: مهدی, موتی, راستگار, mahdi. The classifier treats any match as you being addressed.",
+        label: "نام‌های مستعار / لقب‌ها (جدا با کاما)",
+        hint: "هر شکلی که مردم توی گروه‌ها باهاش بهت اشاره می‌کنن — نام کوچک، نام خانوادگی، غلط‌های املایی رایج، لقب‌ها، @-هندل‌ها بدون @. مثال: مهدی, موتی, راستگار, mahdi. دسته‌بند هر تطبیقی رو یعنی خطاب به تو در نظر می‌گیره.",
       },
       {
         key: "ownerJobDescription",
-        label: "What you do for work",
-        hint: "One short line. Used by the classifier to judge whether a group message is relevant to your job.",
+        label: "کارت چیه",
+        hint: "یک خط کوتاه. دسته‌بند ازش استفاده می‌کنه تا بسنجه یه پیام گروهی به کارت مربوطه یا نه.",
         type: "textarea",
       },
       {
         key: "groupPriorityKeywordsCsv",
-        label: "Priority keywords (comma-separated)",
-        hint: "Project names, products, deadlines, anything you want flagged automatically. A match bumps importance by ~2 and marks the message as concerning you.",
+        label: "کلمات کلیدی مهم (جدا با کاما)",
+        hint: "اسم پروژه‌ها، محصولات، ددلاین‌ها، هر چیزی که می‌خوای خودکار علامت بخوره. یه تطبیق importance رو حدود ۲ واحد بالا می‌بره و پیام رو مربوط به تو علامت می‌زنه.",
       },
     ],
   },
   {
-    title: "Urgent detection",
+    title: "تشخیص فوری",
     fields: [
       {
         key: "importanceThreshold",
-        label: "Importance threshold (0-10)",
-        hint: "Below this, alerts are suppressed even if marked urgent.",
+        label: "آستانه‌ی importance (۰ تا ۱۰)",
+        hint: "زیر این مقدار، هشدارها سرکوب می‌شن حتی اگه فوری علامت خورده باشن.",
         type: "number",
       },
       {
         key: "ownerNotifyChatId",
-        label: "Telegram chat id for urgent heads-up",
-        hint: "Usually your own user id. Receives a copy of every alert via this bot.",
+        label: "chat id تلگرام برای هشدار فوری",
+        hint: "معمولاً user id خودته. یه کپی از هر هشدار رو از طریق این بات دریافت می‌کنه.",
       },
     ],
   },
   {
-    title: "Active-conversation grace",
+    title: "مهلت گفتگوی فعال",
     fields: [
       {
         key: "dmActiveGraceMinutes",
-        label: "DM grace (minutes)",
-        hint: "If YOU sent any message in a DM within this window, incoming messages there are logged but NOT classified, alerted, or auto-replied. 0 disables. VIP chats bypass this.",
+        label: "مهلت DM (دقیقه)",
+        hint: "اگه تو توی این بازه توی یه DM پیامی فرستاده باشی، پیام‌های ورودی اونجا فقط لاگ می‌شن ولی دسته‌بندی، هشدار یا پاسخ خودکار نمی‌گیرن. ۰ یعنی غیرفعال. چت‌های VIP از این مستثنان.",
         type: "number",
       },
       {
         key: "groupActiveGraceMinutes",
-        label: "Group grace (minutes)",
-        hint: "Same idea for group chats. Defaults higher because group activity is bursty.",
+        label: "مهلت گروه (دقیقه)",
+        hint: "همین ایده برای چت‌های گروهی. پیش‌فرضش بالاتره چون فعالیت گروه پرنوسانه.",
         type: "number",
       },
     ],
   },
   {
-    title: "Alert device webhook",
+    title: "webhook دستگاه هشدار",
     fields: [
       {
         key: "alertWebhookUrl",
-        label: "Alert webhook URL",
-        hint: "POSTed with the urgent message payload. Empty disables.",
+        label: "آدرس webhook هشدار",
+        hint: "با payload پیام فوری POST می‌شه. خالی یعنی غیرفعال.",
       },
       {
         key: "alertWebhookMethod",
-        label: "HTTP method",
+        label: "متد HTTP",
       },
     ],
   },
   {
-    title: "Auto-reply (urgent DMs only)",
+    title: "پاسخ خودکار (فقط DMهای فوری)",
     fields: [
-      { key: "autoReplyEnabled", label: "Enabled", type: "toggle" },
-      { key: "autoReplyText", label: "Default text", type: "textarea" },
+      { key: "autoReplyEnabled", label: "فعال", type: "toggle" },
+      { key: "autoReplyText", label: "متن پیش‌فرض", type: "textarea" },
       {
         key: "autoReplyCooldownMinutes",
-        label: "Cooldown per sender (minutes)",
-        hint: "Won't auto-reply to the same chat more than once per this window.",
+        label: "cooldown برای هر فرستنده (دقیقه)",
+        hint: "توی این بازه بیشتر از یک بار به یه چت پاسخ خودکار نمی‌ده.",
         type: "number",
       },
     ],
   },
   {
-    title: "Group analyzer",
+    title: "تحلیل‌گر گروه",
     fields: [
-      { key: "groupAnalysisEnabled", label: "Enabled", type: "toggle" },
+      { key: "groupAnalysisEnabled", label: "فعال", type: "toggle" },
       {
         key: "groupSummaryHourUTC",
-        label: "Daily summary hour (UTC)",
-        hint: "Vercel Cron is configured separately in vercel.json.",
+        label: "ساعت خلاصه‌ی روزانه (UTC)",
+        hint: "Vercel Cron جداگانه توی vercel.json تنظیم می‌شه.",
         type: "number",
       },
     ],
   },
   {
-    title: "Secretary",
+    title: "منشی",
     fields: [
       {
         key: "secretaryEnabled",
-        label: "Enabled",
+        label: "فعال",
         type: "toggle",
       },
       {
         key: "secretarySessionMinutes",
-        label: "Session idle timeout (minutes)",
-        hint: "After this much inactivity, the thread auto-closes and the next urgent message starts a fresh session.",
+        label: "مهلت بیکاری session (دقیقه)",
+        hint: "بعد از این مدت بی‌فعالیتی، thread خودکار بسته می‌شه و پیام فوری بعدی یه session تازه شروع می‌کنه.",
         type: "number",
       },
       {
         key: "secretarySuppressAutoReply",
-        label: "Suppress auto-reply when secretary is handling",
+        label: "سرکوب پاسخ خودکار وقتی منشی داره رسیدگی می‌کنه",
         type: "toggle",
       },
       {
         key: "secretaryAutoTranscribe",
-        label: "Auto-transcribe voice / audio / video notes for the secretary",
-        hint: "When a voice or audio message is forwarded, the bot also sends the Groq / Gemini transcript as a reply in the same thread.",
+        label: "رونویسی خودکار voice / audio / video note برای منشی",
+        hint: "وقتی یه پیام صوتی یا voice فوروارد می‌شه، بات رونوشت Groq / Gemini رو هم به‌عنوان پاسخ توی همون thread می‌فرسته.",
         type: "toggle",
       },
       {
         key: "sttLanguage",
-        label: "Transcription language (ISO 639-1)",
-        hint: 'Force the audio language instead of letting Whisper guess (Whisper misreads short Persian audio as English). Examples: "fa" Persian, "en" English, "ar" Arabic. Leave empty to auto-detect.',
+        label: "زبان رونویسی (ISO 639-1)",
+        hint: 'زبان صوت رو به‌جای حدس Whisper اجباری کن (Whisper صوت کوتاه فارسی رو اشتباه انگلیسی می‌خونه). مثال‌ها: "fa" فارسی، "en" انگلیسی، "ar" عربی. برای تشخیص خودکار خالی بذار.',
       },
       {
         key: "markMessagesAsRead",
-        label: "Mark sender's message as 'seen' after every reply",
-        hint: "When the bot answers via business connection (auto-reply, AI, friendly, secretary relay, or dashboard send), it also calls readBusinessMessage so the sender gets a seen tick. Requires the can_read_messages right in Telegram Business → Chatbots. Turn this OFF if you'd rather not show seen ticks.",
+        label: "پیام فرستنده رو بعد از هر پاسخ «دیده‌شده» علامت بزن",
+        hint: "وقتی بات از طریق business connection جواب می‌ده (پاسخ خودکار، AI، دوستانه، relay منشی، یا ارسال از داشبورد)، readBusinessMessage رو هم صدا می‌زنه تا فرستنده تیک دیده‌شده بگیره. به دسترسی can_read_messages توی Telegram Business ← Chatbots نیاز داره. اگه ترجیح می‌دی تیک دیده‌شده نشون داده نشه این رو خاموش کن.",
         type: "toggle",
       },
     ],
   },
   {
-    title: "Reminders & calendar (AI extract)",
+    title: "یادآوری‌ها و تقویم (استخراج AI)",
     fields: [
       {
         key: "autoExtractEnabled",
-        label: "Automatically extract events / tasks / reminders from messages",
-        hint: "After classifying each incoming message, the AI looks for dates, deadlines, and action items and adds them to /reminders. Turn off to extract only when you tap 🧠 Extract manually.",
+        label: "استخراج خودکار رویدادها / کارها / یادآوری‌ها از پیام‌ها",
+        hint: "بعد از دسته‌بندی هر پیام ورودی، AI دنبال تاریخ‌ها، ددلاین‌ها و کارها می‌گرده و به /reminders اضافه‌شون می‌کنه. خاموش کن تا فقط وقتی دستی 🧠 استخراج می‌زنی استخراج بشه.",
         type: "toggle",
       },
       {
         key: "autoExtractMinImportance",
-        label: "Minimum importance to auto-extract (0-10)",
-        hint: "Skip messages classified below this importance to save AI cost. Default 4: ignores ads/spam, processes anything that looks like real conversation.",
+        label: "حداقل importance برای استخراج خودکار (۰ تا ۱۰)",
+        hint: "پیام‌هایی که زیر این importance دسته‌بندی شدن رو رد کن تا هزینه‌ی AI کم شه. پیش‌فرض ۴: تبلیغ/اسپم رو نادیده می‌گیره، هر چیزی که شبیه گفتگوی واقعیه رو پردازش می‌کنه.",
         type: "number",
       },
     ],
@@ -433,9 +433,9 @@ export default function SettingsPage() {
       });
       if (!r.ok) {
         const j = (await r.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error ?? `save failed (${r.status})`);
+        throw new Error(j.error ?? `ذخیره ناموفق بود (${r.status})`);
       }
-      setMsg("Saved.");
+      setMsg("ذخیره شد.");
     } catch (err) {
       setMsg(err instanceof Error ? err.message : String(err));
     } finally {
@@ -475,8 +475,8 @@ export default function SettingsPage() {
   if (!values) {
     return (
       <Shell>
-        <PageTitle title="Settings" />
-        <Card>Loading…</Card>
+        <PageTitle title="تنظیمات" />
+        <Card>در حال بارگذاری…</Card>
       </Shell>
     );
   }
@@ -486,7 +486,7 @@ export default function SettingsPage() {
       {tenantId && (
         <div className="mb-3 p-3 rounded-lg border border-amber-700 bg-amber-900/20">
           <div className="text-sm font-medium text-amber-200">
-            🏢 Editing tenant: {tenantName ?? `#${tenantId}`}
+            🏢 در حال ویرایش tenant: {tenantName ?? `#${tenantId}`}
           </div>
           <div className="text-[11px] text-amber-300/80 mt-1">
             تغییرات روی این tenant ذخیره می‌شن — مقادیر خالی fallback به global.
@@ -499,15 +499,15 @@ export default function SettingsPage() {
         </div>
       )}
       <PageTitle
-        title={tenantId ? `Settings · ${tenantName ?? `#${tenantId}`}` : "Settings"}
-        subtitle="Everything tunable. Values locked by environment variables are read-only."
+        title={tenantId ? `تنظیمات · ${tenantName ?? `#${tenantId}`}` : "تنظیمات"}
+        subtitle="همه چیز قابل تنظیم. مقادیری که با متغیرهای محیطی قفل شدن فقط‌خواندنی هستن."
         actions={
           <button
             disabled={saving}
             onClick={save}
             className="text-xs px-4 py-2 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
           >
-            {saving ? "Saving…" : "Save changes"}
+            {saving ? "در حال ذخیره…" : "ذخیره‌ی تغییرات"}
           </button>
         }
       />
@@ -532,14 +532,14 @@ export default function SettingsPage() {
         <OwnerPhotoUploader />
         {/* Custom rich editor: Secretaries */}
         <Card>
-          <h2 className="text-sm font-semibold mb-1">Secretaries</h2>
+          <h2 className="text-sm font-semibold mb-1">منشی‌ها</h2>
           <p className="text-xs text-[var(--color-text-dim)] mb-4">
-            The first one in the list handles automatic forwards. Add or
-            remove anyone with a numeric Telegram user id (they must /start
-            the bot once so it can DM them). Or send them an invite link
-            below and they'll be added automatically when they tap it.
+            اولین نفر توی لیست، فوروارد‌های خودکار رو انجام می‌ده. هر کسی رو با
+            یه user id عددی تلگرام می‌تونی اضافه یا حذف کنی (باید یه بار بات رو
+            /start کنه تا بتونه بهش DM بده). یا لینک دعوت زیر رو براشون بفرست تا
+            وقتی روش زدن، خودکار اضافه بشن.
             {envLocked.has("secretariesJson") && (
-              <span className="ml-2 italic">(locked by env)</span>
+              <span className="ml-2 italic">(قفل‌شده با env)</span>
             )}
           </p>
           <SecretariesEditor
@@ -555,13 +555,13 @@ export default function SettingsPage() {
         {/* Custom rich editor: AI Models — general (classify / summaries) */}
         <Card>
           <h2 className="text-sm font-semibold mb-1">
-            AI models — classify &amp; summaries
+            مدل‌های AI — دسته‌بندی و خلاصه‌ها
           </h2>
           <p className="text-xs text-[var(--color-text-dim)] mb-4">
-            Used for urgent detection, group summaries, and transcription
-            metadata. Tried in order; falls back on failure.
+            برای تشخیص فوری، خلاصه‌ی گروه‌ها و متادیتای رونویسی استفاده می‌شه. به
+            ترتیب امتحان می‌شن؛ در صورت خطا به بعدی برمی‌گرده.
             {envLocked.has("aiModelsCsv") && (
-              <span className="ml-2 italic">(locked by env)</span>
+              <span className="ml-2 italic">(قفل‌شده با env)</span>
             )}
           </p>
           <ModelsEditor
@@ -577,15 +577,15 @@ export default function SettingsPage() {
         {/* Custom rich editor: AI Models — chat (ai_chat / friendly_reply) */}
         <Card>
           <h2 className="text-sm font-semibold mb-1">
-            AI models — chat &amp; friendly reply
+            مدل‌های AI — چت و پاسخ دوستانه
           </h2>
           <p className="text-xs text-[var(--color-text-dim)] mb-4">
-            Separate list used only when a chat is in <strong>AI chat</strong>{" "}
-            or <strong>Friendly auto-reply</strong> mode. Put smarter models
-            here (Claude Sonnet, GPT-4o, …) — they only run when a real
-            conversation is happening. Leave empty to reuse the classify list.
+            لیست جداگانه‌ای که فقط وقتی یه چت توی حالت <strong>AI chat</strong>{" "}
+            یا <strong>پاسخ خودکار دوستانه</strong> باشه استفاده می‌شه. مدل‌های
+            باهوش‌تر رو اینجا بذار (Claude Sonnet, GPT-4o, …) — فقط وقتی یه گفتگوی
+            واقعی در جریانه اجرا می‌شن. خالی بذار تا از همون لیست دسته‌بندی استفاده بشه.
             {envLocked.has("aiChatModelsCsv") && (
-              <span className="ml-2 italic">(locked by env)</span>
+              <span className="ml-2 italic">(قفل‌شده با env)</span>
             )}
           </p>
           <ModelsEditor
@@ -601,12 +601,12 @@ export default function SettingsPage() {
         {/* Custom rich editor: Alert webhook headers */}
         <Card>
           <h2 className="text-sm font-semibold mb-1">
-            Alert webhook headers
+            هدرهای webhook هشدار
           </h2>
           <p className="text-xs text-[var(--color-text-dim)] mb-4">
-            Extra HTTP headers sent with every alert webhook call.
+            هدرهای HTTP اضافه‌ای که با هر فراخوانی webhook هشدار فرستاده می‌شن.
             {envLocked.has("alertWebhookHeaders") && (
-              <span className="ml-2 italic">(locked by env)</span>
+              <span className="ml-2 italic">(قفل‌شده با env)</span>
             )}
           </p>
           <HeadersEditor
@@ -634,7 +634,7 @@ export default function SettingsPage() {
               {section.fields.map((f) => {
                 const locked = envLocked.has(f.key);
                 const val = values[f.key];
-                const lockedSuffix = locked ? " (locked by env)" : "";
+                const lockedSuffix = locked ? " (قفل‌شده با env)" : "";
                 if (f.type === "toggle") {
                   return (
                     <label
@@ -695,7 +695,7 @@ export default function SettingsPage() {
                         disabled={locked}
                         className="mt-2 text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                       >
-                        💵 Sort cheapest first
+                        💵 مرتب‌سازی از ارزان‌ترین
                       </button>
                     )}
                   </div>
@@ -739,7 +739,7 @@ function SecretariesEditor({
     <div className="flex flex-col gap-2">
       {value.length === 0 && (
         <p className="text-xs text-[var(--color-text-dim)]">
-          No secretaries yet.
+          هنوز منشی‌ای نیست.
         </p>
       )}
       {value.map((s, idx) => (
@@ -754,7 +754,7 @@ function SecretariesEditor({
             type="text"
             disabled={disabled}
             value={s.name}
-            placeholder="Name"
+            placeholder="نام"
             onChange={(e) => update(idx, { name: e.target.value })}
             className="flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
           />
@@ -771,7 +771,7 @@ function SecretariesEditor({
               disabled={disabled || idx === 0}
               onClick={() => move(idx, -1)}
               className="text-xs px-1.5 py-1 rounded hover:bg-[var(--color-surface)] disabled:opacity-30"
-              aria-label="move up"
+              aria-label="انتقال به بالا"
             >
               ▲
             </button>
@@ -779,7 +779,7 @@ function SecretariesEditor({
               disabled={disabled || idx === value.length - 1}
               onClick={() => move(idx, 1)}
               className="text-xs px-1.5 py-1 rounded hover:bg-[var(--color-surface)] disabled:opacity-30"
-              aria-label="move down"
+              aria-label="انتقال به پایین"
             >
               ▼
             </button>
@@ -787,7 +787,7 @@ function SecretariesEditor({
               disabled={disabled}
               onClick={() => remove(idx)}
               className="text-xs px-2 py-1 rounded text-red-400 hover:bg-red-900/30 disabled:opacity-30"
-              aria-label="remove"
+              aria-label="حذف"
             >
               ✕
             </button>
@@ -799,7 +799,7 @@ function SecretariesEditor({
         onClick={add}
         className="text-xs px-3 py-2 rounded-md border border-dashed border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 self-start"
       >
-        + Add secretary
+        + افزودن منشی
       </button>
     </div>
   );
@@ -839,7 +839,7 @@ function ModelsEditor({
     <div className="flex flex-col gap-2">
       {value.length === 0 && (
         <p className="text-xs text-[var(--color-text-dim)]">
-          Using the default OPENROUTER_MODEL only.
+          فقط از OPENROUTER_MODEL پیش‌فرض استفاده می‌شه.
         </p>
       )}
       {value.map((id, idx) => {
@@ -858,10 +858,10 @@ function ModelsEditor({
                 {id}
                 {meta && (
                   <span className="ml-2">
-                    in ${meta.in}/M · out ${meta.out}/M
+                    ورودی ${meta.in}/M · خروجی ${meta.out}/M
                   </span>
                 )}
-                {!meta && <span className="ml-2 italic">unknown pricing</span>}
+                {!meta && <span className="ml-2 italic">قیمت نامشخص</span>}
               </div>
             </div>
             <div className="flex gap-0.5 shrink-0">
@@ -902,18 +902,18 @@ function ModelsEditor({
           className="text-xs px-2 py-1.5 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)]"
         >
           <option value="" disabled>
-            + Add a known model…
+            + افزودن یک مدل شناخته‌شده…
           </option>
           {available.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.label} — in ${m.in}/M, out ${m.out}/M
+              {m.label} — ورودی ${m.in}/M، خروجی ${m.out}/M
             </option>
           ))}
         </select>
         <input
           type="text"
           disabled={disabled}
-          placeholder="…or paste any OpenRouter id"
+          placeholder="…یا هر id از OpenRouter رو بچسبون"
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               const t = e.currentTarget.value.trim();
@@ -931,12 +931,12 @@ function ModelsEditor({
           onClick={sortByCost}
           className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
         >
-          💵 Sort cheapest first
+          💵 مرتب‌سازی از ارزان‌ترین
         </button>
       </div>
       {value.some((id) => !knownIds.has(id)) && (
         <p className="text-[11px] text-[var(--color-text-dim)] mt-1">
-          Models without a built-in price won't contribute to cost predictions.
+          مدل‌هایی که قیمت داخلی ندارن، در پیش‌بینی هزینه به حساب نمیان.
         </p>
       )}
     </div>

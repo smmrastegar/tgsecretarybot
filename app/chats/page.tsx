@@ -741,7 +741,7 @@ export default function ChatsPage() {
                   disabled={bulking}
                   className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                 >
-                  Clear
+                  پاک کردن
                 </button>
                 <select
                   disabled={bulking}
@@ -754,7 +754,7 @@ export default function ChatsPage() {
                   }}
                   className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
                 >
-                  <option value="">Set mode to…</option>
+                  <option value="">تنظیم حالت به…</option>
                   {(Object.keys(MODE_LABELS) as ChatMode[]).map((m) => (
                     <option key={m} value={m}>
                       {MODE_LABELS[m]}
@@ -766,28 +766,28 @@ export default function ChatsPage() {
                   disabled={bulking}
                   className="px-2 py-1 rounded-md border border-amber-700 text-amber-300 hover:bg-amber-900/30 disabled:opacity-50"
                 >
-                  ⭐ Mark VIP
+                  ⭐ علامت VIP
                 </button>
                 <button
                   onClick={() => runBulk("vip", { value: false })}
                   disabled={bulking}
                   className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                 >
-                  Unmark VIP
+                  حذف VIP
                 </button>
                 <button
                   onClick={() => runBulk("muted", { value: true })}
                   disabled={bulking}
                   className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                 >
-                  🔕 Mute
+                  🔕 بی‌صدا
                 </button>
                 <button
                   onClick={() => runBulk("muted", { value: false })}
                   disabled={bulking}
                   className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                 >
-                  Unmute
+                  لغو بی‌صدا
                 </button>
                 <select
                   disabled={bulking}
@@ -801,14 +801,14 @@ export default function ChatsPage() {
                   }}
                   className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-50"
                 >
-                  <option value="">Set function role…</option>
+                  <option value="">تنظیم نقش…</option>
                   <option value="downloader">📥 Downloader</option>
                   <option value="sms_inbox">📱 SMS inbox</option>
                   <option value="download_archive">🗄 Archive</option>
                   <option value="news">📰 News</option>
                   <option value="summary_inbox">📬 Summary inbox</option>
                   <option value="storage">📦 Storage</option>
-                  <option value="__clear">— Clear role —</option>
+                  <option value="__clear">— پاک کردن نقش —</option>
                 </select>
                 <select
                   disabled={bulking}
@@ -836,7 +836,7 @@ export default function ChatsPage() {
                   <option value="15">روشن، گپ ۱۵ دقیقه</option>
                   <option value="30">روشن، گپ ۳۰ دقیقه</option>
                   <option value="60">روشن، گپ ۱ ساعت</option>
-                  <option value="off">— Off —</option>
+                  <option value="off">— خاموش —</option>
                 </select>
                 <select
                   disabled={bulking}
@@ -983,7 +983,7 @@ export default function ChatsPage() {
                   href={`/chats/${c.chatId}`}
                   className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] shrink-0"
                 >
-                  Open →
+                  باز کن →
                 </Link>
               </div>
               <select
@@ -1013,7 +1013,7 @@ export default function ChatsPage() {
                     className="flex-1 min-w-0 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-[11px]"
                   >
                     <option value="">
-                      Default ({secretaries[0]?.name ?? "—"})
+                      پیش‌فرض ({secretaries[0]?.name ?? "—"})
                     </option>
                     {secretaries.map((s) => (
                       <option key={s.userId} value={s.userId}>
@@ -1025,14 +1025,14 @@ export default function ChatsPage() {
               )}
               {c.modeChangedAt && (
                 <div className="text-[10px] text-[var(--color-text-dim)] mb-2">
-                  switched {relTime(c.modeChangedAt)}
+                  تغییر یافت {relTime(c.modeChangedAt)}
                 </div>
               )}
               <div className="flex flex-wrap gap-1 items-center text-[10px]">
                 <span className="text-[var(--color-text-dim)]">
-                  {c.messages} msg
+                  {c.messages} پیام
                 </span>
-                {c.urgent > 0 && <Badge tone="danger">{c.urgent} urg</Badge>}
+                {c.urgent > 0 && <Badge tone="danger">{c.urgent} فوری</Badge>}
                 {c.isBot && <Badge tone="info">🤖</Badge>}
                 {c.functionRole && (
                   <Badge tone="info">
@@ -1040,13 +1040,13 @@ export default function ChatsPage() {
                   </Badge>
                 )}
                 {c.vip && <Badge tone="warn">VIP</Badge>}
-                {c.muted && <Badge tone="neutral">muted</Badge>}
+                {c.muted && <Badge tone="neutral">بی‌صدا</Badge>}
                 {c.relationship && (
                   <Badge tone={RELATIONSHIP_TONES[c.relationship]}>
                     {RELATIONSHIP_LABELS[c.relationship]}
                   </Badge>
                 )}
-                {c.customReply && <Badge tone="info">custom</Badge>}
+                {c.customReply && <Badge tone="info">سفارشی</Badge>}
                 {c.aiCostUsd > 0 && (
                   <span className="text-[var(--color-text-dim)] ml-auto">
                     ${c.aiCostUsd.toFixed(4)}
@@ -1089,13 +1089,13 @@ export default function ChatsPage() {
                     }}
                   />
                 </th>
-                <th className="text-left font-normal pb-2 pr-3">Chat</th>
-                <th className="text-left font-normal pb-2 pr-3">Mode</th>
-                <th className="text-left font-normal pb-2 pr-3">Last seen</th>
-                <th className="text-right font-normal pb-2 pr-3">Messages</th>
-                <th className="text-right font-normal pb-2 pr-3">Urgent</th>
-                <th className="text-right font-normal pb-2 pr-3">AI $</th>
-                <th className="text-left font-normal pb-2 pr-3">Flags</th>
+                <th className="text-left font-normal pb-2 pr-3">چت</th>
+                <th className="text-left font-normal pb-2 pr-3">حالت</th>
+                <th className="text-left font-normal pb-2 pr-3">آخرین بازدید</th>
+                <th className="text-right font-normal pb-2 pr-3">پیام‌ها</th>
+                <th className="text-right font-normal pb-2 pr-3">فوری</th>
+                <th className="text-right font-normal pb-2 pr-3">هزینه AI</th>
+                <th className="text-left font-normal pb-2 pr-3">نشان‌ها</th>
                 <th className="text-right font-normal pb-2"></th>
               </tr>
             </thead>
@@ -1181,7 +1181,7 @@ export default function ChatsPage() {
                           }
                         >
                           <option value="">
-                            {secretaries[0]?.name ?? "—"} (default)
+                            {secretaries[0]?.name ?? "—"} (پیش‌فرض)
                           </option>
                           {secretaries.map((s) => (
                             <option key={s.userId} value={s.userId}>
@@ -1193,7 +1193,7 @@ export default function ChatsPage() {
                     )}
                     {c.modeChangedAt && (
                       <div className="text-[10px] text-[var(--color-text-dim)] mt-1">
-                        switched {relTime(c.modeChangedAt)}
+                        تغییر یافت {relTime(c.modeChangedAt)}
                       </div>
                     )}
                   </td>
@@ -1219,15 +1219,15 @@ export default function ChatsPage() {
                   </td>
                   <td className="py-3 pr-3">
                     <div className="flex gap-1 flex-wrap">
-                      {c.isBot && <Badge tone="info">🤖 bot</Badge>}
+                      {c.isBot && <Badge tone="info">🤖 بات</Badge>}
                       {c.functionRole && (
                         <Badge tone="info">
                           {FUNCTION_ROLE_BADGE[c.functionRole] ?? "🧩"} {c.functionRole}
                         </Badge>
                       )}
                       {c.vip && <Badge tone="warn">VIP</Badge>}
-                      {c.muted && <Badge tone="neutral">muted</Badge>}
-                      {c.customReply && <Badge tone="info">custom reply</Badge>}
+                      {c.muted && <Badge tone="neutral">بی‌صدا</Badge>}
+                      {c.customReply && <Badge tone="info">پاسخ سفارشی</Badge>}
                     </div>
                   </td>
                   <td className="py-3 text-right">
@@ -1235,7 +1235,7 @@ export default function ChatsPage() {
                       onClick={() => setEdit(c)}
                       className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
                     >
-                      Edit
+                      ویرایش
                     </button>
                   </td>
                 </tr>
@@ -1269,7 +1269,7 @@ export default function ChatsPage() {
             <div className="grid grid-cols-2 gap-2 mb-2">
               <div>
                 <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-                  First name
+                  نام
                 </label>
                 <input
                   dir="auto"
@@ -1284,7 +1284,7 @@ export default function ChatsPage() {
               </div>
               <div>
                 <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-                  Last name
+                  نام خانوادگی
                 </label>
                 <input
                   dir="auto"
@@ -1300,7 +1300,7 @@ export default function ChatsPage() {
             </div>
 
             <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-              Nickname (اسم خودمونی)
+              اسم خودمونی
             </label>
             <input
               dir="auto"
@@ -1312,7 +1312,7 @@ export default function ChatsPage() {
             />
 
             <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-              Relationship
+              رابطه
             </label>
             <select
               value={edit.relationship ?? ""}
@@ -1335,7 +1335,7 @@ export default function ChatsPage() {
             </select>
 
             <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-              Mode for this chat
+              حالت این چت
             </label>
             <select
               value={edit.mode}
@@ -1354,7 +1354,7 @@ export default function ChatsPage() {
             {edit.mode === "secretary" && secretaries.length > 0 && (
               <>
                 <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-                  Forward to which secretary
+                  فوروارد به کدوم منشی
                 </label>
                 <select
                   value={String(edit.secretaryUserId ?? "")}
