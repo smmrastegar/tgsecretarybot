@@ -866,38 +866,6 @@ export default function RuleDetailPage() {
 
       <Card className="mb-4">
         <div className="text-xs font-medium mb-2">
-          🧪 تست/اجرای دستی — یه پیام بده، اگه match شد واقعاً اجرا می‌شه
-        </div>
-        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-          دقیقاً مثل یه پیام ورودی با این rule سنجیده می‌شه. اگه match بشه،
-          <b> واقعاً به گیرنده‌های فعال فوروارد می‌شه</b> (گیت رد می‌شه چون
-          دستیه؛ گیرنده‌های متوقف‌شده رد می‌شن).
-        </p>
-        <div className="flex gap-2">
-          <textarea
-            value={simText}
-            onChange={(e) => setSimText(e.target.value)}
-            placeholder="متن پیام تستی…"
-            rows={2}
-            className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-          />
-          <button
-            onClick={runSimulate}
-            disabled={simBusy || !simText.trim()}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50 self-start"
-          >
-            {simBusy ? "…" : "▶️ اجرا"}
-          </button>
-        </div>
-        {simResult && (
-          <div className="text-[11px] mt-2 p-2 rounded-md bg-[var(--color-surface-2)] leading-relaxed">
-            {simResult}
-          </div>
-        )}
-      </Card>
-
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-2">
           🚫 نمونه‌های منفی ({negExamples.length}) — این‌ها <i>نباید</i> match
           بشن
         </div>
@@ -946,6 +914,38 @@ export default function RuleDetailPage() {
             + منفی
           </button>
         </div>
+      </Card>
+
+      <Card className="mb-4">
+        <div className="text-xs font-medium mb-2">
+          ▶️ تست/اجرای دستی — یه پیام بده، اگه match شد واقعاً اجرا می‌شه
+        </div>
+        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+          دقیقاً مثل یه پیام ورودی با این rule سنجیده می‌شه. اگه match بشه،
+          <b> واقعاً به گیرنده‌های فعال فوروارد می‌شه</b> (گیت رد می‌شه چون
+          دستیه؛ گیرنده‌های متوقف‌شده رد می‌شن).
+        </p>
+        <div className="flex gap-2">
+          <textarea
+            value={simText}
+            onChange={(e) => setSimText(e.target.value)}
+            placeholder="متن پیام تستی…"
+            rows={2}
+            className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+          />
+          <button
+            onClick={runSimulate}
+            disabled={simBusy || !simText.trim()}
+            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50 self-start"
+          >
+            {simBusy ? "…" : "▶️ اجرا"}
+          </button>
+        </div>
+        {simResult && (
+          <div className="text-[11px] mt-2 p-2 rounded-md bg-[var(--color-surface-2)] leading-relaxed">
+            {simResult}
+          </div>
+        )}
       </Card>
 
       <Card className="mb-4">
