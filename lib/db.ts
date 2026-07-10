@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-07-10.match-all-source";
+const SCHEMA_VERSION = "2026-07-10.ai-reply-notify";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1532,6 +1532,15 @@ export async function ensureSchema(
     // Temporary pause: a paused recipient stays configured but receives
     // no forwards until resumed (distinct from delete).
     await q`ALTER TABLE message_rule_recipients ADD COLUMN IF NOT EXISTS paused BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Throttle for "AI started auto-replying in chat X" owner notices —
+    // one row per (connection, chat) with the last time we notified.
+    await q`
+      CREATE TABLE IF NOT EXISTS ai_reply_notifications (
+        business_connection_id TEXT NOT NULL,
+        chat_id                BIGINT NOT NULL,
+        last_notified_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (business_connection_id, chat_id)
+      )`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
     // recent push so the admin can see drift.
@@ -9811,6 +9820,28 @@ export async function listRuleRecipients(
     paused: Boolean(r.paused),
     createdAt: r.created_at as Date,
   }));
+}
+
+// Returns true iff the owner should be told "AI is now replying in this
+// chat" — i.e. we haven't notified for this (connection, chat) within
+// the throttle window. Atomically records the notify time so concurrent
+// messages don't double-notify. First engagement always notifies.
+export async function shouldNotifyAiActivity(args: {
+  businessConnectionId: string;
+  chatId: number;
+  throttleMinutes: number;
+}): Promise<boolean> {
+  if (!hasDb()) return false;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO ai_reply_notifications (business_connection_id, chat_id, last_notified_at)
+    VALUES (${args.businessConnectionId}, ${args.chatId}, NOW())
+    ON CONFLICT (business_connection_id, chat_id) DO UPDATE
+      SET last_notified_at = NOW()
+      WHERE ai_reply_notifications.last_notified_at
+            < NOW() - (${args.throttleMinutes}::int || ' minutes')::interval
+    RETURNING 1`;
+  return rows.length > 0;
 }
 
 // Pause / resume a recipient without deleting it. Paused recipients

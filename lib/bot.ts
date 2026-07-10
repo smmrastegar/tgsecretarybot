@@ -98,6 +98,7 @@ import {
   upsertChatMember,
   getEmail,
   setEmailSummary,
+  shouldNotifyAiActivity,
   getEmailAccountByChannel,
   createEmailPendingReply,
   getEmailPendingReply,
@@ -3321,6 +3322,34 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         aiGeneratePhoto: rule?.aiGeneratePhoto ?? false,
         bot,
       });
+    }
+
+    // Let the owner know when the AI STARTS auto-replying in a chat, so
+    // it's never a surprise later. Only the AI-generating modes count
+    // (not canned auto-replies), and it's throttled to once per chat per
+    // hour so a running conversation doesn't spam.
+    if (
+      autoReplied &&
+      (mode === "ai_chat" || mode === "friendly_reply") &&
+      settings.ownerNotifyChatId
+    ) {
+      const notify = await shouldNotifyAiActivity({
+        businessConnectionId: bcId,
+        chatId: msg.chat.id,
+        throttleMinutes: 60,
+      }).catch(() => false);
+      if (notify) {
+        const modeLabel =
+          mode === "ai_chat" ? "گفتگوی AI" : "پاسخ دوستانه‌ی AI";
+        await bot.api
+          .sendMessage(
+            settings.ownerNotifyChatId,
+            `🤖 AI فعال شد\n` +
+              `تو چت «${chatTitle ?? senderName}» شروع به پاسخ‌دادن خودکار کرد (حالت: ${modeLabel}).\n` +
+              `اگه نمی‌خوای، حالت این چت رو از داشبورد عوض کن.`,
+          )
+          .catch((err) => console.warn("[ai-notify] failed:", err));
+      }
     }
   }
 
