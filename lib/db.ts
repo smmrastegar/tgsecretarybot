@@ -10100,6 +10100,29 @@ export async function clearRecipientRequest(args: {
       AND recipient_chat_id = ${args.recipientChatId}`;
 }
 
+// ATOMIC check-and-consume of the request stamp. Returns true iff the
+// recipient had a still-valid request stamp, which is cleared in the
+// SAME statement. This closes the read→send→clear race: two codes
+// arriving concurrently for one "کد بده" can no longer BOTH see the
+// stamp and both forward — exactly one UPDATE wins the RETURNING row.
+export async function consumeRecipientRequest(args: {
+  ruleId: number;
+  recipientChatId: number;
+  windowSeconds: number;
+}): Promise<boolean> {
+  if (!hasDb()) return false;
+  await ensureSchema();
+  const rows = await sql()`
+    UPDATE message_rule_recipients
+    SET last_request_at = NULL
+    WHERE rule_id = ${args.ruleId}
+      AND recipient_chat_id = ${args.recipientChatId}
+      AND last_request_at IS NOT NULL
+      AND last_request_at > NOW() - (${args.windowSeconds}::int || ' seconds')::interval
+    RETURNING 1`;
+  return rows.length > 0;
+}
+
 // Append a recipient chat_id to a match's forwarded_to array — used
 // both on first forward and when releasing a held match later.
 export async function markMatchForwardedTo(args: {

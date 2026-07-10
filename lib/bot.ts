@@ -3557,34 +3557,47 @@ async function maybeApplyMessageRules(args: {
       // but never saved the description silently ran WITHOUT a gate and
       // codes forwarded to everyone immediately.)
       const { listRuleExamples: listExamplesForGate } = await import("./db");
-      const gateExampleCount =
-        !rule.requestTrigger?.trim() &&
-        rule.requestWindowSeconds != null &&
-        rule.requestWindowSeconds > 0
-          ? (await listExamplesForGate(ruleId, "gate_match").catch(() => []))
-              .length
-          : 0;
-      const gated =
-        rule.requestWindowSeconds != null &&
-        rule.requestWindowSeconds > 0 &&
-        (!!rule.requestTrigger?.trim() || gateExampleCount > 0);
+      const windowed =
+        rule.requestWindowSeconds != null && rule.requestWindowSeconds > 0;
+      let gated = false;
+      if (windowed) {
+        if (rule.requestTrigger?.trim()) {
+          gated = true;
+        } else {
+          // Examples-only gate. FAIL CLOSED: if we can't read the
+          // examples (transient DB error), HOLD rather than broadcast
+          // the code to everyone. A held code is recoverable (the
+          // recipient can ask again); a leaked code is not.
+          try {
+            const ex = await listExamplesForGate(ruleId, "gate_match");
+            gated = ex.length > 0;
+          } catch (err) {
+            console.warn(
+              `[rules] gate-example read failed rule=${ruleId} — failing closed (holding):`,
+              err,
+            );
+            gated = true;
+          }
+        }
+      }
 
       const { sendRuleForward } = await import("./rule-delivery");
-      const { recipientRequestedRecently, clearRecipientRequest } =
-        await import("./db");
+      const { consumeRecipientRequest } = await import("./db");
       const delivered: number[] = [];
       const failures: Array<{ chatId: number; reason: string }> = [];
       for (const r of recipients) {
         let shouldForward = !gated;
         if (gated) {
-          // Bidirectional gate: forward NOW if this recipient sent a
-          // trigger within the last window seconds. Otherwise leave
-          // the match held for the trigger-detect path to release.
-          shouldForward = await recipientRequestedRecently({
+          // ATOMIC check-and-consume: forward NOW only if this recipient
+          // has a still-valid request stamp, which is cleared in the
+          // same statement. Two codes arriving concurrently for one ask
+          // can no longer both pass this gate. If the send then fails
+          // the match stays held and a re-ask re-releases it.
+          shouldForward = await consumeRecipientRequest({
             ruleId,
             recipientChatId: r.recipientChatId,
             windowSeconds: rule.requestWindowSeconds ?? 0,
-          });
+          }).catch(() => false);
         }
         if (!shouldForward) continue;
         const out = await sendRuleForward({
@@ -3595,15 +3608,6 @@ async function maybeApplyMessageRules(args: {
         });
         if (out.ok) {
           delivered.push(r.recipientChatId);
-          // One request = one delivery. Consume the stamp so the next
-          // code needs a fresh ask — otherwise every code arriving in
-          // the window would keep flowing to this recipient.
-          if (gated) {
-            await clearRecipientRequest({
-              ruleId,
-              recipientChatId: r.recipientChatId,
-            }).catch(() => {});
-          }
           console.log(
             `[rules] forward sent rule=${ruleId} → chat=${r.recipientChatId} mode=${out.mode} msg_id=${out.sentMessageId} bcId=${out.businessConnectionId ?? "—"}${gated ? " (gate: recipient requested recently)" : ""}`,
           );

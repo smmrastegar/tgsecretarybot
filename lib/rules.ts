@@ -496,6 +496,16 @@ output: CODE: 738261`;
   // have leaked through here before. Reject, don't forward.
   if (code.length < 4 || code.length > 10) return null;
   if (/\s/.test(code)) return null;
+  // The code MUST literally appear in the (digit-normalised) message.
+  // If the model returned something not present in the text, it
+  // hallucinated or reformatted — don't forward a code we can't point
+  // to in the source. `body` is already normaliseDigits(text).
+  if (!body.toLowerCase().includes(code.toLowerCase())) {
+    console.warn(
+      `[rules] OTP extract rejected — "${code}" not present in message body`,
+    );
+    return null;
+  }
   return code;
 }
 
