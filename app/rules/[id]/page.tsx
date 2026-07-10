@@ -534,8 +534,11 @@ export default function RuleDetailPage() {
   //  expired → nobody got it AND past the window (fully dead)
   const matchStatus = (m: Match): "active" | "done" | "partial" | "expired" => {
     const deliveredSet = new Set(m.forwardedTo);
-    const got = recipients.filter((r) => deliveredSet.has(r.recipientChatId)).length;
-    if (recipients.length > 0 && got === recipients.length) return "done";
+    // Paused recipients aren't expected to receive — not getting to them
+    // is NOT "incomplete". Judge completeness against ACTIVE recipients.
+    const active = recipients.filter((r) => !r.paused);
+    const got = active.filter((r) => deliveredSet.has(r.recipientChatId)).length;
+    if (active.length > 0 && got === active.length) return "done";
     if (got > 0) return "partial";
     return matchPastWindow(m) ? "expired" : "active";
   };
@@ -1158,12 +1161,17 @@ export default function RuleDetailPage() {
                   return {
                     recipientChatId: r.recipientChatId,
                     label: r.recipientLabel,
+                    paused: r.paused,
                     got,
                     err,
                   };
                 });
-                const total = rowsByRecipient.length;
-                const gotCount = rowsByRecipient.filter((r) => r.got).length;
+                // Completeness ignores paused recipients — they're not
+                // expected to receive, so a paused non-delivery isn't
+                // "ناقص".
+                const activeRows = rowsByRecipient.filter((r) => !r.paused);
+                const total = activeRows.length;
+                const gotCount = activeRows.filter((r) => r.got).length;
                 const allDelivered = total > 0 && gotCount === total;
                 const partial = gotCount > 0 && gotCount < total;
                 // Past the window a match can NEVER be delivered again —
@@ -1206,16 +1214,26 @@ export default function RuleDetailPage() {
                         {rowsByRecipient.map((r) => (
                           <span
                             key={r.recipientChatId}
-                            title={r.err ?? undefined}
+                            title={r.paused ? "این گیرنده متوقفه" : r.err ?? undefined}
                             className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] ${
                               r.got
                                 ? "bg-emerald-900/40 text-emerald-200"
-                                : r.err
-                                  ? "bg-red-900/40 text-red-200"
-                                  : "bg-[var(--color-surface)] text-[var(--color-text-dim)]"
+                                : r.paused
+                                  ? "bg-amber-500/10 text-amber-200/70 line-through"
+                                  : r.err
+                                    ? "bg-red-900/40 text-red-200"
+                                    : "bg-[var(--color-surface)] text-[var(--color-text-dim)]"
                             }`}
                           >
-                            {r.got ? "✓" : expired ? "⌛" : r.err ? "✗" : "⏸"}{" "}
+                            {r.got
+                              ? "✓"
+                              : r.paused
+                                ? "⏸"
+                                : expired
+                                  ? "⌛"
+                                  : r.err
+                                    ? "✗"
+                                    : "⏸"}{" "}
                             {r.label
                               ? `${r.label}`
                               : String(r.recipientChatId)}
