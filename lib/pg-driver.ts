@@ -22,9 +22,13 @@ export async function getPgPool(url: string): Promise<PgPool> {
         .replace(/([?&])&+/g, "$1");
       return new Pool({
         connectionString: clean,
-        max: 4,
+        max: 8,
         connectionTimeoutMillis: 20000,
         idleTimeoutMillis: 15000,
+        // Don't let a query hang forever on the fragile remote DB.
+        statement_timeout: 15000,
+        query_timeout: 15000,
+        keepAlive: true,
         ssl: disableSsl ? false : { rejectUnauthorized: false },
       });
     })();
@@ -37,24 +41,45 @@ export function makePgClient(
   url: string,
   opts?: { tolerant?: boolean; errors?: string[] },
 ): SqlTagged {
+  // The self-hosted DB occasionally drops/refuses a connection under a
+  // burst (a page fires ~8 concurrent queries). Those are transient —
+  // retry once on a fresh connection before surfacing a 500.
+  const isTransient = (e: unknown): boolean => {
+    const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+    const code = (e as { code?: string })?.code ?? "";
+    return (
+      /econnreset|connection terminated|timeout|too many clients|server closed|socket hang up|connection ended|ecconnrefused/.test(
+        msg,
+      ) ||
+      ["ECONNRESET", "ETIMEDOUT", "57P01", "53300", "08006", "08003"].includes(
+        code,
+      )
+    );
+  };
   const run = async (
     text: string,
     params: unknown[],
   ): Promise<Record<string, unknown>[]> => {
-    const pool = await getPgPool(url);
-    try {
-      const res = await pool.query(text, params as unknown[]);
-      return (res.rows ?? []) as Record<string, unknown>[];
-    } catch (e) {
-      // Tolerant mode (schema init): swallow per-statement errors so
-      // ensureSchema runs to completion. Ordering issues (an ALTER on a
-      // table created later) resolve on a second pass.
-      if (opts?.tolerant) {
-        opts.errors?.push(`${e instanceof Error ? e.message : e} :: ${text.slice(0, 100)}`);
-        return [];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const pool = await getPgPool(url);
+      try {
+        const res = await pool.query(text, params as unknown[]);
+        return (res.rows ?? []) as Record<string, unknown>[];
+      } catch (e) {
+        if (opts?.tolerant) {
+          // Tolerant mode (schema init): swallow per-statement errors so
+          // ensureSchema runs to completion.
+          opts.errors?.push(`${e instanceof Error ? e.message : e} :: ${text.slice(0, 100)}`);
+          return [];
+        }
+        if (attempt === 0 && isTransient(e)) {
+          await new Promise((r) => setTimeout(r, 150));
+          continue; // retry once on a transient connection error
+        }
+        throw e;
       }
-      throw e;
     }
+    return [];
   };
   const fn = ((strings: TemplateStringsArray, ...values: unknown[]) => {
     // Rebuild with $1,$2… placeholders (Postgres native), matching neon.
