@@ -160,6 +160,12 @@ const TOOLS = [
           type: "number",
           description: "how many recent messages to test (default 30, max 100)",
         },
+        texts: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional explicit message texts to classify instead of recent messages — use for a held-out test set.",
+        },
       },
       required: ["rule_id"],
       additionalProperties: false,
@@ -618,11 +624,25 @@ async function callTool(
       const { batchTestRule } = await import("@/lib/rules");
       const rule = await getMessageRule(ruleId);
       if (!rule) throw new Error(`rule ${ruleId} not found`);
-      const [messages, examples, negatives] = await Promise.all([
-        listRecentMessagesForTest(lim),
+      const explicitTexts = Array.isArray(args.texts)
+        ? (args.texts as unknown[]).map((t) => String(t)).filter((t) => t.trim())
+        : null;
+      const [recent, examples, negatives] = await Promise.all([
+        explicitTexts ? Promise.resolve([]) : listRecentMessagesForTest(lim),
         listRuleExamples(ruleId),
         listRuleExamples(ruleId, "negative_match"),
       ]);
+      const messages =
+        explicitTexts && explicitTexts.length
+          ? explicitTexts.map((t, i) => ({
+              id: -(i + 1),
+              chatId: 0,
+              chatTitle: null,
+              senderName: "test",
+              messageText: t,
+              createdAt: new Date(0),
+            }))
+          : recent;
       const flags = await batchTestRule({
         rule,
         examples,
