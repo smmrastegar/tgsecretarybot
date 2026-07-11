@@ -5,6 +5,7 @@ import {
   audit,
   listRuleRecipients,
   removeRuleRecipient,
+  setRuleRecipientLabel,
   setRuleRecipientPaused,
 } from "@/lib/db";
 
@@ -29,6 +30,7 @@ export async function PATCH(
   const body = (await request.json().catch(() => ({}))) as {
     recipientChatId?: number;
     paused?: boolean;
+    recipientLabel?: string | null;
   };
   const chatId = Number(body.recipientChatId);
   if (!Number.isFinite(chatId)) {
@@ -36,6 +38,19 @@ export async function PATCH(
       { error: "recipientChatId required" },
       { status: 400 },
     );
+  }
+  // Rename takes precedence when a label is present in the body.
+  if ("recipientLabel" in body) {
+    const label = (body.recipientLabel ?? "").toString().trim() || null;
+    await setRuleRecipientLabel({ ruleId, recipientChatId: chatId, recipientLabel: label });
+    await audit({
+      actorId: session.userId,
+      actorName: session.username ?? null,
+      action: "rule.recipient_rename",
+      target: String(ruleId),
+      details: { recipientChatId: chatId },
+    });
+    return NextResponse.json({ ok: true });
   }
   await setRuleRecipientPaused({
     ruleId,

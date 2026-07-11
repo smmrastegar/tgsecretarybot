@@ -292,21 +292,52 @@ export default function RuleDetailPage() {
     window.location.href = "/rules";
   }, [id]);
 
+  // Per-recipient in-flight flag → button spinners without a full reload.
+  const [recipientBusy, setRecipientBusy] = useState<Record<number, boolean>>({});
+  const [addingRecipient, setAddingRecipient] = useState(false);
+  const busyRecip = (chatId: number, v: boolean) =>
+    setRecipientBusy((s) => ({ ...s, [chatId]: v }));
+
   const addRecipient = useCallback(async () => {
     const chatId = Number(newChat);
     if (!Number.isFinite(chatId) || chatId === 0) return;
-    await fetch(`/api/rules/${id}/recipients`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        recipientChatId: chatId,
-        recipientLabel: newLabel || undefined,
-      }),
-    });
-    setNewChat("");
-    setNewLabel("");
-    load();
-  }, [id, newChat, newLabel, load]);
+    setAddingRecipient(true);
+    try {
+      const r = await fetch(`/api/rules/${id}/recipients`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipientChatId: chatId,
+          recipientLabel: newLabel || undefined,
+        }),
+      });
+      if (r.ok) {
+        setRecipients((rs) => {
+          const exists = rs.some((x) => x.recipientChatId === chatId);
+          if (exists)
+            return rs.map((x) =>
+              x.recipientChatId === chatId
+                ? { ...x, recipientLabel: newLabel || x.recipientLabel }
+                : x,
+            );
+          return [
+            ...rs,
+            {
+              ruleId: Number(id),
+              recipientChatId: chatId,
+              recipientLabel: newLabel || null,
+              paused: false,
+              createdAt: new Date().toISOString(),
+            },
+          ];
+        });
+        setNewChat("");
+        setNewLabel("");
+      }
+    } finally {
+      setAddingRecipient(false);
+    }
+  }, [id, newChat, newLabel]);
 
   const [testStatus, setTestStatus] = useState<Record<number, string>>({});
   const testRecipient = useCallback(
@@ -373,25 +404,70 @@ export default function RuleDetailPage() {
 
   const removeRecipient = useCallback(
     async (chatId: number) => {
-      await fetch(
-        `/api/rules/${id}/recipients?recipientChatId=${chatId}`,
-        { method: "DELETE" },
-      );
-      load();
+      busyRecip(chatId, true);
+      try {
+        const r = await fetch(
+          `/api/rules/${id}/recipients?recipientChatId=${chatId}`,
+          { method: "DELETE" },
+        );
+        if (r.ok)
+          setRecipients((rs) => rs.filter((x) => x.recipientChatId !== chatId));
+      } finally {
+        busyRecip(chatId, false);
+      }
     },
-    [id, load],
+    [id],
   );
 
   const setRecipientPaused = useCallback(
     async (chatId: number, paused: boolean) => {
-      await fetch(`/api/rules/${id}/recipients`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipientChatId: chatId, paused }),
-      });
-      load();
+      busyRecip(chatId, true);
+      // Optimistic: flip locally right away so the button reacts.
+      setRecipients((rs) =>
+        rs.map((x) => (x.recipientChatId === chatId ? { ...x, paused } : x)),
+      );
+      try {
+        const r = await fetch(`/api/rules/${id}/recipients`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recipientChatId: chatId, paused }),
+        });
+        if (!r.ok)
+          // revert on failure
+          setRecipients((rs) =>
+            rs.map((x) =>
+              x.recipientChatId === chatId ? { ...x, paused: !paused } : x,
+            ),
+          );
+      } finally {
+        busyRecip(chatId, false);
+      }
     },
-    [id, load],
+    [id],
+  );
+
+  const renameRecipient = useCallback(
+    async (chatId: number, label: string) => {
+      busyRecip(chatId, true);
+      try {
+        const r = await fetch(`/api/rules/${id}/recipients`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recipientChatId: chatId, recipientLabel: label }),
+        });
+        if (r.ok)
+          setRecipients((rs) =>
+            rs.map((x) =>
+              x.recipientChatId === chatId
+                ? { ...x, recipientLabel: label.trim() || null }
+                : x,
+            ),
+          );
+      } finally {
+        busyRecip(chatId, false);
+      }
+    },
+    [id],
   );
 
   // Manual test/execute: run the real matcher on typed input; forward if
@@ -947,67 +1023,16 @@ export default function RuleDetailPage() {
         ) : (
           <div className="flex flex-col gap-1 mb-3">
             {recipients.map((r) => (
-              <div
+              <RecipientRow
                 key={r.recipientChatId}
-                className={`flex items-center gap-2 p-2 rounded-md text-xs ${
-                  r.paused
-                    ? "bg-amber-500/5 border border-amber-500/30"
-                    : "bg-[var(--color-surface-2)]"
-                }`}
-              >
-                <span className="flex-1 tabular-nums">
-                  {r.recipientLabel ? (
-                    <>
-                      <strong>{r.recipientLabel}</strong>{" "}
-                      <span className="text-[var(--color-text-dim)]">
-                        ({r.recipientChatId})
-                      </span>
-                    </>
-                  ) : (
-                    r.recipientChatId
-                  )}
-                  {r.paused && (
-                    <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200">
-                      ⏸ متوقف
-                    </span>
-                  )}
-                  {testStatus[r.recipientChatId] && (
-                    <span
-                      className={`ml-2 text-[10px] ${
-                        testStatus[r.recipientChatId]?.startsWith("✓")
-                          ? "text-emerald-300"
-                          : "text-red-300"
-                      }`}
-                    >
-                      {testStatus[r.recipientChatId]}
-                    </span>
-                  )}
-                </span>
-                <button
-                  onClick={() => setRecipientPaused(r.recipientChatId, !r.paused)}
-                  className={`text-[10px] px-2 py-0.5 rounded-md border ${
-                    r.paused
-                      ? "border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10"
-                      : "border-amber-500/40 text-amber-200 hover:bg-amber-500/10"
-                  }`}
-                  title={r.paused ? "ادامه‌ی ارسال به این گیرنده" : "توقف موقت ارسال به این گیرنده (بدون حذف)"}
-                >
-                  {r.paused ? "▶️ ادامه" : "⏸ توقف"}
-                </button>
-                <button
-                  onClick={() => testRecipient(r.recipientChatId)}
-                  className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
-                  title="یه پیام تست از bot بفرست — اگه واقعاً برسه، در دسترس بودن chat تایید می‌شه"
-                >
-                  🧪 تست
-                </button>
-                <button
-                  onClick={() => removeRecipient(r.recipientChatId)}
-                  className="text-[10px] text-red-300 hover:text-red-200"
-                >
-                  ✕
-                </button>
-              </div>
+                r={r}
+                busy={!!recipientBusy[r.recipientChatId]}
+                testStatus={testStatus[r.recipientChatId]}
+                onPause={() => setRecipientPaused(r.recipientChatId, !r.paused)}
+                onRemove={() => removeRecipient(r.recipientChatId)}
+                onRename={(label) => renameRecipient(r.recipientChatId, label)}
+                onTest={() => testRecipient(r.recipientChatId)}
+              />
             ))}
           </div>
         )}
@@ -1028,10 +1053,10 @@ export default function RuleDetailPage() {
           />
           <button
             onClick={addRecipient}
-            disabled={!newChat}
+            disabled={!newChat || addingRecipient}
             className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
           >
-            + اضافه
+            {addingRecipient ? "…" : "+ اضافه"}
           </button>
         </div>
       </Card>
@@ -1527,6 +1552,146 @@ function ExampleEditor({
           {saving ? "ذخیره…" : "💾 ذخیره"}
         </button>
       </div>
+    </div>
+  );
+}
+
+// One recipient row: inline rename + per-action loading, no page reload.
+function RecipientRow({
+  r,
+  busy,
+  testStatus,
+  onPause,
+  onRemove,
+  onRename,
+  onTest,
+}: {
+  r: Recipient;
+  busy: boolean;
+  testStatus?: string;
+  onPause: () => void;
+  onRemove: () => void;
+  onRename: (label: string) => Promise<void>;
+  onTest: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [label, setLabel] = useState(r.recipientLabel ?? "");
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    try {
+      await onRename(label);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div
+      className={`flex items-center gap-2 p-2 rounded-md text-xs ${
+        r.paused
+          ? "bg-amber-500/5 border border-amber-500/30"
+          : "bg-[var(--color-surface-2)]"
+      } ${busy ? "opacity-60" : ""}`}
+    >
+      {editing ? (
+        <div className="flex-1 flex items-center gap-1.5">
+          <input
+            autoFocus
+            dir="auto"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") save();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            placeholder="اسم گیرنده"
+            className="flex-1 min-w-0 text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1"
+          />
+          <button
+            onClick={save}
+            disabled={saving}
+            className="text-[10px] px-2 py-1 rounded border border-[var(--color-accent)] text-[var(--color-accent)] disabled:opacity-50"
+          >
+            {saving ? "…" : "ذخیره"}
+          </button>
+          <button
+            onClick={() => {
+              setLabel(r.recipientLabel ?? "");
+              setEditing(false);
+            }}
+            className="text-[10px] px-2 py-1 rounded border border-[var(--color-border)]"
+          >
+            انصراف
+          </button>
+        </div>
+      ) : (
+        <span className="flex-1 tabular-nums flex items-center gap-1.5 min-w-0">
+          <span className="truncate">
+            {r.recipientLabel ? (
+              <>
+                <strong>{r.recipientLabel}</strong>{" "}
+                <span className="text-[var(--color-text-dim)]">
+                  ({r.recipientChatId})
+                </span>
+              </>
+            ) : (
+              <span className="text-[var(--color-text-dim)]">{r.recipientChatId}</span>
+            )}
+          </span>
+          <button
+            onClick={() => setEditing(true)}
+            title="ویرایش اسم"
+            className="text-[10px] text-[var(--color-text-dim)] hover:text-white shrink-0"
+          >
+            ✏️
+          </button>
+          {r.paused && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 shrink-0">
+              ⏸ متوقف
+            </span>
+          )}
+          {testStatus && (
+            <span
+              className={`text-[10px] ${
+                testStatus.startsWith("✓") ? "text-emerald-300" : "text-red-300"
+              }`}
+            >
+              {testStatus}
+            </span>
+          )}
+        </span>
+      )}
+      {!editing && (
+        <>
+          <button
+            onClick={onPause}
+            disabled={busy}
+            className={`text-[10px] px-2 py-0.5 rounded-md border disabled:opacity-50 ${
+              r.paused
+                ? "border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10"
+                : "border-amber-500/40 text-amber-200 hover:bg-amber-500/10"
+            }`}
+            title={r.paused ? "ادامه‌ی ارسال به این گیرنده" : "توقف موقت ارسال (بدون حذف)"}
+          >
+            {busy ? "…" : r.paused ? "▶️ ادامه" : "⏸ توقف"}
+          </button>
+          <button
+            onClick={onTest}
+            className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+            title="یه پیام تست از bot بفرست"
+          >
+            🧪 تست
+          </button>
+          <button
+            onClick={onRemove}
+            disabled={busy}
+            className="text-[10px] text-red-300 hover:text-red-200 disabled:opacity-50"
+          >
+            ✕
+          </button>
+        </>
+      )}
     </div>
   );
 }

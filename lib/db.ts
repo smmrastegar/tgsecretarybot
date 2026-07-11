@@ -9874,6 +9874,21 @@ export async function addRuleRecipient(args: {
       recipient_label = COALESCE(EXCLUDED.recipient_label, message_rule_recipients.recipient_label)`;
 }
 
+// Rename a recipient (edit its label). Empty label → NULL.
+export async function setRuleRecipientLabel(args: {
+  ruleId: number;
+  recipientChatId: number;
+  recipientLabel: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE message_rule_recipients
+    SET recipient_label = ${args.recipientLabel}
+    WHERE rule_id = ${args.ruleId}
+      AND recipient_chat_id = ${args.recipientChatId}`;
+}
+
 export async function removeRuleRecipient(args: {
   ruleId: number;
   recipientChatId: number;
