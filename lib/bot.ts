@@ -4978,6 +4978,71 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
   await handleAnyChatPost(msg, bot);
 }
 
+type MirrorRule = { from: number; to: number; threadId?: number };
+
+// Parse the line-based channelMirrors setting. Each line:
+//   "<from> > <to>"  or  "<from> > <to> > <threadId>".
+// Blank lines and lines starting with # are ignored.
+function parseChannelMirrors(raw: string): MirrorRule[] {
+  const out: MirrorRule[] = [];
+  for (const line of (raw ?? "").split(/\n+/)) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const parts = t.split(">").map((p) => p.trim());
+    const from = Number(parts[0]);
+    const to = Number(parts[1]);
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from === 0 || to === 0) {
+      continue;
+    }
+    const threadNum = parts[2] ? Number(parts[2]) : NaN;
+    out.push({
+      from,
+      to,
+      threadId: Number.isFinite(threadNum) && threadNum > 0 ? threadNum : undefined,
+    });
+  }
+  return out;
+}
+
+// Copy every incoming post from a mirrored source chat into its
+// destination(s). copyMessage handles all media/text types cleanly and
+// posts as a fresh message (no "forwarded from" header). Loop-guarded:
+// a chat that is any rule's destination is never used as a source.
+async function maybeMirrorPost(args: { msg: Message; bot: Bot }): Promise<void> {
+  const { msg, bot } = args;
+  let rules: MirrorRule[];
+  try {
+    const settings = await getSettings();
+    rules = parseChannelMirrors(settings.channelMirrors ?? "");
+  } catch (err) {
+    console.warn("[mirror] settings read failed:", err);
+    return;
+  }
+  if (rules.length === 0) return;
+  const destinations = new Set(rules.map((r) => r.to));
+  if (destinations.has(msg.chat.id)) return; // loop guard
+  const targets = rules.filter((r) => r.from === msg.chat.id && r.to !== msg.chat.id);
+  if (targets.length === 0) return;
+  if (typeof (bot.api as { copyMessage?: unknown }).copyMessage !== "function") {
+    return;
+  }
+  for (const r of targets) {
+    try {
+      await bot.api.copyMessage(
+        r.to,
+        msg.chat.id,
+        msg.message_id,
+        r.threadId ? { message_thread_id: r.threadId } : {},
+      );
+      console.log(
+        `[mirror] ${msg.chat.id} → ${r.to}${r.threadId ? `#${r.threadId}` : ""} msg=${msg.message_id}`,
+      );
+    } catch (err) {
+      console.warn(`[mirror] copy ${msg.chat.id}→${r.to} failed:`, err);
+    }
+  }
+}
+
 async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
   if (await isChatIgnored(msg.chat.id).catch(() => false)) {
     console.log(`[ignore] dropping channel/group post in chat=${msg.chat.id} (ignored=true)`);
@@ -5016,6 +5081,12 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
       msg.video_note,
   );
   if (!hasContent) return;
+
+  // Channel mirror: copy every post from a mirrored source chat into
+  // its destination(s). Fire-and-forget so it never blocks classify /
+  // logging, and runs even for muted chats — mirroring is about the
+  // feed, not notifications.
+  void maybeMirrorPost({ msg, bot });
 
   const text = describeMessage(msg);
   const chatTitle =

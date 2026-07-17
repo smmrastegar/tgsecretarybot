@@ -107,6 +107,13 @@ export const DEFAULT_SETTINGS = {
   // of monitoring alerts in a dedicated topic. Empty = no copy.
   smsSilentCopyChatId: "",
   smsSilentCopyThreadId: "",
+  // Channel/group mirror rules — copy EVERY incoming post from a source
+  // chat into a destination chat. One rule per line:
+  //   <fromChatId> > <toChatId>                 (into the channel root)
+  //   <fromChatId> > <toChatId> > <threadId>    (into a forum topic)
+  // Loop-guarded: a chat that is any rule's destination is never used
+  // as a source, so A→B can't ping-pong. Empty = mirroring off.
+  channelMirrors: "",
   autoExtractEnabled: "true",
   autoExtractMinImportance: "4",
   monitorDefaultIntervalMinutes: "720",
@@ -245,6 +252,7 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   smsSilentSenderPatterns: optional("SMS_SILENT_SENDER_PATTERNS"),
   smsSilentCopyChatId: optional("SMS_SILENT_COPY_CHAT_ID"),
   smsSilentCopyThreadId: optional("SMS_SILENT_COPY_THREAD_ID"),
+  channelMirrors: optional("CHANNEL_MIRRORS"),
   autoExtractEnabled: optional("AUTO_EXTRACT_ENABLED"),
   autoExtractMinImportance: optional("AUTO_EXTRACT_MIN_IMPORTANCE"),
   monitorDefaultIntervalMinutes: optional("MONITOR_DEFAULT_INTERVAL_MINUTES"),

@@ -58,6 +58,7 @@ type Settings = {
   smsSilentSenderPatterns: string;
   smsSilentCopyChatId: string;
   smsSilentCopyThreadId: string;
+  channelMirrors: string;
 };
 
 type FieldConfig = {
@@ -336,6 +337,17 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         label: "topic (thread) id مقصد کپی (اختیاری)",
         hint: "اگه مقصد یه تاپیک داخل گروهه، آی‌دی تاپیک رو بذار (مثلاً ۱۱۶۳ برای تاپیک Monitoring). خالی = ریشه‌ی گروه.",
         type: "number",
+      },
+    ],
+  },
+  {
+    title: "آینه‌ی کانال (Mirror)",
+    fields: [
+      {
+        key: "channelMirrors",
+        label: "قوانین آینه — هر خط یک قانون",
+        hint: "هر پستی که توی کانال/گروه مبدأ بیاد، عیناً توی مقصد کپی می‌شه (بدون برچسب forward). هر خط: «آی‌دی‌مبدأ > آی‌دی‌مقصد» و در صورت نیاز «> آی‌دی‌تاپیک». مثال: ‎-1003979188345 > -1004487820314‎. حلقه‌گارد داره (مقصد هیچ‌وقت به‌عنوان مبدأ استفاده نمی‌شه). خالی = غیرفعال. توجه: بات باید توی مبدأ عضو و توی مقصد ادمین با اجازه‌ی ارسال باشه.",
+        type: "textarea",
       },
     ],
   },
