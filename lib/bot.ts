@@ -99,6 +99,11 @@ import {
   getEmail,
   setEmailSummary,
   shouldNotifyAiActivity,
+  bufferMirrorAlbumPart,
+  claimMirrorAlbumFlush,
+  getMirrorAlbumParts,
+  deleteMirrorAlbumBuffer,
+  type MirrorAlbumPart,
   getEmailAccountByChannel,
   createEmailPendingReply,
   getEmailPendingReply,
@@ -5146,8 +5151,72 @@ async function mirrorViaResend(args: {
   }
 }
 
+// Album parts arrive as separate updates, sometimes spread over many
+// seconds (a forwarder downloads each image before relaying). So we
+// don't flush after a fixed delay from the FIRST part — instead every
+// part waits this "quiet window" and only the part that is still the
+// LAST one in the buffer afterwards flushes the group. As long as the
+// gap between consecutive parts stays under this window, the whole
+// album is captured no matter how long it takes overall.
+const ALBUM_QUIET_MS = 5000;
+
+// Send buffered album parts to one chat as native grouped albums
+// (chunked to Telegram's 10-item limit). The caption goes on the very
+// first item of the first chunk. Falls back to individual re-sends if
+// sendMediaGroup rejects the batch.
+async function sendAlbumParts(args: {
+  bot: Bot;
+  toChatId: number;
+  threadId?: number;
+  parts: MirrorAlbumPart[];
+}): Promise<void> {
+  const { bot, toChatId, threadId, parts } = args;
+  const caption = parts.find((p) => p.caption && p.caption.trim())?.caption;
+  for (let i = 0; i < parts.length; i += 10) {
+    const chunk = parts.slice(i, i + 10);
+    const media = chunk.map((p, idx) => {
+      const item: Record<string, unknown> = {
+        type: p.kind === "video" ? "video" : "photo",
+        media: p.fileId,
+      };
+      if (i === 0 && idx === 0 && caption) item.caption = caption.slice(0, 1024);
+      return item;
+    });
+    const opts: Record<string, unknown> = {};
+    if (threadId) opts.message_thread_id = threadId;
+    try {
+      await bot.api.sendMediaGroup(
+        toChatId,
+        media as unknown as Parameters<typeof bot.api.sendMediaGroup>[1],
+        opts,
+      );
+    } catch (err) {
+      console.warn(
+        `[mirror-dm] sendMediaGroup failed (${chunk.length} items) → individual fallback:`,
+        err,
+      );
+      for (const p of chunk) {
+        try {
+          await sendMediaAsOwner({
+            bot,
+            toChatId,
+            kind: p.kind as MediaKind,
+            file: p.fileId,
+            caption: p === chunk[0] && caption ? caption.slice(0, 1024) : undefined,
+            messageThreadId: threadId,
+          });
+        } catch (e) {
+          console.warn("[mirror-dm] album fallback part failed:", e);
+        }
+      }
+    }
+  }
+}
+
 // Mirror an incoming business-DM message (from a forwarder bot) into
 // its configured destination(s), skipping commands and bot chatter.
+// Album (media_group) posts are buffered and re-sent as a single
+// grouped album instead of separate photos.
 async function maybeMirrorBusinessMessage(args: {
   msg: Message;
   bot: Bot;
@@ -5174,6 +5243,64 @@ async function maybeMirrorBusinessMessage(args: {
     );
     return;
   }
+
+  // Album path: buffer this part, wait for the rest, then the first
+  // claimer flushes the whole group as one grouped album.
+  const mediaGroupId = (msg as unknown as { media_group_id?: string })
+    .media_group_id;
+  const media = mediaFileId(msg);
+  if (
+    mediaGroupId &&
+    media &&
+    (media.kind === "photo" || media.kind === "video")
+  ) {
+    const caption = msg.caption?.slice(0, 1024) ?? null;
+    for (const r of targets) {
+      const groupKey = `${mediaGroupId}:${r.to}`;
+      try {
+        await bufferMirrorAlbumPart({
+          groupKey,
+          targetChatId: r.to,
+          threadId: r.threadId ?? null,
+          sourceMessageId: msg.message_id,
+          fileId: media.fileId,
+          kind: media.kind,
+          caption,
+        });
+      } catch (err) {
+        console.warn(`[mirror-dm] buffer failed group=${groupKey}:`, err);
+      }
+    }
+    await new Promise((res) => setTimeout(res, ALBUM_QUIET_MS));
+    for (const r of targets) {
+      const groupKey = `${mediaGroupId}:${r.to}`;
+      try {
+        const parts = await getMirrorAlbumParts(groupKey);
+        if (parts.length === 0) continue;
+        // Only the current LAST part flushes. If a newer part landed
+        // during our wait, its own invocation will handle the flush.
+        const last = parts[parts.length - 1];
+        if (!last || last.sourceMessageId !== msg.message_id) continue;
+        const claimed = await claimMirrorAlbumFlush(groupKey);
+        if (!claimed) continue; // someone already flushing
+        await sendAlbumParts({
+          bot,
+          toChatId: r.to,
+          threadId: r.threadId,
+          parts,
+        });
+        await deleteMirrorAlbumBuffer(groupKey);
+        console.log(
+          `[mirror-dm] album ${msg.chat.id} → ${r.to} (${parts.length} parts) group=${mediaGroupId}`,
+        );
+      } catch (err) {
+        console.warn(`[mirror-dm] album flush failed group=${groupKey}:`, err);
+      }
+    }
+    return;
+  }
+
+  // Single (non-album) message.
   for (const r of targets) {
     try {
       await mirrorViaResend({ bot, msg, toChatId: r.to, threadId: r.threadId });

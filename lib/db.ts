@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-07-10.ai-reply-notify";
+const SCHEMA_VERSION = "2026-07-17.mirror-album-buffer";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1540,6 +1540,30 @@ export async function ensureSchema(
         chat_id                BIGINT NOT NULL,
         last_notified_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (business_connection_id, chat_id)
+      )`;
+    // Buffers the parts of an incoming album (media_group) while the
+    // channel-mirror waits for the whole group to arrive (albums come
+    // as separate updates). group_key = "<media_group_id>:<target>".
+    await q`
+      CREATE TABLE IF NOT EXISTS mirror_album_buffer (
+        id                BIGSERIAL PRIMARY KEY,
+        group_key         TEXT NOT NULL,
+        target_chat_id    BIGINT NOT NULL,
+        thread_id         INTEGER,
+        source_message_id BIGINT NOT NULL,
+        file_id           TEXT NOT NULL,
+        kind              TEXT NOT NULL,
+        caption           TEXT,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS mirror_album_buffer_grp ON mirror_album_buffer (group_key, source_message_id)`;
+    // One row per flushed group — the INSERT that wins is the single
+    // invocation allowed to send the grouped album (dedup guard so
+    // concurrent album parts don't each fire a sendMediaGroup).
+    await q`
+      CREATE TABLE IF NOT EXISTS mirror_album_claim (
+        group_key   TEXT PRIMARY KEY,
+        claimed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
@@ -9842,6 +9866,74 @@ export async function shouldNotifyAiActivity(args: {
             < NOW() - (${args.throttleMinutes}::int || ' minutes')::interval
     RETURNING 1`;
   return rows.length > 0;
+}
+
+// --- Channel-mirror album buffering ---
+// Store one part of an incoming album while we wait for the rest.
+export async function bufferMirrorAlbumPart(args: {
+  groupKey: string;
+  targetChatId: number;
+  threadId: number | null;
+  sourceMessageId: number;
+  fileId: string;
+  kind: string;
+  caption: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO mirror_album_buffer
+      (group_key, target_chat_id, thread_id, source_message_id, file_id, kind, caption)
+    VALUES (${args.groupKey}, ${args.targetChatId}, ${args.threadId},
+            ${args.sourceMessageId}, ${args.fileId}, ${args.kind}, ${args.caption})`;
+}
+
+// Atomically claim the right to flush this group — only the first
+// caller gets true, so concurrent album parts don't each send.
+export async function claimMirrorAlbumFlush(groupKey: string): Promise<boolean> {
+  if (!hasDb()) return false;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO mirror_album_claim (group_key)
+    VALUES (${groupKey})
+    ON CONFLICT (group_key) DO NOTHING
+    RETURNING 1`;
+  return rows.length > 0;
+}
+
+export type MirrorAlbumPart = {
+  sourceMessageId: number;
+  fileId: string;
+  kind: string;
+  caption: string | null;
+  targetChatId: number;
+  threadId: number | null;
+};
+
+// Read the buffered parts of a group in original album order.
+export async function getMirrorAlbumParts(
+  groupKey: string,
+): Promise<MirrorAlbumPart[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT source_message_id, file_id, kind, caption, target_chat_id, thread_id
+      FROM mirror_album_buffer
+     WHERE group_key = ${groupKey}
+     ORDER BY source_message_id ASC`;
+  return rows.map((r) => ({
+    sourceMessageId: Number(r.source_message_id),
+    fileId: r.file_id as string,
+    kind: r.kind as string,
+    caption: (r.caption as string | null) ?? null,
+    targetChatId: Number(r.target_chat_id),
+    threadId: r.thread_id == null ? null : Number(r.thread_id),
+  }));
+}
+
+export async function deleteMirrorAlbumBuffer(groupKey: string): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`DELETE FROM mirror_album_buffer WHERE group_key = ${groupKey}`;
 }
 
 // Pause / resume a recipient without deleting it. Paused recipients

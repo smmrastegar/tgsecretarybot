@@ -351,6 +351,32 @@ const TOOLS = [
     },
   },
   {
+    name: "send_album",
+    description:
+      "Re-send several stored messages as ONE grouped media album (Telegram sendMediaGroup), by their file_ids — the way a native photo/video album looks. Preserves the order of source_message_ids; the caption is taken from the first item that has real text. Auto-chunks into groups of 10 (Telegram's album limit). Use to mirror an album exactly instead of separate photos.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source_message_ids: {
+          type: "array",
+          items: { type: "number" },
+          description: "Ordered message_ids of the album parts to re-send",
+        },
+        source_chat_id: {
+          type: "number",
+          description: "Optional chat_id to disambiguate the source rows",
+        },
+        chat_id: { type: "number", description: "Target chat_id to send into" },
+        message_thread_id: {
+          type: "number",
+          description: "Optional forum topic thread id in the target",
+        },
+      },
+      required: ["source_message_ids", "chat_id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "delete_message",
     description:
       "Delete a message the bot sent (by chat_id + message_id). Use to clean up mistakes.",
@@ -1052,6 +1078,72 @@ async function callTool(
       };
       if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
       return toolText({ ok: true, method, message_id: j.result?.message_id });
+    }
+
+    case "send_album": {
+      const targetChat = Number(args.chat_id);
+      const idsRaw = Array.isArray(args.source_message_ids)
+        ? (args.source_message_ids as unknown[]).map(Number).filter((n) => Number.isFinite(n))
+        : [];
+      if (!Number.isFinite(targetChat) || idsRaw.length === 0) {
+        throw new Error("chat_id and source_message_ids[] required");
+      }
+      const srcChat = args.source_chat_id != null ? Number(args.source_chat_id) : null;
+      const rows = (await runParams(
+        `SELECT message_id, media_kind, media_file_id, message_text
+           FROM messages_log
+          WHERE message_id = ANY($1) ${srcChat != null ? "AND chat_id = $2" : ""}`,
+        srcChat != null ? [idsRaw, srcChat] : [idsRaw],
+      )) as Array<{
+        message_id: string | number;
+        media_kind: string | null;
+        media_file_id: string | null;
+        message_text: string | null;
+      }>;
+      const byId = new Map(rows.map((r) => [Number(r.message_id), r]));
+      const ordered = idsRaw
+        .map((id) => byId.get(id))
+        .filter(
+          (r): r is NonNullable<typeof r> =>
+            !!r && !!r.media_file_id && !!r.media_kind,
+        );
+      if (ordered.length === 0) throw new Error("no media rows found");
+      const captionRow = ordered.find(
+        (r) => r.message_text && !r.message_text.startsWith("["),
+      );
+      const caption = captionRow
+        ? String(captionRow.message_text).slice(0, 1024)
+        : undefined;
+      const sentIds: number[] = [];
+      for (let i = 0; i < ordered.length; i += 10) {
+        const chunk = ordered.slice(i, i + 10);
+        const media = chunk.map((r, idx) => {
+          const type = r.media_kind === "video" ? "video" : "photo";
+          const item: Record<string, unknown> = { type, media: r.media_file_id };
+          if (i === 0 && idx === 0 && caption) item.caption = caption;
+          return item;
+        });
+        const body: Record<string, unknown> = { chat_id: targetChat, media };
+        if (args.message_thread_id != null) {
+          body.message_thread_id = Number(args.message_thread_id);
+        }
+        const res = await fetch(
+          `https://api.telegram.org/bot${config.telegramBotToken}/sendMediaGroup`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        );
+        const j = (await res.json()) as {
+          ok: boolean;
+          result?: Array<{ message_id: number }>;
+          description?: string;
+        };
+        if (!j.ok) throw new Error(`telegram: ${j.description ?? "sendMediaGroup failed"}`);
+        for (const m of j.result ?? []) sentIds.push(m.message_id);
+      }
+      return toolText({ ok: true, message_ids: sentIds });
     }
 
     case "delete_message": {
