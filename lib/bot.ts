@@ -2810,6 +2810,13 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     return;
   }
 
+  // Channel mirror for a DM source (e.g. the AximoBot forwarder):
+  // re-send real content into the configured destination channel,
+  // skipping the bot's own commands / menus / service chatter. Runs
+  // here — past the owner-outgoing and bot-echo early-returns — so
+  // only genuine INCOMING messages are considered. Fire-and-forget.
+  void maybeMirrorBusinessMessage({ msg, bot });
+
   let rule = await getChatRule(msg.chat.id).catch(() => null);
   const settings = await getSettings();
   // First time the bot sees this chat — stamp a chat_rules row with
@@ -4422,16 +4429,25 @@ type MediaKind = NonNullable<ReturnType<typeof mediaFileId>>["kind"];
 async function sendMediaAsOwner(args: {
   bot: Bot;
   toChatId: number;
-  businessConnectionId: string;
+  // When set, the media is sent AS THE OWNER via the business
+  // connection. When omitted, it's sent AS THE BOT (used by the
+  // channel-mirror path, where the destination is a channel the bot
+  // administers rather than one of the owner's private chats).
+  businessConnectionId?: string;
   kind: MediaKind;
   file: string | InputFile;
   caption?: string;
   replyToMessageId?: number;
+  messageThreadId?: number;
 }): Promise<number> {
   const { bot, toChatId, businessConnectionId, kind, file } = args;
-  const base: Record<string, unknown> = {
-    business_connection_id: businessConnectionId,
-  };
+  const base: Record<string, unknown> = {};
+  if (businessConnectionId) {
+    base.business_connection_id = businessConnectionId;
+  }
+  if (args.messageThreadId !== undefined) {
+    base.message_thread_id = args.messageThreadId;
+  }
   if (args.replyToMessageId !== undefined) {
     base.reply_parameters = { message_id: args.replyToMessageId };
   }
@@ -5039,6 +5055,133 @@ async function maybeMirrorPost(args: { msg: Message; bot: Bot }): Promise<void> 
       );
     } catch (err) {
       console.warn(`[mirror] copy ${msg.chat.id}→${r.to} failed:`, err);
+    }
+  }
+}
+
+// AximoBot-style forwarder chatter we DON'T want mirrored: menus,
+// status pings, subscription/upsell, feed-management confirmations.
+// Real forwarded posts are either media or text with a source header
+// and don't match any of these.
+const FORWARDER_JUNK_RX: RegExp[] = [
+  /^\s*[⌛⏳💳📺⚙️🔧🔔📌]/u,
+  /\b(premium|subscription|upgrade|renew|billing|payment)\b/i,
+  /\bdisplay options\b/i,
+  /^\s*settings\s*$/i,
+  /\badd source\b/i,
+  /\bdata source\b/i,
+  /\byour feed\b/i,
+  /\bis (added|removed) (to|from) your feed\b/i,
+  /\brequest is processing\b/i,
+  /\bresolving data source\b/i,
+  /\bwe are using non-official\b/i,
+];
+
+// Decide whether an incoming forwarder-bot message is REAL content
+// worth mirroring (vs. a command echo or the bot's own UI/service
+// message). Owner-typed commands never reach here — they early-return
+// on the owner-outgoing branch — but we still guard against a leading
+// "/" and against data-export documents just in case.
+function isForwarderContent(msg: Message): boolean {
+  const body = msg.text ?? msg.caption ?? "";
+  if (body.trimStart().startsWith("/")) return false; // command
+  const media = mediaFileId(msg);
+  if (media) {
+    if (media.kind === "document") {
+      const name = msg.document?.file_name ?? "";
+      if (/\.(csv|json|txt|xlsx?|log)$/i.test(name)) return false; // export
+    }
+    return true; // photo / video / album part / etc.
+  }
+  if (!body.trim()) return false;
+  return !FORWARDER_JUNK_RX.some((rx) => rx.test(body));
+}
+
+// Re-send a message to `toChatId` AS THE BOT (no business connection):
+// media by file_id (with download+reupload fallback), text as text.
+// Used for mirroring a business-DM source (e.g. AximoBot) into a
+// channel the bot administers, where copyMessage isn't available
+// because the bot only sees the source via the business connection.
+async function mirrorViaResend(args: {
+  bot: Bot;
+  msg: Message;
+  toChatId: number;
+  threadId?: number;
+}): Promise<void> {
+  const { bot, msg, toChatId, threadId } = args;
+  const media = mediaFileId(msg);
+  if (media) {
+    const caption = msg.caption?.slice(0, 1024);
+    try {
+      await sendMediaAsOwner({
+        bot,
+        toChatId,
+        kind: media.kind,
+        file: media.fileId,
+        caption,
+        messageThreadId: threadId,
+      });
+    } catch (err) {
+      if (!isFileIdProblem(err)) throw err;
+      const { data, name } = await downloadTelegramFile(
+        config.telegramBotToken,
+        media.fileId,
+      );
+      await sendMediaAsOwner({
+        bot,
+        toChatId,
+        kind: media.kind,
+        file: new InputFile(data, name || `${media.kind}.bin`),
+        caption,
+        messageThreadId: threadId,
+      });
+    }
+    return;
+  }
+  const textBody = msg.text;
+  if (textBody && textBody.trim()) {
+    const opts: Record<string, unknown> = {};
+    if (threadId) opts.message_thread_id = threadId;
+    await bot.api.sendMessage(toChatId, textBody.slice(0, 4096), opts);
+  }
+}
+
+// Mirror an incoming business-DM message (from a forwarder bot) into
+// its configured destination(s), skipping commands and bot chatter.
+async function maybeMirrorBusinessMessage(args: {
+  msg: Message;
+  bot: Bot;
+}): Promise<void> {
+  const { msg, bot } = args;
+  let rules: MirrorRule[];
+  try {
+    const settings = await getSettings();
+    rules = parseChannelMirrors(settings.channelMirrors ?? "");
+  } catch (err) {
+    console.warn("[mirror-dm] settings read failed:", err);
+    return;
+  }
+  if (rules.length === 0) return;
+  const destinations = new Set(rules.map((r) => r.to));
+  if (destinations.has(msg.chat.id)) return; // loop guard
+  const targets = rules.filter(
+    (r) => r.from === msg.chat.id && r.to !== msg.chat.id,
+  );
+  if (targets.length === 0) return;
+  if (!isForwarderContent(msg)) {
+    console.log(
+      `[mirror-dm] skipped command/chatter chat=${msg.chat.id} msg=${msg.message_id}`,
+    );
+    return;
+  }
+  for (const r of targets) {
+    try {
+      await mirrorViaResend({ bot, msg, toChatId: r.to, threadId: r.threadId });
+      console.log(
+        `[mirror-dm] ${msg.chat.id} → ${r.to}${r.threadId ? `#${r.threadId}` : ""} msg=${msg.message_id}`,
+      );
+    } catch (err) {
+      console.warn(`[mirror-dm] resend ${msg.chat.id}→${r.to} failed:`, err);
     }
   }
 }
