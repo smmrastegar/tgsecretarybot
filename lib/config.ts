@@ -95,6 +95,18 @@ export const DEFAULT_SETTINGS = {
   // /messages.
   smsWebhookSecret: "",
   smsWebhookChatTitle: "📱 SMS Forwarder",
+  // Sender-name / body substrings whose forwarded SMS should be posted
+  // to the inbox SILENTLY (disable_notification: true) — no ping. One
+  // pattern per line (or comma-separated). Matching is case-insensitive
+  // and normalizes Arabic ي/ك → Persian ی/ک, so "مانیتورینگ" catches
+  // the "سرويس مانيتورينگ ليمومي" monitoring alerts regardless of the
+  // varying body. Empty = every SMS pings as usual.
+  smsSilentSenderPatterns: "مانیتورینگ\nmonitoring",
+  // Optional destination for a copy of every SILENT SMS — a group id
+  // (and optional forum-topic thread id). Use it to keep a running log
+  // of monitoring alerts in a dedicated topic. Empty = no copy.
+  smsSilentCopyChatId: "",
+  smsSilentCopyThreadId: "",
   autoExtractEnabled: "true",
   autoExtractMinImportance: "4",
   monitorDefaultIntervalMinutes: "720",
@@ -230,6 +242,9 @@ const ENV_OVERRIDES: Record<SettingKey, string | undefined> = {
   markMessagesAsRead: optional("MARK_MESSAGES_AS_READ"),
   smsWebhookSecret: optional("SMS_WEBHOOK_SECRET"),
   smsWebhookChatTitle: optional("SMS_WEBHOOK_CHAT_TITLE"),
+  smsSilentSenderPatterns: optional("SMS_SILENT_SENDER_PATTERNS"),
+  smsSilentCopyChatId: optional("SMS_SILENT_COPY_CHAT_ID"),
+  smsSilentCopyThreadId: optional("SMS_SILENT_COPY_THREAD_ID"),
   autoExtractEnabled: optional("AUTO_EXTRACT_ENABLED"),
   autoExtractMinImportance: optional("AUTO_EXTRACT_MIN_IMPORTANCE"),
   monitorDefaultIntervalMinutes: optional("MONITOR_DEFAULT_INTERVAL_MINUTES"),

@@ -55,6 +55,9 @@ type Settings = {
   chatDefaultAiProcessVideoNotes: string;
   chatDefaultAiGeneratePhoto: string;
   ownerPhotoUrl: string;
+  smsSilentSenderPatterns: string;
+  smsSilentCopyChatId: string;
+  smsSilentCopyThreadId: string;
 };
 
 type FieldConfig = {
@@ -311,6 +314,28 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
         key: "chatDefaultAiGeneratePhoto",
         label: "🖼 AI generate photo of owner (پیش‌فرض)",
         type: "toggle",
+      },
+    ],
+  },
+  {
+    title: "پیامک سایلنت (مانیتورینگ)",
+    fields: [
+      {
+        key: "smsSilentSenderPatterns",
+        label: "الگوهای فرستنده‌ی سایلنت",
+        hint: "هر خط یک الگو (یا با کاما). اگه اسم فرستنده یا متن پیامک شامل یکی از این‌ها باشه، بی‌صدا (بدون نوتیف) توی کانال منتشر می‌شه. مثلاً «مانیتورینگ» همه‌ی هشدارهای «سرویس مانیتورینگ لیمومی» رو می‌گیره. حساس به بزرگی/کوچکی نیست و ي/ك عربی رو هم می‌فهمه.",
+        type: "textarea",
+      },
+      {
+        key: "smsSilentCopyChatId",
+        label: "chat id مقصد کپی (اختیاری)",
+        hint: "یک نسخه از هر پیامک سایلنت اینجا هم لاگ می‌شه (بی‌صدا). آی‌دی گروه — مثلاً ‎-1004364845878‎. خالی = بدون کپی.",
+      },
+      {
+        key: "smsSilentCopyThreadId",
+        label: "topic (thread) id مقصد کپی (اختیاری)",
+        hint: "اگه مقصد یه تاپیک داخل گروهه، آی‌دی تاپیک رو بذار (مثلاً ۱۱۶۳ برای تاپیک Monitoring). خالی = ریشه‌ی گروه.",
+        type: "number",
       },
     ],
   },

@@ -326,6 +326,35 @@ const SMS_NAMED_RX =
 const SMS_LINE_RX =
   /^(?:☎️|☎|📞|📱)\s*([^\n]+)\n+([\s\S]+)$/u;
 
+// Normalize for pattern matching: lowercase, unify Arabic/Persian
+// letter variants (ي→ی, ك→ک), collapse whitespace. So a pattern like
+// "مانیتورینگ" matches the SMS sender "سرويس مانيتورينگ ليمومي" even
+// though the SMS uses the Arabic ي/ك glyphs.
+function normSilent(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[يﻱﻲ]/g, "ی")
+    .replace(/[كﻙﻚ]/g, "ک")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Should this SMS be posted silently? True when the sender name OR the
+// body contains any of the operator's configured silent patterns.
+export function isSilentSms(args: {
+  sender: string;
+  body: string;
+  patternsRaw: string;
+}): boolean {
+  const patterns = args.patternsRaw
+    .split(/[\n,]+/)
+    .map((p) => normSilent(p))
+    .filter((p) => p.length > 0);
+  if (patterns.length === 0) return false;
+  const hay = normSilent(`${args.sender}\n${args.body}`);
+  return patterns.some((p) => hay.includes(p));
+}
+
 export type SmsExtraction = {
   phone: string;
   body: string;
@@ -545,6 +574,34 @@ export async function routeSmsForward(args: {
   }
   const outText = parts.join("\n");
 
+  // Silent-publish check: monitoring / uptime alerts and any other
+  // sender the operator flagged should land in the inbox WITHOUT a
+  // notification ping. Matched against sender name AND body.
+  let silent = false;
+  let silentCopyChatId = 0;
+  let silentCopyThreadId: number | undefined;
+  try {
+    const settings = await getSettings();
+    silent = isSilentSms({
+      sender: sms.phone,
+      body: sms.body,
+      patternsRaw: settings.smsSilentSenderPatterns ?? "",
+    });
+    const rawCopyChat = Number(settings.smsSilentCopyChatId ?? "");
+    if (Number.isFinite(rawCopyChat) && rawCopyChat !== 0) {
+      silentCopyChatId = rawCopyChat;
+      const rawThread = Number(settings.smsSilentCopyThreadId ?? "");
+      if (Number.isFinite(rawThread) && rawThread > 0) {
+        silentCopyThreadId = rawThread;
+      }
+    }
+  } catch (err) {
+    console.warn("[sms] silent-pattern check failed:", err);
+  }
+  if (silent) {
+    console.log(`[sms] silent publish sender="${sms.phone}"`);
+  }
+
   // Dedup signature for "same SMS arrived again" → edit-in-place
   // instead of posting a new copy.
   const signature = otp
@@ -601,6 +658,8 @@ export async function routeSmsForward(args: {
                 ),
           },
         );
+        // (edit doesn't re-notify; disable_notification only affects
+        // fresh sends — handled below.)
         await upsertSmsDedup({
           inboxChatId: inbox.chatId,
           bodySignature: signature,
@@ -641,6 +700,7 @@ export async function routeSmsForward(args: {
     try {
       const sent = await args.bot.api.sendMessage(inbox.chatId, outText, {
         parse_mode: "HTML",
+        disable_notification: silent,
         reply_markup: accepted
           ? undefined
           : buildSmsActionKeyboard(
@@ -668,6 +728,32 @@ export async function routeSmsForward(args: {
       );
     }
   }
+
+  // Silent copy: when the SMS is silent AND a copy destination is
+  // configured (a group + optional forum topic), drop a running-log
+  // copy there too — always silently, no action buttons. Each
+  // occurrence is a fresh message so the topic keeps a full history
+  // (unlike the inbox, which dedup-edits repeats into one line).
+  if (silent && silentCopyChatId !== 0) {
+    try {
+      await args.bot.api.sendMessage(silentCopyChatId, outText, {
+        parse_mode: "HTML",
+        disable_notification: true,
+        ...(silentCopyThreadId
+          ? { message_thread_id: silentCopyThreadId }
+          : {}),
+      });
+      console.log(
+        `[sms] silent copy → chat=${silentCopyChatId} thread=${silentCopyThreadId ?? "-"}`,
+      );
+    } catch (err) {
+      console.warn(
+        `[sms] silent copy to chat=${silentCopyChatId} failed:`,
+        err,
+      );
+    }
+  }
+
   return { delivered };
 }
 
