@@ -325,6 +325,32 @@ const TOOLS = [
     },
   },
   {
+    name: "resend_message",
+    description:
+      "Re-send a message that's already stored in messages_log INTO another chat, AS THE BOT, by its file_id. Handles every media kind (photo/video/animation/voice/audio/document/video_note) plus plain text, using the stored media_file_id + message_text as the caption. Use it to hand-test the channel-mirror pipeline or to backfill posts a mirror missed. Look up source_message_id via chat_messages/query first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source_message_id: {
+          type: "number",
+          description: "message_id of the stored row to re-send",
+        },
+        source_chat_id: {
+          type: "number",
+          description:
+            "Optional chat_id to disambiguate when the same message_id exists in several chats.",
+        },
+        chat_id: { type: "number", description: "Target chat_id to send into" },
+        message_thread_id: {
+          type: "number",
+          description: "Optional forum topic thread id in the target",
+        },
+      },
+      required: ["source_message_id", "chat_id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "delete_message",
     description:
       "Delete a message the bot sent (by chat_id + message_id). Use to clean up mistakes.",
@@ -953,6 +979,79 @@ async function callTool(
       };
       if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
       return toolText({ ok: true, message_id: j.result?.message_id });
+    }
+
+    case "resend_message": {
+      const targetChat = Number(args.chat_id);
+      const srcMsgId = Number(args.source_message_id);
+      if (!Number.isFinite(targetChat) || !Number.isFinite(srcMsgId)) {
+        throw new Error("chat_id and source_message_id required");
+      }
+      const srcChat = args.source_chat_id != null ? Number(args.source_chat_id) : null;
+      const rows = (await runParams(
+        `SELECT chat_id, media_kind, media_file_id, message_text
+           FROM messages_log
+          WHERE message_id = $1 ${srcChat != null ? "AND chat_id = $2" : ""}
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        srcChat != null ? [srcMsgId, srcChat] : [srcMsgId],
+      )) as Array<{
+        media_kind: string | null;
+        media_file_id: string | null;
+        message_text: string | null;
+      }>;
+      const row = rows[0];
+      if (!row) throw new Error(`no stored message ${srcMsgId}`);
+      const caption =
+        row.message_text && !row.message_text.startsWith("[")
+          ? row.message_text.slice(0, 1024)
+          : undefined;
+      // media_kind → (Telegram method, payload field).
+      const MEDIA_METHOD: Record<string, { method: string; field: string; caption: boolean }> = {
+        photo: { method: "sendPhoto", field: "photo", caption: true },
+        video: { method: "sendVideo", field: "video", caption: true },
+        animation: { method: "sendAnimation", field: "animation", caption: true },
+        voice: { method: "sendVoice", field: "voice", caption: true },
+        audio: { method: "sendAudio", field: "audio", caption: true },
+        document: { method: "sendDocument", field: "document", caption: true },
+        sticker: { method: "sendSticker", field: "sticker", caption: false },
+        video_note: { method: "sendVideoNote", field: "video_note", caption: false },
+      };
+      const body: Record<string, unknown> = { chat_id: targetChat };
+      if (args.message_thread_id != null) {
+        body.message_thread_id = Number(args.message_thread_id);
+      }
+      let method: string;
+      if (row.media_file_id && row.media_kind && MEDIA_METHOD[row.media_kind]) {
+        const spec = MEDIA_METHOD[row.media_kind]!;
+        method = spec.method;
+        body[spec.field] = row.media_file_id;
+        if (spec.caption && caption) {
+          body.caption = caption;
+          body.parse_mode = "none";
+        }
+      } else {
+        method = "sendMessage";
+        const t = (row.message_text ?? "").slice(0, 4096);
+        if (!t.trim()) throw new Error("nothing to send (no media, empty text)");
+        body.text = t;
+        body.disable_web_page_preview = true;
+      }
+      const res = await fetch(
+        `https://api.telegram.org/bot${config.telegramBotToken}/${method}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const j = (await res.json()) as {
+        ok: boolean;
+        result?: { message_id: number };
+        description?: string;
+      };
+      if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
+      return toolText({ ok: true, method, message_id: j.result?.message_id });
     }
 
     case "delete_message": {
