@@ -351,6 +351,22 @@ const TOOLS = [
     },
   },
   {
+    name: "bot_chat_status",
+    description:
+      "Diagnostic: is the bot a member/admin of a given chat, and can it post there? Calls Telegram getChat + getChatMember(bot). Use to explain why a channel-mirror source (or destination) isn't working — a bot only receives channel_post updates when it's an ADMIN of that channel.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: {
+          type: "number",
+          description: "The chat_id to check (e.g. a channel id)",
+        },
+      },
+      required: ["chat_id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "send_album",
     description:
       "Re-send several stored messages as ONE grouped media album (Telegram sendMediaGroup), by their file_ids — the way a native photo/video album looks. Preserves the order of source_message_ids; the caption is taken from the first item that has real text. Auto-chunks into groups of 10 (Telegram's album limit). Use to mirror an album exactly instead of separate photos.",
@@ -1078,6 +1094,47 @@ async function callTool(
       };
       if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
       return toolText({ ok: true, method, message_id: j.result?.message_id });
+    }
+
+    case "bot_chat_status": {
+      const chatId = Number(args.chat_id);
+      if (!Number.isFinite(chatId)) throw new Error("chat_id required");
+      const botId = Number((config.telegramBotToken ?? "").split(":")[0]);
+      const call = async (method: string, body: Record<string, unknown>) => {
+        const res = await fetch(
+          `https://api.telegram.org/bot${config.telegramBotToken}/${method}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        );
+        return (await res.json()) as {
+          ok: boolean;
+          result?: Record<string, unknown>;
+          description?: string;
+        };
+      };
+      const chat = await call("getChat", { chat_id: chatId });
+      const member = Number.isFinite(botId)
+        ? await call("getChatMember", { chat_id: chatId, user_id: botId })
+        : { ok: false, description: "bot id unknown" };
+      const status = (member.result?.status as string | undefined) ?? null;
+      const canPost =
+        status === "administrator" || status === "creator"
+          ? (member.result?.can_post_messages as boolean | undefined) ?? true
+          : false;
+      return toolText({
+        chat_ok: chat.ok,
+        chat_type: chat.result?.type ?? null,
+        chat_title: chat.result?.title ?? null,
+        chat_error: chat.ok ? null : chat.description,
+        bot_id: Number.isFinite(botId) ? botId : null,
+        bot_status: status,
+        bot_member_error: member.ok ? null : member.description,
+        can_post_messages: canPost,
+        receives_channel_posts: status === "administrator" || status === "creator",
+      });
     }
 
     case "send_album": {
