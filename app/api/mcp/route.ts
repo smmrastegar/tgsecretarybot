@@ -1124,6 +1124,19 @@ async function callTool(
         status === "administrator" || status === "creator"
           ? (member.result?.can_post_messages as boolean | undefined) ?? true
           : false;
+      const adminsRes = (await call("getChatAdministrators", {
+        chat_id: chatId,
+      })) as {
+        ok: boolean;
+        result?: Array<{ user?: { id?: number; is_bot?: boolean; first_name?: string; username?: string }; status?: string }>;
+        description?: string;
+      };
+      const admins = (adminsRes.result ?? []).map((a) => ({
+        id: a.user?.id ?? null,
+        is_bot: a.user?.is_bot ?? false,
+        name: a.user?.first_name ?? a.user?.username ?? null,
+        status: a.status ?? null,
+      }));
       return toolText({
         chat_ok: chat.ok,
         chat_type: chat.result?.type ?? null,
@@ -1134,6 +1147,8 @@ async function callTool(
         bot_member_error: member.ok ? null : member.description,
         can_post_messages: canPost,
         receives_channel_posts: status === "administrator" || status === "creator",
+        admins,
+        bot_admins: admins.filter((a) => a.is_bot),
       });
     }
 
