@@ -24,6 +24,7 @@ import {
 } from "./hikerapi";
 import { getSettings } from "./settings";
 import { getCurrentTenantId } from "./tenant-context";
+import { parseChannelMirrors, mirrorTargetsFor } from "./channel-mirror";
 
 export type AccountTarget = {
   chatId: number;
@@ -133,9 +134,11 @@ export async function sendMediaToChat(args: {
   chatId: number;
   media: IGMedia;
   caption: string;
+  threadId?: number;
 }): Promise<number> {
-  const { bot, chatId, media, caption } = args;
+  const { bot, chatId, media, caption, threadId } = args;
   const HTML = "HTML" as const;
+  const thread = threadId ? { message_thread_id: threadId } : {};
   if (media.extra.length > 1) {
     const groupItems = media.extra.slice(0, 10).map((m, i) => ({
       type: m.mediaType === "video" ? ("video" as const) : ("photo" as const),
@@ -143,13 +146,14 @@ export async function sendMediaToChat(args: {
       caption: i === 0 ? caption : undefined,
       parse_mode: i === 0 ? HTML : undefined,
     }));
-    const sent = await bot.api.sendMediaGroup(chatId, groupItems);
+    const sent = await bot.api.sendMediaGroup(chatId, groupItems, thread);
     return sent[0]?.message_id ?? 0;
   }
   if (media.mediaType === "video" && media.mediaUrl) {
     const sent = await bot.api.sendVideo(chatId, media.mediaUrl, {
       caption,
       parse_mode: HTML,
+      ...thread,
     });
     return sent.message_id;
   }
@@ -157,13 +161,14 @@ export async function sendMediaToChat(args: {
     const sent = await bot.api.sendPhoto(chatId, media.mediaUrl, {
       caption,
       parse_mode: HTML,
+      ...thread,
     });
     return sent.message_id;
   }
   const sent = await bot.api.sendMessage(
     chatId,
     `${caption}\n\n${media.mediaUrl ?? ""}`.slice(0, 4096),
-    { parse_mode: HTML },
+    { parse_mode: HTML, ...thread },
   );
   return sent.message_id;
 }
@@ -341,11 +346,12 @@ export async function processAccount(args: {
       if (!ev) continue;
       detected++;
       try {
+        const cap = captionFor({ account, kind: task.kind, media: m });
         const msgId = await sendMediaToChat({
           bot,
           chatId: target.chatId,
           media: m,
-          caption: captionFor({ account, kind: task.kind, media: m }),
+          caption: cap,
         });
         await markMonitorEventForwarded({
           id: ev.id,
@@ -353,6 +359,29 @@ export async function processAccount(args: {
           messageId: msgId,
         });
         forwarded++;
+        // Channel mirror at the write site: the bot never receives its
+        // OWN posts back as channel_post, so the incoming-message mirror
+        // in bot.ts can't see these. Copy the same media straight into
+        // any configured mirror destination for this target channel.
+        for (const mr of mirrorTargetsFor(
+          parseChannelMirrors(settings.channelMirrors ?? ""),
+          target.chatId,
+        )) {
+          try {
+            await sendMediaToChat({
+              bot,
+              chatId: mr.to,
+              media: m,
+              caption: cap,
+              threadId: mr.threadId,
+            });
+          } catch (err) {
+            const em = err instanceof Error ? err.message : String(err);
+            errors.push(
+              `mirror ${account.username} ${task.kind} → ${mr.to}: ${em.slice(0, 120)}`,
+            );
+          }
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(

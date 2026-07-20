@@ -110,6 +110,7 @@ import {
   deleteEmailPendingReply,
 } from "./db";
 import { buildEmailCard, replyToEmail, resolveEmailAccount, sendEmail } from "./email";
+import { parseChannelMirrors, type MirrorRule } from "./channel-mirror";
 import { summarizeEmail } from "./classifier";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -4997,32 +4998,6 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
     }
   }
   await handleAnyChatPost(msg, bot);
-}
-
-type MirrorRule = { from: number; to: number; threadId?: number };
-
-// Parse the line-based channelMirrors setting. Each line:
-//   "<from> > <to>"  or  "<from> > <to> > <threadId>".
-// Blank lines and lines starting with # are ignored.
-function parseChannelMirrors(raw: string): MirrorRule[] {
-  const out: MirrorRule[] = [];
-  for (const line of (raw ?? "").split(/\n+/)) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    const parts = t.split(">").map((p) => p.trim());
-    const from = Number(parts[0]);
-    const to = Number(parts[1]);
-    if (!Number.isFinite(from) || !Number.isFinite(to) || from === 0 || to === 0) {
-      continue;
-    }
-    const threadNum = parts[2] ? Number(parts[2]) : NaN;
-    out.push({
-      from,
-      to,
-      threadId: Number.isFinite(threadNum) && threadNum > 0 ? threadNum : undefined,
-    });
-  }
-  return out;
 }
 
 // Copy every incoming post from a mirrored source chat into its
