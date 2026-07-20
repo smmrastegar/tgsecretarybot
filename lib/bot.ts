@@ -103,6 +103,7 @@ import {
   claimMirrorAlbumFlush,
   getMirrorAlbumParts,
   deleteMirrorAlbumBuffer,
+  getReadyMirrorAlbumGroups,
   type MirrorAlbumPart,
   getEmailAccountByChannel,
   createEmailPendingReply,
@@ -5126,14 +5127,47 @@ async function mirrorViaResend(args: {
   }
 }
 
-// Album parts arrive as separate updates, sometimes spread over many
-// seconds (a forwarder downloads each image before relaying). So we
-// don't flush after a fixed delay from the FIRST part — instead every
-// part waits this "quiet window" and only the part that is still the
-// LAST one in the buffer afterwards flushes the group. As long as the
-// gap between consecutive parts stays under this window, the whole
-// album is captured no matter how long it takes overall.
-const ALBUM_QUIET_MS = 5000;
+// An album group is considered COMPLETE once no new part has been
+// buffered for this many seconds. Flushing is driven by (a) the next
+// incoming message's opportunistic sweep and (b) a 1-minute cron —
+// NOT by an in-request timer, which Vercel freezes after the webhook
+// response returns (that made album flushing unreliable).
+const ALBUM_QUIET_SECONDS = 8;
+
+// Flush every album group that is complete (quiet ≥ ALBUM_QUIET_SECONDS)
+// and not yet claimed. Safe to call from anywhere — a webhook sweep or
+// the cron. The atomic claim guarantees each group sends exactly once.
+export async function flushReadyMirrorAlbums(bot: Bot): Promise<number> {
+  let flushed = 0;
+  let groups: string[];
+  try {
+    groups = await getReadyMirrorAlbumGroups(ALBUM_QUIET_SECONDS);
+  } catch (err) {
+    console.warn("[mirror-dm] ready-groups query failed:", err);
+    return 0;
+  }
+  for (const groupKey of groups) {
+    try {
+      if (!(await claimMirrorAlbumFlush(groupKey))) continue;
+      const parts = await getMirrorAlbumParts(groupKey);
+      if (parts.length === 0) continue;
+      await sendAlbumParts({
+        bot,
+        toChatId: parts[0]!.targetChatId,
+        threadId: parts[0]!.threadId ?? undefined,
+        parts,
+      });
+      await deleteMirrorAlbumBuffer(groupKey);
+      flushed++;
+      console.log(
+        `[mirror-dm] album flushed group=${groupKey} (${parts.length} parts)`,
+      );
+    } catch (err) {
+      console.warn(`[mirror-dm] album flush failed group=${groupKey}:`, err);
+    }
+  }
+  return flushed;
+}
 
 // Send buffered album parts to one chat as native grouped albums
 // (chunked to Telegram's 10-item limit). The caption goes on the very
@@ -5246,32 +5280,12 @@ async function maybeMirrorBusinessMessage(args: {
         console.warn(`[mirror-dm] buffer failed group=${groupKey}:`, err);
       }
     }
-    await new Promise((res) => setTimeout(res, ALBUM_QUIET_MS));
-    for (const r of targets) {
-      const groupKey = `${mediaGroupId}:${r.to}`;
-      try {
-        const parts = await getMirrorAlbumParts(groupKey);
-        if (parts.length === 0) continue;
-        // Only the current LAST part flushes. If a newer part landed
-        // during our wait, its own invocation will handle the flush.
-        const last = parts[parts.length - 1];
-        if (!last || last.sourceMessageId !== msg.message_id) continue;
-        const claimed = await claimMirrorAlbumFlush(groupKey);
-        if (!claimed) continue; // someone already flushing
-        await sendAlbumParts({
-          bot,
-          toChatId: r.to,
-          threadId: r.threadId,
-          parts,
-        });
-        await deleteMirrorAlbumBuffer(groupKey);
-        console.log(
-          `[mirror-dm] album ${msg.chat.id} → ${r.to} (${parts.length} parts) group=${mediaGroupId}`,
-        );
-      } catch (err) {
-        console.warn(`[mirror-dm] album flush failed group=${groupKey}:`, err);
-      }
-    }
+    // Opportunistic sweep: flush any PRIOR album that has gone quiet.
+    // This is immediate (no timer, so it survives the serverless
+    // response), and since a forwarder sends albums back-to-back the
+    // next message usually flushes the previous one within seconds.
+    // The trailing album (no following message) is caught by the cron.
+    await flushReadyMirrorAlbums(bot);
     return;
   }
 

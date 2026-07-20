@@ -2,6 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
+      "path": "/api/cron/mirror-albums",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/daily-summary",
       "schedule": "0 * * * *"
     },

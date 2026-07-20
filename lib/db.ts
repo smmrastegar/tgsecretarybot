@@ -9936,6 +9936,24 @@ export async function deleteMirrorAlbumBuffer(groupKey: string): Promise<void> {
   await sql()`DELETE FROM mirror_album_buffer WHERE group_key = ${groupKey}`;
 }
 
+// Album groups whose newest buffered part is older than `quietSeconds`
+// — i.e. no new part has arrived recently, so the group is complete and
+// ready to flush. Excludes already-claimed groups so we don't re-send.
+export async function getReadyMirrorAlbumGroups(
+  quietSeconds: number,
+): Promise<string[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT b.group_key
+      FROM mirror_album_buffer b
+      LEFT JOIN mirror_album_claim c ON c.group_key = b.group_key
+     WHERE c.group_key IS NULL
+     GROUP BY b.group_key
+    HAVING MAX(b.created_at) < NOW() - (${quietSeconds}::int || ' seconds')::interval`;
+  return rows.map((r) => r.group_key as string);
+}
+
 // Pause / resume a recipient without deleting it. Paused recipients
 // keep their config + history but receive no new forwards.
 export async function setRuleRecipientPaused(args: {
