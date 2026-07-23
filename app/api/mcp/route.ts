@@ -1069,8 +1069,11 @@ async function callTool(
         method = spec.method;
         body[spec.field] = row.media_file_id;
         if (spec.caption && caption) {
+          // Plain-text caption: OMIT parse_mode entirely. Passing an
+          // unsupported value ("none") is not a valid Telegram
+          // parse_mode and leaving it off is what renders the stored
+          // text safely without HTML/Markdown entity parsing.
           body.caption = caption;
-          body.parse_mode = "none";
         }
       } else {
         method = "sendMessage";

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { getBot, flushReadyMirrorAlbums } from "@/lib/bot";
-import { hasDb } from "@/lib/db";
+import { hasDb, sql } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +28,13 @@ async function run(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "DATABASE_URL not set" }, { status: 500 });
   }
   const flushed = await flushReadyMirrorAlbums(getBot());
+  // Housekeeping: dedup-claim rows are only needed while a group's
+  // buffer exists (minutes). Prune old ones so the table stays small.
+  try {
+    await sql()`DELETE FROM mirror_album_claim WHERE claimed_at < NOW() - INTERVAL '1 day'`;
+  } catch {
+    // best-effort cleanup — never fail the cron over it
+  }
   return NextResponse.json({ ok: true, flushed });
 }
 
