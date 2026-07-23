@@ -3,6 +3,7 @@ import { getSettings } from "./settings";
 import { findKnowledgeMatches, recordAiUsage } from "./db";
 import { downloadTelegramFile } from "./stt";
 import { assertOpenrouterBudget } from "./openrouter-budget";
+import { isTransientDbError } from "./pg-driver";
 
 // Look up knowledge-base entries whose title or any alias appears in
 // the given text and return them in a payload-friendly shape ready to
@@ -254,7 +255,11 @@ async function callOpenRouter(
         completionTokens,
         totalTokens,
         costUsd: cost,
-      }).catch((err) => console.error("[ai_usage] record failed:", err));
+      }).catch((err) =>
+        isTransientDbError(err)
+          ? console.warn("[ai_usage] record skipped (transient DB)")
+          : console.error("[ai_usage] record failed:", err),
+      );
     }
 
     return data.choices?.[0]?.message?.content ?? "";
@@ -299,7 +304,10 @@ export async function classify(input: {
       { role: "user", content: JSON.stringify(userPayload) },
     ],
     {
-      maxTokens: 200,
+      // Enough headroom for the reason string so the JSON isn't cut
+      // off mid-value (which produced "Unterminated string" parse
+      // errors); parseVerdict is also resilient to truncation now.
+      maxTokens: 320,
       jsonObject: true,
       purpose: "classify",
       chatId: input.chatId ?? null,
@@ -310,10 +318,7 @@ export async function classify(input: {
 }
 
 function parseVerdict(raw: string): Classification {
-  const json = extractJson(raw);
-  const parsed = json
-    ? (JSON.parse(json) as Record<string, unknown>)
-    : ({} as Record<string, unknown>);
+  const parsed = parseVerdictObject(raw);
   const importance = Number(parsed.importance);
   return {
     importance: Number.isFinite(importance)
@@ -323,6 +328,32 @@ function parseVerdict(raw: string): Classification {
     concernsOwner: parsed.concerns_owner === true,
     reason: typeof parsed.reason === "string" ? parsed.reason : "",
   };
+}
+
+// Turn a (possibly truncated / malformed) model response into a verdict
+// object WITHOUT throwing. Strict JSON first; if that fails — usually an
+// "Unterminated string" when the reason field was cut off at max_tokens
+// — fall back to pulling each field out by regex so we still recover the
+// importance/urgent/concerns_owner flags instead of defaulting to zero.
+function parseVerdictObject(raw: string): Record<string, unknown> {
+  const json = extractJson(raw);
+  if (json) {
+    try {
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch {
+      // fall through to lenient extraction
+    }
+  }
+  const out: Record<string, unknown> = {};
+  const imp = raw.match(/"importance"\s*:\s*(-?\d+(?:\.\d+)?)/);
+  if (imp) out.importance = Number(imp[1]);
+  const urg = raw.match(/"urgent"\s*:\s*(true|false)/i);
+  if (urg) out.urgent = urg[1]!.toLowerCase() === "true";
+  const co = raw.match(/"concerns_owner"\s*:\s*(true|false)/i);
+  if (co) out.concerns_owner = co[1]!.toLowerCase() === "true";
+  const rsn = raw.match(/"reason"\s*:\s*"((?:[^"\\]|\\.)*)"?/);
+  if (rsn) out.reason = rsn[1];
+  return out;
 }
 
 // Multimodal description of a photo / sticker / GIF / video thumbnail.

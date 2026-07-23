@@ -112,6 +112,7 @@ import {
 } from "./db";
 import { buildEmailCard, replyToEmail, resolveEmailAccount, sendEmail } from "./email";
 import { parseChannelMirrors, type MirrorRule } from "./channel-mirror";
+import { isTransientDbError } from "./pg-driver";
 import { summarizeEmail } from "./classifier";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
@@ -255,7 +256,13 @@ async function autoExtractAndSave(args: {
       );
     }
   } catch (err) {
-    console.error("[extract] auto failed:", err);
+    // Auto-extract is best-effort — a transient DB blip shouldn't be
+    // surfaced as a runtime error; the next message re-runs it anyway.
+    if (isTransientDbError(err)) {
+      console.warn("[extract] auto skipped (transient DB)");
+    } else {
+      console.error("[extract] auto failed:", err);
+    }
   }
 }
 

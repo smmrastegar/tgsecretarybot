@@ -37,30 +37,37 @@ export async function getPgPool(url: string): Promise<PgPool> {
   return p;
 }
 
+// A transient DB error is a dropped/refused/timed-out connection to the
+// fragile self-hosted DB — safe to retry, and NOT worth logging as an
+// error when it happens on a best-effort background write (telemetry,
+// auto-extract). Exported so those call sites can stay quiet on it.
+export function isTransientDbError(e: unknown): boolean {
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  const code = (e as { code?: string })?.code ?? "";
+  return (
+    /econnreset|connection terminated|timeout|too many clients|server closed|socket hang up|connection ended|ecconnrefused/.test(
+      msg,
+    ) ||
+    ["ECONNRESET", "ETIMEDOUT", "57P01", "53300", "08006", "08003"].includes(
+      code,
+    )
+  );
+}
+
 export function makePgClient(
   url: string,
   opts?: { tolerant?: boolean; errors?: string[] },
 ): SqlTagged {
   // The self-hosted DB occasionally drops/refuses a connection under a
   // burst (a page fires ~8 concurrent queries). Those are transient —
-  // retry once on a fresh connection before surfacing a 500.
-  const isTransient = (e: unknown): boolean => {
-    const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
-    const code = (e as { code?: string })?.code ?? "";
-    return (
-      /econnreset|connection terminated|timeout|too many clients|server closed|socket hang up|connection ended|ecconnrefused/.test(
-        msg,
-      ) ||
-      ["ECONNRESET", "ETIMEDOUT", "57P01", "53300", "08006", "08003"].includes(
-        code,
-      )
-    );
-  };
+  // retry a couple of times on a fresh connection before surfacing a 500.
+  const isTransient = isTransientDbError;
+  const MAX_ATTEMPTS = 3;
   const run = async (
     text: string,
     params: unknown[],
   ): Promise<Record<string, unknown>[]> => {
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const pool = await getPgPool(url);
       try {
         const res = await pool.query(text, params as unknown[]);
@@ -72,9 +79,11 @@ export function makePgClient(
           opts.errors?.push(`${e instanceof Error ? e.message : e} :: ${text.slice(0, 100)}`);
           return [];
         }
-        if (attempt === 0 && isTransient(e)) {
-          await new Promise((r) => setTimeout(r, 150));
-          continue; // retry once on a transient connection error
+        if (attempt < MAX_ATTEMPTS - 1 && isTransient(e)) {
+          // Backoff grows per attempt (150ms, 400ms) to let the fragile
+          // remote DB recover from a burst before we give up.
+          await new Promise((r) => setTimeout(r, attempt === 0 ? 150 : 400));
+          continue;
         }
         throw e;
       }
