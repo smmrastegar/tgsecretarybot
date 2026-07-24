@@ -664,6 +664,72 @@ function toolText(value: unknown): {
   };
 }
 
+// --- Secret redaction for raw SQL results (defense in depth) ---
+// The MCP caller already holds MCP_SECRET, but query results get pasted
+// into chats / logs / AI contexts. Mask credential-bearing values so a
+// leaked transcript can't leak live keys.
+//
+//  1. settings-table rows: {key, value} where key is a known-sensitive
+//     setting → value masked.
+//  2. any column whose NAME smells like a credential (token / secret /
+//     password / api_key) → masked.
+//  3. any string containing one of the process-level secrets (bot
+//     token, API keys, DB URL) → that substring masked.
+const SENSITIVE_SETTING_KEYS = new Set([
+  "resendApiKey",
+  "resendInboundSecret",
+  "smsWebhookSecret",
+  "hikerApiKeyOverride",
+  "monitorExternalSecret",
+  "alertWebhookHeaders",
+]);
+const CREDENTIAL_COL_RX = /(secret|token|password|passwd|api_?key|credential)/i;
+
+function maskValue(v: string): string {
+  if (v.length <= 6) return "•••";
+  return `${v.slice(0, 3)}…${v.slice(-2)} (masked)`;
+}
+
+function processSecrets(): string[] {
+  return [
+    config.telegramBotToken,
+    config.openrouterApiKey,
+    config.groqApiKey,
+    config.hikerApiKey,
+    config.mcpSecret,
+    config.cronSecret,
+    config.webhookSecretToken,
+    config.databaseUrl,
+  ].filter((s): s is string => typeof s === "string" && s.length >= 8);
+}
+
+function redactDeep(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(redactDeep);
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    const isSettingRow =
+      typeof obj.key === "string" && SENSITIVE_SETTING_KEYS.has(obj.key);
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === "string" && v.length > 0) {
+        if ((isSettingRow && k === "value") || CREDENTIAL_COL_RX.test(k)) {
+          out[k] = maskValue(v);
+          continue;
+        }
+        let s = v;
+        for (const secret of processSecrets()) {
+          if (s.includes(secret)) s = s.split(secret).join("•••secret•••");
+        }
+        out[k] = s;
+        continue;
+      }
+      out[k] = redactDeep(v);
+    }
+    return out;
+  }
+  return node;
+}
+
 async function callTool(
   name: string,
   args: Record<string, unknown>,
@@ -700,7 +766,7 @@ async function callTool(
       const text = String(args.sql ?? "");
       assertReadOnly(text);
       const r = await runSql(text);
-      return toolText(r);
+      return toolText(redactDeep(r));
     }
     case "execute": {
       const text = String(args.sql ?? "");
@@ -708,7 +774,7 @@ async function callTool(
         throw new Error("refused: pass confirm=true to run a write statement");
       }
       const r = await runSql(text);
-      return toolText({ rowCount: r.rowCount, returned: r.rows });
+      return toolText({ rowCount: r.rowCount, returned: redactDeep(r.rows) });
     }
     case "rule_test": {
       const ruleId = Number(args.rule_id);
