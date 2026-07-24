@@ -45,6 +45,8 @@ import {
   isAllowedUser,
   setBoardMemberStatus,
   getBoardMember,
+  getChatIdByShareToken,
+  requestBoardAccess,
   lastOwnerMessageAt,
   findThreadByInboxMessage,
   getPrimarySummaryInbox,
@@ -1897,6 +1899,72 @@ function buildBot(): Bot {
   bot.command("start", async (ctx) => {
     const from = ctx.from;
     const arg = ctx.match?.toString().trim() ?? "";
+
+    // Deep-link board login: t.me/<bot>?start=board_<shareToken>. The
+    // person taps Start, we record their access request (verified by
+    // their Telegram identity here), ping the owner to approve, and hand
+    // back a one-tap magic link into the board.
+    if (arg.startsWith("board_") && from && hasDb()) {
+      const shareToken = arg.slice("board_".length);
+      const chat = await getChatIdByShareToken(shareToken).catch(() => null);
+      if (!chat) {
+        await ctx.reply("این لینک برد معتبر نیست یا منقضی شده.");
+        return;
+      }
+      const name =
+        [from.first_name, from.last_name].filter(Boolean).join(" ").trim() ||
+        (from.username ? `@${from.username}` : `tg:${from.id}`);
+      const settings = await getSettings().catch(() => null);
+      const ownerNotify = settings?.ownerNotifyChatId;
+      const owner =
+        (await isAllowedUser(from.id).catch(() => false)) ||
+        (!!ownerNotify && String(ownerNotify) === String(from.id));
+
+      const { isNew } = await requestBoardAccess({
+        chatId: chat.chatId,
+        tgId: from.id,
+        username: from.username ?? null,
+        name,
+        autoApprove: owner,
+      });
+
+      if (isNew && !owner && ownerNotify) {
+        const uname = from.username ? ` (@${from.username})` : "";
+        const kb = new InlineKeyboard()
+          .text("✅ تایید دسترسی", `board:ok:${chat.chatId}:${from.id}`)
+          .text("❌ رد", `board:no:${chat.chatId}:${from.id}`);
+        await bot.api
+          .sendMessage(
+            ownerNotify,
+            `🔐 درخواست دسترسی به برد\n\n` +
+              `برد: ${chat.chatTitle ?? chat.chatId}\n` +
+              `کاربر: ${name}${uname}\n` +
+              `آیدی: ${from.id}\n\n` +
+              `اگر تایید کنی، دسترسی ویرایش پیدا می‌کنه.`,
+            { reply_markup: kb },
+          )
+          .catch(() => {});
+      }
+
+      const magic = await createMagicToken({
+        userId: from.id,
+        username: from.username ?? null,
+        firstName: from.first_name ?? null,
+        lastName: from.last_name ?? null,
+        photoUrl: null,
+      });
+      const url = `${appBaseUrl()}/board/${shareToken}?login=${encodeURIComponent(magic)}`;
+      await ctx.reply(
+        owner
+          ? `✅ خوش اومدی ${name}! روی دکمه بزن تا وارد برد بشی.`
+          : `سلام ${name} 👋\nدرخواست دسترسی‌ات ثبت شد و برای مدیر رفت. روی دکمه بزن؛ به‌محض تایید، برد باز می‌شه.`,
+        {
+          reply_markup: new InlineKeyboard().url("📋 رفتن به برد", url),
+          link_preview_options: { is_disabled: true },
+        },
+      );
+      return;
+    }
 
     if (arg.startsWith("inv") && from && hasDb()) {
       const invite = await consumeInvite(arg, from.id).catch(() => null);

@@ -94,8 +94,36 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     [token, loadTasks],
   );
 
-  // Hydrate a saved session on mount and resolve its status.
+  // On mount: if the URL carries a ?login=<magic> from the bot deep
+  // link, exchange it for a session; otherwise hydrate a saved one.
   useEffect(() => {
+    const url = new URL(window.location.href);
+    const magic = url.searchParams.get("login");
+    if (magic) {
+      url.searchParams.delete("login");
+      window.history.replaceState({}, "", url.pathname + url.search);
+      setStatus("loading");
+      void (async () => {
+        try {
+          const r = await fetch(`/api/board/${token}/magic`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: magic }),
+          });
+          const j = (await r.json().catch(() => ({}))) as {
+            session?: string; status?: Status; name?: string; isOwner?: boolean; error?: string;
+          };
+          if (!r.ok || !j.session) { setLoginErr(j.error ?? "ورود ناموفق بود"); setStatus("anonymous"); return; }
+          localStorage.setItem(sessKey, j.session);
+          setSession(j.session);
+          if (j.name) setName(j.name);
+          setIsOwner(!!j.isOwner);
+          setStatus(j.status ?? "pending");
+          if (j.status === "approved") await loadTasks();
+        } catch { setLoginErr("خطای شبکه"); setStatus("anonymous"); }
+      })();
+      return;
+    }
     const s = localStorage.getItem(sessKey) ?? "";
     if (s) { setSession(s); void refreshStatus(s); }
     else setStatus("anonymous");
@@ -198,7 +226,14 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
           {status === "anonymous" && (
             <>
               <p style={S.sub}>برای دسترسی، با تلگرام وارد شو. بعد از تایید مدیر، می‌تونی برد رو ببینی و ویرایش کنی.</p>
-              <div style={{ marginTop: 18, display: "flex", justifyContent: "center" }}>
+              <a href={`https://t.me/${BOT_USERNAME}?start=board_${token}`} target="_blank" rel="noreferrer"
+                style={S.tgBtn}>
+                ورود با تلگرام
+              </a>
+              <div style={S.orRow}>
+                <span style={S.orLine} /><span style={S.orTxt}>یا</span><span style={S.orLine} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "center" }}>
                 <Script
                   src="https://telegram.org/js/telegram-widget.js?22"
                   strategy="afterInteractive"
@@ -357,6 +392,10 @@ const S: Record<string, React.CSSProperties> = {
   loginBox: { background: "#1e293b", padding: 28, borderRadius: 14, width: 320, color: "#e2e8f0", boxShadow: "0 10px 40px rgba(0,0,0,.4)" },
   input: { width: "100%", boxSizing: "border-box", background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 8, padding: "10px 12px", fontSize: 14, marginTop: 10 },
   loginBtn: { width: "100%", marginTop: 14, background: "#6366f1", color: "#fff", border: "none", borderRadius: 8, padding: "10px", fontSize: 15, fontWeight: 700, cursor: "pointer" },
+  tgBtn: { display: "block", marginTop: 18, background: "#229ED9", color: "#fff", textAlign: "center", textDecoration: "none", borderRadius: 10, padding: "12px", fontSize: 15, fontWeight: 700 },
+  orRow: { display: "flex", alignItems: "center", gap: 10, margin: "16px 0 8px" },
+  orLine: { flex: 1, height: 1, background: "#334155" },
+  orTxt: { fontSize: 12, color: "#64748b" },
   waitBox: { marginTop: 16, background: "#0f172a", border: "1px solid #334155", borderRadius: 10, padding: "14px 16px", fontSize: 14, lineHeight: 1.8, color: "#cbd5e1" },
   logBtnWide: { width: "100%", marginTop: 14, background: "#334155", color: "#e2e8f0", border: "none", borderRadius: 8, padding: "10px", fontSize: 14, cursor: "pointer" },
   linkBtn: { width: "100%", marginTop: 10, background: "transparent", color: "#94a3b8", border: "none", fontSize: 13, cursor: "pointer" },
