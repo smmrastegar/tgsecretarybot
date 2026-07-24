@@ -23,6 +23,11 @@ const PUBLIC_PREFIXES = [
   // that chat but cannot trigger a recompute or modify anything.
   "/api/public",
   "/share",
+  // Editable group task board — the URL share token authorises both the
+  // page and its CRUD API. Anyone with the link can view AND edit that
+  // group's board (scoped to one chat_id via the token).
+  "/board",
+  "/api/board",
   // Public email view — the ?t= HMAC token in the URL is the auth, so
   // Telegram email-card links open without a dashboard login.
   "/e",

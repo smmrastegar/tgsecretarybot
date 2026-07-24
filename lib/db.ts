@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-07-17.mirror-album-buffer";
+const SCHEMA_VERSION = "2026-07-24.group-board-tasks";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1564,6 +1564,32 @@ export async function ensureSchema(
       CREATE TABLE IF NOT EXISTS mirror_album_claim (
         group_key   TEXT PRIMARY KEY,
         claimed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    // Human-editable task board per group. Seeded once from the AI
+    // analysis, then maintained by hand via /board/<token>. Kept
+    // SEPARATE from group_analytics (the AI view) so edits are never
+    // clobbered by re-analysis.
+    await q`
+      CREATE TABLE IF NOT EXISTS group_board_tasks (
+        id          BIGSERIAL PRIMARY KEY,
+        chat_id     BIGINT NOT NULL,
+        title       TEXT NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'todo',
+        assignee    TEXT,
+        topic       TEXT,
+        note        TEXT,
+        position    INTEGER NOT NULL DEFAULT 0,
+        source      TEXT NOT NULL DEFAULT 'manual',
+        created_by  TEXT,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS group_board_tasks_chat_idx ON group_board_tasks (chat_id, status, position)`;
+    // Marker so the AI seed runs at most once per chat.
+    await q`
+      CREATE TABLE IF NOT EXISTS group_board_seeded (
+        chat_id    BIGINT PRIMARY KEY,
+        seeded_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
@@ -4709,6 +4735,173 @@ export async function setGroupAnalyticsShareToken(args: {
     ON CONFLICT (chat_id) DO UPDATE SET
       analytics_share_token = ${args.token},
       updated_at = NOW()`;
+}
+
+// Resolve the chat_id a share token belongs to (used by the editable
+// board API to authorise a request by its token instead of a session).
+export async function getChatIdByShareToken(
+  token: string,
+): Promise<{ chatId: number; chatTitle: string | null } | null> {
+  if (!hasDb() || !token) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT chat_id, chat_title FROM chat_rules
+     WHERE analytics_share_token = ${token} LIMIT 1`;
+  const r = rows[0] as { chat_id: number | string; chat_title: string | null } | undefined;
+  return r ? { chatId: Number(r.chat_id), chatTitle: r.chat_title ?? null } : null;
+}
+
+// --- Editable group task board ---
+export type BoardTask = {
+  id: number;
+  chatId: number;
+  title: string;
+  status: string;
+  assignee: string | null;
+  topic: string | null;
+  note: string | null;
+  position: number;
+  source: string;
+  createdBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export const BOARD_STATUSES = ["todo", "doing", "blocked", "done"] as const;
+
+function rowToBoardTask(r: Record<string, unknown>): BoardTask {
+  return {
+    id: Number(r.id),
+    chatId: Number(r.chat_id),
+    title: String(r.title ?? ""),
+    status: String(r.status ?? "todo"),
+    assignee: (r.assignee as string) ?? null,
+    topic: (r.topic as string) ?? null,
+    note: (r.note as string) ?? null,
+    position: Number(r.position ?? 0),
+    source: String(r.source ?? "manual"),
+    createdBy: (r.created_by as string) ?? null,
+    createdAt: r.created_at as Date,
+    updatedAt: r.updated_at as Date,
+  };
+}
+
+export async function listBoardTasks(chatId: number): Promise<BoardTask[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM group_board_tasks WHERE chat_id = ${chatId}
+     ORDER BY position ASC, id ASC`;
+  return rows.map(rowToBoardTask);
+}
+
+export async function createBoardTask(args: {
+  chatId: number;
+  title: string;
+  status?: string;
+  assignee?: string | null;
+  topic?: string | null;
+  note?: string | null;
+  source?: string;
+  createdBy?: string | null;
+}): Promise<BoardTask | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const status = (BOARD_STATUSES as readonly string[]).includes(args.status ?? "")
+    ? args.status
+    : "todo";
+  const rows = await sql()`
+    INSERT INTO group_board_tasks (chat_id, title, status, assignee, topic, note, source, created_by, position)
+    VALUES (${args.chatId}, ${args.title.slice(0, 500)}, ${status},
+            ${args.assignee ?? null}, ${args.topic ?? null}, ${args.note ?? null},
+            ${args.source ?? "manual"}, ${args.createdBy ?? null},
+            COALESCE((SELECT MAX(position) + 1 FROM group_board_tasks WHERE chat_id = ${args.chatId}), 0))
+    RETURNING *`;
+  return rows[0] ? rowToBoardTask(rows[0]) : null;
+}
+
+export async function updateBoardTask(args: {
+  id: number;
+  chatId: number;
+  title?: string;
+  status?: string;
+  assignee?: string | null;
+  topic?: string | null;
+  note?: string | null;
+}): Promise<BoardTask | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    UPDATE group_board_tasks SET
+      title    = COALESCE(${args.title ?? null}, title),
+      status   = COALESCE(${args.status ?? null}, status),
+      assignee = CASE WHEN ${args.assignee !== undefined} THEN ${args.assignee ?? null} ELSE assignee END,
+      topic    = CASE WHEN ${args.topic !== undefined} THEN ${args.topic ?? null} ELSE topic END,
+      note     = CASE WHEN ${args.note !== undefined} THEN ${args.note ?? null} ELSE note END,
+      updated_at = NOW()
+    WHERE id = ${args.id} AND chat_id = ${args.chatId}
+    RETURNING *`;
+  return rows[0] ? rowToBoardTask(rows[0]) : null;
+}
+
+export async function deleteBoardTask(args: {
+  id: number;
+  chatId: number;
+}): Promise<boolean> {
+  if (!hasDb()) return false;
+  await ensureSchema();
+  const rows = await sql()`
+    DELETE FROM group_board_tasks WHERE id = ${args.id} AND chat_id = ${args.chatId}
+    RETURNING id`;
+  return rows.length > 0;
+}
+
+// Seed the board once from the latest AI analysis's tasks, so a brand
+// new board opens pre-populated instead of empty. No-op if already
+// seeded or if the board already has rows.
+export async function seedBoardFromAnalysisOnce(chatId: number): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const already = await sql()`SELECT 1 FROM group_board_seeded WHERE chat_id = ${chatId} LIMIT 1`;
+  if (already.length > 0) return 0;
+  const existing = await sql()`SELECT COUNT(*)::int AS n FROM group_board_tasks WHERE chat_id = ${chatId}`;
+  if (Number((existing[0] as { n: number })?.n ?? 0) > 0) {
+    await sql()`INSERT INTO group_board_seeded (chat_id) VALUES (${chatId}) ON CONFLICT DO NOTHING`;
+    return 0;
+  }
+  const cached = await sql()`
+    SELECT analysis FROM group_analytics WHERE chat_id = ${chatId}
+     ORDER BY created_at DESC LIMIT 1`;
+  const analysis = (cached[0] as { analysis?: unknown })?.analysis as
+    | { tasks?: Array<Record<string, unknown>> }
+    | undefined;
+  const tasks = Array.isArray(analysis?.tasks) ? analysis!.tasks! : [];
+  let inserted = 0;
+  for (const t of tasks.slice(0, 300)) {
+    const title = String(
+      (t.title ?? t.task ?? t.text ?? t.description ?? "") as string,
+    ).trim();
+    if (!title) continue;
+    const rawStatus = String((t.status ?? t.state ?? "") as string).toLowerCase();
+    const status = rawStatus.includes("done")
+      ? "done"
+      : rawStatus.includes("progress") || rawStatus.includes("doing")
+        ? "doing"
+        : rawStatus.includes("block") || rawStatus.includes("stop")
+          ? "blocked"
+          : "todo";
+    await createBoardTask({
+      chatId,
+      title,
+      status,
+      assignee: (t.assignee ?? t.owner ?? t.who ?? null) as string | null,
+      topic: (t.topic ?? t.category ?? null) as string | null,
+      source: "ai",
+    });
+    inserted++;
+  }
+  await sql()`INSERT INTO group_board_seeded (chat_id) VALUES (${chatId}) ON CONFLICT DO NOTHING`;
+  return inserted;
 }
 
 export async function findChatByAnalyticsShareToken(
