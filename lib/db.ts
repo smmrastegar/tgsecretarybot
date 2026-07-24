@@ -5396,10 +5396,11 @@ export async function seedBoardTabsOnce(chatId: number): Promise<number> {
   );
 
   const defs: Array<Parameters<typeof createBoardTab>[0]> = [
-    // Critical = live filter on real tasks flagged critical priority.
+    // Critical = live filter on real tasks flagged high/critical priority
+    // (or overdue). Fills as the team sets priorities on the board.
     {
       chatId, source: "ai", icon: "🆘", title: "موارد بحرانی — نیاز به رسیدگی مستقیم شما",
-      kind: "filter", config: { priorities: ["critical"] }, items: [],
+      kind: "filter", config: { priorities: ["critical", "high"], overdue: true }, items: [],
     },
     // Key points = editable note list (genuinely free-form).
     {
