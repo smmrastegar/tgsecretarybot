@@ -10,8 +10,9 @@ type Event = {
   id: number; action: string; actor: string | null; summary: string;
   reverted: boolean; createdAt: string;
 };
+type Column = { key: string; label: string; color: string };
 
-const COLUMNS = [
+const DEFAULT_COLUMNS: Column[] = [
   { key: "todo", label: "برای انجام", color: "#64748b" },
   { key: "doing", label: "در حال انجام", color: "#f59e0b" },
   { key: "blocked", label: "متوقف / بلاک", color: "#ef4444" },
@@ -29,6 +30,13 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   const [title, setTitle] = useState("");
   const [chatTitle, setChatTitle] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
+  const [columns, setColumns] = useState<Column[]>(DEFAULT_COLUMNS);
+  const [prompt, setPrompt] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [draftCols, setDraftCols] = useState<Column[]>(DEFAULT_COLUMNS);
+  const [draftPrompt, setDraftPrompt] = useState("");
+  const [savingCfg, setSavingCfg] = useState(false);
+  const [cfgMsg, setCfgMsg] = useState<string | null>(null);
 
   const headers = useCallback(
     (): Record<string, string> => ({
@@ -42,9 +50,13 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   const loadTasks = useCallback(async () => {
     const r = await fetch(`/api/board/${token}`, { headers: headers() });
     if (!r.ok) return false;
-    const j = (await r.json()) as { chatTitle: string | null; tasks: Task[] };
+    const j = (await r.json()) as {
+      chatTitle: string | null; tasks: Task[]; columns?: Column[]; prompt?: string;
+    };
     setChatTitle(j.chatTitle);
     setTasks(j.tasks);
+    if (Array.isArray(j.columns) && j.columns.length) setColumns(j.columns);
+    if (typeof j.prompt === "string") setPrompt(j.prompt);
     return true;
   }, [token, headers]);
 
@@ -104,6 +116,31 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     await Promise.all([loadTasks(), loadLog()]);
   }
 
+  function openSettings() {
+    setDraftCols(columns.map((c) => ({ ...c })));
+    setDraftPrompt(prompt);
+    setCfgMsg(null);
+    setShowSettings(true);
+  }
+  async function saveSettings() {
+    setSavingCfg(true); setCfgMsg(null);
+    const r = await fetch(`/api/board/${token}/config`, {
+      method: "PUT", headers: headers(),
+      body: JSON.stringify({ columns: draftCols, prompt: draftPrompt }),
+    }).catch(() => null);
+    setSavingCfg(false);
+    if (r && r.ok) {
+      const j = (await r.json()) as { columns?: Column[]; prompt?: string };
+      if (Array.isArray(j.columns)) setColumns(j.columns);
+      if (typeof j.prompt === "string") setPrompt(j.prompt);
+      setCfgMsg("ذخیره شد ✓");
+      if (showLog) void loadLog();
+      setTimeout(() => setShowSettings(false), 700);
+    } else {
+      setCfgMsg("خطا در ذخیره");
+    }
+  }
+
   if (!authed) {
     return (
       <div dir="rtl" style={S.loginWrap}>
@@ -126,10 +163,41 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
           <h1 style={S.h1}>📋 برد تسک — {chatTitle ?? "گروه"}</h1>
           <p style={S.sub}>{tasks.length} تسک · واردشده به‌عنوان «{name}»</p>
         </div>
-        <button style={S.logBtn} onClick={() => { const n = !showLog; setShowLog(n); if (n) void loadLog(); }}>
-          {showLog ? "بستن لاگ" : "🕘 لاگ و بازگردانی"}
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button style={S.logBtn} onClick={openSettings}>⚙️ تنظیمات</button>
+          <button style={S.logBtn} onClick={() => { const n = !showLog; setShowLog(n); if (n) void loadLog(); }}>
+            {showLog ? "بستن لاگ" : "🕘 لاگ و بازگردانی"}
+          </button>
+        </div>
       </div>
+
+      {showSettings && (
+        <div style={S.logPanel}>
+          <div style={S.logTitle}>⚙️ تنظیمات برد</div>
+          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>نام و رنگ ستون‌ها</div>
+          {draftCols.map((c, i) => (
+            <div key={c.key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+              <input type="color" value={c.color} style={{ width: 34, height: 30, background: "transparent", border: "none", cursor: "pointer" }}
+                onChange={(e) => setDraftCols((x) => x.map((y, j) => (j === i ? { ...y, color: e.target.value } : y)))} />
+              <input style={{ ...S.input, marginTop: 0, flex: 1 }} value={c.label} maxLength={40}
+                onChange={(e) => setDraftCols((x) => x.map((y, j) => (j === i ? { ...y, label: e.target.value } : y)))} />
+            </div>
+          ))}
+          <div style={{ fontSize: 12, color: "#94a3b8", margin: "12px 0 6px" }}>
+            پرامپت دسته‌بندی هوش مصنوعی (به تحلیل خودکار تسک‌ها اضافه می‌شود)
+          </div>
+          <textarea style={{ ...S.input, marginTop: 0, minHeight: 90, resize: "vertical", fontFamily: "inherit" }}
+            placeholder="مثال: هر پیام از تاپیک «سفارش‌ها» یک تسک با اولویت بالا است…"
+            value={draftPrompt} maxLength={2000} onChange={(e) => setDraftPrompt(e.target.value)} />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10 }}>
+            <button style={S.addBtn} onClick={saveSettings} disabled={savingCfg}>
+              {savingCfg ? "…" : "ذخیره"}
+            </button>
+            <button style={S.logBtn} onClick={() => setShowSettings(false)}>بستن</button>
+            {cfgMsg && <span style={{ fontSize: 12, color: cfgMsg.includes("✓") ? "#22c55e" : "#f87171" }}>{cfgMsg}</span>}
+          </div>
+        </div>
+      )}
 
       {showLog && (
         <div style={S.logPanel}>
@@ -157,7 +225,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
       </div>
 
       <div style={S.board}>
-        {COLUMNS.map((col) => {
+        {columns.map((col) => {
           const list = tasks.filter((t) => t.status === col.key);
           return (
             <div key={col.key} style={S.col}>
@@ -178,7 +246,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                   </div>
                   <div style={S.cardActions}>
                     <select style={S.select} value={t.status} onChange={(e) => patch(t.id, { status: e.target.value })}>
-                      {COLUMNS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                      {columns.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                     </select>
                     <button style={S.del} onClick={() => del(t.id)} title="حذف">🗑</button>
                   </div>

@@ -1,6 +1,6 @@
 import { config } from "./config";
 import { getSettings } from "./settings";
-import { findKnowledgeMatches, recordAiUsage } from "./db";
+import { findKnowledgeMatches, recordAiUsage, getBoardPromptForChat } from "./db";
 import { downloadTelegramFile } from "./stt";
 import { assertOpenrouterBudget } from "./openrouter-budget";
 import { isTransientDbError } from "./pg-driver";
@@ -1335,11 +1335,21 @@ async function extractTaskEventsBatch(
       text: m.text.slice(0, 1800),
     })),
   };
+  // The operator can supply an extra, board-specific categorisation
+  // instruction (e.g. "treat anything from #Rabeeen as high priority").
+  // It is appended to the base prompt, never replaces it.
+  let systemPrompt = TASK_EVENTS_PROMPT;
+  if (chatId != null) {
+    const custom = await getBoardPromptForChat(chatId).catch(() => null);
+    if (custom) {
+      systemPrompt = `${TASK_EVENTS_PROMPT}\n\nOPERATOR CATEGORISATION RULES (highest priority — follow these when they conflict with the defaults above):\n${custom.slice(0, 2000)}`;
+    }
+  }
   let content: string;
   try {
     content = await callOpenRouter(
       [
-        { role: "system", content: TASK_EVENTS_PROMPT },
+        { role: "system", content: systemPrompt },
         { role: "user", content: JSON.stringify(payload) },
       ],
       {

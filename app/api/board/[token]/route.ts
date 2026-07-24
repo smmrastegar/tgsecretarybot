@@ -6,6 +6,7 @@ import {
   getBoardTask,
   listBoardTasks,
   logBoardEvent,
+  parseBoardColumns,
   seedBoardFromAnalysisOnce,
   updateBoardTask,
 } from "@/lib/db";
@@ -27,6 +28,8 @@ export async function GET(
     ok: true,
     chatTitle: auth!.chatTitle,
     statuses: BOARD_STATUSES,
+    columns: parseBoardColumns(auth!.boardColumns),
+    prompt: auth!.boardPrompt ?? "",
     tasks,
   });
 }

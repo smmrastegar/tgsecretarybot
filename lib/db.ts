@@ -4809,6 +4809,8 @@ export async function setBoardConfig(args: {
       board_prompt  = CASE WHEN ${args.prompt !== undefined} THEN ${args.prompt ?? null} ELSE board_prompt END,
       updated_at = NOW()
     WHERE chat_id = ${args.chatId}`;
+  // Drop the cached AI-prompt so the next analysis picks up the edit.
+  if (args.prompt !== undefined) boardPromptCache.delete(args.chatId);
 }
 
 // --- Editable group task board ---
@@ -4828,6 +4830,68 @@ export type BoardTask = {
 };
 
 export const BOARD_STATUSES = ["todo", "doing", "blocked", "done"] as const;
+
+// The four status keys are fixed (data integrity), but their display
+// labels + colours are operator-editable via board_columns.
+export type BoardColumn = { key: string; label: string; color: string };
+export const DEFAULT_BOARD_COLUMNS: BoardColumn[] = [
+  { key: "todo", label: "برای انجام", color: "#64748b" },
+  { key: "doing", label: "در حال انجام", color: "#f59e0b" },
+  { key: "blocked", label: "متوقف / بلاک", color: "#ef4444" },
+  { key: "done", label: "انجام‌شده", color: "#22c55e" },
+];
+
+// Parse a stored board_columns JSON string into a full column list,
+// always covering every fixed status key (falls back to the default
+// label/colour for any key the stored value omits or corrupts).
+export function parseBoardColumns(raw: string | null): BoardColumn[] {
+  let stored: Record<string, { label?: string; color?: string }> = {};
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const c of parsed) {
+          if (c && typeof c === "object" && typeof c.key === "string") {
+            stored[c.key] = { label: c.label, color: c.color };
+          }
+        }
+      }
+    } catch {
+      /* corrupt → defaults */
+    }
+  }
+  return DEFAULT_BOARD_COLUMNS.map((d) => {
+    const s = stored[d.key];
+    return {
+      key: d.key,
+      label: (s?.label ?? "").toString().trim().slice(0, 40) || d.label,
+      color: /^#[0-9a-fA-F]{3,8}$/.test(s?.color ?? "") ? s!.color! : d.color,
+    };
+  });
+}
+
+// Fetch the operator's custom AI-categorisation prompt for a chat, if
+// any. Cached briefly so the analyzer doesn't hit the DB per batch.
+const boardPromptCache = new Map<number, { prompt: string | null; at: number }>();
+export async function getBoardPromptForChat(
+  chatId: number,
+): Promise<string | null> {
+  if (!hasDb()) return null;
+  const now = Date.now();
+  const hit = boardPromptCache.get(chatId);
+  if (hit && now - hit.at < 60_000) return hit.prompt;
+  try {
+    await ensureSchema();
+    const rows = await sql()`
+      SELECT board_prompt FROM chat_rules WHERE chat_id = ${chatId} LIMIT 1`;
+    const p = (rows[0] as { board_prompt?: string | null })?.board_prompt ?? null;
+    const prompt = p && p.trim() ? p.trim() : null;
+    boardPromptCache.set(chatId, { prompt, at: now });
+    return prompt;
+  } catch {
+    return hit?.prompt ?? null;
+  }
+}
 
 function rowToBoardTask(r: Record<string, unknown>): BoardTask {
   return {
