@@ -33,7 +33,7 @@ chmod 600 .env
 
 # 2) run the bootstrap (installs Node+Caddy, builds, wires systemd+cron,
 #    and repoints the Telegram webhook)
-sudo bash deploy/setup.sh your-domain.example
+sudo bash deploy/setup.sh bot.text.bz
 ```
 
 ## What setup.sh does
@@ -57,9 +57,27 @@ Then send yourself a Telegram message and confirm it's logged (dashboard
 
 ## Updating later
 
+Automatic — nothing to do. `setup.sh` installs
+`tgsecretarybot-autodeploy.timer`, which **every minute** checks the
+branch and, when a new commit is pushed, runs `deploy/auto-deploy.sh`
+(pull → `npm ci` → build → restart) and pings you on Telegram. It
+no-ops when there's nothing new, and a flock prevents overlapping
+builds.
+
+Watch it:
 ```bash
-cd /opt/tgsecretarybot && sudo bash deploy/deploy.sh
+systemctl list-timers tgsecretarybot-autodeploy.timer
+tail -f /var/log/tgsecretarybot-autodeploy.log
 ```
+
+Manual one-off (if you ever need it): `sudo bash deploy/deploy.sh`.
+
+### Optional: instant deploy via GitHub Actions
+`.github/workflows/deploy.yml` SSHes in and deploys the moment you push
+(vs. up to 1 min for the timer). Add three repo secrets to enable it:
+`SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY` (public half in the server's
+`~/.ssh/authorized_keys`). Until `SSH_HOST` is set it just skips — the
+on-server timer keeps working either way.
 
 ## Also move (not automated — do when ready)
 

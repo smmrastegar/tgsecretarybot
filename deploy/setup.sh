@@ -40,11 +40,16 @@ cd "$APP_DIR"
 npm ci
 npm run build
 
-echo "==> [4/6] systemd service"
+echo "==> [4/6] systemd service + auto-deploy timer"
 cp "$APP_DIR/deploy/tgsecretarybot.service" /etc/systemd/system/tgsecretarybot.service
+cp "$APP_DIR/deploy/tgsecretarybot-autodeploy.service" /etc/systemd/system/tgsecretarybot-autodeploy.service
+cp "$APP_DIR/deploy/tgsecretarybot-autodeploy.timer" /etc/systemd/system/tgsecretarybot-autodeploy.timer
+chmod +x "$APP_DIR/deploy/auto-deploy.sh"
 systemctl daemon-reload
 systemctl enable tgsecretarybot
 systemctl restart tgsecretarybot
+# Auto-deploy: polls the branch every minute, redeploys on a new commit.
+systemctl enable --now tgsecretarybot-autodeploy.timer
 
 echo "==> [5/6] cron jobs"
 CRON_SECRET="$(grep -E '^CRON_SECRET=' "$APP_DIR/.env" | cut -d= -f2-)"

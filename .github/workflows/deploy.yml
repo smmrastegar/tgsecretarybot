@@ -1,0 +1,45 @@
+name: Deploy to server
+
+# Optional INSTANT deploy: on every push to the branch, SSH into the
+# server and run the auto-deploy script. This is complementary to the
+# on-server systemd timer (deploy/tgsecretarybot-autodeploy.timer),
+# which already redeploys within ~1 min even without this workflow.
+#
+# To enable, add three repo secrets (Settings → Secrets → Actions):
+#   SSH_HOST         209.97.138.127
+#   SSH_USER         root
+#   SSH_PRIVATE_KEY  a private key whose public half is in the server's
+#                    ~/.ssh/authorized_keys
+# Until SSH_HOST is set, the job runs green and simply skips.
+
+on:
+  push:
+    branches: [claude/telegram-secretary-bot-A0UsO]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check config
+        id: cfg
+        run: |
+          if [ -n "${{ secrets.SSH_HOST }}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "SSH_HOST secret not set — skipping instant deploy (the on-server timer still handles it)."
+          fi
+
+      - name: Deploy over SSH
+        if: steps.cfg.outputs.ready == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: sudo bash /opt/tgsecretarybot/deploy/auto-deploy.sh
