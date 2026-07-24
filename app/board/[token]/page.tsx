@@ -201,6 +201,23 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     setSession(""); setStatus("anonymous"); setTasks([]);
   }
 
+  // (Re)ask the owner to approve, then re-check our own status.
+  const requestApproval = useCallback(async (sess?: string) => {
+    const s = sess ?? session;
+    if (!s) return;
+    await fetch(`/api/board/${token}/notify`, {
+      method: "POST", headers: { "X-Board-Session": s },
+    }).catch(() => {});
+    await refreshStatus(s);
+  }, [token, session, refreshStatus]);
+
+  // When we land on the waiting screen, ping the owner once automatically
+  // (covers the case where the login-time push didn't arrive).
+  useEffect(() => {
+    if (status === "pending" && session) void requestApproval(session);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status === "pending", session]);
+
   async function addTask() {
     const t = title.trim(); if (!t) return; setTitle("");
     const r = await fetch(`/api/board/${token}`, { method: "POST", headers: headers(), body: JSON.stringify({ title: t }) });
@@ -285,7 +302,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
               <div style={S.waitBox}>
                 ⏳ درخواستت ثبت شد. منتظر تایید مدیر باش — این صفحه خودش به‌روز می‌شه.
               </div>
-              <button style={S.logBtnWide} onClick={() => void refreshStatus(session)}>بررسی مجدد</button>
+              <button style={S.logBtnWide} onClick={() => void requestApproval(session)}>بررسی مجدد و ارسال دوباره به مدیر</button>
               <button style={S.linkBtn} onClick={logout}>خروج</button>
             </>
           )}
