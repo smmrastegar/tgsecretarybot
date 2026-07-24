@@ -18,6 +18,7 @@ type Event = {
   reverted: boolean; createdAt: string;
 };
 type Column = { key: string; label: string; color: string };
+type Member = { tgId: number; name: string | null; username: string | null; status: string; createdAt: string };
 
 const DEFAULT_COLUMNS: Column[] = [
   { key: "todo", label: "برای انجام", color: "#64748b" },
@@ -49,6 +50,8 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   const [draftPrompt, setDraftPrompt] = useState("");
   const [savingCfg, setSavingCfg] = useState(false);
   const [cfgMsg, setCfgMsg] = useState<string | null>(null);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [showMembers, setShowMembers] = useState(false);
 
   const authed = status === "approved";
   const sessKey = `board_session_${token}`;
@@ -61,8 +64,11 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     [session],
   );
 
-  const loadTasks = useCallback(async () => {
-    const r = await fetch(`/api/board/${token}`, { headers: { "X-Board-Session": session } });
+  // Accept an explicit session so callers that JUST set it (login /
+  // magic / mount) don't race the async `session` state update.
+  const loadTasks = useCallback(async (sess?: string) => {
+    const s = sess ?? session;
+    const r = await fetch(`/api/board/${token}`, { headers: { "X-Board-Session": s } });
     if (!r.ok) return false;
     const j = (await r.json()) as {
       chatTitle: string | null; tasks: Task[]; columns?: Column[]; prompt?: string;
@@ -79,6 +85,22 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     if (r.ok) setEvents(((await r.json()) as { events: Event[] }).events);
   }, [token, headers]);
 
+  const loadMembers = useCallback(async (sess?: string) => {
+    const s = sess ?? session;
+    if (!s) return;
+    const r = await fetch(`/api/board/${token}/members`, { headers: { "X-Board-Session": s } });
+    if (r.ok) setMembers(((await r.json()) as { members: Member[] }).members);
+  }, [token, session]);
+
+  async function decide(tgId: number, action: "approve" | "reject") {
+    setMembers((x) => x.map((m) => (m.tgId === tgId ? { ...m, status: action === "approve" ? "approved" : "rejected" } : m)));
+    await fetch(`/api/board/${token}/members`, {
+      method: "POST", headers: headers(), body: JSON.stringify({ tgId, action }),
+    }).catch(() => {});
+    void loadMembers();
+    if (showLog) void loadLog();
+  }
+
   // Check the saved session's current access status.
   const refreshStatus = useCallback(
     async (sess: string) => {
@@ -89,7 +111,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
       if (j.name) setName(j.name);
       setIsOwner(!!j.isOwner);
       setStatus(j.status);
-      if (j.status === "approved") await loadTasks();
+      if (j.status === "approved") await loadTasks(sess);
     },
     [token, loadTasks],
   );
@@ -119,7 +141,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
           if (j.name) setName(j.name);
           setIsOwner(!!j.isOwner);
           setStatus(j.status ?? "pending");
-          if (j.status === "approved") await loadTasks();
+          if (j.status === "approved") await loadTasks(j.session);
         } catch { setLoginErr("خطای شبکه"); setStatus("anonymous"); }
       })();
       return;
@@ -136,6 +158,15 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     const id = setInterval(() => void refreshStatus(session), 5000);
     return () => clearInterval(id);
   }, [status, session, refreshStatus]);
+
+  // Owner: keep the access-requests list fresh so approvals never
+  // depend on the Telegram push arriving.
+  useEffect(() => {
+    if (!authed || !isOwner || !session) return;
+    void loadMembers(session);
+    const id = setInterval(() => void loadMembers(session), 15000);
+    return () => clearInterval(id);
+  }, [authed, isOwner, session, loadMembers]);
 
   // Telegram Login Widget callback.
   useEffect(() => {
@@ -157,7 +188,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
         if (j.name) setName(j.name);
         setIsOwner(!!j.isOwner);
         setStatus(j.status ?? "pending");
-        if (j.status === "approved") await loadTasks();
+        if (j.status === "approved") await loadTasks(j.session);
       } catch {
         setLoginErr("خطای شبکه"); setStatus("anonymous");
       }
@@ -289,13 +320,51 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
           <p style={S.sub}>{tasks.length} تسک · واردشده به‌عنوان «{name}»</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {isOwner && <button style={S.logBtn} onClick={openSettings}>⚙️ تنظیمات</button>}
+          {isOwner && (() => {
+            const pend = members.filter((m) => m.status === "pending").length;
+            return (
+              <button style={pend > 0 ? S.reqBtnHot : S.logBtn} onClick={() => setShowMembers((v) => !v)}>
+                👥 درخواست‌ها{pend > 0 ? ` (${pend})` : ""}
+              </button>
+            );
+          })()}
+          {isOwner && (
+            <button style={S.logBtn} onClick={() => (showSettings ? setShowSettings(false) : openSettings())}>
+              {showSettings ? "بستن تنظیمات" : "⚙️ تنظیمات"}
+            </button>
+          )}
           <button style={S.logBtn} onClick={() => { const n = !showLog; setShowLog(n); if (n) void loadLog(); }}>
             {showLog ? "بستن لاگ" : "🕘 لاگ و بازگردانی"}
           </button>
           <button style={S.logBtn} onClick={logout}>خروج</button>
         </div>
       </div>
+
+      {showMembers && isOwner && (
+        <div style={S.logPanel}>
+          <div style={S.logTitle}>👥 درخواست‌های دسترسی</div>
+          {members.length === 0 && <div style={S.empty}>هنوز کسی درخواست نداده.</div>}
+          {members.map((m) => (
+            <div key={m.tgId} style={S.logRow}>
+              <span>
+                <b>{m.name || (m.username ? `@${m.username}` : m.tgId)}</b>
+                {m.username && m.name && <span style={S.time}> @{m.username}</span>}
+                {m.status === "approved" && <span style={S.revTag}> · تاییدشده</span>}
+                {m.status === "rejected" && <span style={{ color: "#f87171" }}> · ردشده</span>}
+                {m.status === "pending" && <span style={{ color: "#f59e0b" }}> · در انتظار</span>}
+              </span>
+              <span style={{ display: "flex", gap: 6 }}>
+                {m.status !== "approved" && (
+                  <button style={S.okBtn} onClick={() => decide(m.tgId, "approve")}>✅ تایید</button>
+                )}
+                {m.status !== "rejected" && (
+                  <button style={S.noBtn} onClick={() => decide(m.tgId, "reject")}>❌ رد</button>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {showSettings && (
         <div style={S.logPanel}>
@@ -405,6 +474,9 @@ const S: Record<string, React.CSSProperties> = {
   h1: { fontSize: 20, fontWeight: 800, margin: 0 },
   sub: { fontSize: 12, color: "#94a3b8", margin: "4px 0 0" },
   logBtn: { background: "#334155", color: "#e2e8f0", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, cursor: "pointer" },
+  reqBtnHot: { background: "#b45309", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" },
+  okBtn: { background: "#166534", color: "#fff", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" },
+  noBtn: { background: "transparent", color: "#f87171", border: "1px solid #7f1d1d", borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" },
   logPanel: { background: "#1e293b", borderRadius: 12, padding: 12, marginBottom: 16, maxHeight: 300, overflowY: "auto" },
   logTitle: { fontSize: 13, fontWeight: 700, color: "#cbd5e1", marginBottom: 8 },
   logRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 12, padding: "6px 4px", borderBottom: "1px solid #293548" },
