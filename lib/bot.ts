@@ -1,7 +1,7 @@
 import { Bot, type Context, GrammyError, HttpError, InlineKeyboard, InputFile } from "grammy";
 import type { InlineKeyboardMarkup } from "grammy/types";
 import type { Message } from "grammy/types";
-import { config } from "./config";
+import { config, IS_BUILD_PHASE } from "./config";
 import {
   aiConversationReply,
   classify,
@@ -1750,7 +1750,14 @@ async function markBusinessRead(
 }
 
 function buildBot(): Bot {
-  const bot = new Bot(config.telegramBotToken);
+  // During `next build`'s page-data collection this module is imported
+  // with no runtime env, so the token is empty and grammy's `new Bot("")`
+  // throws "Empty token!". Feed a placeholder in the build phase only —
+  // no Telegram calls happen at build time. At runtime the real token is
+  // present (systemd EnvironmentFile / Vercel env).
+  const token =
+    config.telegramBotToken || (IS_BUILD_PHASE ? "0:BUILD_PLACEHOLDER" : "");
+  const bot = new Bot(token);
 
   bot.on("business_connection", async (ctx) => {
     const bc = ctx.update.business_connection;

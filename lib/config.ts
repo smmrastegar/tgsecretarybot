@@ -7,7 +7,7 @@ import "dotenv/config";
 // placeholder; the real value is only needed when a request actually
 // runs, where systemd's EnvironmentFile has loaded .env. At runtime a
 // genuinely-missing var still throws loudly.
-const IS_BUILD_PHASE =
+export const IS_BUILD_PHASE =
   process.env.NEXT_PHASE === "phase-production-build" ||
   process.env.npm_lifecycle_event === "build";
 
