@@ -1,9 +1,21 @@
 import "dotenv/config";
 
+// `config` is built at module-load time, which also runs during
+// `next build`'s "Collecting page data" pass — when runtime secrets are
+// NOT present. A hard throw there fails the whole build (as it did on
+// the self-hosted box). During the build phase we return a harmless
+// placeholder; the real value is only needed when a request actually
+// runs, where systemd's EnvironmentFile has loaded .env. At runtime a
+// genuinely-missing var still throws loudly.
+const IS_BUILD_PHASE =
+  process.env.NEXT_PHASE === "phase-production-build" ||
+  process.env.npm_lifecycle_event === "build";
+
 function required(name: string): string {
   const v = process.env[name];
-  if (!v) throw new Error(`Missing required env var: ${name}`);
-  return v;
+  if (v && v.length > 0) return v;
+  if (IS_BUILD_PHASE) return "";
+  throw new Error(`Missing required env var: ${name}`);
 }
 
 function optional(name: string): string | undefined {
