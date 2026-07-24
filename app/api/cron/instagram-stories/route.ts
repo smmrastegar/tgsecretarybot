@@ -4,7 +4,10 @@ import {
   clearMonitoredAccountPending,
   dueMonitoredAccounts,
   hasDb,
+  sql,
 } from "@/lib/db";
+import { getBudgetState } from "@/lib/hikerapi-budget";
+import { getSettings } from "@/lib/settings";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";
 import { getActiveKey, HikerOutOfCreditsError } from "@/lib/hikerapi";
 import { HikerApprovalNeededError } from "@/lib/hikerapi-budget";
@@ -188,9 +191,50 @@ async function run(request: Request): Promise<NextResponse> {
     }),
     { checked: 0, detected: 0, forwarded: 0 },
   );
+  // Budget early-warning: last time the cap was hit, monitoring died
+  // SILENTLY for hours. Warn the owner once per budget level when a
+  // tenant crosses 90% of its budget (re-arms automatically when the
+  // budget is raised, because the marker stores the budget value).
+  try {
+    await warnIfBudgetNearlyExhausted(tenants.map((t) => t.id));
+  } catch (err) {
+    console.warn("[cron ig] budget warn failed:", err);
+  }
   return NextResponse.json({
     ok: true,
     tenants: results,
     ...totals,
   });
+}
+
+async function warnIfBudgetNearlyExhausted(tenantIds: number[]): Promise<void> {
+  const settings = await getSettings();
+  const notifyChat = Number(settings.ownerNotifyChatId);
+  if (!Number.isFinite(notifyChat) || notifyChat === 0) return;
+  const bot = getBot();
+  for (const tenantId of tenantIds) {
+    const state = await getBudgetState(tenantId).catch(() => null);
+    if (!state || state.budgetUsd <= 0) continue;
+    if (state.spentUsd < state.budgetUsd * 0.9) continue;
+    const warnKey = `hiker.budget.warned.${tenantId}`;
+    const marker = String(state.budgetUsd);
+    const rows = await sql()`SELECT value FROM settings WHERE key = ${warnKey} LIMIT 1`;
+    if (rows.length > 0 && String(rows[0]!.value) === marker) continue; // already warned at this budget level
+    const pct = Math.min(100, Math.round((state.spentUsd / state.budgetUsd) * 100));
+    const text =
+      `⚠️ بودجه‌ی HikerAPI رو به اتمامه\n\n` +
+      `مصرف: $${state.spentUsd.toFixed(2)} از $${state.budgetUsd.toFixed(2)} (${pct}٪)\n` +
+      (state.budgetExceeded
+        ? `🔴 سقف پر شده — پایش اینستاگرام متوقفه تا بودجه رو بالا ببری.`
+        : `اگر بودجه رو بالا نبری، پایش اینستاگرام به‌زودی متوقف می‌شه.`);
+    try {
+      await bot.api.sendMessage(notifyChat, text);
+      await sql()`
+        INSERT INTO settings (key, value) VALUES (${warnKey}, ${marker})
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
+      console.log(`[cron ig] budget warning sent tenant=${tenantId} pct=${pct}`);
+    } catch (err) {
+      console.warn(`[cron ig] budget warning send failed tenant=${tenantId}:`, err);
+    }
+  }
 }

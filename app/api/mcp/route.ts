@@ -1195,17 +1195,22 @@ async function callTool(
     case "transcribe_voice": {
       let fileId = args.file_id ? String(args.file_id) : "";
       const midArg = args.source_message_id != null ? Number(args.source_message_id) : null;
+      // Track the exact row we read the file_id from — message_id is NOT
+      // unique across chats, so the transcript cache below must be
+      // scoped to this chat or it could land on another chat's row.
+      let cacheChatId: number | null = null;
       if (!fileId && midArg != null && Number.isFinite(midArg)) {
         const srcChat = args.source_chat_id != null ? Number(args.source_chat_id) : null;
         const rows = (await runParams(
-          `SELECT media_file_id, media_kind FROM messages_log
+          `SELECT chat_id, media_file_id, media_kind FROM messages_log
              WHERE message_id = $1 ${srcChat != null ? "AND chat_id = $2" : ""}
              ORDER BY created_at DESC LIMIT 1`,
           srcChat != null ? [midArg, srcChat] : [midArg],
-        )) as Array<{ media_file_id: string | null; media_kind: string | null }>;
+        )) as Array<{ chat_id: string | number; media_file_id: string | null; media_kind: string | null }>;
         const row = rows[0];
         if (!row?.media_file_id) throw new Error(`no media on message ${midArg}`);
         fileId = String(row.media_file_id);
+        cacheChatId = Number(row.chat_id);
       }
       if (!fileId) throw new Error("source_message_id or file_id required");
       const { transcribeAudio } = await import("@/lib/stt");
@@ -1218,12 +1223,14 @@ async function callTool(
         fileId,
         language: lang,
       });
-      if (midArg != null && Number.isFinite(midArg)) {
-        // Best-effort cache so a re-read shows the transcript.
+      if (midArg != null && Number.isFinite(midArg) && cacheChatId != null) {
+        // Best-effort cache so a re-read shows the transcript. Scoped to
+        // the exact (chat_id, message_id) row we transcribed.
         await runParams(
           `UPDATE messages_log SET media_description = $1, media_description_at = NOW()
-             WHERE message_id = $2 AND (media_description IS NULL OR media_description = '')`,
-          [r.text, midArg],
+             WHERE message_id = $2 AND chat_id = $3
+               AND (media_description IS NULL OR media_description = '')`,
+          [r.text, midArg, cacheChatId],
         ).catch(() => {});
       }
       return toolText({

@@ -28,10 +28,17 @@ async function run(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "DATABASE_URL not set" }, { status: 500 });
   }
   const flushed = await flushReadyMirrorAlbums(getBot());
-  // Housekeeping: dedup-claim rows are only needed while a group's
-  // buffer exists (minutes). Prune old ones so the table stays small.
+  // Housekeeping: prune ONLY claims whose buffer is gone (successful
+  // flushes). A claim with buffer rows still present marks an
+  // in-flight/failed group — pruning it would let the cron re-send a
+  // possibly half-delivered album.
   try {
-    await sql()`DELETE FROM mirror_album_claim WHERE claimed_at < NOW() - INTERVAL '1 day'`;
+    await sql()`
+      DELETE FROM mirror_album_claim c
+       WHERE c.claimed_at < NOW() - INTERVAL '1 day'
+         AND NOT EXISTS (
+           SELECT 1 FROM mirror_album_buffer b WHERE b.group_key = c.group_key
+         )`;
   } catch {
     // best-effort cleanup — never fail the cron over it
   }

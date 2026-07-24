@@ -103,6 +103,7 @@ import {
   claimMirrorAlbumFlush,
   getMirrorAlbumParts,
   deleteMirrorAlbumBuffer,
+  deleteMirrorAlbumClaim,
   getReadyMirrorAlbumGroups,
   type MirrorAlbumPart,
   getEmailAccountByChannel,
@@ -2829,7 +2830,13 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   // skipping the bot's own commands / menus / service chatter. Runs
   // here — past the owner-outgoing and bot-echo early-returns — so
   // only genuine INCOMING messages are considered. Fire-and-forget.
-  void maybeMirrorBusinessMessage({ msg, bot });
+  // AWAITED (not void): on Vercel a detached promise can be frozen the
+  // moment the webhook response returns, silently dropping the mirror
+  // copy — the same failure class that hit album flushing. The work is
+  // bounded (one buffer write or one resend) and the webhook has 55s.
+  await maybeMirrorBusinessMessage({ msg, bot }).catch((err) =>
+    console.warn("[mirror-dm] failed:", err),
+  );
 
   let rule = await getChatRule(msg.chat.id).catch(() => null);
   const settings = await getSettings();
@@ -5154,10 +5161,15 @@ export async function flushReadyMirrorAlbums(bot: Bot): Promise<number> {
     return 0;
   }
   for (const groupKey of groups) {
+    let claimed = false;
     try {
       if (!(await claimMirrorAlbumFlush(groupKey))) continue;
+      claimed = true;
       const parts = await getMirrorAlbumParts(groupKey);
-      if (parts.length === 0) continue;
+      if (parts.length === 0) {
+        await deleteMirrorAlbumClaim(groupKey).catch(() => {});
+        continue;
+      }
       await sendAlbumParts({
         bot,
         toChatId: parts[0]!.targetChatId,
@@ -5171,6 +5183,9 @@ export async function flushReadyMirrorAlbums(bot: Bot): Promise<number> {
       );
     } catch (err) {
       console.warn(`[mirror-dm] album flush failed group=${groupKey}:`, err);
+      // Release the claim so the next cron tick retries this group —
+      // otherwise it would be stuck behind the claim forever.
+      if (claimed) await deleteMirrorAlbumClaim(groupKey).catch(() => {});
     }
   }
   return flushed;
@@ -5349,10 +5364,13 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
   if (!hasContent) return;
 
   // Channel mirror: copy every post from a mirrored source chat into
-  // its destination(s). Fire-and-forget so it never blocks classify /
-  // logging, and runs even for muted chats — mirroring is about the
-  // feed, not notifications.
-  void maybeMirrorPost({ msg, bot });
+  // its destination(s). AWAITED — a detached promise can be frozen when
+  // the webhook response returns on Vercel, silently dropping the copy.
+  // Runs even for muted chats: mirroring is about the feed, not
+  // notifications.
+  await maybeMirrorPost({ msg, bot }).catch((err) =>
+    console.warn("[mirror] failed:", err),
+  );
 
   const text = describeMessage(msg);
   const chatTitle =

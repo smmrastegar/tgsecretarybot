@@ -6,6 +6,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/health-report",
+      "schedule": "30 5 * * *"
+    },
+    {
       "path": "/api/cron/daily-summary",
       "schedule": "0 * * * *"
     },

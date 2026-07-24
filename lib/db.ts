@@ -9936,6 +9936,15 @@ export async function deleteMirrorAlbumBuffer(groupKey: string): Promise<void> {
   await sql()`DELETE FROM mirror_album_buffer WHERE group_key = ${groupKey}`;
 }
 
+// Release a flush claim after a FAILED send so the next cron tick can
+// retry the group. Without this the claim blocks retries forever (and
+// the 1-day claim prune would then re-send a possibly half-delivered
+// album a day later).
+export async function deleteMirrorAlbumClaim(groupKey: string): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`DELETE FROM mirror_album_claim WHERE group_key = ${groupKey}`;
+}
+
 // Album groups whose newest buffered part is older than `quietSeconds`
 // — i.e. no new part has arrived recently, so the group is complete and
 // ready to flush. Excludes already-claimed groups so we don't re-send.
