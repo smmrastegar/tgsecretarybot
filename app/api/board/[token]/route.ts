@@ -7,6 +7,8 @@ import {
   listBoardTasks,
   logBoardEvent,
   parseBoardColumns,
+  parseBoardLabels,
+  parseBoardPriorities,
   seedBoardFromAnalysisOnce,
   updateBoardTask,
 } from "@/lib/db";
@@ -29,6 +31,8 @@ export async function GET(
     chatTitle: auth!.chatTitle,
     statuses: BOARD_STATUSES,
     columns: parseBoardColumns(auth!.boardColumns),
+    labels: parseBoardLabels(auth!.boardLabels),
+    priorities: parseBoardPriorities(auth!.boardPriorities),
     prompt: auth!.boardPrompt ?? "",
     tasks,
   });
@@ -76,6 +80,7 @@ export async function PATCH(
   if (!auth!.actor) return NextResponse.json({ error: "login required" }, { status: 401 });
   const b = (await req.json().catch(() => ({}))) as {
     id?: number; title?: string; status?: string; assignee?: string | null; topic?: string | null; note?: string | null;
+    priority?: string | null; labels?: string[] | null; dueDate?: string | null;
   };
   const id = Number(b.id);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "id required" }, { status: 400 });
@@ -89,6 +94,9 @@ export async function PATCH(
     assignee: "assignee" in b ? b.assignee ?? null : undefined,
     topic: "topic" in b ? b.topic ?? null : undefined,
     note: "note" in b ? b.note ?? null : undefined,
+    priority: "priority" in b ? b.priority ?? null : undefined,
+    labels: "labels" in b ? (Array.isArray(b.labels) ? b.labels.map(String).slice(0, 30) : null) : undefined,
+    dueDate: "dueDate" in b ? (b.dueDate ? String(b.dueDate).slice(0, 10) : null) : undefined,
   });
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
   // Describe what changed for the log.
@@ -96,6 +104,10 @@ export async function PATCH(
   if (b.status && b.status !== before.status) parts.push(`وضعیت → ${b.status}`);
   if ("assignee" in b && (b.assignee ?? null) !== before.assignee) parts.push(`مسئول → ${b.assignee || "—"}`);
   if (b.title && b.title !== before.title) parts.push("عنوان ویرایش شد");
+  if ("priority" in b && (b.priority ?? null) !== before.priority) parts.push(`اولویت → ${b.priority || "—"}`);
+  if ("labels" in b) parts.push("برچسب‌ها ویرایش شد");
+  if ("dueDate" in b && (b.dueDate ?? null) !== before.dueDate) parts.push(`سررسید → ${b.dueDate || "—"}`);
+  if ("note" in b && (b.note ?? null) !== before.note) parts.push("توضیحات ویرایش شد");
   const summary = `«${before.title.slice(0, 40)}»: ${parts.join("، ") || "ویرایش"}`;
   await logBoardEvent({
     chatId: auth!.chatId, taskId: id, action: "update", actor: auth!.actor,

@@ -16,6 +16,8 @@ export type BoardAuth = {
   isOwner: boolean;
   boardColumns: string | null;
   boardPrompt: string | null;
+  boardLabels: string | null;
+  boardPriorities: string | null;
 };
 
 export function boardSessionDisplayName(s: {
@@ -88,6 +90,8 @@ export async function authBoard(
       isOwner: owner,
       boardColumns: chat.boardColumns,
       boardPrompt: chat.boardPrompt,
+      boardLabels: chat.boardLabels,
+      boardPriorities: chat.boardPriorities,
     },
   };
 }

@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-07-24.board-comments";
+const SCHEMA_VERSION = "2026-07-24.board-fields";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -674,6 +674,9 @@ export async function ensureSchema(
     // AI categorisation prompt. NULL = use defaults.
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS board_columns TEXT`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS board_prompt TEXT`;
+    // Configurable label palette + priority levels for the board (JSON).
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS board_labels TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS board_priorities TEXT`;
     await q`CREATE UNIQUE INDEX IF NOT EXISTS chat_rules_share_token_idx
       ON chat_rules (analytics_share_token) WHERE analytics_share_token IS NOT NULL`;
     // Per-chat summary cadence: how many hours back the daily-summary
@@ -1592,6 +1595,10 @@ export async function ensureSchema(
         updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await q`CREATE INDEX IF NOT EXISTS group_board_tasks_chat_idx ON group_board_tasks (chat_id, status, position)`;
+    // Extra trackable fields: priority (key), labels (JSON id array), due date.
+    await q`ALTER TABLE group_board_tasks ADD COLUMN IF NOT EXISTS priority TEXT`;
+    await q`ALTER TABLE group_board_tasks ADD COLUMN IF NOT EXISTS labels JSONB`;
+    await q`ALTER TABLE group_board_tasks ADD COLUMN IF NOT EXISTS due_date DATE`;
     // Marker so the AI seed runs at most once per chat.
     await q`
       CREATE TABLE IF NOT EXISTS group_board_seeded (
@@ -4795,11 +4802,13 @@ export async function getChatIdByShareToken(token: string): Promise<{
   boardCode: string | null;
   boardColumns: string | null;
   boardPrompt: string | null;
+  boardLabels: string | null;
+  boardPriorities: string | null;
 } | null> {
   if (!hasDb() || !token) return null;
   await ensureSchema();
   const rows = await sql()`
-    SELECT chat_id, chat_title, board_code, board_columns, board_prompt
+    SELECT chat_id, chat_title, board_code, board_columns, board_prompt, board_labels, board_priorities
       FROM chat_rules WHERE analytics_share_token = ${token} LIMIT 1`;
   const r = rows[0] as
     | {
@@ -4808,6 +4817,8 @@ export async function getChatIdByShareToken(token: string): Promise<{
         board_code: string | null;
         board_columns: string | null;
         board_prompt: string | null;
+        board_labels: string | null;
+        board_priorities: string | null;
       }
     | undefined;
   return r
@@ -4817,6 +4828,8 @@ export async function getChatIdByShareToken(token: string): Promise<{
         boardCode: r.board_code ?? null,
         boardColumns: r.board_columns ?? null,
         boardPrompt: r.board_prompt ?? null,
+        boardLabels: r.board_labels ?? null,
+        boardPriorities: r.board_priorities ?? null,
       }
     : null;
 }
@@ -4826,14 +4839,18 @@ export async function setBoardConfig(args: {
   code?: string | null;
   columns?: string | null;
   prompt?: string | null;
+  labels?: string | null;
+  priorities?: string | null;
 }): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
   await sql()`
     UPDATE chat_rules SET
-      board_code    = CASE WHEN ${args.code !== undefined} THEN ${args.code ?? null} ELSE board_code END,
-      board_columns = CASE WHEN ${args.columns !== undefined} THEN ${args.columns ?? null} ELSE board_columns END,
-      board_prompt  = CASE WHEN ${args.prompt !== undefined} THEN ${args.prompt ?? null} ELSE board_prompt END,
+      board_code       = CASE WHEN ${args.code !== undefined} THEN ${args.code ?? null} ELSE board_code END,
+      board_columns    = CASE WHEN ${args.columns !== undefined} THEN ${args.columns ?? null} ELSE board_columns END,
+      board_prompt     = CASE WHEN ${args.prompt !== undefined} THEN ${args.prompt ?? null} ELSE board_prompt END,
+      board_labels     = CASE WHEN ${args.labels !== undefined} THEN ${args.labels ?? null} ELSE board_labels END,
+      board_priorities = CASE WHEN ${args.priorities !== undefined} THEN ${args.priorities ?? null} ELSE board_priorities END,
       updated_at = NOW()
     WHERE chat_id = ${args.chatId}`;
   // Drop the cached AI-prompt so the next analysis picks up the edit.
@@ -4855,9 +4872,77 @@ export type BoardTask = {
   createdAt: Date;
   updatedAt: Date;
   commentCount: number;
+  priority: string | null;
+  labels: string[];
+  dueDate: string | null;
 };
 
 export const BOARD_STATUSES = ["todo", "doing", "blocked", "done"] as const;
+
+// Configurable label palette (multi-select per task) + priority levels
+// (single-select). Priority keys are fixed; labels have arbitrary ids.
+export type BoardLabel = { id: string; name: string; color: string };
+export type BoardPriority = { key: string; label: string; color: string };
+export const DEFAULT_BOARD_LABELS: BoardLabel[] = [
+  { id: "bug", name: "باگ", color: "#ef4444" },
+  { id: "feature", name: "قابلیت", color: "#3b82f6" },
+  { id: "urgent", name: "فوری", color: "#f59e0b" },
+  { id: "backend", name: "بک‌اند", color: "#8b5cf6" },
+  { id: "design", name: "دیزاین", color: "#ec4899" },
+];
+export const DEFAULT_BOARD_PRIORITIES: BoardPriority[] = [
+  { key: "low", label: "کم", color: "#22c55e" },
+  { key: "normal", label: "عادی", color: "#3b82f6" },
+  { key: "high", label: "زیاد", color: "#f59e0b" },
+  { key: "critical", label: "بحرانی", color: "#ef4444" },
+];
+
+export function parseBoardLabels(raw: string | null): BoardLabel[] {
+  if (!raw) return DEFAULT_BOARD_LABELS;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return DEFAULT_BOARD_LABELS;
+    const out: BoardLabel[] = [];
+    for (const l of parsed) {
+      if (l && typeof l === "object" && typeof l.id === "string" && l.id) {
+        out.push({
+          id: l.id.slice(0, 40),
+          name: (String(l.name ?? "").trim() || l.id).slice(0, 40),
+          color: /^#[0-9a-fA-F]{3,8}$/.test(l.color ?? "") ? l.color : "#64748b",
+        });
+      }
+    }
+    return out;
+  } catch {
+    return DEFAULT_BOARD_LABELS;
+  }
+}
+
+export function parseBoardPriorities(raw: string | null): BoardPriority[] {
+  let stored: Record<string, { label?: string; color?: string }> = {};
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const p of parsed) {
+          if (p && typeof p === "object" && typeof p.key === "string") {
+            stored[p.key] = { label: p.label, color: p.color };
+          }
+        }
+      }
+    } catch {
+      /* corrupt → defaults */
+    }
+  }
+  return DEFAULT_BOARD_PRIORITIES.map((d) => {
+    const s = stored[d.key];
+    return {
+      key: d.key,
+      label: (s?.label ?? "").toString().trim().slice(0, 30) || d.label,
+      color: /^#[0-9a-fA-F]{3,8}$/.test(s?.color ?? "") ? s!.color! : d.color,
+    };
+  });
+}
 
 // The four status keys are fixed (data integrity), but their display
 // labels + colours are operator-editable via board_columns.
@@ -5032,6 +5117,16 @@ function rowToBoardTask(r: Record<string, unknown>): BoardTask {
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
     commentCount: Number(r.comment_count ?? 0),
+    priority: (r.priority as string) ?? null,
+    labels: Array.isArray(r.labels)
+      ? (r.labels as unknown[]).map((x) => String(x))
+      : [],
+    dueDate:
+      r.due_date == null
+        ? null
+        : r.due_date instanceof Date
+          ? r.due_date.toISOString().slice(0, 10)
+          : String(r.due_date).slice(0, 10),
   };
 }
 
@@ -5124,6 +5219,9 @@ export async function createBoardTask(args: {
   assignee?: string | null;
   topic?: string | null;
   note?: string | null;
+  priority?: string | null;
+  labels?: string[] | null;
+  dueDate?: string | null;
   source?: string;
   createdBy?: string | null;
 }): Promise<BoardTask | null> {
@@ -5132,10 +5230,12 @@ export async function createBoardTask(args: {
   const status = (BOARD_STATUSES as readonly string[]).includes(args.status ?? "")
     ? args.status
     : "todo";
+  const labelsJson = Array.isArray(args.labels) ? JSON.stringify(args.labels) : null;
   const rows = await sql()`
-    INSERT INTO group_board_tasks (chat_id, title, status, assignee, topic, note, source, created_by, position)
+    INSERT INTO group_board_tasks (chat_id, title, status, assignee, topic, note, priority, labels, due_date, source, created_by, position)
     VALUES (${args.chatId}, ${args.title.slice(0, 500)}, ${status},
             ${args.assignee ?? null}, ${args.topic ?? null}, ${args.note ?? null},
+            ${args.priority ?? null}, ${labelsJson}::jsonb, ${args.dueDate ?? null},
             ${args.source ?? "manual"}, ${args.createdBy ?? null},
             COALESCE((SELECT MAX(position) + 1 FROM group_board_tasks WHERE chat_id = ${args.chatId}), 0))
     RETURNING *`;
@@ -5150,9 +5250,14 @@ export async function updateBoardTask(args: {
   assignee?: string | null;
   topic?: string | null;
   note?: string | null;
+  priority?: string | null;
+  labels?: string[] | null;
+  dueDate?: string | null;
 }): Promise<BoardTask | null> {
   if (!hasDb()) return null;
   await ensureSchema();
+  const labelsJson =
+    args.labels !== undefined && args.labels !== null ? JSON.stringify(args.labels) : null;
   const rows = await sql()`
     UPDATE group_board_tasks SET
       title    = COALESCE(${args.title ?? null}, title),
@@ -5160,6 +5265,9 @@ export async function updateBoardTask(args: {
       assignee = CASE WHEN ${args.assignee !== undefined} THEN ${args.assignee ?? null} ELSE assignee END,
       topic    = CASE WHEN ${args.topic !== undefined} THEN ${args.topic ?? null} ELSE topic END,
       note     = CASE WHEN ${args.note !== undefined} THEN ${args.note ?? null} ELSE note END,
+      priority = CASE WHEN ${args.priority !== undefined} THEN ${args.priority ?? null} ELSE priority END,
+      labels   = CASE WHEN ${args.labels !== undefined} THEN ${labelsJson}::jsonb ELSE labels END,
+      due_date = CASE WHEN ${args.dueDate !== undefined} THEN ${args.dueDate ?? null} ELSE due_date END,
       updated_at = NOW()
     WHERE id = ${args.id} AND chat_id = ${args.chatId}
     RETURNING *`;
@@ -5326,6 +5434,9 @@ export async function restoreBoardTask(args: {
     assignee: (b.assignee as string) ?? null,
     topic: (b.topic as string) ?? null,
     note: (b.note as string) ?? null,
+    priority: (b.priority as string) ?? null,
+    labels: Array.isArray(b.labels) ? (b.labels as unknown[]).map(String) : null,
+    dueDate: (b.dueDate as string) ?? (b.due_date as string) ?? null,
     source: String(b.source ?? "manual"),
     createdBy: (b.createdBy as string) ?? (b.created_by as string) ?? null,
   });

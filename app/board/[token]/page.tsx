@@ -13,6 +13,7 @@ type Task = {
   id: number; title: string; status: string;
   assignee: string | null; topic: string | null; note: string | null; source: string;
   commentCount?: number;
+  priority?: string | null; labels?: string[]; dueDate?: string | null;
 };
 type Comment = { id: number; author: string | null; body: string; createdAt: string };
 type Event = {
@@ -20,7 +21,16 @@ type Event = {
   reverted: boolean; createdAt: string;
 };
 type Column = { key: string; label: string; color: string };
+type Label = { id: string; name: string; color: string };
+type Priority = { key: string; label: string; color: string };
 type Member = { tgId: number; name: string | null; username: string | null; status: string; createdAt: string };
+
+const DEFAULT_PRIORITIES: Priority[] = [
+  { key: "low", label: "کم", color: "#22c55e" },
+  { key: "normal", label: "عادی", color: "#3b82f6" },
+  { key: "high", label: "زیاد", color: "#f59e0b" },
+  { key: "critical", label: "بحرانی", color: "#ef4444" },
+];
 
 const DEFAULT_COLUMNS: Column[] = [
   { key: "todo", label: "برای انجام", color: "#64748b" },
@@ -58,6 +68,12 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentText, setCommentText] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
+  const [labels, setLabels] = useState<Label[]>([]);
+  const [priorities, setPriorities] = useState<Priority[]>(DEFAULT_PRIORITIES);
+  const [openLabels, setOpenLabels] = useState<number | null>(null);
+  const [openDetails, setOpenDetails] = useState<number | null>(null);
+  const [draftLabels, setDraftLabels] = useState<Label[]>([]);
+  const [draftPris, setDraftPris] = useState<Priority[]>(DEFAULT_PRIORITIES);
 
   const authed = status === "approved";
   const sessKey = `board_session_${token}`;
@@ -78,10 +94,13 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     if (!r.ok) return false;
     const j = (await r.json()) as {
       chatTitle: string | null; tasks: Task[]; columns?: Column[]; prompt?: string;
+      labels?: Label[]; priorities?: Priority[];
     };
     setChatTitle(j.chatTitle);
     setTasks(j.tasks);
     if (Array.isArray(j.columns) && j.columns.length) setColumns(j.columns);
+    if (Array.isArray(j.labels)) setLabels(j.labels);
+    if (Array.isArray(j.priorities) && j.priorities.length) setPriorities(j.priorities);
     if (typeof j.prompt === "string") setPrompt(j.prompt);
     return true;
   }, [token, session]);
@@ -267,6 +286,8 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
 
   function openSettings() {
     setDraftCols(columns.map((c) => ({ ...c })));
+    setDraftLabels(labels.map((l) => ({ ...l })));
+    setDraftPris(priorities.map((p) => ({ ...p })));
     setDraftPrompt(prompt);
     setCfgMsg(null);
     setShowSettings(true);
@@ -275,12 +296,14 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     setSavingCfg(true); setCfgMsg(null);
     const r = await fetch(`/api/board/${token}/config`, {
       method: "PUT", headers: headers(),
-      body: JSON.stringify({ columns: draftCols, prompt: draftPrompt }),
+      body: JSON.stringify({ columns: draftCols, labels: draftLabels, priorities: draftPris, prompt: draftPrompt }),
     }).catch(() => null);
     setSavingCfg(false);
     if (r && r.ok) {
-      const j = (await r.json()) as { columns?: Column[]; prompt?: string };
+      const j = (await r.json()) as { columns?: Column[]; labels?: Label[]; priorities?: Priority[]; prompt?: string };
       if (Array.isArray(j.columns)) setColumns(j.columns);
+      if (Array.isArray(j.labels)) setLabels(j.labels);
+      if (Array.isArray(j.priorities)) setPriorities(j.priorities);
       if (typeof j.prompt === "string") setPrompt(j.prompt);
       setCfgMsg("ذخیره شد ✓");
       if (showLog) void loadLog();
@@ -289,6 +312,15 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
       setCfgMsg("خطا در ذخیره");
     }
   }
+
+  // Per-task field helpers (optimistic + PATCH via the existing `patch`).
+  function toggleTaskLabel(t: Task, labelId: string) {
+    const cur = t.labels ?? [];
+    const next = cur.includes(labelId) ? cur.filter((x) => x !== labelId) : [...cur, labelId];
+    void patch(t.id, { labels: next });
+  }
+  const labelById = (id: string) => labels.find((l) => l.id === id);
+  const priorityByKey = (k: string | null | undefined) => (k ? priorities.find((p) => p.key === k) : undefined);
 
   if (!authed) {
     return (
@@ -422,7 +454,34 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                 onChange={(e) => setDraftCols((x) => x.map((y, j) => (j === i ? { ...y, label: e.target.value } : y)))} />
             </div>
           ))}
-          <div style={{ fontSize: 12, color: "#94a3b8", margin: "12px 0 6px" }}>
+          {/* Priorities */}
+          <div style={{ fontSize: 12, color: "#94a3b8", margin: "14px 0 6px" }}>نام و رنگ اولویت‌ها</div>
+          {draftPris.map((p, i) => (
+            <div key={p.key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+              <input type="color" value={p.color} style={{ width: 34, height: 30, background: "transparent", border: "none", cursor: "pointer" }}
+                onChange={(e) => setDraftPris((x) => x.map((y, j) => (j === i ? { ...y, color: e.target.value } : y)))} />
+              <input style={{ ...S.input, marginTop: 0, flex: 1 }} value={p.label} maxLength={30}
+                onChange={(e) => setDraftPris((x) => x.map((y, j) => (j === i ? { ...y, label: e.target.value } : y)))} />
+            </div>
+          ))}
+
+          {/* Labels */}
+          <div style={{ fontSize: 12, color: "#94a3b8", margin: "14px 0 6px" }}>برچسب‌ها (اضافه/حذف/ویرایش)</div>
+          {draftLabels.map((l, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+              <input type="color" value={l.color} style={{ width: 34, height: 30, background: "transparent", border: "none", cursor: "pointer" }}
+                onChange={(e) => setDraftLabels((x) => x.map((y, j) => (j === i ? { ...y, color: e.target.value } : y)))} />
+              <input style={{ ...S.input, marginTop: 0, flex: 1 }} value={l.name} maxLength={40} placeholder="نام برچسب"
+                onChange={(e) => setDraftLabels((x) => x.map((y, j) => (j === i ? { ...y, name: e.target.value } : y)))} />
+              <button style={S.noBtn} onClick={() => setDraftLabels((x) => x.filter((_, j) => j !== i))}>حذف</button>
+            </div>
+          ))}
+          <button style={{ ...S.logBtn, marginTop: 2 }}
+            onClick={() => setDraftLabels((x) => [...x, { id: `l${Date.now().toString(36)}${x.length}`, name: "", color: "#64748b" }])}>
+            + برچسب جدید
+          </button>
+
+          <div style={{ fontSize: 12, color: "#94a3b8", margin: "14px 0 6px" }}>
             پرامپت دسته‌بندی هوش مصنوعی (به تحلیل خودکار تسک‌ها اضافه می‌شود)
           </div>
           <textarea style={{ ...S.input, marginTop: 0, minHeight: 90, resize: "vertical", fontFamily: "inherit" }}
@@ -483,10 +542,69 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                       onBlur={(e) => patch(t.id, { assignee: e.target.value || null })} />
                     {t.source === "ai" && <span style={S.aiTag}>AI</span>}
                   </div>
+
+                  {/* Labels (chips) */}
+                  {(t.labels ?? []).length > 0 && (
+                    <div style={S.chipRow}>
+                      {(t.labels ?? []).map((lid) => {
+                        const l = labelById(lid);
+                        if (!l) return null;
+                        return <span key={lid} style={{ ...S.chip, background: l.color + "33", color: l.color, borderColor: l.color }}>{l.name}</span>;
+                      })}
+                    </div>
+                  )}
+
+                  {/* Priority + due date */}
+                  <div style={S.metaRow}>
+                    <select
+                      style={{ ...S.miniSelect, color: priorityByKey(t.priority)?.color ?? "#94a3b8", borderColor: priorityByKey(t.priority)?.color ?? "#334155" }}
+                      value={t.priority ?? ""}
+                      onChange={(e) => patch(t.id, { priority: e.target.value || null })}
+                    >
+                      <option value="">اولویت…</option>
+                      {priorities.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+                    </select>
+                    <input
+                      type="date"
+                      style={S.dateInput}
+                      value={t.dueDate ?? ""}
+                      onChange={(e) => patch(t.id, { dueDate: e.target.value || null })}
+                    />
+                    <button
+                      style={openLabels === t.id ? S.miniBtnOn : S.miniBtn}
+                      onClick={() => setOpenLabels(openLabels === t.id ? null : t.id)}
+                      title="برچسب"
+                    >🏷</button>
+                  </div>
+
+                  {/* Label picker */}
+                  {openLabels === t.id && (
+                    <div style={S.labelPicker}>
+                      {labels.length === 0 && <span style={S.cmtEmpty}>برچسبی تعریف نشده — از ⚙️ تنظیمات اضافه کن.</span>}
+                      {labels.map((l) => {
+                        const on = (t.labels ?? []).includes(l.id);
+                        return (
+                          <button
+                            key={l.id}
+                            onClick={() => toggleTaskLabel(t, l.id)}
+                            style={{ ...S.pickChip, borderColor: l.color, background: on ? l.color + "33" : "transparent", color: on ? l.color : "#94a3b8" }}
+                          >
+                            {on ? "✓ " : ""}{l.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   <div style={S.cardActions}>
                     <select style={S.select} value={t.status} onChange={(e) => patch(t.id, { status: e.target.value })}>
                       {columns.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                     </select>
+                    <button
+                      style={openDetails === t.id ? S.miniBtnOn : S.miniBtn}
+                      onClick={() => setOpenDetails(openDetails === t.id ? null : t.id)}
+                      title="توضیحات"
+                    >📝</button>
                     <button
                       style={openComments === t.id ? S.cmtBtnOn : S.cmtBtn}
                       onClick={() => toggleComments(t.id)}
@@ -496,6 +614,16 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                     </button>
                     <button style={S.del} onClick={() => del(t.id)} title="حذف">🗑</button>
                   </div>
+
+                  {/* Description */}
+                  {openDetails === t.id && (
+                    <textarea
+                      style={S.noteArea}
+                      placeholder="توضیحات تسک…"
+                      defaultValue={t.note ?? ""}
+                      onBlur={(e) => patch(t.id, { note: e.target.value || null })}
+                    />
+                  )}
                   {openComments === t.id && (
                     <div style={S.cmtPanel}>
                       {loadingComments && <div style={S.cmtEmpty}>در حال بارگذاری…</div>}
@@ -585,4 +713,14 @@ const S: Record<string, React.CSSProperties> = {
   cmtInputRow: { display: "flex", gap: 6, marginTop: 6 },
   cmtInput: { flex: 1, background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 12 },
   cmtSend: { background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, padding: "0 12px", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" },
+  chipRow: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 },
+  chip: { fontSize: 10, border: "1px solid", borderRadius: 999, padding: "1px 8px", fontWeight: 600 },
+  metaRow: { display: "flex", gap: 6, marginTop: 6, alignItems: "center" },
+  miniSelect: { flex: 1, background: "#1e293b", border: "1px solid #334155", borderRadius: 6, padding: "3px 6px", fontSize: 11, fontWeight: 700 },
+  dateInput: { background: "#1e293b", border: "1px solid #334155", color: "#cbd5e1", borderRadius: 6, padding: "2px 6px", fontSize: 11, colorScheme: "dark" as React.CSSProperties["colorScheme"] },
+  miniBtn: { background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", borderRadius: 6, padding: "3px 8px", fontSize: 12, cursor: "pointer" },
+  miniBtnOn: { background: "#3730a3", border: "1px solid #6366f1", color: "#e0e7ff", borderRadius: 6, padding: "3px 8px", fontSize: 12, cursor: "pointer" },
+  labelPicker: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6, padding: 6, background: "#0b1220", borderRadius: 8, border: "1px solid #293548" },
+  pickChip: { fontSize: 11, border: "1px solid", borderRadius: 999, padding: "2px 10px", cursor: "pointer", background: "transparent" },
+  noteArea: { width: "100%", boxSizing: "border-box", marginTop: 8, minHeight: 60, resize: "vertical", background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 8, padding: "8px", fontSize: 12, fontFamily: "inherit" },
 };

@@ -48,6 +48,9 @@ export async function POST(
       assignee: (bf.assignee as string) ?? null,
       topic: (bf.topic as string) ?? null,
       note: (bf.note as string) ?? null,
+      priority: (bf.priority as string) ?? null,
+      labels: Array.isArray(bf.labels) ? (bf.labels as unknown[]).map(String) : null,
+      dueDate: (bf.dueDate as string) ?? (bf.due_date as string) ?? null,
     });
     // If the task was deleted since, re-create it from the snapshot.
     if (!restored) await restoreBoardTask({ chatId: auth!.chatId, before: bf });
