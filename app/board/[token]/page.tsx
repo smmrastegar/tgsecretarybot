@@ -23,7 +23,12 @@ type Event = {
 type Column = { key: string; label: string; color: string };
 type Label = { id: string; name: string; color: string };
 type Priority = { key: string; label: string; color: string };
-type Tab = { id: number; title: string; icon: string | null; body: string; position: number; source: string };
+type TabItem = { id: string; values: string[] };
+type Tab = {
+  id: number; title: string; icon: string | null; position: number; source: string;
+  kind: "filter" | "list"; config: { statuses?: string[]; priorities?: string[]; overdue?: boolean; fields?: string[] };
+  items: TabItem[];
+};
 type Member = { tgId: number; name: string | null; username: string | null; status: string; createdAt: string };
 
 const DEFAULT_PRIORITIES: Priority[] = [
@@ -136,14 +141,60 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
       method: "PATCH", headers: headers(), body: JSON.stringify({ id, ...patch }),
     }).catch(() => {});
   }
-  async function addTab() {
+  async function addTab(kind: "list" | "filter") {
+    const body = kind === "filter"
+      ? { title: "نمای تسک جدید", icon: "🔎", kind: "filter", config: { statuses: ["todo"] } }
+      : { title: "لیست جدید", icon: "🗂", kind: "list", config: { fields: ["عنوان", "توضیح"] }, items: [] };
     const r = await fetch(`/api/board/${token}/tabs`, {
-      method: "POST", headers: headers(), body: JSON.stringify({ title: "تب جدید", icon: "🗂" }),
+      method: "POST", headers: headers(), body: JSON.stringify(body),
     }).catch(() => null);
     if (r && r.ok) {
       const j = (await r.json()) as { tab: Tab };
       if (j.tab) { setTabs((x) => [...x, j.tab]); setActiveTab(j.tab.id); }
     }
+  }
+
+  // List-tab item helpers (optimistic + PATCH the whole items array).
+  function tabFields(tb: Tab): string[] {
+    return Array.isArray(tb.config.fields) && tb.config.fields.length ? tb.config.fields : ["ستون ۱"];
+  }
+  async function saveTabItems(tb: Tab, items: TabItem[]) {
+    setTabLocal(tb.id, { items });
+    await fetch(`/api/board/${token}/tabs`, {
+      method: "PATCH", headers: headers(), body: JSON.stringify({ id: tb.id, items }),
+    }).catch(() => {});
+  }
+  function addTabRow(tb: Tab) {
+    const n = tabFields(tb).length;
+    const item: TabItem = { id: `r${Date.now().toString(36)}${tb.items.length}`, values: Array(n).fill("") };
+    void saveTabItems(tb, [...tb.items, item]);
+  }
+  function setTabCell(tb: Tab, itemId: string, col: number, val: string) {
+    setTabLocal(tb.id, {
+      items: tb.items.map((it) => (it.id === itemId ? { ...it, values: it.values.map((v, i) => (i === col ? val : v)) } : it)),
+    });
+  }
+  function commitTabItems(tb: Tab) {
+    const cur = tabs.find((t) => t.id === tb.id);
+    if (cur) void saveTabItems(cur, cur.items);
+  }
+  function deleteTabRow(tb: Tab, itemId: string) {
+    void saveTabItems(tb, tb.items.filter((it) => it.id !== itemId));
+  }
+  function moveTabRow(tb: Tab, itemId: string, dir: -1 | 1) {
+    const idx = tb.items.findIndex((it) => it.id === itemId);
+    const j = idx + dir;
+    if (idx < 0 || j < 0 || j >= tb.items.length) return;
+    const next = [...tb.items];
+    const tmp = next[idx]!; next[idx] = next[j]!; next[j] = tmp;
+    void saveTabItems(tb, next);
+  }
+  // Owner: edit the column set (fields) of a list tab.
+  async function saveTabConfig(tb: Tab, config: Tab["config"]) {
+    setTabLocal(tb.id, { config });
+    await fetch(`/api/board/${token}/tabs`, {
+      method: "PATCH", headers: headers(), body: JSON.stringify({ id: tb.id, config }),
+    }).catch(() => {});
   }
   async function deleteTab(id: number) {
     setTabs((x) => x.filter((t) => t.id !== id));
@@ -374,6 +425,112 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   const labelById = (id: string) => labels.find((l) => l.id === id);
   const priorityByKey = (k: string | null | undefined) => (k ? priorities.find((p) => p.key === k) : undefined);
 
+  // Live tasks matching a filter-tab's config (interrelated with kanban).
+  function tasksForFilter(cfg: Tab["config"]): Task[] {
+    const today = new Date().toISOString().slice(0, 10);
+    const st = cfg.statuses ?? [];
+    const pr = cfg.priorities ?? [];
+    return tasks.filter((t) => {
+      const byStatus = st.length ? st.includes(t.status) : false;
+      const byPriority = pr.length ? !!t.priority && pr.includes(t.priority) : false;
+      const byOverdue = cfg.overdue ? !!t.dueDate && t.dueDate < today && t.status !== "done" : false;
+      // A task matches if ANY enabled criterion matches; if no criteria
+      // are set, show nothing (owner must configure the view).
+      if (!st.length && !pr.length && !cfg.overdue) return false;
+      return byStatus || byPriority || byOverdue;
+    });
+  }
+
+  // The task card, shared by the kanban and by filter tabs so a task
+  // edited in a filter view updates everywhere.
+  const renderCard = (t: Task) => (
+    <div key={t.id} style={S.card}>
+      <input style={S.cardTitle} value={t.title}
+        onChange={(e) => setTasks((x) => x.map((y) => (y.id === t.id ? { ...y, title: e.target.value } : y)))}
+        onBlur={(e) => patch(t.id, { title: e.target.value })} />
+      <div style={S.cardRow}>
+        <input style={S.assignee} placeholder="مسئول…" value={t.assignee ?? ""}
+          onChange={(e) => setTasks((x) => x.map((y) => (y.id === t.id ? { ...y, assignee: e.target.value } : y)))}
+          onBlur={(e) => patch(t.id, { assignee: e.target.value || null })} />
+        {t.source === "ai" && <span style={S.aiTag}>AI</span>}
+      </div>
+      {(t.labels ?? []).length > 0 && (
+        <div style={S.chipRow}>
+          {(t.labels ?? []).map((lid) => {
+            const l = labelById(lid);
+            if (!l) return null;
+            return <span key={lid} style={{ ...S.chip, background: l.color + "33", color: l.color, borderColor: l.color }}>{l.name}</span>;
+          })}
+        </div>
+      )}
+      <div style={S.metaRow}>
+        <select
+          style={{ ...S.miniSelect, color: priorityByKey(t.priority)?.color ?? "#94a3b8", borderColor: priorityByKey(t.priority)?.color ?? "#334155" }}
+          value={t.priority ?? ""}
+          onChange={(e) => patch(t.id, { priority: e.target.value || null })}
+        >
+          <option value="">اولویت…</option>
+          {priorities.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+        </select>
+        <input type="date" style={S.dateInput} value={t.dueDate ?? ""}
+          onChange={(e) => patch(t.id, { dueDate: e.target.value || null })} />
+        <button style={openLabels === t.id ? S.miniBtnOn : S.miniBtn}
+          onClick={() => setOpenLabels(openLabels === t.id ? null : t.id)} title="برچسب">🏷</button>
+      </div>
+      {openLabels === t.id && (
+        <div style={S.labelPicker}>
+          {labels.length === 0 && <span style={S.cmtEmpty}>برچسبی تعریف نشده — از ⚙️ تنظیمات اضافه کن.</span>}
+          {labels.map((l) => {
+            const on = (t.labels ?? []).includes(l.id);
+            return (
+              <button key={l.id} onClick={() => toggleTaskLabel(t, l.id)}
+                style={{ ...S.pickChip, borderColor: l.color, background: on ? l.color + "33" : "transparent", color: on ? l.color : "#94a3b8" }}>
+                {on ? "✓ " : ""}{l.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div style={S.cardActions}>
+        <select style={S.select} value={t.status} onChange={(e) => patch(t.id, { status: e.target.value })}>
+          {columns.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
+        <button style={openDetails === t.id ? S.miniBtnOn : S.miniBtn}
+          onClick={() => setOpenDetails(openDetails === t.id ? null : t.id)} title="توضیحات">📝</button>
+        <button style={openComments === t.id ? S.cmtBtnOn : S.cmtBtn}
+          onClick={() => toggleComments(t.id)} title="کامنت‌ها">
+          💬{(t.commentCount ?? 0) > 0 ? ` ${t.commentCount}` : ""}
+        </button>
+        <button style={S.del} onClick={() => del(t.id)} title="حذف">🗑</button>
+      </div>
+      {openDetails === t.id && (
+        <textarea style={S.noteArea} placeholder="توضیحات تسک…" defaultValue={t.note ?? ""}
+          onBlur={(e) => patch(t.id, { note: e.target.value || null })} />
+      )}
+      {openComments === t.id && (
+        <div style={S.cmtPanel}>
+          {loadingComments && <div style={S.cmtEmpty}>در حال بارگذاری…</div>}
+          {!loadingComments && comments.length === 0 && <div style={S.cmtEmpty}>هنوز کامنتی نیست.</div>}
+          {comments.map((c) => (
+            <div key={c.id} style={S.cmtRow}>
+              <div style={S.cmtHead}>
+                <b>{c.author || "?"}</b>
+                <span style={S.time}>{new Date(c.createdAt).toLocaleString("fa-IR")}</span>
+              </div>
+              <div style={S.cmtBody}>{c.body}</div>
+            </div>
+          ))}
+          <div style={S.cmtInputRow}>
+            <input style={S.cmtInput} placeholder="کامنت بنویس و Enter بزن…" value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addComment(t.id)} />
+            <button style={S.cmtSend} onClick={() => addComment(t.id)}>ارسال</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   if (!authed) {
     return (
       <div dir="rtl" style={S.loginWrap}>
@@ -576,13 +733,15 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
             {tb.icon ? `${tb.icon} ` : ""}{tb.title}
           </button>
         ))}
-        {isOwner && <button style={S.tabAdd} onClick={addTab} title="تب جدید">＋</button>}
+        {isOwner && <button style={S.tabAdd} onClick={() => addTab("list")} title="تب لیست جدید">＋ لیست</button>}
+        {isOwner && <button style={S.tabAdd} onClick={() => addTab("filter")} title="تب نمای تسک جدید">＋ نما</button>}
       </div>
 
       {activeTab !== 0 ? (
         (() => {
           const tb = tabs.find((t) => t.id === activeTab);
           if (!tb) return <div style={S.empty}>—</div>;
+          const fields = tabFields(tb);
           return (
             <div style={S.tabPanel}>
               <div style={S.tabPanelHead}>
@@ -602,14 +761,107 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                   <span style={{ fontWeight: 700, fontSize: 15 }}>{tb.icon} {tb.title}</span>
                 )}
               </div>
-              <textarea
-                style={S.tabBody}
-                placeholder="محتوای این تب را بنویس…"
-                value={tb.body}
-                onChange={(e) => setTabLocal(tb.id, { body: e.target.value })}
-                onBlur={(e) => saveTab(tb.id, { body: e.target.value })}
-              />
-              <div style={S.tabHint}>تغییرات با خارج‌شدن از کادر ذخیره می‌شود.</div>
+
+              {tb.kind === "filter" ? (
+                <>
+                  {isOwner && (
+                    <div style={S.filterCfg}>
+                      <span style={S.filterCfgLabel}>نمایش تسک‌هایی که:</span>
+                      {columns.map((c) => {
+                        const on = (tb.config.statuses ?? []).includes(c.key);
+                        return (
+                          <button key={c.key}
+                            style={{ ...S.pickChip, borderColor: c.color, background: on ? c.color + "33" : "transparent", color: on ? c.color : "#94a3b8" }}
+                            onClick={() => {
+                              const cur = tb.config.statuses ?? [];
+                              const next = on ? cur.filter((x) => x !== c.key) : [...cur, c.key];
+                              void saveTabConfig(tb, { ...tb.config, statuses: next });
+                            }}>
+                            {on ? "✓ " : ""}{c.label}
+                          </button>
+                        );
+                      })}
+                      <button
+                        style={{ ...S.pickChip, borderColor: "#ef4444", background: tb.config.overdue ? "#ef444433" : "transparent", color: tb.config.overdue ? "#ef4444" : "#94a3b8" }}
+                        onClick={() => void saveTabConfig(tb, { ...tb.config, overdue: !tb.config.overdue })}>
+                        {tb.config.overdue ? "✓ " : ""}سررسیدگذشته
+                      </button>
+                      <button
+                        style={{ ...S.pickChip, borderColor: "#ef4444", background: (tb.config.priorities ?? []).includes("critical") ? "#ef444433" : "transparent", color: (tb.config.priorities ?? []).includes("critical") ? "#ef4444" : "#94a3b8" }}
+                        onClick={() => {
+                          const cur = tb.config.priorities ?? [];
+                          const on = cur.includes("critical");
+                          void saveTabConfig(tb, { ...tb.config, priorities: on ? cur.filter((x) => x !== "critical") : [...cur, "critical"] });
+                        }}>
+                        {(tb.config.priorities ?? []).includes("critical") ? "✓ " : ""}اولویت بحرانی
+                      </button>
+                    </div>
+                  )}
+                  {(() => {
+                    const ft = tasksForFilter(tb.config);
+                    return (
+                      <>
+                        <div style={S.tabHint}>{ft.length} تسک — این‌ها همون تسک‌های واقعی برد هستن؛ هر تغییری اینجا همه‌جا اعمال می‌شه.</div>
+                        <div style={S.filterGrid}>
+                          {ft.map((t) => renderCard(t))}
+                          {ft.length === 0 && <div style={S.empty}>تسکی با این شرایط نیست.</div>}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </>
+              ) : (
+                <>
+                  {isOwner && (
+                    <div style={S.filterCfg}>
+                      <span style={S.filterCfgLabel}>ستون‌ها:</span>
+                      {fields.map((f, i) => (
+                        <input key={i} style={S.colNameInput} value={f}
+                          onChange={(e) => setTabLocal(tb.id, { config: { ...tb.config, fields: fields.map((x, j) => (j === i ? e.target.value : x)) } })}
+                          onBlur={() => saveTabConfig(tb, tb.config)} />
+                      ))}
+                      <button style={S.miniBtn} onClick={() => saveTabConfig(tb, { ...tb.config, fields: [...fields, `ستون ${fields.length + 1}`] })}>+ ستون</button>
+                      {fields.length > 1 && (
+                        <button style={S.noBtn} onClick={() => saveTabConfig(tb, { ...tb.config, fields: fields.slice(0, -1) })}>− ستون</button>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={S.listTable}>
+                      <thead>
+                        <tr>
+                          {fields.map((f, i) => <th key={i} style={S.listTh}>{f}</th>)}
+                          <th style={S.listTh}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tb.items.map((it) => (
+                          <tr key={it.id}>
+                            {fields.map((_, ci) => (
+                              <td key={ci} style={S.listTd}>
+                                <input style={S.listCell} value={it.values[ci] ?? ""}
+                                  onChange={(e) => setTabCell(tb, it.id, ci, e.target.value)}
+                                  onBlur={() => commitTabItems(tb)} />
+                              </td>
+                            ))}
+                            <td style={S.listTd}>
+                              <span style={{ display: "flex", gap: 4 }}>
+                                <button style={S.miniBtn} onClick={() => moveTabRow(tb, it.id, -1)}>▲</button>
+                                <button style={S.miniBtn} onClick={() => moveTabRow(tb, it.id, 1)}>▼</button>
+                                <button style={S.del} onClick={() => deleteTabRow(tb, it.id)} title="حذف">🗑</button>
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                        {tb.items.length === 0 && (
+                          <tr><td colSpan={fields.length + 1} style={{ ...S.listTd, textAlign: "center", color: "#475569" }}>هنوز ردیفی نیست.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button style={{ ...S.addBtn, marginTop: 10 }} onClick={() => addTabRow(tb)}>+ ردیف جدید</button>
+                </>
+              )}
             </div>
           );
         })()
@@ -630,126 +882,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                 <span style={{ color: col.color, fontWeight: 700 }}>{col.label}</span>
                 <span style={S.count}>{list.length}</span>
               </div>
-              {list.map((t) => (
-                <div key={t.id} style={S.card}>
-                  <input style={S.cardTitle} value={t.title}
-                    onChange={(e) => setTasks((x) => x.map((y) => (y.id === t.id ? { ...y, title: e.target.value } : y)))}
-                    onBlur={(e) => patch(t.id, { title: e.target.value })} />
-                  <div style={S.cardRow}>
-                    <input style={S.assignee} placeholder="مسئول…" value={t.assignee ?? ""}
-                      onChange={(e) => setTasks((x) => x.map((y) => (y.id === t.id ? { ...y, assignee: e.target.value } : y)))}
-                      onBlur={(e) => patch(t.id, { assignee: e.target.value || null })} />
-                    {t.source === "ai" && <span style={S.aiTag}>AI</span>}
-                  </div>
-
-                  {/* Labels (chips) */}
-                  {(t.labels ?? []).length > 0 && (
-                    <div style={S.chipRow}>
-                      {(t.labels ?? []).map((lid) => {
-                        const l = labelById(lid);
-                        if (!l) return null;
-                        return <span key={lid} style={{ ...S.chip, background: l.color + "33", color: l.color, borderColor: l.color }}>{l.name}</span>;
-                      })}
-                    </div>
-                  )}
-
-                  {/* Priority + due date */}
-                  <div style={S.metaRow}>
-                    <select
-                      style={{ ...S.miniSelect, color: priorityByKey(t.priority)?.color ?? "#94a3b8", borderColor: priorityByKey(t.priority)?.color ?? "#334155" }}
-                      value={t.priority ?? ""}
-                      onChange={(e) => patch(t.id, { priority: e.target.value || null })}
-                    >
-                      <option value="">اولویت…</option>
-                      {priorities.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-                    </select>
-                    <input
-                      type="date"
-                      style={S.dateInput}
-                      value={t.dueDate ?? ""}
-                      onChange={(e) => patch(t.id, { dueDate: e.target.value || null })}
-                    />
-                    <button
-                      style={openLabels === t.id ? S.miniBtnOn : S.miniBtn}
-                      onClick={() => setOpenLabels(openLabels === t.id ? null : t.id)}
-                      title="برچسب"
-                    >🏷</button>
-                  </div>
-
-                  {/* Label picker */}
-                  {openLabels === t.id && (
-                    <div style={S.labelPicker}>
-                      {labels.length === 0 && <span style={S.cmtEmpty}>برچسبی تعریف نشده — از ⚙️ تنظیمات اضافه کن.</span>}
-                      {labels.map((l) => {
-                        const on = (t.labels ?? []).includes(l.id);
-                        return (
-                          <button
-                            key={l.id}
-                            onClick={() => toggleTaskLabel(t, l.id)}
-                            style={{ ...S.pickChip, borderColor: l.color, background: on ? l.color + "33" : "transparent", color: on ? l.color : "#94a3b8" }}
-                          >
-                            {on ? "✓ " : ""}{l.name}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  <div style={S.cardActions}>
-                    <select style={S.select} value={t.status} onChange={(e) => patch(t.id, { status: e.target.value })}>
-                      {columns.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-                    </select>
-                    <button
-                      style={openDetails === t.id ? S.miniBtnOn : S.miniBtn}
-                      onClick={() => setOpenDetails(openDetails === t.id ? null : t.id)}
-                      title="توضیحات"
-                    >📝</button>
-                    <button
-                      style={openComments === t.id ? S.cmtBtnOn : S.cmtBtn}
-                      onClick={() => toggleComments(t.id)}
-                      title="کامنت‌ها"
-                    >
-                      💬{(t.commentCount ?? 0) > 0 ? ` ${t.commentCount}` : ""}
-                    </button>
-                    <button style={S.del} onClick={() => del(t.id)} title="حذف">🗑</button>
-                  </div>
-
-                  {/* Description */}
-                  {openDetails === t.id && (
-                    <textarea
-                      style={S.noteArea}
-                      placeholder="توضیحات تسک…"
-                      defaultValue={t.note ?? ""}
-                      onBlur={(e) => patch(t.id, { note: e.target.value || null })}
-                    />
-                  )}
-                  {openComments === t.id && (
-                    <div style={S.cmtPanel}>
-                      {loadingComments && <div style={S.cmtEmpty}>در حال بارگذاری…</div>}
-                      {!loadingComments && comments.length === 0 && <div style={S.cmtEmpty}>هنوز کامنتی نیست.</div>}
-                      {comments.map((c) => (
-                        <div key={c.id} style={S.cmtRow}>
-                          <div style={S.cmtHead}>
-                            <b>{c.author || "?"}</b>
-                            <span style={S.time}>{new Date(c.createdAt).toLocaleString("fa-IR")}</span>
-                          </div>
-                          <div style={S.cmtBody}>{c.body}</div>
-                        </div>
-                      ))}
-                      <div style={S.cmtInputRow}>
-                        <input
-                          style={S.cmtInput}
-                          placeholder="کامنت بنویس و Enter بزن…"
-                          value={commentText}
-                          onChange={(e) => setCommentText(e.target.value)}
-                          onKeyDown={(e) => e.key === "Enter" && addComment(t.id)}
-                        />
-                        <button style={S.cmtSend} onClick={() => addComment(t.id)}>ارسال</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+              {list.map((t) => renderCard(t))}
               {list.length === 0 && <div style={S.empty}>—</div>}
             </div>
           );
@@ -832,6 +965,13 @@ const S: Record<string, React.CSSProperties> = {
   tabPanelHead: { display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" },
   tabIconInput: { width: 44, textAlign: "center", background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 8, padding: "6px", fontSize: 15 },
   tabTitleInput: { flex: 1, minWidth: 160, background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 8, padding: "6px 10px", fontSize: 15, fontWeight: 700 },
-  tabBody: { width: "100%", boxSizing: "border-box", minHeight: 320, resize: "vertical", background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 10, padding: 12, fontSize: 13, lineHeight: 1.9, fontFamily: "inherit" },
-  tabHint: { fontSize: 11, color: "#64748b", marginTop: 6 },
+  tabHint: { fontSize: 11, color: "#64748b", margin: "6px 0 10px" },
+  filterCfg: { display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginBottom: 10, padding: 8, background: "#0b1220", borderRadius: 8, border: "1px solid #293548" },
+  filterCfgLabel: { fontSize: 12, color: "#94a3b8" },
+  filterGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10, alignItems: "start" },
+  colNameInput: { width: 110, background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, padding: "4px 8px", fontSize: 12 },
+  listTable: { width: "100%", borderCollapse: "collapse", fontSize: 13 },
+  listTh: { textAlign: "right", color: "#94a3b8", fontWeight: 700, fontSize: 12, padding: "6px 8px", borderBottom: "1px solid #334155", whiteSpace: "nowrap" },
+  listTd: { padding: "4px 6px", borderBottom: "1px solid #1e293b", verticalAlign: "top" },
+  listCell: { width: "100%", minWidth: 120, boxSizing: "border-box", background: "#0f172a", border: "1px solid #293548", color: "#e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: "inherit" },
 };

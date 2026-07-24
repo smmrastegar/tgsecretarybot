@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-07-24.board-tabs";
+const SCHEMA_VERSION = "2026-07-24.board-tabs-structured";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1658,11 +1658,17 @@ export async function ensureSchema(
         title      TEXT NOT NULL,
         icon       TEXT,
         body       TEXT,
+        kind       TEXT NOT NULL DEFAULT 'list',
+        config     JSONB,
+        items      JSONB,
         position   INTEGER NOT NULL DEFAULT 0,
         source     TEXT NOT NULL DEFAULT 'manual',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
+    await q`ALTER TABLE board_tabs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'list'`;
+    await q`ALTER TABLE board_tabs ADD COLUMN IF NOT EXISTS config JSONB`;
+    await q`ALTER TABLE board_tabs ADD COLUMN IF NOT EXISTS items JSONB`;
     await q`CREATE INDEX IF NOT EXISTS board_tabs_chat_idx ON board_tabs (chat_id, position)`;
     await q`
       CREATE TABLE IF NOT EXISTS board_tabs_seeded (
@@ -5223,21 +5229,63 @@ export async function addTaskComment(args: {
 }
 
 // --- Board content tabs ---
+// kind = "filter": a live view of the real board tasks, filtered by
+//   config {statuses[], priorities[], overdue}. Fully interrelated with
+//   the kanban — editing a task here edits it everywhere.
+// kind = "list": a structured, manageable list. config {fields:[]} names
+//   the columns; items is an array of { id, values: string[] } rows.
+export type TabFilterConfig = { statuses?: string[]; priorities?: string[]; overdue?: boolean };
+export type TabListConfig = { fields?: string[] };
+export type TabListItem = { id: string; values: string[] };
 export type BoardTab = {
   id: number;
   title: string;
   icon: string | null;
-  body: string;
+  kind: string;
+  config: Record<string, unknown>;
+  items: TabListItem[];
   position: number;
   source: string;
 };
+
+function asObj(v: unknown): Record<string, unknown> {
+  if (v == null) return {};
+  if (typeof v === "string") {
+    try {
+      return JSON.parse(v) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  return typeof v === "object" ? (v as Record<string, unknown>) : {};
+}
+function asItems(v: unknown): TabListItem[] {
+  let arr: unknown = v;
+  if (typeof v === "string") {
+    try {
+      arr = JSON.parse(v);
+    } catch {
+      arr = [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr.map((it, i) => {
+    const o = (it ?? {}) as Record<string, unknown>;
+    return {
+      id: String(o.id ?? `r${i}`),
+      values: Array.isArray(o.values) ? (o.values as unknown[]).map((x) => String(x ?? "")) : [],
+    };
+  });
+}
 
 function rowToBoardTab(r: Record<string, unknown>): BoardTab {
   return {
     id: Number(r.id),
     title: String(r.title ?? ""),
     icon: (r.icon as string) ?? null,
-    body: String(r.body ?? ""),
+    kind: String(r.kind ?? "list"),
+    config: asObj(r.config),
+    items: asItems(r.items),
     position: Number(r.position ?? 0),
     source: String(r.source ?? "manual"),
   };
@@ -5263,14 +5311,19 @@ export async function createBoardTab(args: {
   chatId: number;
   title: string;
   icon?: string | null;
-  body?: string | null;
+  kind?: string;
+  config?: Record<string, unknown> | null;
+  items?: TabListItem[] | null;
   source?: string;
 }): Promise<BoardTab | null> {
   if (!hasDb()) return null;
   await ensureSchema();
+  const configJson = args.config != null ? JSON.stringify(args.config) : null;
+  const itemsJson = args.items != null ? JSON.stringify(args.items) : null;
   const rows = await sql()`
-    INSERT INTO board_tabs (chat_id, title, icon, body, source, position)
-    VALUES (${args.chatId}, ${args.title.slice(0, 80)}, ${args.icon ?? null}, ${args.body ?? ""},
+    INSERT INTO board_tabs (chat_id, title, icon, kind, config, items, source, position)
+    VALUES (${args.chatId}, ${args.title.slice(0, 80)}, ${args.icon ?? null},
+            ${args.kind ?? "list"}, ${configJson}::jsonb, ${itemsJson}::jsonb,
             ${args.source ?? "manual"},
             COALESCE((SELECT MAX(position) + 1 FROM board_tabs WHERE chat_id = ${args.chatId}), 0))
     RETURNING *`;
@@ -5282,16 +5335,20 @@ export async function updateBoardTab(args: {
   chatId: number;
   title?: string;
   icon?: string | null;
-  body?: string;
+  config?: Record<string, unknown>;
+  items?: TabListItem[];
   position?: number;
 }): Promise<BoardTab | null> {
   if (!hasDb()) return null;
   await ensureSchema();
+  const configJson = args.config !== undefined ? JSON.stringify(args.config) : null;
+  const itemsJson = args.items !== undefined ? JSON.stringify(args.items) : null;
   const rows = await sql()`
     UPDATE board_tabs SET
       title    = COALESCE(${args.title ?? null}, title),
       icon     = CASE WHEN ${args.icon !== undefined} THEN ${args.icon ?? null} ELSE icon END,
-      body     = COALESCE(${args.body ?? null}, body),
+      config   = CASE WHEN ${args.config !== undefined} THEN ${configJson}::jsonb ELSE config END,
+      items    = CASE WHEN ${args.items !== undefined} THEN ${itemsJson}::jsonb ELSE items END,
       position = COALESCE(${args.position ?? null}, position),
       updated_at = NOW()
     WHERE id = ${args.id} AND chat_id = ${args.chatId}
@@ -5307,7 +5364,9 @@ export async function deleteBoardTab(args: { id: number; chatId: number }): Prom
   return rows.length > 0;
 }
 
-// Seed the default content tabs once from the latest AI analysis.
+// Seed the default structured tabs once from the latest AI analysis.
+// Task-type sections become LIVE filter tabs over the real board tasks;
+// the rest become editable structured lists.
 export async function seedBoardTabsOnce(chatId: number): Promise<number> {
   if (!hasDb()) return 0;
   await ensureSchema();
@@ -5320,46 +5379,65 @@ export async function seedBoardTabsOnce(chatId: number): Promise<number> {
   const a = (cached[0] as { analysis?: unknown })?.analysis as
     | Record<string, unknown>
     | undefined;
-
   const asArr = (v: unknown): Record<string, unknown>[] =>
     Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
   const s = (v: unknown): string => (typeof v === "string" ? v : "");
-  const lines = (items: string[]): string => items.filter(Boolean).join("\n");
+  let rid = 0;
+  const row = (...values: string[]): TabListItem => ({ id: `s${rid++}`, values });
 
-  const critical = asArr(a?.criticalForInbox).map(
-    (c) => `• ${s(c.title)}${s(c.details) ? `\n  ${s(c.details)}` : ""}${asArr(c.people).length ? `\n  👥 ${(c.people as string[]).join("، ")}` : ""}`,
+  // List: key points
+  const highlightItems = asArr(a?.highlights).map((h) =>
+    row(s(h.title), s(h.kind), s(h.details)),
   );
-  const highlights = asArr(a?.highlights).map(
-    (h) => `• [${s(h.kind)}] ${s(h.title)}${s(h.details) ? ` — ${s(h.details)}` : ""}`,
+  // List: topic breakdown
+  const topicItems = asArr(a?.topicBreakdown).map((t) =>
+    row(
+      s(t.topicName),
+      s(t.summary),
+      asArr(t.keyPoints as unknown).length ? (t.keyPoints as string[]).join("؛ ") : "",
+    ),
   );
-  const topics = asArr(a?.topicBreakdown).map((t) => {
-    const kp = asArr(t.keyPoints as unknown).length
-      ? (t.keyPoints as string[]).map((k) => `   - ${k}`).join("\n")
-      : "";
-    return `## ${s(t.topicName)} (${Number(t.messageCount ?? 0)} پیام، ${Number(t.openTasks ?? 0)} تسک باز)\n${s(t.summary)}${kp ? `\n${kp}` : ""}`;
-  });
-  const tasks = asArr(a?.tasks);
-  const overdue = tasks
-    .filter((t) => t.isOverdue === true || s(t.status) === "stalled")
-    .map((t) => `• ${s(t.title)}${t.owner ? ` — ${s(t.owner)}` : ""} (${s(t.status) || "?"})`);
-  const active = tasks
-    .filter((t) => s(t.status) === "announced" || s(t.status) === "in_progress")
-    .map((t) => `• ${s(t.title)}${t.owner ? ` — ${s(t.owner)}` : ""}`);
-  const people = asArr(a?.people).map(
-    (p) => `• ${s(p.name)} — ${s(p.roleLabel)}${s(p.roleDescription) ? `: ${s(p.roleDescription)}` : ""} (اعلام: ${Number(p.tasksAnnounced ?? 0)}، انجام: ${Number(p.tasksCompleted ?? 0)})`,
+  // List: critical items
+  const criticalItems = asArr(a?.criticalForInbox).map((c) =>
+    row(s(c.title), s(c.kind), asArr(c.people).length ? (c.people as string[]).join("، ") : "", s(c.details)),
+  );
+  // List: people & roles
+  const peopleItems = asArr(a?.people).map((p) =>
+    row(
+      s(p.name),
+      s(p.roleLabel),
+      s(p.roleDescription),
+      `${Number(p.tasksAnnounced ?? 0)}/${Number(p.tasksCompleted ?? 0)}`,
+    ),
   );
 
-  const defs: Array<{ title: string; icon: string; body: string }> = [
-    { title: "موارد بحرانی — نیاز به رسیدگی مستقیم شما", icon: "🆘", body: lines(critical) },
-    { title: "نکات کلیدی", icon: "🚨", body: lines(highlights) },
-    { title: "تفکیک بر اساس تاپیک", icon: "🧵", body: topics.join("\n\n") },
-    { title: "کارهای معوق و متوقف", icon: "⏰", body: lines(overdue) },
-    { title: "کارهای فعال", icon: "📋", body: lines(active) },
-    { title: "افراد و نقش‌ها", icon: "👥", body: lines(people) },
+  const defs: Array<Parameters<typeof createBoardTab>[0]> = [
+    {
+      chatId, source: "ai", icon: "🆘", title: "موارد بحرانی — نیاز به رسیدگی مستقیم شما",
+      kind: "list", config: { fields: ["عنوان", "نوع", "افراد", "توضیح"] }, items: criticalItems,
+    },
+    {
+      chatId, source: "ai", icon: "🚨", title: "نکات کلیدی",
+      kind: "list", config: { fields: ["نکته", "نوع", "توضیح"] }, items: highlightItems,
+    },
+    {
+      chatId, source: "ai", icon: "🧵", title: "تفکیک بر اساس تاپیک",
+      kind: "list", config: { fields: ["تاپیک", "خلاصه", "نکات کلیدی"] }, items: topicItems,
+    },
+    {
+      chatId, source: "ai", icon: "⏰", title: "کارهای معوق و متوقف",
+      kind: "filter", config: { statuses: ["blocked"], overdue: true }, items: [],
+    },
+    {
+      chatId, source: "ai", icon: "📋", title: "کارهای فعال",
+      kind: "filter", config: { statuses: ["doing"] }, items: [],
+    },
+    {
+      chatId, source: "ai", icon: "👥", title: "افراد و نقش‌ها",
+      kind: "list", config: { fields: ["نام", "نقش", "توضیح", "اعلام/انجام"] }, items: peopleItems,
+    },
   ];
-  for (const d of defs) {
-    await createBoardTab({ chatId, title: d.title, icon: d.icon, body: d.body, source: "ai" });
-  }
+  for (const d of defs) await createBoardTab(d);
   await sql()`INSERT INTO board_tabs_seeded (chat_id) VALUES (${chatId}) ON CONFLICT DO NOTHING`;
   return defs.length;
 }

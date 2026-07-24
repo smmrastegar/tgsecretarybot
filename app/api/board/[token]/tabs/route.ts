@@ -35,14 +35,20 @@ export async function POST(
   const { auth, error } = await authBoard(req, token);
   if (error) return error;
   if (!auth!.isOwner) return NextResponse.json({ error: "owner only" }, { status: 403 });
-  const b = (await req.json().catch(() => ({}))) as { title?: string; icon?: string; body?: string };
+  const b = (await req.json().catch(() => ({}))) as {
+    title?: string; icon?: string; kind?: string;
+    config?: Record<string, unknown>; items?: Array<{ id: string; values: string[] }>;
+  };
   const title = (b.title ?? "").toString().trim();
   if (!title) return NextResponse.json({ error: "title required" }, { status: 400 });
+  const kind = b.kind === "filter" ? "filter" : "list";
   const tab = await createBoardTab({
     chatId: auth!.chatId,
     title,
     icon: (b.icon ?? "").toString().slice(0, 8) || null,
-    body: (b.body ?? "").toString(),
+    kind,
+    config: b.config ?? (kind === "list" ? { fields: ["ستون ۱"] } : {}),
+    items: kind === "list" ? (Array.isArray(b.items) ? b.items : []) : [],
     source: "manual",
   });
   if (tab) {
@@ -65,28 +71,38 @@ export async function PATCH(
   if (error) return error;
   if (!auth!.actor) return NextResponse.json({ error: "login required" }, { status: 401 });
   const b = (await req.json().catch(() => ({}))) as {
-    id?: number; title?: string; icon?: string | null; body?: string; position?: number;
+    id?: number; title?: string; icon?: string | null; position?: number;
+    config?: Record<string, unknown>; items?: Array<{ id: string; values: string[] }>;
   };
   const id = Number(b.id);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "id required" }, { status: 400 });
   const before = await getBoardTab(id, auth!.chatId);
   if (!before) return NextResponse.json({ error: "not found" }, { status: 404 });
-  // Reordering is a management action → owner only.
-  if (b.position !== undefined && !auth!.isOwner) {
+  // Structural changes (reorder, rename, columns/filter config) are
+  // management → owner only. Editing list ITEMS is collaborative.
+  if ((b.position !== undefined || b.config !== undefined || b.title !== undefined) && !auth!.isOwner) {
     return NextResponse.json({ error: "owner only" }, { status: 403 });
   }
+  const items = Array.isArray(b.items)
+    ? b.items.slice(0, 500).map((it, i) => ({
+        id: String(it?.id ?? `r${i}`),
+        values: Array.isArray(it?.values) ? it.values.map((v) => String(v ?? "").slice(0, 2000)) : [],
+      }))
+    : undefined;
   const tab = await updateBoardTab({
     id,
     chatId: auth!.chatId,
     title: b.title,
     icon: "icon" in b ? (b.icon ? String(b.icon).slice(0, 8) : null) : undefined,
-    body: b.body,
+    config: b.config,
+    items,
     position: b.position,
   });
   if (!tab) return NextResponse.json({ error: "not found" }, { status: 404 });
   const parts: string[] = [];
   if (b.title && b.title !== before.title) parts.push("عنوان");
-  if ("body" in b && b.body !== before.body) parts.push("محتوا");
+  if (items !== undefined) parts.push("محتوا");
+  if (b.config !== undefined) parts.push("تنظیمات");
   if (b.position !== undefined) parts.push("ترتیب");
   await logBoardEvent({
     chatId: auth!.chatId, taskId: null, action: "tab",
