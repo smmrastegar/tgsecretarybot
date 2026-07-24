@@ -26,7 +26,8 @@ type Priority = { key: string; label: string; color: string };
 type TabItem = { id: string; values: string[] };
 type Tab = {
   id: number; title: string; icon: string | null; position: number; source: string;
-  kind: "filter" | "list"; config: { statuses?: string[]; priorities?: string[]; overdue?: boolean; fields?: string[] };
+  kind: "filter" | "list" | "group";
+  config: { statuses?: string[]; priorities?: string[]; overdue?: boolean; fields?: string[]; by?: string; roles?: boolean };
   items: TabItem[];
 };
 type Member = { tgId: number; name: string | null; username: string | null; status: string; createdAt: string };
@@ -82,6 +83,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   const [draftPris, setDraftPris] = useState<Priority[]>(DEFAULT_PRIORITIES);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTab, setActiveTab] = useState<number>(0); // 0 = kanban
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const authed = status === "approved";
   const sessKey = `board_session_${token}`;
@@ -141,9 +143,11 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
       method: "PATCH", headers: headers(), body: JSON.stringify({ id, ...patch }),
     }).catch(() => {});
   }
-  async function addTab(kind: "list" | "filter") {
+  async function addTab(kind: "list" | "filter" | "group") {
     const body = kind === "filter"
       ? { title: "نمای تسک جدید", icon: "🔎", kind: "filter", config: { statuses: ["todo"] } }
+      : kind === "group"
+      ? { title: "گروه‌بندی جدید", icon: "🗂", kind: "group", config: { by: "assignee" } }
       : { title: "لیست جدید", icon: "🗂", kind: "list", config: { fields: ["عنوان", "توضیح"] }, items: [] };
     const r = await fetch(`/api/board/${token}/tabs`, {
       method: "POST", headers: headers(), body: JSON.stringify(body),
@@ -233,7 +237,9 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   }
   // Count shown on each tab pill (matches the reference "(63)" style).
   function tabCount(tb: Tab): number {
-    return tb.kind === "filter" ? tasksForFilter(tb.config).length : tb.items.length;
+    if (tb.kind === "filter") return tasksForFilter(tb.config).length;
+    if (tb.kind === "group") return groupTasks(tb.config.by ?? "assignee").length;
+    return tb.items.length;
   }
   async function deleteTab(id: number) {
     setTabs((x) => x.filter((t) => t.id !== id));
@@ -480,6 +486,47 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     });
   }
 
+  // Live grouping of the real tasks by one of their own fields — this is
+  // the real interconnection: set a task's assignee/topic/priority and it
+  // flows straight into these views.
+  const NONE = "__none__";
+  function groupTasks(by: string): { key: string; label: string; tasks: Task[] }[] {
+    const map = new Map<string, Task[]>();
+    const push = (k: string, t: Task) => { const a = map.get(k) ?? []; a.push(t); map.set(k, a); };
+    for (const t of tasks) {
+      if (by === "assignee") push((t.assignee ?? "").trim() || NONE, t);
+      else if (by === "topic") push((t.topic ?? "").trim() || NONE, t);
+      else if (by === "priority") push(t.priority || NONE, t);
+      else if (by === "status") push(t.status, t);
+      else if (by === "label") {
+        const ls = t.labels ?? [];
+        if (ls.length === 0) push(NONE, t);
+        else for (const l of ls) push(`label:${l}`, t);
+      } else push(NONE, t);
+    }
+    const label = (k: string): string => {
+      if (k === NONE) return by === "assignee" ? "بدون مسئول" : by === "topic" ? "بدون تاپیک" : by === "priority" ? "بدون اولویت" : "سایر";
+      if (by === "priority") return priorityByKey(k)?.label ?? k;
+      if (by === "status") return columns.find((c) => c.key === k)?.label ?? k;
+      if (by === "label") return labelById(k.slice(6))?.name ?? k.slice(6);
+      return k;
+    };
+    return [...map.entries()]
+      .map(([key, ts]) => ({ key, label: label(key), tasks: ts }))
+      .sort((a, b) => (a.key === NONE ? 1 : b.key === NONE ? -1 : b.tasks.length - a.tasks.length));
+  }
+  // Role overlay for the group-by-assignee ("people") view — persisted
+  // in the tab's items, keyed by person name.
+  function getRole(tb: Tab, name: string): string {
+    return tb.items.find((it) => it.id === name)?.values[0] ?? "";
+  }
+  function setRole(tb: Tab, name: string, role: string) {
+    const items = tb.items.some((it) => it.id === name)
+      ? tb.items.map((it) => (it.id === name ? { ...it, values: [role] } : it))
+      : [...tb.items, { id: name, values: [role] }];
+    void saveTabItems(tb, items);
+  }
+
   // The task card, shared by the kanban and by filter tabs so a task
   // edited in a filter view updates everywhere.
   const renderCard = (t: Task) => (
@@ -491,6 +538,9 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
         <input style={S.assignee} placeholder="مسئول…" value={t.assignee ?? ""}
           onChange={(e) => setTasks((x) => x.map((y) => (y.id === t.id ? { ...y, assignee: e.target.value } : y)))}
           onBlur={(e) => patch(t.id, { assignee: e.target.value || null })} />
+        <input style={S.assignee} placeholder="تاپیک…" value={t.topic ?? ""}
+          onChange={(e) => setTasks((x) => x.map((y) => (y.id === t.id ? { ...y, topic: e.target.value } : y)))}
+          onBlur={(e) => patch(t.id, { topic: e.target.value || null })} />
         {t.source === "ai" && <span style={S.aiTag}>AI</span>}
       </div>
       {(t.labels ?? []).length > 0 && (
@@ -775,8 +825,9 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
             <span style={activeTab === tb.id ? S.tabCountOn : S.tabCount}>{tabCount(tb)}</span>
           </button>
         ))}
-        {isOwner && <button style={S.tabAdd} onClick={() => addTab("list")} title="تب لیست جدید">＋ لیست</button>}
+        {isOwner && <button style={S.tabAdd} onClick={() => addTab("group")} title="تب گروه‌بندی جدید">＋ گروه</button>}
         {isOwner && <button style={S.tabAdd} onClick={() => addTab("filter")} title="تب نمای تسک جدید">＋ نما</button>}
+        {isOwner && <button style={S.tabAdd} onClick={() => addTab("list")} title="تب لیست جدید">＋ لیست</button>}
       </div>
 
       {activeTab !== 0 ? (
@@ -854,6 +905,66 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                           {ft.map((t) => renderCard(t))}
                           {ft.length === 0 && <div style={S.empty}>تسکی با این شرایط نیست.</div>}
                         </div>
+                      </>
+                    );
+                  })()}
+                </>
+              ) : tb.kind === "group" ? (
+                <>
+                  {isOwner && (
+                    <div style={S.filterCfg}>
+                      <span style={S.filterCfgLabel}>گروه‌بندی بر اساس:</span>
+                      {([["assignee", "مسئول"], ["topic", "تاپیک"], ["priority", "اولویت"], ["label", "برچسب"], ["status", "وضعیت"]] as const).map(([k, lbl]) => {
+                        const on = (tb.config.by ?? "assignee") === k;
+                        return (
+                          <button key={k}
+                            style={{ ...S.pickChip, borderColor: on ? "#6366f1" : "#334155", background: on ? "#6366f133" : "transparent", color: on ? "#a5b4fc" : "#94a3b8" }}
+                            onClick={() => void saveTabConfig(tb, { ...tb.config, by: k })}>
+                            {on ? "✓ " : ""}{lbl}
+                          </button>
+                        );
+                      })}
+                      {(tb.config.by ?? "assignee") === "assignee" && (
+                        <button
+                          style={{ ...S.pickChip, borderColor: "#22c55e", background: tb.config.roles ? "#22c55e33" : "transparent", color: tb.config.roles ? "#22c55e" : "#94a3b8" }}
+                          onClick={() => void saveTabConfig(tb, { ...tb.config, roles: !tb.config.roles })}>
+                          {tb.config.roles ? "✓ " : ""}نقش‌ها
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {(() => {
+                    const by = tb.config.by ?? "assignee";
+                    const groups = groupTasks(by);
+                    return (
+                      <>
+                        <div style={S.tabHint}>{groups.length} گروه · {tasks.length} تسک — زنده از روی تسک‌های واقعی. با تغییر مسئول/تاپیک/اولویتِ هر تسک، این‌جا هم عوض می‌شه.</div>
+                        {groups.map((g) => {
+                          const ck = `${tb.id}:${g.key}`;
+                          const isCol = collapsed.has(ck);
+                          return (
+                            <div key={g.key} style={S.groupBox}>
+                              <div style={S.groupHead}>
+                                <button style={S.groupToggle}
+                                  onClick={() => setCollapsed((s) => { const n = new Set(s); n.has(ck) ? n.delete(ck) : n.add(ck); return n; })}>
+                                  {isCol ? "▸" : "▾"} <b>{g.label}</b>
+                                  <span style={S.count}>{g.tasks.length}</span>
+                                </button>
+                                {by === "assignee" && tb.config.roles && g.key !== NONE && (
+                                  <input style={S.roleInput} placeholder="نقش…"
+                                    defaultValue={getRole(tb, g.key)}
+                                    onBlur={(e) => setRole(tb, g.key, e.target.value)} />
+                                )}
+                              </div>
+                              {!isCol && (
+                                <div style={S.filterGrid}>
+                                  {g.tasks.map((t) => renderCard(t))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {groups.length === 0 && <div style={S.empty}>تسکی نیست.</div>}
                       </>
                     );
                   })()}
@@ -1024,4 +1135,8 @@ const S: Record<string, React.CSSProperties> = {
   listTh: { textAlign: "right", color: "#94a3b8", fontWeight: 700, fontSize: 12, padding: "6px 8px", borderBottom: "1px solid #334155", whiteSpace: "nowrap" },
   listTd: { padding: "4px 6px", borderBottom: "1px solid #1e293b", verticalAlign: "top" },
   listCell: { width: "100%", minWidth: 120, boxSizing: "border-box", background: "#0f172a", border: "1px solid #293548", color: "#e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: "inherit" },
+  groupBox: { marginBottom: 14, background: "#0b1220", borderRadius: 10, border: "1px solid #293548", padding: 10 },
+  groupHead: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 },
+  groupToggle: { display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", color: "#e2e8f0", fontSize: 14, cursor: "pointer", padding: 0 },
+  roleInput: { background: "#1e293b", border: "1px solid #334155", color: "#cbd5e1", borderRadius: 6, padding: "4px 8px", fontSize: 12, minWidth: 140 },
 };

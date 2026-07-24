@@ -41,13 +41,15 @@ export async function POST(
   };
   const title = (b.title ?? "").toString().trim();
   if (!title) return NextResponse.json({ error: "title required" }, { status: 400 });
-  const kind = b.kind === "filter" ? "filter" : "list";
+  const kind = b.kind === "filter" ? "filter" : b.kind === "group" ? "group" : "list";
+  const defaultConfig =
+    kind === "list" ? { fields: ["ستون ۱"] } : kind === "group" ? { by: "assignee" } : {};
   const tab = await createBoardTab({
     chatId: auth!.chatId,
     title,
     icon: (b.icon ?? "").toString().slice(0, 8) || null,
     kind,
-    config: b.config ?? (kind === "list" ? { fields: ["ستون ۱"] } : {}),
+    config: b.config ?? defaultConfig,
     items: kind === "list" ? (Array.isArray(b.items) ? b.items : []) : [],
     source: "manual",
   });
