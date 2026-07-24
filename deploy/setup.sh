@@ -18,9 +18,9 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
 fi
 if [[ -z "$DOMAIN" ]]; then echo "usage: setup.sh YOUR-DOMAIN"; exit 1; fi
 
-echo "==> [1/6] Node 20 (NodeSource)"
-if ! command -v node >/dev/null || [[ "$(node -v | cut -dv -f2 | cut -d. -f1)" -lt 18 ]]; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+echo "==> [1/6] Node 24 (NodeSource) — matches package.json engines (24.x)"
+if ! command -v node >/dev/null || [[ "$(node -v | cut -dv -f2 | cut -d. -f1)" -lt 22 ]]; then
+  curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
   apt-get install -y nodejs
 fi
 node -v
