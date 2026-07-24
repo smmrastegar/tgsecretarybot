@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-07-24.group-board-events";
+const SCHEMA_VERSION = "2026-07-24.board-members";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1614,6 +1614,22 @@ export async function ensureSchema(
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await q`CREATE INDEX IF NOT EXISTS group_board_events_chat_idx ON group_board_events (chat_id, created_at DESC)`;
+    // Per-board membership: who logged in with Telegram and whether the
+    // owner approved them for THIS board. No shared code — access is a
+    // verified Telegram identity plus an explicit owner approval.
+    await q`
+      CREATE TABLE IF NOT EXISTS board_members (
+        chat_id     BIGINT NOT NULL,
+        tg_id       BIGINT NOT NULL,
+        tg_username TEXT,
+        tg_name     TEXT,
+        status      TEXT NOT NULL DEFAULT 'pending',
+        decided_by  TEXT,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        decided_at  TIMESTAMPTZ,
+        PRIMARY KEY (chat_id, tg_id)
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS board_members_chat_idx ON board_members (chat_id, status)`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
     // recent push so the admin can see drift.
@@ -4891,6 +4907,102 @@ export async function getBoardPromptForChat(
   } catch {
     return hit?.prompt ?? null;
   }
+}
+
+// --- Board membership (Telegram-login + owner approval) ---
+export type BoardMemberStatus = "pending" | "approved" | "rejected";
+export type BoardMember = {
+  chatId: number;
+  tgId: number;
+  username: string | null;
+  name: string | null;
+  status: BoardMemberStatus;
+  decidedBy: string | null;
+  createdAt: Date;
+  decidedAt: Date | null;
+};
+
+function rowToBoardMember(r: Record<string, unknown>): BoardMember {
+  return {
+    chatId: Number(r.chat_id),
+    tgId: Number(r.tg_id),
+    username: (r.tg_username as string) ?? null,
+    name: (r.tg_name as string) ?? null,
+    status: (String(r.status ?? "pending") as BoardMemberStatus),
+    decidedBy: (r.decided_by as string) ?? null,
+    createdAt: r.created_at as Date,
+    decidedAt: (r.decided_at as Date) ?? null,
+  };
+}
+
+// Record (or refresh) a Telegram-verified access request for a board.
+// Keeps an existing decision; only refreshes the display name/username.
+// Returns the current member row plus whether this created a new
+// pending request (so the caller knows to ping the owner).
+export async function requestBoardAccess(args: {
+  chatId: number;
+  tgId: number;
+  username?: string | null;
+  name?: string | null;
+  autoApprove?: boolean;
+}): Promise<{ member: BoardMember; isNew: boolean }> {
+  await ensureSchema();
+  const existing = await sql()`
+    SELECT * FROM board_members WHERE chat_id = ${args.chatId} AND tg_id = ${args.tgId} LIMIT 1`;
+  if (existing[0]) {
+    const rows = await sql()`
+      UPDATE board_members SET
+        tg_username = ${args.username ?? null},
+        tg_name = ${args.name ?? null}
+      WHERE chat_id = ${args.chatId} AND tg_id = ${args.tgId}
+      RETURNING *`;
+    return { member: rowToBoardMember(rows[0]!), isNew: false };
+  }
+  const status: BoardMemberStatus = args.autoApprove ? "approved" : "pending";
+  const rows = await sql()`
+    INSERT INTO board_members (chat_id, tg_id, tg_username, tg_name, status, decided_by, decided_at)
+    VALUES (${args.chatId}, ${args.tgId}, ${args.username ?? null}, ${args.name ?? null},
+            ${status}, ${args.autoApprove ? "owner" : null},
+            ${args.autoApprove ? new Date() : null})
+    RETURNING *`;
+  return { member: rowToBoardMember(rows[0]!), isNew: !args.autoApprove };
+}
+
+export async function getBoardMember(
+  chatId: number,
+  tgId: number,
+): Promise<BoardMember | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM board_members WHERE chat_id = ${chatId} AND tg_id = ${tgId} LIMIT 1`;
+  return rows[0] ? rowToBoardMember(rows[0]) : null;
+}
+
+export async function setBoardMemberStatus(args: {
+  chatId: number;
+  tgId: number;
+  status: BoardMemberStatus;
+  decidedBy: string;
+}): Promise<BoardMember | null> {
+  await ensureSchema();
+  const rows = await sql()`
+    UPDATE board_members SET
+      status = ${args.status},
+      decided_by = ${args.decidedBy},
+      decided_at = NOW()
+    WHERE chat_id = ${args.chatId} AND tg_id = ${args.tgId}
+    RETURNING *`;
+  return rows[0] ? rowToBoardMember(rows[0]) : null;
+}
+
+export async function listBoardMembers(chatId: number): Promise<BoardMember[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM board_members WHERE chat_id = ${chatId}
+     ORDER BY (status = 'pending') DESC, created_at DESC`;
+  return rows.map(rowToBoardMember);
 }
 
 function rowToBoardTask(r: Record<string, unknown>): BoardTask {

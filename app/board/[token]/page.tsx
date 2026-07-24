@@ -1,6 +1,13 @@
 "use client";
 
+import Script from "next/script";
 import { use, useCallback, useEffect, useState } from "react";
+
+declare global {
+  interface Window {
+    onBoardTelegramAuth?: (user: Record<string, unknown>) => void;
+  }
+}
 
 type Task = {
   id: number; title: string; status: string;
@@ -19,11 +26,16 @@ const DEFAULT_COLUMNS: Column[] = [
   { key: "done", label: "انجام‌شده", color: "#22c55e" },
 ];
 
+type Status = "loading" | "anonymous" | "pending" | "rejected" | "none" | "approved";
+
+const BOT_USERNAME = process.env.NEXT_PUBLIC_BOT_USERNAME ?? "smmrchatbot";
+
 export default function BoardPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
-  const [authed, setAuthed] = useState(false);
+  const [status, setStatus] = useState<Status>("loading");
+  const [session, setSession] = useState<string>("");
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
+  const [isOwner, setIsOwner] = useState(false);
   const [loginErr, setLoginErr] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
@@ -38,17 +50,19 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   const [savingCfg, setSavingCfg] = useState(false);
   const [cfgMsg, setCfgMsg] = useState<string | null>(null);
 
+  const authed = status === "approved";
+  const sessKey = `board_session_${token}`;
+
   const headers = useCallback(
     (): Record<string, string> => ({
       "Content-Type": "application/json",
-      "X-Board-Code": code,
-      "X-Board-Actor": name,
+      "X-Board-Session": session,
     }),
-    [code, name],
+    [session],
   );
 
   const loadTasks = useCallback(async () => {
-    const r = await fetch(`/api/board/${token}`, { headers: headers() });
+    const r = await fetch(`/api/board/${token}`, { headers: { "X-Board-Session": session } });
     if (!r.ok) return false;
     const j = (await r.json()) as {
       chatTitle: string | null; tasks: Task[]; columns?: Column[]; prompt?: string;
@@ -58,42 +72,74 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     if (Array.isArray(j.columns) && j.columns.length) setColumns(j.columns);
     if (typeof j.prompt === "string") setPrompt(j.prompt);
     return true;
-  }, [token, headers]);
+  }, [token, session]);
 
   const loadLog = useCallback(async () => {
     const r = await fetch(`/api/board/${token}/log`, { headers: headers() });
     if (r.ok) setEvents(((await r.json()) as { events: Event[] }).events);
   }, [token, headers]);
 
-  // Auto-login from a saved session.
-  useEffect(() => {
-    const n = localStorage.getItem("board_name") ?? "";
-    const c = localStorage.getItem(`board_code_${token}`) ?? "";
-    if (n && c) { setName(n); setCode(c); }
-  }, [token]);
-  useEffect(() => {
-    if (!authed && name && code && localStorage.getItem("board_tried") !== "1") {
-      // try silent login once creds are hydrated
-      void (async () => {
-        const r = await fetch(`/api/board/${token}`, { headers: { "X-Board-Code": code, "X-Board-Actor": name } });
-        if (r.ok) { setAuthed(true); await loadTasks(); }
-      })();
-    }
-  }, [authed, name, code, token, loadTasks]);
+  // Check the saved session's current access status.
+  const refreshStatus = useCallback(
+    async (sess: string) => {
+      const r = await fetch(`/api/board/${token}/me`, { headers: { "X-Board-Session": sess } });
+      if (!r.ok) { setStatus("anonymous"); return; }
+      const j = (await r.json()) as { status: Status; name?: string; isOwner?: boolean; chatTitle?: string | null };
+      if (j.chatTitle) setChatTitle(j.chatTitle);
+      if (j.name) setName(j.name);
+      setIsOwner(!!j.isOwner);
+      setStatus(j.status);
+      if (j.status === "approved") await loadTasks();
+    },
+    [token, loadTasks],
+  );
 
-  async function login() {
-    setLoginErr(null);
-    if (!name.trim() || !code.trim()) { setLoginErr("نام و رمز لازم است"); return; }
-    const r = await fetch(`/api/board/${token}`, {
-      headers: { "X-Board-Code": code.trim(), "X-Board-Actor": name.trim() },
-    });
-    if (r.status === 401) { setLoginErr("رمز اشتباه است"); return; }
-    if (r.status === 403) { setLoginErr("رمز برد هنوز تنظیم نشده — به مدیر بگو"); return; }
-    if (!r.ok) { setLoginErr("خطا"); return; }
-    localStorage.setItem("board_name", name.trim());
-    localStorage.setItem(`board_code_${token}`, code.trim());
-    setAuthed(true);
-    await loadTasks();
+  // Hydrate a saved session on mount and resolve its status.
+  useEffect(() => {
+    const s = localStorage.getItem(sessKey) ?? "";
+    if (s) { setSession(s); void refreshStatus(s); }
+    else setStatus("anonymous");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  // While waiting for approval, poll status every 5s.
+  useEffect(() => {
+    if (status !== "pending" || !session) return;
+    const id = setInterval(() => void refreshStatus(session), 5000);
+    return () => clearInterval(id);
+  }, [status, session, refreshStatus]);
+
+  // Telegram Login Widget callback.
+  useEffect(() => {
+    window.onBoardTelegramAuth = async (user: Record<string, unknown>) => {
+      setLoginErr(null);
+      setStatus("loading");
+      try {
+        const r = await fetch(`/api/board/${token}/tg-login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(user),
+        });
+        const j = (await r.json().catch(() => ({}))) as {
+          session?: string; status?: Status; name?: string; isOwner?: boolean; error?: string;
+        };
+        if (!r.ok || !j.session) { setLoginErr(j.error ?? "ورود ناموفق بود"); setStatus("anonymous"); return; }
+        localStorage.setItem(sessKey, j.session);
+        setSession(j.session);
+        if (j.name) setName(j.name);
+        setIsOwner(!!j.isOwner);
+        setStatus(j.status ?? "pending");
+        if (j.status === "approved") await loadTasks();
+      } catch {
+        setLoginErr("خطای شبکه"); setStatus("anonymous");
+      }
+    };
+    return () => { delete window.onBoardTelegramAuth; };
+  }, [token, sessKey, loadTasks]);
+
+  function logout() {
+    localStorage.removeItem(sessKey);
+    setSession(""); setStatus("anonymous"); setTasks([]);
   }
 
   async function addTask() {
@@ -145,12 +191,56 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     return (
       <div dir="rtl" style={S.loginWrap}>
         <div style={S.loginBox}>
-          <h1 style={S.h1}>📋 ورود به برد تسک</h1>
-          <p style={S.sub}>برای دیدن یا ویرایش، با نام و رمز وارد شو.</p>
-          <input style={S.input} placeholder="نام شما" value={name} onChange={(e) => setName(e.target.value)} />
-          <input style={S.input} placeholder="رمز برد" type="password" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && login()} />
-          <button style={S.loginBtn} onClick={login}>ورود</button>
-          {loginErr && <div style={S.err}>{loginErr}</div>}
+          <h1 style={S.h1}>📋 برد تسک</h1>
+
+          {status === "loading" && <p style={S.sub}>در حال بررسی…</p>}
+
+          {status === "anonymous" && (
+            <>
+              <p style={S.sub}>برای دسترسی، با تلگرام وارد شو. بعد از تایید مدیر، می‌تونی برد رو ببینی و ویرایش کنی.</p>
+              <div style={{ marginTop: 18, display: "flex", justifyContent: "center" }}>
+                <Script
+                  src="https://telegram.org/js/telegram-widget.js?22"
+                  strategy="afterInteractive"
+                  data-telegram-login={BOT_USERNAME}
+                  data-size="large"
+                  data-onauth="onBoardTelegramAuth(user)"
+                  data-request-access="write"
+                  data-userpic="false"
+                />
+              </div>
+              {loginErr && <div style={S.err}>{loginErr}</div>}
+            </>
+          )}
+
+          {status === "pending" && (
+            <>
+              <p style={S.sub}>سلام {name} 👋</p>
+              <div style={S.waitBox}>
+                ⏳ درخواستت ثبت شد. منتظر تایید مدیر باش — این صفحه خودش به‌روز می‌شه.
+              </div>
+              <button style={S.logBtnWide} onClick={() => void refreshStatus(session)}>بررسی مجدد</button>
+              <button style={S.linkBtn} onClick={logout}>خروج</button>
+            </>
+          )}
+
+          {(status === "rejected") && (
+            <>
+              <div style={{ ...S.waitBox, borderColor: "#ef4444", color: "#fca5a5" }}>
+                ❌ دسترسیت رد شده. اگر فکر می‌کنی اشتباهه، به مدیر بگو.
+              </div>
+              <button style={S.linkBtn} onClick={logout}>ورود با اکانت دیگر</button>
+            </>
+          )}
+
+          {status === "none" && (
+            <>
+              <div style={S.waitBox}>
+                این اکانت هنوز برای این برد ثبت نشده. دوباره وارد شو تا درخواست بره برای مدیر.
+              </div>
+              <button style={S.linkBtn} onClick={logout}>ورود دوباره</button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -164,10 +254,11 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
           <p style={S.sub}>{tasks.length} تسک · واردشده به‌عنوان «{name}»</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button style={S.logBtn} onClick={openSettings}>⚙️ تنظیمات</button>
+          {isOwner && <button style={S.logBtn} onClick={openSettings}>⚙️ تنظیمات</button>}
           <button style={S.logBtn} onClick={() => { const n = !showLog; setShowLog(n); if (n) void loadLog(); }}>
             {showLog ? "بستن لاگ" : "🕘 لاگ و بازگردانی"}
           </button>
+          <button style={S.logBtn} onClick={logout}>خروج</button>
         </div>
       </div>
 
@@ -266,6 +357,9 @@ const S: Record<string, React.CSSProperties> = {
   loginBox: { background: "#1e293b", padding: 28, borderRadius: 14, width: 320, color: "#e2e8f0", boxShadow: "0 10px 40px rgba(0,0,0,.4)" },
   input: { width: "100%", boxSizing: "border-box", background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 8, padding: "10px 12px", fontSize: 14, marginTop: 10 },
   loginBtn: { width: "100%", marginTop: 14, background: "#6366f1", color: "#fff", border: "none", borderRadius: 8, padding: "10px", fontSize: 15, fontWeight: 700, cursor: "pointer" },
+  waitBox: { marginTop: 16, background: "#0f172a", border: "1px solid #334155", borderRadius: 10, padding: "14px 16px", fontSize: 14, lineHeight: 1.8, color: "#cbd5e1" },
+  logBtnWide: { width: "100%", marginTop: 14, background: "#334155", color: "#e2e8f0", border: "none", borderRadius: 8, padding: "10px", fontSize: 14, cursor: "pointer" },
+  linkBtn: { width: "100%", marginTop: 10, background: "transparent", color: "#94a3b8", border: "none", fontSize: 13, cursor: "pointer" },
   err: { color: "#f87171", fontSize: 13, marginTop: 10, textAlign: "center" },
   page: { fontFamily: "system-ui, Tahoma, sans-serif", background: "#0f172a", minHeight: "100vh", color: "#e2e8f0", padding: 16 },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 },

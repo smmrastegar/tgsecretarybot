@@ -43,6 +43,8 @@ import {
   getSenderStats,
   hasDb,
   isAllowedUser,
+  setBoardMemberStatus,
+  getBoardMember,
   lastOwnerMessageAt,
   findThreadByInboxMessage,
   getPrimarySummaryInbox,
@@ -834,6 +836,76 @@ async function handleSmsCallback(
 // AI summary as a reply in the channel; Reply posts a force-reply
 // prompt the operator answers to send the email reply — all without
 // leaving Telegram.
+// Owner taps ✅/❌ on a board access request. Only an allowed (owner)
+// account may decide. Approve/reject the member, refresh the card, and
+// best-effort DM the requester with the outcome.
+async function handleBoardAccessCallback(
+  ctx: Context,
+  data: string,
+  bot: Bot,
+): Promise<void> {
+  const parts = data.split(":"); // board:ok|no:<chatId>:<tgId>
+  const action = parts[1];
+  const boardChatId = Number(parts[2]);
+  const tgId = Number(parts[3]);
+  const from = ctx.from;
+  if (
+    !from ||
+    (action !== "ok" && action !== "no") ||
+    !Number.isFinite(boardChatId) ||
+    !Number.isFinite(tgId)
+  ) {
+    await ctx.answerCallbackQuery().catch(() => {});
+    return;
+  }
+  const isOwner = await isAllowedUser(from.id).catch(() => false);
+  if (!isOwner) {
+    await ctx
+      .answerCallbackQuery({ text: "فقط مدیر می‌تواند تایید کند." })
+      .catch(() => {});
+    return;
+  }
+  const member = await getBoardMember(boardChatId, tgId).catch(() => null);
+  if (!member) {
+    await ctx.answerCallbackQuery({ text: "درخواست پیدا نشد." }).catch(() => {});
+    return;
+  }
+  const status = action === "ok" ? "approved" : "rejected";
+  const decidedBy =
+    [from.first_name, from.last_name].filter(Boolean).join(" ").trim() ||
+    (from.username ? `@${from.username}` : String(from.id));
+  await setBoardMemberStatus({
+    chatId: boardChatId,
+    tgId,
+    status,
+    decidedBy,
+  }).catch(() => null);
+
+  const who = member.name || (member.username ? `@${member.username}` : String(tgId));
+  await ctx
+    .answerCallbackQuery({ text: action === "ok" ? "تایید شد ✓" : "رد شد" })
+    .catch(() => {});
+  const cardChat = ctx.chat?.id;
+  const cardMsgId = ctx.callbackQuery?.message?.message_id;
+  if (cardChat != null && cardMsgId != null) {
+    await ctx.api
+      .editMessageText(
+        cardChat,
+        cardMsgId,
+        `🔐 درخواست دسترسی به برد — ${who}\n\n` +
+          (action === "ok" ? "✅ تایید شد" : "❌ رد شد") +
+          ` (توسط ${decidedBy})`,
+      )
+      .catch(() => {});
+  }
+  // Best-effort: tell the requester (only works if they've started the bot).
+  if (action === "ok") {
+    await bot.api
+      .sendMessage(tgId, "✅ دسترسی‌ات به برد تسک تایید شد. حالا صفحه را باز کن.")
+      .catch(() => {});
+  }
+}
+
 async function handleEmailCallback(
   ctx: Context,
   data: string,
@@ -1979,6 +2051,12 @@ function buildBot(): Bot {
     if (data.startsWith("em:")) {
       await handleEmailCallback(ctx, data, bot).catch((err) =>
         console.error("[email_callback] failed:", err),
+      );
+      return;
+    }
+    if (data.startsWith("board:")) {
+      await handleBoardAccessCallback(ctx, data, bot).catch((err) =>
+        console.error("[board_callback] failed:", err),
       );
       return;
     }
