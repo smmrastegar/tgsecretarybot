@@ -23,6 +23,7 @@ type Event = {
 type Column = { key: string; label: string; color: string };
 type Label = { id: string; name: string; color: string };
 type Priority = { key: string; label: string; color: string };
+type Tab = { id: number; title: string; icon: string | null; body: string; position: number; source: string };
 type Member = { tgId: number; name: string | null; username: string | null; status: string; createdAt: string };
 
 const DEFAULT_PRIORITIES: Priority[] = [
@@ -74,6 +75,8 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   const [openDetails, setOpenDetails] = useState<number | null>(null);
   const [draftLabels, setDraftLabels] = useState<Label[]>([]);
   const [draftPris, setDraftPris] = useState<Priority[]>(DEFAULT_PRIORITIES);
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeTab, setActiveTab] = useState<number>(0); // 0 = kanban
 
   const authed = status === "approved";
   const sessKey = `board_session_${token}`;
@@ -116,6 +119,50 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     const r = await fetch(`/api/board/${token}/members`, { headers: { "X-Board-Session": s } });
     if (r.ok) setMembers(((await r.json()) as { members: Member[] }).members);
   }, [token, session]);
+
+  const loadTabs = useCallback(async (sess?: string) => {
+    const s = sess ?? session;
+    if (!s) return;
+    const r = await fetch(`/api/board/${token}/tabs`, { headers: { "X-Board-Session": s } });
+    if (r.ok) setTabs(((await r.json()) as { tabs: Tab[] }).tabs);
+  }, [token, session]);
+
+  function setTabLocal(id: number, patch: Partial<Tab>) {
+    setTabs((x) => x.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  }
+  async function saveTab(id: number, patch: Partial<Tab>) {
+    setTabLocal(id, patch);
+    await fetch(`/api/board/${token}/tabs`, {
+      method: "PATCH", headers: headers(), body: JSON.stringify({ id, ...patch }),
+    }).catch(() => {});
+  }
+  async function addTab() {
+    const r = await fetch(`/api/board/${token}/tabs`, {
+      method: "POST", headers: headers(), body: JSON.stringify({ title: "تب جدید", icon: "🗂" }),
+    }).catch(() => null);
+    if (r && r.ok) {
+      const j = (await r.json()) as { tab: Tab };
+      if (j.tab) { setTabs((x) => [...x, j.tab]); setActiveTab(j.tab.id); }
+    }
+  }
+  async function deleteTab(id: number) {
+    setTabs((x) => x.filter((t) => t.id !== id));
+    setActiveTab(0);
+    await fetch(`/api/board/${token}/tabs?id=${id}`, { method: "DELETE", headers: headers() }).catch(() => {});
+  }
+  async function moveTab(id: number, dir: -1 | 1) {
+    const ordered = [...tabs].sort((a, b) => a.position - b.position);
+    const idx = ordered.findIndex((t) => t.id === id);
+    const swap = idx + dir;
+    if (idx < 0 || swap < 0 || swap >= ordered.length) return;
+    const a = ordered[idx], b = ordered[swap];
+    if (!a || !b) return;
+    setTabs((x) => x.map((t) => (t.id === a.id ? { ...t, position: b.position } : t.id === b.id ? { ...t, position: a.position } : t)));
+    await Promise.all([
+      fetch(`/api/board/${token}/tabs`, { method: "PATCH", headers: headers(), body: JSON.stringify({ id: a.id, position: b.position }) }).catch(() => {}),
+      fetch(`/api/board/${token}/tabs`, { method: "PATCH", headers: headers(), body: JSON.stringify({ id: b.id, position: a.position }) }).catch(() => {}),
+    ]);
+  }
 
   async function decide(tgId: number, action: "approve" | "reject") {
     setMembers((x) => x.map((m) => (m.tgId === tgId ? { ...m, status: action === "approve" ? "approved" : "rejected" } : m)));
@@ -213,6 +260,11 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     const id = setInterval(() => void loadMembers(session), 15000);
     return () => clearInterval(id);
   }, [authed, isOwner, session, loadMembers]);
+
+  // Load content tabs once approved.
+  useEffect(() => {
+    if (authed && session) void loadTabs(session);
+  }, [authed, session, loadTabs]);
 
   // Telegram Login Widget callback.
   useEffect(() => {
@@ -516,6 +568,53 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
         </div>
       )}
 
+      {/* Tab bar */}
+      <div style={S.tabBar}>
+        <button style={activeTab === 0 ? S.tabOn : S.tab} onClick={() => setActiveTab(0)}>📋 برد تسک</button>
+        {[...tabs].sort((a, b) => a.position - b.position).map((tb) => (
+          <button key={tb.id} style={activeTab === tb.id ? S.tabOn : S.tab} onClick={() => setActiveTab(tb.id)}>
+            {tb.icon ? `${tb.icon} ` : ""}{tb.title}
+          </button>
+        ))}
+        {isOwner && <button style={S.tabAdd} onClick={addTab} title="تب جدید">＋</button>}
+      </div>
+
+      {activeTab !== 0 ? (
+        (() => {
+          const tb = tabs.find((t) => t.id === activeTab);
+          if (!tb) return <div style={S.empty}>—</div>;
+          return (
+            <div style={S.tabPanel}>
+              <div style={S.tabPanelHead}>
+                {isOwner ? (
+                  <>
+                    <input style={S.tabIconInput} value={tb.icon ?? ""} maxLength={4}
+                      onChange={(e) => setTabLocal(tb.id, { icon: e.target.value })}
+                      onBlur={(e) => saveTab(tb.id, { icon: e.target.value })} />
+                    <input style={S.tabTitleInput} value={tb.title}
+                      onChange={(e) => setTabLocal(tb.id, { title: e.target.value })}
+                      onBlur={(e) => saveTab(tb.id, { title: e.target.value })} />
+                    <button style={S.miniBtn} onClick={() => moveTab(tb.id, -1)} title="جابه‌جایی">▶</button>
+                    <button style={S.miniBtn} onClick={() => moveTab(tb.id, 1)} title="جابه‌جایی">◀</button>
+                    <button style={S.noBtn} onClick={() => { if (confirm("این تب حذف شود؟")) void deleteTab(tb.id); }}>حذف تب</button>
+                  </>
+                ) : (
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>{tb.icon} {tb.title}</span>
+                )}
+              </div>
+              <textarea
+                style={S.tabBody}
+                placeholder="محتوای این تب را بنویس…"
+                value={tb.body}
+                onChange={(e) => setTabLocal(tb.id, { body: e.target.value })}
+                onBlur={(e) => saveTab(tb.id, { body: e.target.value })}
+              />
+              <div style={S.tabHint}>تغییرات با خارج‌شدن از کادر ذخیره می‌شود.</div>
+            </div>
+          );
+        })()
+      ) : (
+      <>
       <div style={S.addRow}>
         <input style={S.addInput} placeholder="تسک جدید بنویس و Enter بزن…" value={title}
           onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addTask()} />
@@ -656,6 +755,8 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
           );
         })}
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -723,4 +824,14 @@ const S: Record<string, React.CSSProperties> = {
   labelPicker: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6, padding: 6, background: "#0b1220", borderRadius: 8, border: "1px solid #293548" },
   pickChip: { fontSize: 11, border: "1px solid", borderRadius: 999, padding: "2px 10px", cursor: "pointer", background: "transparent" },
   noteArea: { width: "100%", boxSizing: "border-box", marginTop: 8, minHeight: 60, resize: "vertical", background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 8, padding: "8px", fontSize: 12, fontFamily: "inherit" },
+  tabBar: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14, alignItems: "center" },
+  tab: { background: "#1e293b", color: "#cbd5e1", border: "1px solid #334155", borderRadius: 999, padding: "6px 14px", fontSize: 13, cursor: "pointer" },
+  tabOn: { background: "#6366f1", color: "#fff", border: "1px solid #6366f1", borderRadius: 999, padding: "6px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" },
+  tabAdd: { background: "transparent", color: "#94a3b8", border: "1px dashed #475569", borderRadius: 999, padding: "6px 12px", fontSize: 15, cursor: "pointer", lineHeight: 1 },
+  tabPanel: { background: "#1e293b", borderRadius: 12, padding: 14 },
+  tabPanelHead: { display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" },
+  tabIconInput: { width: 44, textAlign: "center", background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 8, padding: "6px", fontSize: 15 },
+  tabTitleInput: { flex: 1, minWidth: 160, background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 8, padding: "6px 10px", fontSize: 15, fontWeight: 700 },
+  tabBody: { width: "100%", boxSizing: "border-box", minHeight: 320, resize: "vertical", background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 10, padding: 12, fontSize: 13, lineHeight: 1.9, fontFamily: "inherit" },
+  tabHint: { fontSize: 11, color: "#64748b", marginTop: 6 },
 };

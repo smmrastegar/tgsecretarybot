@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-07-24.board-fields";
+const SCHEMA_VERSION = "2026-07-24.board-tabs";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1648,6 +1648,27 @@ export async function ensureSchema(
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
     await q`CREATE INDEX IF NOT EXISTS board_task_comments_idx ON board_task_comments (chat_id, task_id, created_at)`;
+    // Editable content tabs alongside the kanban (critical items, key
+    // points, people & roles, …). Seeded once from the AI analysis, then
+    // freely editable/manageable.
+    await q`
+      CREATE TABLE IF NOT EXISTS board_tabs (
+        id         BIGSERIAL PRIMARY KEY,
+        chat_id    BIGINT NOT NULL,
+        title      TEXT NOT NULL,
+        icon       TEXT,
+        body       TEXT,
+        position   INTEGER NOT NULL DEFAULT 0,
+        source     TEXT NOT NULL DEFAULT 'manual',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS board_tabs_chat_idx ON board_tabs (chat_id, position)`;
+    await q`
+      CREATE TABLE IF NOT EXISTS board_tabs_seeded (
+        chat_id   BIGINT PRIMARY KEY,
+        seeded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
     // recent push so the admin can see drift.
@@ -5199,6 +5220,148 @@ export async function addTaskComment(args: {
     body: String(r.body ?? ""),
     createdAt: r.created_at as Date,
   };
+}
+
+// --- Board content tabs ---
+export type BoardTab = {
+  id: number;
+  title: string;
+  icon: string | null;
+  body: string;
+  position: number;
+  source: string;
+};
+
+function rowToBoardTab(r: Record<string, unknown>): BoardTab {
+  return {
+    id: Number(r.id),
+    title: String(r.title ?? ""),
+    icon: (r.icon as string) ?? null,
+    body: String(r.body ?? ""),
+    position: Number(r.position ?? 0),
+    source: String(r.source ?? "manual"),
+  };
+}
+
+export async function listBoardTabs(chatId: number): Promise<BoardTab[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM board_tabs WHERE chat_id = ${chatId} ORDER BY position ASC, id ASC`;
+  return rows.map(rowToBoardTab);
+}
+
+export async function getBoardTab(id: number, chatId: number): Promise<BoardTab | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM board_tabs WHERE id = ${id} AND chat_id = ${chatId} LIMIT 1`;
+  return rows[0] ? rowToBoardTab(rows[0]) : null;
+}
+
+export async function createBoardTab(args: {
+  chatId: number;
+  title: string;
+  icon?: string | null;
+  body?: string | null;
+  source?: string;
+}): Promise<BoardTab | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO board_tabs (chat_id, title, icon, body, source, position)
+    VALUES (${args.chatId}, ${args.title.slice(0, 80)}, ${args.icon ?? null}, ${args.body ?? ""},
+            ${args.source ?? "manual"},
+            COALESCE((SELECT MAX(position) + 1 FROM board_tabs WHERE chat_id = ${args.chatId}), 0))
+    RETURNING *`;
+  return rows[0] ? rowToBoardTab(rows[0]) : null;
+}
+
+export async function updateBoardTab(args: {
+  id: number;
+  chatId: number;
+  title?: string;
+  icon?: string | null;
+  body?: string;
+  position?: number;
+}): Promise<BoardTab | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    UPDATE board_tabs SET
+      title    = COALESCE(${args.title ?? null}, title),
+      icon     = CASE WHEN ${args.icon !== undefined} THEN ${args.icon ?? null} ELSE icon END,
+      body     = COALESCE(${args.body ?? null}, body),
+      position = COALESCE(${args.position ?? null}, position),
+      updated_at = NOW()
+    WHERE id = ${args.id} AND chat_id = ${args.chatId}
+    RETURNING *`;
+  return rows[0] ? rowToBoardTab(rows[0]) : null;
+}
+
+export async function deleteBoardTab(args: { id: number; chatId: number }): Promise<boolean> {
+  if (!hasDb()) return false;
+  await ensureSchema();
+  const rows = await sql()`
+    DELETE FROM board_tabs WHERE id = ${args.id} AND chat_id = ${args.chatId} RETURNING id`;
+  return rows.length > 0;
+}
+
+// Seed the default content tabs once from the latest AI analysis.
+export async function seedBoardTabsOnce(chatId: number): Promise<number> {
+  if (!hasDb()) return 0;
+  await ensureSchema();
+  const already = await sql()`SELECT 1 FROM board_tabs_seeded WHERE chat_id = ${chatId} LIMIT 1`;
+  if (already.length > 0) return 0;
+
+  const cached = await sql()`
+    SELECT analysis FROM group_analytics WHERE chat_id = ${chatId}
+     ORDER BY created_at DESC LIMIT 1`;
+  const a = (cached[0] as { analysis?: unknown })?.analysis as
+    | Record<string, unknown>
+    | undefined;
+
+  const asArr = (v: unknown): Record<string, unknown>[] =>
+    Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
+  const s = (v: unknown): string => (typeof v === "string" ? v : "");
+  const lines = (items: string[]): string => items.filter(Boolean).join("\n");
+
+  const critical = asArr(a?.criticalForInbox).map(
+    (c) => `• ${s(c.title)}${s(c.details) ? `\n  ${s(c.details)}` : ""}${asArr(c.people).length ? `\n  👥 ${(c.people as string[]).join("، ")}` : ""}`,
+  );
+  const highlights = asArr(a?.highlights).map(
+    (h) => `• [${s(h.kind)}] ${s(h.title)}${s(h.details) ? ` — ${s(h.details)}` : ""}`,
+  );
+  const topics = asArr(a?.topicBreakdown).map((t) => {
+    const kp = asArr(t.keyPoints as unknown).length
+      ? (t.keyPoints as string[]).map((k) => `   - ${k}`).join("\n")
+      : "";
+    return `## ${s(t.topicName)} (${Number(t.messageCount ?? 0)} پیام، ${Number(t.openTasks ?? 0)} تسک باز)\n${s(t.summary)}${kp ? `\n${kp}` : ""}`;
+  });
+  const tasks = asArr(a?.tasks);
+  const overdue = tasks
+    .filter((t) => t.isOverdue === true || s(t.status) === "stalled")
+    .map((t) => `• ${s(t.title)}${t.owner ? ` — ${s(t.owner)}` : ""} (${s(t.status) || "?"})`);
+  const active = tasks
+    .filter((t) => s(t.status) === "announced" || s(t.status) === "in_progress")
+    .map((t) => `• ${s(t.title)}${t.owner ? ` — ${s(t.owner)}` : ""}`);
+  const people = asArr(a?.people).map(
+    (p) => `• ${s(p.name)} — ${s(p.roleLabel)}${s(p.roleDescription) ? `: ${s(p.roleDescription)}` : ""} (اعلام: ${Number(p.tasksAnnounced ?? 0)}، انجام: ${Number(p.tasksCompleted ?? 0)})`,
+  );
+
+  const defs: Array<{ title: string; icon: string; body: string }> = [
+    { title: "موارد بحرانی — نیاز به رسیدگی مستقیم شما", icon: "🆘", body: lines(critical) },
+    { title: "نکات کلیدی", icon: "🚨", body: lines(highlights) },
+    { title: "تفکیک بر اساس تاپیک", icon: "🧵", body: topics.join("\n\n") },
+    { title: "کارهای معوق و متوقف", icon: "⏰", body: lines(overdue) },
+    { title: "کارهای فعال", icon: "📋", body: lines(active) },
+    { title: "افراد و نقش‌ها", icon: "👥", body: lines(people) },
+  ];
+  for (const d of defs) {
+    await createBoardTab({ chatId, title: d.title, icon: d.icon, body: d.body, source: "ai" });
+  }
+  await sql()`INSERT INTO board_tabs_seeded (chat_id) VALUES (${chatId}) ON CONFLICT DO NOTHING`;
+  return defs.length;
 }
 
 export async function getBoardTask(
