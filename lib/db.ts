@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-07-24.board-members";
+const SCHEMA_VERSION = "2026-07-24.board-comments";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1630,6 +1630,17 @@ export async function ensureSchema(
         PRIMARY KEY (chat_id, tg_id)
       )`;
     await q`CREATE INDEX IF NOT EXISTS board_members_chat_idx ON board_members (chat_id, status)`;
+    // Threaded comments per board task.
+    await q`
+      CREATE TABLE IF NOT EXISTS board_task_comments (
+        id         BIGSERIAL PRIMARY KEY,
+        chat_id    BIGINT NOT NULL,
+        task_id    BIGINT NOT NULL,
+        author     TEXT,
+        body       TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS board_task_comments_idx ON board_task_comments (chat_id, task_id, created_at)`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
     // recent push so the admin can see drift.
@@ -4843,6 +4854,7 @@ export type BoardTask = {
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
+  commentCount: number;
 };
 
 export const BOARD_STATUSES = ["todo", "doing", "blocked", "done"] as const;
@@ -5019,6 +5031,7 @@ function rowToBoardTask(r: Record<string, unknown>): BoardTask {
     createdBy: (r.created_by as string) ?? null,
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
+    commentCount: Number(r.comment_count ?? 0),
   };
 }
 
@@ -5026,9 +5039,71 @@ export async function listBoardTasks(chatId: number): Promise<BoardTask[]> {
   if (!hasDb()) return [];
   await ensureSchema();
   const rows = await sql()`
-    SELECT * FROM group_board_tasks WHERE chat_id = ${chatId}
-     ORDER BY position ASC, id ASC`;
+    SELECT t.*, COALESCE(c.n, 0) AS comment_count
+      FROM group_board_tasks t
+      LEFT JOIN (
+        SELECT task_id, COUNT(*)::int AS n
+          FROM board_task_comments WHERE chat_id = ${chatId}
+         GROUP BY task_id
+      ) c ON c.task_id = t.id
+     WHERE t.chat_id = ${chatId}
+     ORDER BY t.position ASC, t.id ASC`;
   return rows.map(rowToBoardTask);
+}
+
+// --- Board task comments ---
+export type BoardTaskComment = {
+  id: number;
+  taskId: number;
+  author: string | null;
+  body: string;
+  createdAt: Date;
+};
+
+export async function listTaskComments(
+  chatId: number,
+  taskId: number,
+): Promise<BoardTaskComment[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, task_id, author, body, created_at
+      FROM board_task_comments
+     WHERE chat_id = ${chatId} AND task_id = ${taskId}
+     ORDER BY created_at ASC, id ASC`;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    taskId: Number(r.task_id),
+    author: (r.author as string) ?? null,
+    body: String(r.body ?? ""),
+    createdAt: r.created_at as Date,
+  }));
+}
+
+export async function addTaskComment(args: {
+  chatId: number;
+  taskId: number;
+  author: string | null;
+  body: string;
+}): Promise<BoardTaskComment | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  // Guard: the task must belong to this chat.
+  const t = await sql()`
+    SELECT 1 FROM group_board_tasks WHERE id = ${args.taskId} AND chat_id = ${args.chatId} LIMIT 1`;
+  if (t.length === 0) return null;
+  const rows = await sql()`
+    INSERT INTO board_task_comments (chat_id, task_id, author, body)
+    VALUES (${args.chatId}, ${args.taskId}, ${args.author ?? null}, ${args.body.slice(0, 2000)})
+    RETURNING id, task_id, author, body, created_at`;
+  const r = rows[0]!;
+  return {
+    id: Number(r.id),
+    taskId: Number(r.task_id),
+    author: (r.author as string) ?? null,
+    body: String(r.body ?? ""),
+    createdAt: r.created_at as Date,
+  };
 }
 
 export async function getBoardTask(

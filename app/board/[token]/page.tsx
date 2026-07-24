@@ -12,7 +12,9 @@ declare global {
 type Task = {
   id: number; title: string; status: string;
   assignee: string | null; topic: string | null; note: string | null; source: string;
+  commentCount?: number;
 };
+type Comment = { id: number; author: string | null; body: string; createdAt: string };
 type Event = {
   id: number; action: string; actor: string | null; summary: string;
   reverted: boolean; createdAt: string;
@@ -52,6 +54,10 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   const [cfgMsg, setCfgMsg] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [showMembers, setShowMembers] = useState(false);
+  const [openComments, setOpenComments] = useState<number | null>(null);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentText, setCommentText] = useState("");
+  const [loadingComments, setLoadingComments] = useState(false);
 
   const authed = status === "approved";
   const sessKey = `board_session_${token}`;
@@ -99,6 +105,27 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     }).catch(() => {});
     void loadMembers();
     if (showLog) void loadLog();
+  }
+
+  async function toggleComments(taskId: number) {
+    if (openComments === taskId) { setOpenComments(null); setComments([]); return; }
+    setOpenComments(taskId); setComments([]); setCommentText(""); setLoadingComments(true);
+    const r = await fetch(`/api/board/${token}/comments?taskId=${taskId}`, { headers: headers() }).catch(() => null);
+    setLoadingComments(false);
+    if (r && r.ok) setComments(((await r.json()) as { comments: Comment[] }).comments);
+  }
+  async function addComment(taskId: number) {
+    const text = commentText.trim(); if (!text) return;
+    setCommentText("");
+    const r = await fetch(`/api/board/${token}/comments`, {
+      method: "POST", headers: headers(), body: JSON.stringify({ taskId, body: text }),
+    }).catch(() => null);
+    if (r && r.ok) {
+      const j = (await r.json()) as { comment: Comment };
+      setComments((x) => [...x, j.comment]);
+      setTasks((x) => x.map((t) => (t.id === taskId ? { ...t, commentCount: (t.commentCount ?? 0) + 1 } : t)));
+      if (showLog) void loadLog();
+    }
   }
 
   // Check the saved session's current access status.
@@ -460,8 +487,40 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                     <select style={S.select} value={t.status} onChange={(e) => patch(t.id, { status: e.target.value })}>
                       {columns.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                     </select>
+                    <button
+                      style={openComments === t.id ? S.cmtBtnOn : S.cmtBtn}
+                      onClick={() => toggleComments(t.id)}
+                      title="کامنت‌ها"
+                    >
+                      💬{(t.commentCount ?? 0) > 0 ? ` ${t.commentCount}` : ""}
+                    </button>
                     <button style={S.del} onClick={() => del(t.id)} title="حذف">🗑</button>
                   </div>
+                  {openComments === t.id && (
+                    <div style={S.cmtPanel}>
+                      {loadingComments && <div style={S.cmtEmpty}>در حال بارگذاری…</div>}
+                      {!loadingComments && comments.length === 0 && <div style={S.cmtEmpty}>هنوز کامنتی نیست.</div>}
+                      {comments.map((c) => (
+                        <div key={c.id} style={S.cmtRow}>
+                          <div style={S.cmtHead}>
+                            <b>{c.author || "?"}</b>
+                            <span style={S.time}>{new Date(c.createdAt).toLocaleString("fa-IR")}</span>
+                          </div>
+                          <div style={S.cmtBody}>{c.body}</div>
+                        </div>
+                      ))}
+                      <div style={S.cmtInputRow}>
+                        <input
+                          style={S.cmtInput}
+                          placeholder="کامنت بنویس و Enter بزن…"
+                          value={commentText}
+                          onChange={(e) => setCommentText(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && addComment(t.id)}
+                        />
+                        <button style={S.cmtSend} onClick={() => addComment(t.id)}>ارسال</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
               {list.length === 0 && <div style={S.empty}>—</div>}
@@ -516,4 +575,14 @@ const S: Record<string, React.CSSProperties> = {
   select: { flex: 1, background: "#1e293b", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, padding: "3px 6px", fontSize: 11 },
   del: { background: "transparent", border: "none", cursor: "pointer", fontSize: 13, opacity: 0.7 },
   empty: { textAlign: "center", color: "#475569", fontSize: 12, padding: 8 },
+  cmtBtn: { background: "#1e293b", border: "1px solid #334155", color: "#94a3b8", borderRadius: 6, padding: "3px 8px", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" },
+  cmtBtnOn: { background: "#3730a3", border: "1px solid #6366f1", color: "#e0e7ff", borderRadius: 6, padding: "3px 8px", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap" },
+  cmtPanel: { marginTop: 8, borderTop: "1px solid #293548", paddingTop: 8 },
+  cmtEmpty: { color: "#475569", fontSize: 11, padding: "2px 0 6px" },
+  cmtRow: { marginBottom: 6, background: "#1e293b", borderRadius: 8, padding: "6px 8px" },
+  cmtHead: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, fontSize: 11, color: "#cbd5e1", marginBottom: 2 },
+  cmtBody: { fontSize: 12, color: "#e2e8f0", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" },
+  cmtInputRow: { display: "flex", gap: 6, marginTop: 6 },
+  cmtInput: { flex: 1, background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 12 },
+  cmtSend: { background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, padding: "0 12px", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" },
 };
