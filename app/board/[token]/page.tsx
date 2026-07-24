@@ -171,12 +171,27 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   }
   function setTabCell(tb: Tab, itemId: string, col: number, val: string) {
     setTabLocal(tb.id, {
-      items: tb.items.map((it) => (it.id === itemId ? { ...it, values: it.values.map((v, i) => (i === col ? val : v)) } : it)),
+      items: tb.items.map((it) => {
+        if (it.id !== itemId) return it;
+        const vals = [...it.values];
+        while (vals.length <= col) vals.push(""); // pad if a column was added later
+        vals[col] = val;
+        return { ...it, values: vals };
+      }),
     });
   }
-  function commitTabItems(tb: Tab) {
-    const cur = tabs.find((t) => t.id === tb.id);
-    if (cur) void saveTabItems(cur, cur.items);
+  function commitTabItems(tabId: number) {
+    // Read the latest items straight from state so a fast blur after a
+    // keystroke can't POST a stale array.
+    setTabs((cur) => {
+      const t = cur.find((x) => x.id === tabId);
+      if (t) {
+        void fetch(`/api/board/${token}/tabs`, {
+          method: "PATCH", headers: headers(), body: JSON.stringify({ id: tabId, items: t.items }),
+        }).catch(() => {});
+      }
+      return cur;
+    });
   }
   function deleteTabRow(tb: Tab, itemId: string) {
     void saveTabItems(tb, tb.items.filter((it) => it.id !== itemId));
@@ -195,6 +210,30 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
     await fetch(`/api/board/${token}/tabs`, {
       method: "PATCH", headers: headers(), body: JSON.stringify({ id: tb.id, config }),
     }).catch(() => {});
+  }
+  // Add/remove a column and keep every row's cell count in sync so no
+  // data is silently dropped or misaligned.
+  async function addColumn(tb: Tab) {
+    const fields = [...tabFields(tb), `ستون ${tabFields(tb).length + 1}`];
+    const items = tb.items.map((it) => ({ ...it, values: [...it.values, ""] }));
+    setTabLocal(tb.id, { config: { ...tb.config, fields }, items });
+    await fetch(`/api/board/${token}/tabs`, {
+      method: "PATCH", headers: headers(), body: JSON.stringify({ id: tb.id, config: { ...tb.config, fields }, items }),
+    }).catch(() => {});
+  }
+  async function removeColumn(tb: Tab) {
+    const cur = tabFields(tb);
+    if (cur.length <= 1) return;
+    const fields = cur.slice(0, -1);
+    const items = tb.items.map((it) => ({ ...it, values: it.values.slice(0, fields.length) }));
+    setTabLocal(tb.id, { config: { ...tb.config, fields }, items });
+    await fetch(`/api/board/${token}/tabs`, {
+      method: "PATCH", headers: headers(), body: JSON.stringify({ id: tb.id, config: { ...tb.config, fields }, items }),
+    }).catch(() => {});
+  }
+  // Count shown on each tab pill (matches the reference "(63)" style).
+  function tabCount(tb: Tab): number {
+    return tb.kind === "filter" ? tasksForFilter(tb.config).length : tb.items.length;
   }
   async function deleteTab(id: number) {
     setTabs((x) => x.filter((t) => t.id !== id));
@@ -717,7 +756,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                 <span style={S.time}> · {new Date(e.createdAt).toLocaleString("fa-IR")}</span>
                 {e.reverted && <span style={S.revTag}> (بازگردانده شد)</span>}
               </span>
-              {!e.reverted && e.action !== "revert" && (
+              {!e.reverted && ["create", "update", "delete"].includes(e.action) && (
                 <button style={S.revBtn} onClick={() => revert(e.id)}>↩️ بازگردانی</button>
               )}
             </div>
@@ -727,10 +766,13 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
 
       {/* Tab bar */}
       <div style={S.tabBar}>
-        <button style={activeTab === 0 ? S.tabOn : S.tab} onClick={() => setActiveTab(0)}>📋 برد تسک</button>
+        <button style={activeTab === 0 ? S.tabOn : S.tab} onClick={() => setActiveTab(0)}>
+          📋 برد تسک<span style={activeTab === 0 ? S.tabCountOn : S.tabCount}>{tasks.length}</span>
+        </button>
         {[...tabs].sort((a, b) => a.position - b.position).map((tb) => (
           <button key={tb.id} style={activeTab === tb.id ? S.tabOn : S.tab} onClick={() => setActiveTab(tb.id)}>
             {tb.icon ? `${tb.icon} ` : ""}{tb.title}
+            <span style={activeTab === tb.id ? S.tabCountOn : S.tabCount}>{tabCount(tb)}</span>
           </button>
         ))}
         {isOwner && <button style={S.tabAdd} onClick={() => addTab("list")} title="تب لیست جدید">＋ لیست</button>}
@@ -781,19 +823,25 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                           </button>
                         );
                       })}
+                      <span style={{ width: 1, height: 18, background: "#334155", margin: "0 2px" }} />
+                      {priorities.map((p) => {
+                        const on = (tb.config.priorities ?? []).includes(p.key);
+                        return (
+                          <button key={p.key}
+                            style={{ ...S.pickChip, borderColor: p.color, background: on ? p.color + "33" : "transparent", color: on ? p.color : "#94a3b8" }}
+                            onClick={() => {
+                              const cur = tb.config.priorities ?? [];
+                              void saveTabConfig(tb, { ...tb.config, priorities: on ? cur.filter((x) => x !== p.key) : [...cur, p.key] });
+                            }}>
+                            {on ? "✓ " : ""}{p.label}
+                          </button>
+                        );
+                      })}
+                      <span style={{ width: 1, height: 18, background: "#334155", margin: "0 2px" }} />
                       <button
                         style={{ ...S.pickChip, borderColor: "#ef4444", background: tb.config.overdue ? "#ef444433" : "transparent", color: tb.config.overdue ? "#ef4444" : "#94a3b8" }}
                         onClick={() => void saveTabConfig(tb, { ...tb.config, overdue: !tb.config.overdue })}>
                         {tb.config.overdue ? "✓ " : ""}سررسیدگذشته
-                      </button>
-                      <button
-                        style={{ ...S.pickChip, borderColor: "#ef4444", background: (tb.config.priorities ?? []).includes("critical") ? "#ef444433" : "transparent", color: (tb.config.priorities ?? []).includes("critical") ? "#ef4444" : "#94a3b8" }}
-                        onClick={() => {
-                          const cur = tb.config.priorities ?? [];
-                          const on = cur.includes("critical");
-                          void saveTabConfig(tb, { ...tb.config, priorities: on ? cur.filter((x) => x !== "critical") : [...cur, "critical"] });
-                        }}>
-                        {(tb.config.priorities ?? []).includes("critical") ? "✓ " : ""}اولویت بحرانی
                       </button>
                     </div>
                   )}
@@ -820,9 +868,9 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                           onChange={(e) => setTabLocal(tb.id, { config: { ...tb.config, fields: fields.map((x, j) => (j === i ? e.target.value : x)) } })}
                           onBlur={() => saveTabConfig(tb, tb.config)} />
                       ))}
-                      <button style={S.miniBtn} onClick={() => saveTabConfig(tb, { ...tb.config, fields: [...fields, `ستون ${fields.length + 1}`] })}>+ ستون</button>
+                      <button style={S.miniBtn} onClick={() => void addColumn(tb)}>+ ستون</button>
                       {fields.length > 1 && (
-                        <button style={S.noBtn} onClick={() => saveTabConfig(tb, { ...tb.config, fields: fields.slice(0, -1) })}>− ستون</button>
+                        <button style={S.noBtn} onClick={() => void removeColumn(tb)}>− ستون</button>
                       )}
                     </div>
                   )}
@@ -841,7 +889,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                               <td key={ci} style={S.listTd}>
                                 <input style={S.listCell} value={it.values[ci] ?? ""}
                                   onChange={(e) => setTabCell(tb, it.id, ci, e.target.value)}
-                                  onBlur={() => commitTabItems(tb)} />
+                                  onBlur={() => commitTabItems(tb.id)} />
                               </td>
                             ))}
                             <td style={S.listTd}>
@@ -960,7 +1008,9 @@ const S: Record<string, React.CSSProperties> = {
   tabBar: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14, alignItems: "center" },
   tab: { background: "#1e293b", color: "#cbd5e1", border: "1px solid #334155", borderRadius: 999, padding: "6px 14px", fontSize: 13, cursor: "pointer" },
   tabOn: { background: "#6366f1", color: "#fff", border: "1px solid #6366f1", borderRadius: 999, padding: "6px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" },
-  tabAdd: { background: "transparent", color: "#94a3b8", border: "1px dashed #475569", borderRadius: 999, padding: "6px 12px", fontSize: 15, cursor: "pointer", lineHeight: 1 },
+  tabAdd: { background: "transparent", color: "#94a3b8", border: "1px dashed #475569", borderRadius: 999, padding: "6px 12px", fontSize: 13, cursor: "pointer", lineHeight: 1 },
+  tabCount: { marginRight: 6, background: "#0f172a", color: "#94a3b8", borderRadius: 999, padding: "0 7px", fontSize: 11, fontWeight: 700 },
+  tabCountOn: { marginRight: 6, background: "rgba(255,255,255,.25)", color: "#fff", borderRadius: 999, padding: "0 7px", fontSize: 11, fontWeight: 700 },
   tabPanel: { background: "#1e293b", borderRadius: 12, padding: 14 },
   tabPanelHead: { display: "flex", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" },
   tabIconInput: { width: 44, textAlign: "center", background: "#0f172a", border: "1px solid #334155", color: "#e2e8f0", borderRadius: 8, padding: "6px", fontSize: 15 },
