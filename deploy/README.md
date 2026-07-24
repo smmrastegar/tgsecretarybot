@@ -4,6 +4,9 @@ Move the app off Vercel onto the same box that already runs Postgres.
 This removes the serverless pain (function freezes, cold starts,
 maxDuration) and makes every DB query a localhost round-trip.
 
+**Repo:** `https://github.com/smmrastegar/tgsecretarybot`
+**Branch:** `claude/telegram-secretary-bot-A0UsO`
+
 ## Prerequisites (do these first)
 
 1. **DNS** — point a domain/subdomain's `A` record at `209.97.138.127`.
@@ -17,7 +20,9 @@ maxDuration) and makes every DB query a localhost round-trip.
 ```bash
 # on the server, as root
 mkdir -p /opt && cd /opt
-git clone <your repo url> tgsecretarybot   # or copy the repo here
+# Private repo → clone over HTTPS with a GitHub token (or SSH if you
+# have a deploy key). Replace <TOKEN> with a GitHub PAT that can read it.
+git clone https://<TOKEN>@github.com/smmrastegar/tgsecretarybot.git tgsecretarybot
 cd tgsecretarybot
 git checkout claude/telegram-secretary-bot-A0UsO
 
