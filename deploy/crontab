@@ -1,0 +1,15 @@
+# tgsecretarybot cron jobs (self-hosted replacement for vercel.json crons).
+# Install:  deploy/setup.sh writes this to /etc/cron.d/tgsecretarybot after
+# substituting $CRON_SECRET. Endpoints are hit on localhost; auth is the
+# ?secret= query param (same CRON_SECRET as the app's env).
+#
+# NOTE: setup.sh replaces __CRON_SECRET__ with the real value at install.
+# m h dom mon dow user command
+
+* * * * *   root  curl -fsS "http://127.0.0.1:3000/api/cron/mirror-albums?secret=__CRON_SECRET__" >/dev/null 2>&1
+*/5 * * * * root  curl -fsS "http://127.0.0.1:3000/api/cron/auto-summary?secret=__CRON_SECRET__" >/dev/null 2>&1
+*/5 * * * * root  curl -fsS "http://127.0.0.1:3000/api/cron/instagram-stories?secret=__CRON_SECRET__" >/dev/null 2>&1
+*/30 * * * * root curl -fsS "http://127.0.0.1:3000/api/cron/follow-up?secret=__CRON_SECRET__" >/dev/null 2>&1
+0 * * * *   root  curl -fsS "http://127.0.0.1:3000/api/cron/daily-summary?secret=__CRON_SECRET__" >/dev/null 2>&1
+30 * * * *  root  curl -fsS "http://127.0.0.1:3000/api/cron/site-monitor?secret=__CRON_SECRET__" >/dev/null 2>&1
+30 5 * * *  root  curl -fsS "http://127.0.0.1:3000/api/cron/health-report?secret=__CRON_SECRET__" >/dev/null 2>&1

@@ -1,0 +1,13 @@
+# Caddy reverse proxy with automatic HTTPS (Let's Encrypt).
+# Replace YOUR-DOMAIN with the domain whose DNS A-record points at this
+# server. Caddy fetches + renews the TLS cert on its own — Telegram
+# requires a valid HTTPS webhook, this satisfies it.
+#
+# Install:  /opt/tgsecretarybot/deploy/setup.sh handles it, or manually:
+#   cp deploy/Caddyfile /etc/caddy/Caddyfile   (edit the domain)
+#   systemctl reload caddy
+
+YOUR-DOMAIN {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3000
+}
