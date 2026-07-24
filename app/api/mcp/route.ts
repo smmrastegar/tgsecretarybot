@@ -351,6 +351,33 @@ const TOOLS = [
     },
   },
   {
+    name: "transcribe_voice",
+    description:
+      "Transcribe a stored voice / audio / video-note message to text (Groq Whisper, falls back to OpenRouter). Pass source_message_id (its media_file_id is looked up) or a raw file_id. Returns the transcript and caches it back into media_description. Use to read voice messages the bot didn't auto-transcribe.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source_message_id: {
+          type: "number",
+          description: "message_id of the stored voice/audio to transcribe",
+        },
+        source_chat_id: {
+          type: "number",
+          description: "Optional chat_id to disambiguate the source row",
+        },
+        file_id: {
+          type: "string",
+          description: "Raw Telegram file_id (alternative to source_message_id)",
+        },
+        language: {
+          type: "string",
+          description: "Optional ISO language hint (e.g. 'fa'); defaults to the sttLanguage setting",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "bot_chat_status",
     description:
       "Diagnostic: is the bot a member/admin of a given chat, and can it post there? Calls Telegram getChat + getChatMember(bot). Use to explain why a channel-mirror source (or destination) isn't working — a bot only receives channel_post updates when it's an ADMIN of that channel.",
@@ -1097,6 +1124,47 @@ async function callTool(
       };
       if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
       return toolText({ ok: true, method, message_id: j.result?.message_id });
+    }
+
+    case "transcribe_voice": {
+      let fileId = args.file_id ? String(args.file_id) : "";
+      const midArg = args.source_message_id != null ? Number(args.source_message_id) : null;
+      if (!fileId && midArg != null && Number.isFinite(midArg)) {
+        const srcChat = args.source_chat_id != null ? Number(args.source_chat_id) : null;
+        const rows = (await runParams(
+          `SELECT media_file_id, media_kind FROM messages_log
+             WHERE message_id = $1 ${srcChat != null ? "AND chat_id = $2" : ""}
+             ORDER BY created_at DESC LIMIT 1`,
+          srcChat != null ? [midArg, srcChat] : [midArg],
+        )) as Array<{ media_file_id: string | null; media_kind: string | null }>;
+        const row = rows[0];
+        if (!row?.media_file_id) throw new Error(`no media on message ${midArg}`);
+        fileId = String(row.media_file_id);
+      }
+      if (!fileId) throw new Error("source_message_id or file_id required");
+      const { transcribeAudio } = await import("@/lib/stt");
+      const { getSettings } = await import("@/lib/settings");
+      const lang = args.language
+        ? String(args.language)
+        : (await getSettings()).sttLanguage || undefined;
+      const r = await transcribeAudio({
+        botToken: config.telegramBotToken,
+        fileId,
+        language: lang,
+      });
+      if (midArg != null && Number.isFinite(midArg)) {
+        // Best-effort cache so a re-read shows the transcript.
+        await runParams(
+          `UPDATE messages_log SET media_description = $1, media_description_at = NOW()
+             WHERE message_id = $2 AND (media_description IS NULL OR media_description = '')`,
+          [r.text, midArg],
+        ).catch(() => {});
+      }
+      return toolText({
+        text: r.text,
+        provider: r.provider,
+        durationSeconds: r.durationSeconds ?? null,
+      });
     }
 
     case "bot_chat_status": {
