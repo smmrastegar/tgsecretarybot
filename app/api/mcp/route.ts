@@ -351,24 +351,6 @@ const TOOLS = [
     },
   },
   {
-    name: "shell_exec",
-    description:
-      "Run a shell command on the HOST the app runs on and return stdout/stderr/exit code. DANGEROUS: arbitrary remote code execution, gated only by MCP_SECRET. Intended for operating the self-hosted server (debugging deploys, DB connectivity, systemd). Known process secrets are masked from the output. Meant to be removed after server bring-up.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        command: { type: "string", description: "Shell command (run via bash -c)" },
-        timeout_ms: {
-          type: "number",
-          description: "Max run time in ms (default 30000, max 120000)",
-        },
-        cwd: { type: "string", description: "Optional working directory" },
-      },
-      required: ["command"],
-      additionalProperties: false,
-    },
-  },
-  {
     name: "transcribe_voice",
     description:
       "Transcribe a stored voice / audio / video-note message to text (Groq Whisper, falls back to OpenRouter). Pass source_message_id (its media_file_id is looked up) or a raw file_id. Returns the transcript and caches it back into media_description. Use to read voice messages the bot didn't auto-transcribe.",
@@ -1208,61 +1190,6 @@ async function callTool(
       };
       if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
       return toolText({ ok: true, method, message_id: j.result?.message_id });
-    }
-
-    case "shell_exec": {
-      const command = String(args.command ?? "");
-      if (!command.trim()) throw new Error("command required");
-      const timeoutMs = Math.min(
-        Math.max(Number(args.timeout_ms) || 30000, 1000),
-        120000,
-      );
-      const cwd = args.cwd ? String(args.cwd) : undefined;
-      const { exec } = await import("node:child_process");
-      const res = await new Promise<{
-        stdout: string;
-        stderr: string;
-        code: number | null;
-        error?: string;
-      }>((resolve) => {
-        exec(
-          command,
-          {
-            timeout: timeoutMs,
-            maxBuffer: 8 * 1024 * 1024,
-            shell: "/bin/bash",
-            cwd,
-            windowsHide: true,
-          },
-          (err, stdout, stderr) => {
-            const code =
-              err && typeof (err as { code?: unknown }).code === "number"
-                ? ((err as { code: number }).code)
-                : err
-                  ? 1
-                  : 0;
-            resolve({
-              stdout: stdout ?? "",
-              stderr: stderr ?? "",
-              code,
-              error: err ? (err as Error).message : undefined,
-            });
-          },
-        );
-      });
-      // Mask known process-level secrets from the output.
-      const mask = (s: string): string => {
-        for (const secret of processSecrets()) {
-          if (s.includes(secret)) s = s.split(secret).join("•••secret•••");
-        }
-        return s;
-      };
-      return toolText({
-        code: res.code,
-        stdout: mask(res.stdout).slice(0, 100_000),
-        stderr: mask(res.stderr).slice(0, 30_000),
-        ...(res.error ? { error: mask(res.error) } : {}),
-      });
     }
 
     case "transcribe_voice": {
