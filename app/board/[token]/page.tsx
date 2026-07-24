@@ -302,7 +302,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
               <div style={S.waitBox}>
                 ⏳ درخواستت ثبت شد. منتظر تایید مدیر باش — این صفحه خودش به‌روز می‌شه.
               </div>
-              <button style={S.logBtnWide} onClick={() => void requestApproval(session)}>بررسی مجدد و ارسال دوباره به مدیر</button>
+              <button style={S.logBtnWide} onClick={() => void requestApproval(session)}>بررسی مجدد</button>
               <button style={S.linkBtn} onClick={logout}>خروج</button>
             </>
           )}
