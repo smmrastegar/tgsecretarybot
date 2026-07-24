@@ -3,37 +3,29 @@ import {
   BOARD_STATUSES,
   createBoardTask,
   deleteBoardTask,
-  getChatIdByShareToken,
+  getBoardTask,
   listBoardTasks,
+  logBoardEvent,
   seedBoardFromAnalysisOnce,
   updateBoardTask,
 } from "@/lib/db";
+import { authBoard } from "@/lib/board-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Editable group task board, authorised by the group's share token (the
-// same token the read-only /share/groups/<token> uses). Anyone with the
-// link can view AND edit — that's intentional; the operator hands it to
-// a trusted teammate. Scoped to a single group: the token resolves to
-// exactly one chat_id.
-async function resolveChat(token: string) {
-  return getChatIdByShareToken(token).catch(() => null);
-}
-
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ token: string }> },
 ): Promise<NextResponse> {
   const { token } = await ctx.params;
-  const chat = await resolveChat(token);
-  if (!chat) return NextResponse.json({ error: "invalid token" }, { status: 404 });
-  // First open: pre-populate from the AI analysis so the board isn't empty.
-  await seedBoardFromAnalysisOnce(chat.chatId).catch(() => {});
-  const tasks = await listBoardTasks(chat.chatId);
+  const { auth, error } = await authBoard(req, token);
+  if (error) return error;
+  await seedBoardFromAnalysisOnce(auth!.chatId).catch(() => {});
+  const tasks = await listBoardTasks(auth!.chatId);
   return NextResponse.json({
     ok: true,
-    chatTitle: chat.chatTitle,
+    chatTitle: auth!.chatTitle,
     statuses: BOARD_STATUSES,
     tasks,
   });
@@ -44,28 +36,30 @@ export async function POST(
   ctx: { params: Promise<{ token: string }> },
 ): Promise<NextResponse> {
   const { token } = await ctx.params;
-  const chat = await resolveChat(token);
-  if (!chat) return NextResponse.json({ error: "invalid token" }, { status: 404 });
-  const b = (await req.json().catch(() => ({}))) as {
-    title?: string;
-    status?: string;
-    assignee?: string | null;
-    topic?: string | null;
-    note?: string | null;
-    createdBy?: string | null;
-  };
+  const { auth, error } = await authBoard(req, token);
+  if (error) return error;
+  if (!auth!.actor) return NextResponse.json({ error: "login required" }, { status: 401 });
+  const b = (await req.json().catch(() => ({}))) as { title?: string; status?: string; assignee?: string | null };
   const title = (b.title ?? "").toString().trim();
   if (!title) return NextResponse.json({ error: "title required" }, { status: 400 });
   const task = await createBoardTask({
-    chatId: chat.chatId,
+    chatId: auth!.chatId,
     title,
     status: b.status,
     assignee: b.assignee ?? null,
-    topic: b.topic ?? null,
-    note: b.note ?? null,
-    createdBy: (b.createdBy ?? "").toString().slice(0, 60) || null,
+    createdBy: auth!.actor,
     source: "manual",
   });
+  if (task) {
+    await logBoardEvent({
+      chatId: auth!.chatId,
+      taskId: task.id,
+      action: "create",
+      actor: auth!.actor,
+      summary: `«${title.slice(0, 60)}» را افزود`,
+      after: task,
+    }).catch(() => {});
+  }
   return NextResponse.json({ ok: true, task });
 }
 
@@ -74,21 +68,19 @@ export async function PATCH(
   ctx: { params: Promise<{ token: string }> },
 ): Promise<NextResponse> {
   const { token } = await ctx.params;
-  const chat = await resolveChat(token);
-  if (!chat) return NextResponse.json({ error: "invalid token" }, { status: 404 });
+  const { auth, error } = await authBoard(req, token);
+  if (error) return error;
+  if (!auth!.actor) return NextResponse.json({ error: "login required" }, { status: 401 });
   const b = (await req.json().catch(() => ({}))) as {
-    id?: number;
-    title?: string;
-    status?: string;
-    assignee?: string | null;
-    topic?: string | null;
-    note?: string | null;
+    id?: number; title?: string; status?: string; assignee?: string | null; topic?: string | null; note?: string | null;
   };
   const id = Number(b.id);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "id required" }, { status: 400 });
+  const before = await getBoardTask(id, auth!.chatId);
+  if (!before) return NextResponse.json({ error: "not found" }, { status: 404 });
   const task = await updateBoardTask({
     id,
-    chatId: chat.chatId,
+    chatId: auth!.chatId,
     title: b.title,
     status: b.status,
     assignee: "assignee" in b ? b.assignee ?? null : undefined,
@@ -96,6 +88,16 @@ export async function PATCH(
     note: "note" in b ? b.note ?? null : undefined,
   });
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
+  // Describe what changed for the log.
+  const parts: string[] = [];
+  if (b.status && b.status !== before.status) parts.push(`وضعیت → ${b.status}`);
+  if ("assignee" in b && (b.assignee ?? null) !== before.assignee) parts.push(`مسئول → ${b.assignee || "—"}`);
+  if (b.title && b.title !== before.title) parts.push("عنوان ویرایش شد");
+  const summary = `«${before.title.slice(0, 40)}»: ${parts.join("، ") || "ویرایش"}`;
+  await logBoardEvent({
+    chatId: auth!.chatId, taskId: id, action: "update", actor: auth!.actor,
+    summary, before, after: task,
+  }).catch(() => {});
   return NextResponse.json({ ok: true, task });
 }
 
@@ -104,11 +106,19 @@ export async function DELETE(
   ctx: { params: Promise<{ token: string }> },
 ): Promise<NextResponse> {
   const { token } = await ctx.params;
-  const chat = await resolveChat(token);
-  if (!chat) return NextResponse.json({ error: "invalid token" }, { status: 404 });
+  const { auth, error } = await authBoard(req, token);
+  if (error) return error;
+  if (!auth!.actor) return NextResponse.json({ error: "login required" }, { status: 401 });
   const url = new URL(req.url);
   const id = Number(url.searchParams.get("id"));
   if (!Number.isFinite(id)) return NextResponse.json({ error: "id required" }, { status: 400 });
-  const ok = await deleteBoardTask({ id, chatId: chat.chatId });
+  const before = await getBoardTask(id, auth!.chatId);
+  const ok = await deleteBoardTask({ id, chatId: auth!.chatId });
+  if (ok && before) {
+    await logBoardEvent({
+      chatId: auth!.chatId, taskId: id, action: "delete", actor: auth!.actor,
+      summary: `«${before.title.slice(0, 60)}» را حذف کرد`, before,
+    }).catch(() => {});
+  }
   return NextResponse.json({ ok });
 }

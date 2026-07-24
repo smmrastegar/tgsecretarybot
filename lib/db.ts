@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-07-24.group-board-tasks";
+const SCHEMA_VERSION = "2026-07-24.group-board-events";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -667,6 +667,13 @@ export async function ensureSchema(
     await q`CREATE INDEX IF NOT EXISTS group_analytics_chat_idx
       ON group_analytics (chat_id, created_at DESC)`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS analytics_share_token TEXT`;
+    // Shared access code for the editable /board/<token> — required to
+    // view or edit (no anonymous access). Set by the operator.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS board_code TEXT`;
+    // Optional per-board overrides: custom column set (JSON) and a custom
+    // AI categorisation prompt. NULL = use defaults.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS board_columns TEXT`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS board_prompt TEXT`;
     await q`CREATE UNIQUE INDEX IF NOT EXISTS chat_rules_share_token_idx
       ON chat_rules (analytics_share_token) WHERE analytics_share_token IS NOT NULL`;
     // Per-chat summary cadence: how many hours back the daily-summary
@@ -1591,6 +1598,22 @@ export async function ensureSchema(
         chat_id    BIGINT PRIMARY KEY,
         seeded_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
+    // Audit log for the board: every create/update/delete keeps a
+    // before/after snapshot so any change can be reverted.
+    await q`
+      CREATE TABLE IF NOT EXISTS group_board_events (
+        id          BIGSERIAL PRIMARY KEY,
+        chat_id     BIGINT NOT NULL,
+        task_id     BIGINT,
+        action      TEXT NOT NULL,
+        actor       TEXT,
+        summary     TEXT NOT NULL,
+        before_json JSONB,
+        after_json  JSONB,
+        reverted    BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS group_board_events_chat_idx ON group_board_events (chat_id, created_at DESC)`;
     // Tracks which usernames we've registered with the external
     // change-detector. last_status is the HTTP status from the most
     // recent push so the admin can see drift.
@@ -4739,16 +4762,53 @@ export async function setGroupAnalyticsShareToken(args: {
 
 // Resolve the chat_id a share token belongs to (used by the editable
 // board API to authorise a request by its token instead of a session).
-export async function getChatIdByShareToken(
-  token: string,
-): Promise<{ chatId: number; chatTitle: string | null } | null> {
+export async function getChatIdByShareToken(token: string): Promise<{
+  chatId: number;
+  chatTitle: string | null;
+  boardCode: string | null;
+  boardColumns: string | null;
+  boardPrompt: string | null;
+} | null> {
   if (!hasDb() || !token) return null;
   await ensureSchema();
   const rows = await sql()`
-    SELECT chat_id, chat_title FROM chat_rules
-     WHERE analytics_share_token = ${token} LIMIT 1`;
-  const r = rows[0] as { chat_id: number | string; chat_title: string | null } | undefined;
-  return r ? { chatId: Number(r.chat_id), chatTitle: r.chat_title ?? null } : null;
+    SELECT chat_id, chat_title, board_code, board_columns, board_prompt
+      FROM chat_rules WHERE analytics_share_token = ${token} LIMIT 1`;
+  const r = rows[0] as
+    | {
+        chat_id: number | string;
+        chat_title: string | null;
+        board_code: string | null;
+        board_columns: string | null;
+        board_prompt: string | null;
+      }
+    | undefined;
+  return r
+    ? {
+        chatId: Number(r.chat_id),
+        chatTitle: r.chat_title ?? null,
+        boardCode: r.board_code ?? null,
+        boardColumns: r.board_columns ?? null,
+        boardPrompt: r.board_prompt ?? null,
+      }
+    : null;
+}
+
+export async function setBoardConfig(args: {
+  chatId: number;
+  code?: string | null;
+  columns?: string | null;
+  prompt?: string | null;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    UPDATE chat_rules SET
+      board_code    = CASE WHEN ${args.code !== undefined} THEN ${args.code ?? null} ELSE board_code END,
+      board_columns = CASE WHEN ${args.columns !== undefined} THEN ${args.columns ?? null} ELSE board_columns END,
+      board_prompt  = CASE WHEN ${args.prompt !== undefined} THEN ${args.prompt ?? null} ELSE board_prompt END,
+      updated_at = NOW()
+    WHERE chat_id = ${args.chatId}`;
 }
 
 // --- Editable group task board ---
@@ -4793,6 +4853,17 @@ export async function listBoardTasks(chatId: number): Promise<BoardTask[]> {
     SELECT * FROM group_board_tasks WHERE chat_id = ${chatId}
      ORDER BY position ASC, id ASC`;
   return rows.map(rowToBoardTask);
+}
+
+export async function getBoardTask(
+  id: number,
+  chatId: number,
+): Promise<BoardTask | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM group_board_tasks WHERE id = ${id} AND chat_id = ${chatId} LIMIT 1`;
+  return rows[0] ? rowToBoardTask(rows[0]) : null;
 }
 
 export async function createBoardTask(args: {
@@ -4902,6 +4973,111 @@ export async function seedBoardFromAnalysisOnce(chatId: number): Promise<number>
   }
   await sql()`INSERT INTO group_board_seeded (chat_id) VALUES (${chatId}) ON CONFLICT DO NOTHING`;
   return inserted;
+}
+
+// --- Board audit log + revert ---
+export type BoardEvent = {
+  id: number;
+  chatId: number;
+  taskId: number | null;
+  action: string;
+  actor: string | null;
+  summary: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  reverted: boolean;
+  createdAt: Date;
+};
+
+function rowToBoardEvent(r: Record<string, unknown>): BoardEvent {
+  const j = (v: unknown): Record<string, unknown> | null => {
+    if (v == null) return null;
+    if (typeof v === "string") {
+      try {
+        return JSON.parse(v) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    }
+    return v as Record<string, unknown>;
+  };
+  return {
+    id: Number(r.id),
+    chatId: Number(r.chat_id),
+    taskId: r.task_id == null ? null : Number(r.task_id),
+    action: String(r.action ?? ""),
+    actor: (r.actor as string) ?? null,
+    summary: String(r.summary ?? ""),
+    before: j(r.before_json),
+    after: j(r.after_json),
+    reverted: Boolean(r.reverted),
+    createdAt: r.created_at as Date,
+  };
+}
+
+export async function logBoardEvent(args: {
+  chatId: number;
+  taskId: number | null;
+  action: string;
+  actor: string | null;
+  summary: string;
+  before?: unknown;
+  after?: unknown;
+}): Promise<void> {
+  if (!hasDb()) return;
+  await ensureSchema();
+  await sql()`
+    INSERT INTO group_board_events (chat_id, task_id, action, actor, summary, before_json, after_json)
+    VALUES (${args.chatId}, ${args.taskId}, ${args.action}, ${args.actor}, ${args.summary},
+            ${args.before != null ? JSON.stringify(args.before) : null}::jsonb,
+            ${args.after != null ? JSON.stringify(args.after) : null}::jsonb)`;
+}
+
+export async function listBoardEvents(
+  chatId: number,
+  limit = 100,
+): Promise<BoardEvent[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM group_board_events WHERE chat_id = ${chatId}
+     ORDER BY created_at DESC, id DESC LIMIT ${limit}`;
+  return rows.map(rowToBoardEvent);
+}
+
+export async function getBoardEvent(
+  id: number,
+  chatId: number,
+): Promise<BoardEvent | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT * FROM group_board_events WHERE id = ${id} AND chat_id = ${chatId} LIMIT 1`;
+  return rows[0] ? rowToBoardEvent(rows[0]) : null;
+}
+
+export async function markBoardEventReverted(id: number): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`UPDATE group_board_events SET reverted = TRUE WHERE id = ${id}`;
+}
+
+// Re-insert a task with a specific set of fields (used when reverting a
+// delete — the id will be new, but the content is restored).
+export async function restoreBoardTask(args: {
+  chatId: number;
+  before: Record<string, unknown>;
+}): Promise<BoardTask | null> {
+  const b = args.before;
+  return createBoardTask({
+    chatId: args.chatId,
+    title: String(b.title ?? ""),
+    status: String(b.status ?? "todo"),
+    assignee: (b.assignee as string) ?? null,
+    topic: (b.topic as string) ?? null,
+    note: (b.note as string) ?? null,
+    source: String(b.source ?? "manual"),
+    createdBy: (b.createdBy as string) ?? (b.created_by as string) ?? null,
+  });
 }
 
 export async function findChatByAnalyticsShareToken(
