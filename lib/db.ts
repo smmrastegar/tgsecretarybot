@@ -5415,31 +5415,30 @@ export async function seedBoardTabsOnce(chatId: number): Promise<number> {
     ),
   );
 
+  // Drop any column that is empty across every row, so tabs never show a
+  // sea of blank cells (keeps at least the first column).
+  const compact = (
+    fields: string[],
+    items: TabListItem[],
+  ): { fields: string[]; items: TabListItem[] } => {
+    const keep = fields.map((_, ci) => ci === 0 || items.some((it) => (it.values[ci] ?? "").trim() !== ""));
+    return {
+      fields: fields.filter((_, ci) => keep[ci]),
+      items: items.map((it) => ({ ...it, values: it.values.filter((_, ci) => keep[ci]) })),
+    };
+  };
+  const crit = compact(["عنوان", "نوع", "افراد درگیر", "توضیح"], criticalItems);
+  const hl = compact(["نکته", "نوع", "توضیح", "تاپیک"], highlightItems);
+  const tp = compact(["تاپیک", "خلاصه", "نکات کلیدی", "تسک‌ها"], topicItems);
+  const pe = compact(["نام", "نقش", "توضیح نقش", "کارنامه"], peopleItems);
+
   const defs: Array<Parameters<typeof createBoardTab>[0]> = [
-    {
-      chatId, source: "ai", icon: "🆘", title: "موارد بحرانی — نیاز به رسیدگی مستقیم شما",
-      kind: "list", config: { fields: ["عنوان", "نوع", "افراد درگیر", "توضیح"] }, items: criticalItems,
-    },
-    {
-      chatId, source: "ai", icon: "🚨", title: "نکات کلیدی",
-      kind: "list", config: { fields: ["نکته", "نوع", "توضیح", "تاپیک"] }, items: highlightItems,
-    },
-    {
-      chatId, source: "ai", icon: "🧵", title: "تفکیک بر اساس تاپیک",
-      kind: "list", config: { fields: ["تاپیک", "خلاصه", "نکات کلیدی", "تسک‌ها"] }, items: topicItems,
-    },
-    {
-      chatId, source: "ai", icon: "⏰", title: "کارهای معوق و متوقف",
-      kind: "filter", config: { statuses: ["blocked"], overdue: true }, items: [],
-    },
-    {
-      chatId, source: "ai", icon: "📋", title: "کارهای فعال",
-      kind: "filter", config: { statuses: ["doing"] }, items: [],
-    },
-    {
-      chatId, source: "ai", icon: "👥", title: "افراد و نقش‌ها",
-      kind: "list", config: { fields: ["نام", "نقش", "توضیح نقش", "کارنامه"] }, items: peopleItems,
-    },
+    { chatId, source: "ai", icon: "🆘", title: "موارد بحرانی — نیاز به رسیدگی مستقیم شما", kind: "list", config: { fields: crit.fields }, items: crit.items },
+    { chatId, source: "ai", icon: "🚨", title: "نکات کلیدی", kind: "list", config: { fields: hl.fields }, items: hl.items },
+    { chatId, source: "ai", icon: "🧵", title: "تفکیک بر اساس تاپیک", kind: "list", config: { fields: tp.fields }, items: tp.items },
+    { chatId, source: "ai", icon: "⏰", title: "کارهای معوق و متوقف", kind: "filter", config: { statuses: ["blocked"], overdue: true }, items: [] },
+    { chatId, source: "ai", icon: "📋", title: "کارهای فعال", kind: "filter", config: { statuses: ["doing"] }, items: [] },
+    { chatId, source: "ai", icon: "👥", title: "افراد و نقش‌ها", kind: "list", config: { fields: pe.fields }, items: pe.items },
   ];
   for (const d of defs) await createBoardTab(d);
   await sql()`INSERT INTO board_tabs_seeded (chat_id) VALUES (${chatId}) ON CONFLICT DO NOTHING`;
