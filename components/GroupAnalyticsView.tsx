@@ -177,7 +177,10 @@ export function formatTime(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return "—";
-  return d.toLocaleString();
+  // Pre-2000 values are "from the beginning" sentinels (epoch), not real
+  // timestamps — showing «۱۹۷۰» to a reader is worse than showing nothing.
+  if (d.getTime() < Date.UTC(2000, 0, 1)) return "—";
+  return d.toLocaleString("fa-IR");
 }
 
 export type CurrentTopic = {
@@ -249,13 +252,16 @@ export default function GroupAnalyticsView({
             {analysis.overview}
           </p>
           <div className="text-[11px] text-[var(--color-text-dim)] mt-3">
-            {messageCount} پیام
-            {sinceIso && (
-              <>
-                {" "}
-                · از {new Date(sinceIso).toLocaleDateString()} تا الان
-              </>
-            )}
+            {messageCount.toLocaleString("fa-IR")} پیام
+            {(() => {
+              if (!sinceIso) return null;
+              const d = new Date(sinceIso);
+              // Skip epoch sentinels — "از ۱۹۷۰ تا الان" is meaningless.
+              if (!Number.isFinite(d.getTime()) || d.getTime() < Date.UTC(2000, 0, 1)) {
+                return null;
+              }
+              return <> · از {d.toLocaleDateString("fa-IR")} تا الان</>;
+            })()}
           </div>
         </Card>
       )}

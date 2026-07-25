@@ -4756,6 +4756,28 @@ export async function deleteGroupAnalytics(chatId: number): Promise<number> {
   return (rows as Array<unknown>).length;
 }
 
+// Which analytics windows actually have a cached report for this chat.
+// The public share page uses this so it only offers windows that will
+// really render something.
+export async function listCachedAnalyticsWindows(
+  chatId: number,
+): Promise<Array<{ windowDays: number; createdAt: string; messageCount: number }>> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT window_days, message_count, created_at
+      FROM group_analytics WHERE chat_id = ${chatId}
+     ORDER BY window_days ASC`;
+  return rows.map((r) => ({
+    windowDays: Number(r.window_days ?? 0),
+    messageCount: Number(r.message_count ?? 0),
+    createdAt:
+      r.created_at instanceof Date
+        ? r.created_at.toISOString()
+        : String(r.created_at ?? ""),
+  }));
+}
+
 export async function getCachedGroupAnalytics(
   chatId: number,
   windowDays: number,
