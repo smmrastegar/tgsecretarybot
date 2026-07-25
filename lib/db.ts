@@ -5382,35 +5382,51 @@ export async function seedBoardTabsOnce(chatId: number): Promise<number> {
   const asArr = (v: unknown): Record<string, unknown>[] =>
     Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
   const s = (v: unknown): string => (typeof v === "string" ? v : "");
+  const join = (v: unknown): string => (Array.isArray(v) ? (v as unknown[]).map(String).join("، ") : "");
+  const n = (v: unknown): number => Number(v ?? 0);
   let rid = 0;
   const row = (...values: string[]): TabListItem => ({ id: `s${rid++}`, values });
+  const ROLE_FA: Record<string, string> = {
+    executor: "مجری", reporter: "گزارش‌گر", supervisor: "ناظر", designer: "طراح",
+    support: "پشتیبان", stakeholder: "ذی‌نفع", other: "سایر",
+  };
 
-  // Key points stay a genuine editable note-list.
-  const highlightItems = asArr(a?.highlights).map((h) =>
-    row(s(h.title), s(h.kind), s(h.details)),
+  // Rich, pre-filled, EDITABLE lists mirroring the well-populated report.
+  const criticalItems = asArr(a?.criticalForInbox).map((c) =>
+    row(s(c.title), s(c.kind), join(c.people), s(c.details)),
   );
-  // Pre-fill editable role labels for people (used by the live
-  // group-by-assignee view as an overlay keyed by person name).
-  const roleItems = asArr(a?.people).map((p) =>
-    row(s(p.name), s(p.roleDescription) || s(p.roleLabel)),
+  const highlightItems = asArr(a?.highlights).map((h) =>
+    row(s(h.title), s(h.kind), s(h.details), s(h.topicName)),
+  );
+  const topicItems = asArr(a?.topicBreakdown).map((t) =>
+    row(
+      s(t.topicName),
+      s(t.summary),
+      join(t.keyPoints),
+      `${n(t.openTasks)} باز / ${n(t.overdueTasks)} معوق`,
+    ),
+  );
+  const peopleItems = asArr(a?.people).map((p) =>
+    row(
+      s(p.name),
+      ROLE_FA[s(p.roleLabel)] ?? s(p.roleLabel),
+      s(p.roleDescription),
+      `اعلام ${n(p.tasksAnnounced)} / انجام ${n(p.tasksCompleted)}`,
+    ),
   );
 
   const defs: Array<Parameters<typeof createBoardTab>[0]> = [
-    // Critical = live filter on real tasks flagged high/critical priority
-    // (or overdue). Fills as the team sets priorities on the board.
     {
       chatId, source: "ai", icon: "🆘", title: "موارد بحرانی — نیاز به رسیدگی مستقیم شما",
-      kind: "filter", config: { priorities: ["critical", "high"], overdue: true }, items: [],
+      kind: "list", config: { fields: ["عنوان", "نوع", "افراد درگیر", "توضیح"] }, items: criticalItems,
     },
-    // Key points = editable note list (genuinely free-form).
     {
       chatId, source: "ai", icon: "🚨", title: "نکات کلیدی",
-      kind: "list", config: { fields: ["نکته", "نوع", "توضیح"] }, items: highlightItems,
+      kind: "list", config: { fields: ["نکته", "نوع", "توضیح", "تاپیک"] }, items: highlightItems,
     },
-    // Topic breakdown = live grouping of the real tasks by their topic.
     {
       chatId, source: "ai", icon: "🧵", title: "تفکیک بر اساس تاپیک",
-      kind: "group", config: { by: "topic" }, items: [],
+      kind: "list", config: { fields: ["تاپیک", "خلاصه", "نکات کلیدی", "تسک‌ها"] }, items: topicItems,
     },
     {
       chatId, source: "ai", icon: "⏰", title: "کارهای معوق و متوقف",
@@ -5420,10 +5436,9 @@ export async function seedBoardTabsOnce(chatId: number): Promise<number> {
       chatId, source: "ai", icon: "📋", title: "کارهای فعال",
       kind: "filter", config: { statuses: ["doing"] }, items: [],
     },
-    // People = live grouping by assignee, with an editable role overlay.
     {
       chatId, source: "ai", icon: "👥", title: "افراد و نقش‌ها",
-      kind: "group", config: { by: "assignee", roles: true }, items: roleItems,
+      kind: "list", config: { fields: ["نام", "نقش", "توضیح نقش", "کارنامه"] }, items: peopleItems,
     },
   ];
   for (const d of defs) await createBoardTab(d);

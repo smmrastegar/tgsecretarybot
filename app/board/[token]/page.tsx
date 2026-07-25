@@ -77,7 +77,6 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
   const [loadingComments, setLoadingComments] = useState(false);
   const [labels, setLabels] = useState<Label[]>([]);
   const [priorities, setPriorities] = useState<Priority[]>(DEFAULT_PRIORITIES);
-  const [openLabels, setOpenLabels] = useState<number | null>(null);
   const [openDetails, setOpenDetails] = useState<number | null>(null);
   const [draftLabels, setDraftLabels] = useState<Label[]>([]);
   const [draftPris, setDraftPris] = useState<Priority[]>(DEFAULT_PRIORITIES);
@@ -529,73 +528,83 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
 
   // The task card, shared by the kanban and by filter tabs so a task
   // edited in a filter view updates everywhere.
-  const renderCard = (t: Task) => (
+  const renderCard = (t: Task) => {
+    const editing = openDetails === t.id;
+    const pr = priorityByKey(t.priority);
+    const setLocal = (p: Partial<Task>) => setTasks((x) => x.map((y) => (y.id === t.id ? { ...y, ...p } : y)));
+    const hasMeta = !!pr || (t.labels ?? []).length > 0 || !!t.assignee || !!t.topic || !!t.dueDate;
+    return (
     <div key={t.id} style={S.card}>
       <input style={S.cardTitle} value={t.title}
-        onChange={(e) => setTasks((x) => x.map((y) => (y.id === t.id ? { ...y, title: e.target.value } : y)))}
+        onChange={(e) => setLocal({ title: e.target.value })}
         onBlur={(e) => patch(t.id, { title: e.target.value })} />
-      <div style={S.cardRow}>
-        <input style={S.assignee} placeholder="مسئول…" value={t.assignee ?? ""}
-          onChange={(e) => setTasks((x) => x.map((y) => (y.id === t.id ? { ...y, assignee: e.target.value } : y)))}
-          onBlur={(e) => patch(t.id, { assignee: e.target.value || null })} />
-        <input style={S.assignee} placeholder="تاپیک…" value={t.topic ?? ""}
-          onChange={(e) => setTasks((x) => x.map((y) => (y.id === t.id ? { ...y, topic: e.target.value } : y)))}
-          onBlur={(e) => patch(t.id, { topic: e.target.value || null })} />
-        {t.source === "ai" && <span style={S.aiTag}>AI</span>}
-      </div>
-      {(t.labels ?? []).length > 0 && (
-        <div style={S.chipRow}>
+
+      {/* Compact summary — only what's actually set, no empty widgets */}
+      {!editing && hasMeta && (
+        <div style={S.summaryRow}>
+          {pr && <span style={{ ...S.chip, background: pr.color + "22", color: pr.color, borderColor: pr.color }}>{pr.label}</span>}
           {(t.labels ?? []).map((lid) => {
-            const l = labelById(lid);
-            if (!l) return null;
-            return <span key={lid} style={{ ...S.chip, background: l.color + "33", color: l.color, borderColor: l.color }}>{l.name}</span>;
+            const l = labelById(lid); if (!l) return null;
+            return <span key={lid} style={{ ...S.chip, background: l.color + "22", color: l.color, borderColor: l.color }}>{l.name}</span>;
           })}
+          {t.assignee && <span style={S.metaPill}>👤 {t.assignee}</span>}
+          {t.topic && <span style={S.metaPill}>🧵 {t.topic}</span>}
+          {t.dueDate && <span style={S.metaPill}>📅 {t.dueDate}</span>}
         </div>
       )}
-      <div style={S.metaRow}>
-        <select
-          style={{ ...S.miniSelect, color: priorityByKey(t.priority)?.color ?? "#94a3b8", borderColor: priorityByKey(t.priority)?.color ?? "#334155" }}
-          value={t.priority ?? ""}
-          onChange={(e) => patch(t.id, { priority: e.target.value || null })}
-        >
-          <option value="">اولویت…</option>
-          {priorities.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-        </select>
-        <input type="date" style={S.dateInput} value={t.dueDate ?? ""}
-          onChange={(e) => patch(t.id, { dueDate: e.target.value || null })} />
-        <button style={openLabels === t.id ? S.miniBtnOn : S.miniBtn}
-          onClick={() => setOpenLabels(openLabels === t.id ? null : t.id)} title="برچسب">🏷</button>
-      </div>
-      {openLabels === t.id && (
-        <div style={S.labelPicker}>
-          {labels.length === 0 && <span style={S.cmtEmpty}>برچسبی تعریف نشده — از ⚙️ تنظیمات اضافه کن.</span>}
-          {labels.map((l) => {
-            const on = (t.labels ?? []).includes(l.id);
-            return (
-              <button key={l.id} onClick={() => toggleTaskLabel(t, l.id)}
-                style={{ ...S.pickChip, borderColor: l.color, background: on ? l.color + "33" : "transparent", color: on ? l.color : "#94a3b8" }}>
-                {on ? "✓ " : ""}{l.name}
-              </button>
-            );
-          })}
+      {!editing && t.note && <div style={S.notePreview}>{t.note}</div>}
+
+      {/* Full editor — only when the pencil is toggled */}
+      {editing && (
+        <div style={S.editor}>
+          <div style={S.cardRow}>
+            <input style={S.assignee} placeholder="مسئول…" value={t.assignee ?? ""}
+              onChange={(e) => setLocal({ assignee: e.target.value })}
+              onBlur={(e) => patch(t.id, { assignee: e.target.value || null })} />
+            <input style={S.assignee} placeholder="تاپیک…" value={t.topic ?? ""}
+              onChange={(e) => setLocal({ topic: e.target.value })}
+              onBlur={(e) => patch(t.id, { topic: e.target.value || null })} />
+          </div>
+          <div style={S.metaRow}>
+            <select
+              style={{ ...S.miniSelect, color: pr?.color ?? "#94a3b8", borderColor: pr?.color ?? "#334155" }}
+              value={t.priority ?? ""} onChange={(e) => patch(t.id, { priority: e.target.value || null })}>
+              <option value="">اولویت…</option>
+              {priorities.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+            </select>
+            <input type="date" style={S.dateInput} value={t.dueDate ?? ""}
+              onChange={(e) => patch(t.id, { dueDate: e.target.value || null })} />
+          </div>
+          {labels.length > 0 && (
+            <div style={S.labelPicker}>
+              {labels.map((l) => {
+                const on = (t.labels ?? []).includes(l.id);
+                return (
+                  <button key={l.id} onClick={() => toggleTaskLabel(t, l.id)}
+                    style={{ ...S.pickChip, borderColor: l.color, background: on ? l.color + "33" : "transparent", color: on ? l.color : "#94a3b8" }}>
+                    {on ? "✓ " : ""}{l.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <textarea style={S.noteArea} placeholder="توضیحات تسک…" defaultValue={t.note ?? ""}
+            onBlur={(e) => patch(t.id, { note: e.target.value || null })} />
         </div>
       )}
+
       <div style={S.cardActions}>
         <select style={S.select} value={t.status} onChange={(e) => patch(t.id, { status: e.target.value })}>
           {columns.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
-        <button style={openDetails === t.id ? S.miniBtnOn : S.miniBtn}
-          onClick={() => setOpenDetails(openDetails === t.id ? null : t.id)} title="توضیحات">📝</button>
+        <button style={editing ? S.miniBtnOn : S.miniBtn}
+          onClick={() => setOpenDetails(editing ? null : t.id)} title="ویرایش جزئیات">✏️</button>
         <button style={openComments === t.id ? S.cmtBtnOn : S.cmtBtn}
           onClick={() => toggleComments(t.id)} title="کامنت‌ها">
           💬{(t.commentCount ?? 0) > 0 ? ` ${t.commentCount}` : ""}
         </button>
         <button style={S.del} onClick={() => del(t.id)} title="حذف">🗑</button>
       </div>
-      {openDetails === t.id && (
-        <textarea style={S.noteArea} placeholder="توضیحات تسک…" defaultValue={t.note ?? ""}
-          onBlur={(e) => patch(t.id, { note: e.target.value || null })} />
-      )}
       {openComments === t.id && (
         <div style={S.cmtPanel}>
           {loadingComments && <div style={S.cmtEmpty}>در حال بارگذاری…</div>}
@@ -618,7 +627,8 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
         </div>
       )}
     </div>
-  );
+    );
+  };
 
   if (!authed) {
     return (
@@ -1108,6 +1118,10 @@ const S: Record<string, React.CSSProperties> = {
   cmtSend: { background: "#6366f1", color: "#fff", border: "none", borderRadius: 6, padding: "0 12px", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" },
   chipRow: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 },
   chip: { fontSize: 10, border: "1px solid", borderRadius: 999, padding: "1px 8px", fontWeight: 600 },
+  summaryRow: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6, alignItems: "center" },
+  metaPill: { fontSize: 11, color: "#cbd5e1", background: "#1e293b", borderRadius: 999, padding: "1px 8px" },
+  notePreview: { fontSize: 11, color: "#94a3b8", marginTop: 6, lineHeight: 1.6, maxHeight: 40, overflow: "hidden", whiteSpace: "pre-wrap" },
+  editor: { marginTop: 8, padding: 8, background: "#0b1220", borderRadius: 8, border: "1px solid #293548" },
   metaRow: { display: "flex", gap: 6, marginTop: 6, alignItems: "center" },
   miniSelect: { flex: 1, background: "#1e293b", border: "1px solid #334155", borderRadius: 6, padding: "3px 6px", fontSize: 11, fontWeight: 700 },
   dateInput: { background: "#1e293b", border: "1px solid #334155", color: "#cbd5e1", borderRadius: 6, padding: "2px 6px", fontSize: 11, colorScheme: "dark" as React.CSSProperties["colorScheme"] },
