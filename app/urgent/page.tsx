@@ -203,10 +203,13 @@ export default function UrgentPage() {
     if (!text) return;
     setSending((s) => new Set(s).add(id));
     try {
+      // Sending ONE reply must not hand the chat to the AI. Flipping a
+      // chat into ai_chat mode is a separate, explicit decision made with
+      // the «🤖 کامل AI» button — never a side effect of pressing send.
       const r = await fetch(`/api/messages/${id}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, markHandled: true, setMode: "ai_chat" }),
+        body: JSON.stringify({ text, markHandled: true }),
       });
       const j = (await r.json()) as { error?: string };
       if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
@@ -215,7 +218,7 @@ export default function UrgentPage() {
         delete n[id];
         return n;
       });
-      showToast(id, "✅ ارسال شد — از این به بعد AI این چت رو مدیریت می‌کنه");
+      showToast(id, "✅ ارسال شد");
       load();
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
@@ -254,6 +257,20 @@ export default function UrgentPage() {
   }
 
   async function handOverToAi(id: number) {
+    // Persistent + outward-facing: from now on the AI answers this person
+    // as the owner, unprompted. Never do that on a stray click.
+    const who = messages.find((x) => x.id === id);
+    const label = who?.chatTitle || who?.senderName || "این چت";
+    if (
+      !confirm(
+        `«${label}» به AI سپرده شود؟\n\n` +
+          "AI همین حالا جواب می‌دهد و از این پس پیام‌های بعدی این چت را هم " +
+          "خودش به‌جای تو پاسخ می‌دهد.\n\n" +
+          "برای پاسخ یک‌باره، به‌جای این از «🤖 پیشنهاد AI» استفاده کن.",
+      )
+    ) {
+      return;
+    }
     setHandingOver((s) => new Set(s).add(id));
     try {
       const r = await fetch(`/api/messages/${id}/ai-handle`, {
