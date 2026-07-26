@@ -92,6 +92,20 @@ export default function SharedGroupReport({
   const s = a?.stats;
   const pct = s && s.totalTasks > 0 ? Math.round((s.done / s.totalTasks) * 100) : 0;
 
+  // The analyser can emit the same issue twice with slightly different
+  // wording; collapse those so the reader isn't shown duplicates.
+  const critical = useMemo(() => {
+    if (!a) return [];
+    const seen = new Set<string>();
+    return a.criticalForInbox.filter((c) => {
+      const k = c.title.replace(/[\s‌«»"'`.,:؛()-]/g, "").toLowerCase();
+      const dup = [...seen].some((p) => p.includes(k) || k.includes(p));
+      if (dup) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [a]);
+
   const tasks = useMemo(() => {
     if (!a) return [];
     const needle = q.trim().toLowerCase();
@@ -233,7 +247,7 @@ export default function SharedGroupReport({
                     <span key={x.k} className="sg-leg">
                       <i className={`sg-swatch sg-${x.k}`} />{x.label}
                       <b>{fa(x.v)}</b>
-                      <em>{Math.round((x.v / segTotal) * 100)}٪</em>
+                      <em>{fa(Math.round((x.v / segTotal) * 100))}٪</em>
                     </span>
                   ))}
                 </div>
@@ -241,11 +255,11 @@ export default function SharedGroupReport({
             )}
 
             {/* ─── CRITICAL ─────────────────────────────── */}
-            {a.criticalForInbox.length > 0 && (
+            {critical.length > 0 && (
               <section className="sg-sec">
                 <h2 className="sg-h2"><span className="sg-h2-ico">🆘</span>موارد بحرانی</h2>
                 <div className="sg-crit-grid">
-                  {a.criticalForInbox.map((c, i) => (
+                  {critical.map((c, i) => (
                     <article key={i} className="sg-crit">
                       <div className="sg-crit-top">
                         <span className="sg-tag sg-tag--red">{KIND_LABEL[c.kind] ?? c.kind}</span>
@@ -253,14 +267,19 @@ export default function SharedGroupReport({
                       </div>
                       <h3 className="sg-crit-title">{c.title}</h3>
                       {c.details && <p className="sg-crit-body">{c.details}</p>}
-                      {c.people.length > 0 && (
-                        <div className="sg-faces">
-                          {c.people.map((p, j) => (
-                            <span key={j} className="sg-face" title={p}>{initials(p)}</span>
-                          ))}
-                          <span className="sg-faces-txt">{c.people.join("، ")}</span>
-                        </div>
-                      )}
+                      {(() => {
+                        // The analyser sometimes repeats a name; show each person once.
+                        const ppl = [...new Set(c.people.map((p) => p.trim()).filter(Boolean))];
+                        if (ppl.length === 0) return null;
+                        return (
+                          <div className="sg-faces">
+                            {ppl.map((p, j) => (
+                              <span key={j} className="sg-face" title={p}>{initials(p)}</span>
+                            ))}
+                            <span className="sg-faces-txt">{ppl.join("، ")}</span>
+                          </div>
+                        );
+                      })()}
                     </article>
                   ))}
                 </div>
@@ -305,8 +324,8 @@ export default function SharedGroupReport({
                               <span className="sg-tag">{ROLE_LABEL[p.roleLabel] ?? p.roleLabel}</span>
                             </div>
                             {p.roleDescription && <p className="sg-person-desc">{p.roleDescription}</p>}
-                            <div className="sg-prog">
-                              <div className="sg-prog-fill" style={{ width: `${rate}%` }} />
+                            <div className="sg-pbar">
+                              <div className="sg-pbar-fill" style={{ width: `${rate}%` }} />
                             </div>
                             <div className="sg-person-stats">
                               <span>اعلام: <b>{fa(p.tasksAnnounced)}</b></span>

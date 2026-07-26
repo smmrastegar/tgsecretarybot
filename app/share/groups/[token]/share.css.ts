@@ -119,8 +119,8 @@ export const SHARE_CSS = `
 .sg-person-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px}
 .sg-person-row h3{font-size:14px;font-weight:700;margin:0}
 .sg-person-desc{font-size:12px;color:var(--dim);line-height:1.8;margin:0 0 9px}
-.sg-prog{height:6px;border-radius:999px;background:#0a1120;overflow:hidden;margin-bottom:8px}
-.sg-prog-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--done),#7ce6b8);
+.sg-pbar{height:6px;border-radius:999px;background:#0a1120;overflow:hidden;margin-bottom:8px}
+.sg-pbar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--done),#7ce6b8);
   transition:width .8s cubic-bezier(.4,0,.2,1)}
 .sg-person-stats{display:flex;gap:14px;font-size:12px;color:var(--dim);align-items:center}
 .sg-person-stats b{color:var(--txt)}
