@@ -170,6 +170,21 @@ async function setAutoReplyLast(key: string, ttlSeconds: number): Promise<void> 
   }
 }
 
+// Everything the owner reads must be Persian — including mode names and
+// digits inside the alert cards.
+const CHAT_MODE_FA: Record<string, string> = {
+  off: "خاموش",
+  secretary: "منشی",
+  auto_reply: "پاسخ خودکار",
+  friendly_reply: "پاسخ دوستانه",
+  ai_chat: "چت هوش مصنوعی",
+  ai_listen: "شنود هوش مصنوعی",
+};
+
+function faNum(n: number | string): string {
+  return String(n).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]!);
+}
+
 function chatTitleOf(msg: Message): string | null {
   const chat = msg.chat as { title?: unknown };
   return typeof chat.title === "string" ? chat.title : null;
@@ -1154,7 +1169,7 @@ async function handleTranscribeCallback(
 ): Promise<void> {
   const cbMsg = ctx.callbackQuery?.message;
   if (!cbMsg) {
-    await ctx.answerCallbackQuery({ text: "no message context", show_alert: true });
+    await ctx.answerCallbackQuery({ text: "پیام مرجع پیدا نشد", show_alert: true });
     return;
   }
   const storageChatId = cbMsg.chat.id;
@@ -1197,13 +1212,13 @@ async function handleTranscribeCallback(
   }
   if (!fileId) {
     await ctx.answerCallbackQuery({
-      text: "media metadata not found",
+      text: "اطلاعات این فایل پیدا نشد",
       show_alert: true,
     });
     return;
   }
   if (alreadyTranscribed) {
-    await ctx.answerCallbackQuery({ text: "Already transcribed." });
+    await ctx.answerCallbackQuery({ text: "قبلاً پیاده‌سازی شده." });
     return;
   }
   await ctx.answerCallbackQuery({ text: "در حال transcribe…" });
@@ -1284,14 +1299,14 @@ async function handleAutoSummaryCallback(
 ): Promise<void> {
   const parts = data.split(":");
   if (parts.length < 4) {
-    await ctx.answerCallbackQuery({ text: "bad callback", show_alert: true });
+    await ctx.answerCallbackQuery({ text: "درخواست نامعتبر", show_alert: true });
     return;
   }
   const action = parts[1]!;
   const chatId = Number(parts[2]);
   const startSec = Number(parts[3]);
   if (!Number.isFinite(chatId) || !Number.isFinite(startSec)) {
-    await ctx.answerCallbackQuery({ text: "bad callback", show_alert: true });
+    await ctx.answerCallbackQuery({ text: "درخواست نامعتبر", show_alert: true });
     return;
   }
   const cb = ctx.callbackQuery;
@@ -1299,7 +1314,7 @@ async function handleAutoSummaryCallback(
   const rule = await getChatRule(chatId).catch(() => null);
   if (!rule) {
     await ctx.answerCallbackQuery({
-      text: "chat rule missing",
+      text: "تنظیمات این چت پیدا نشد",
       show_alert: true,
     });
     return;
@@ -1315,7 +1330,7 @@ async function handleAutoSummaryCallback(
   );
   if (!target) {
     await ctx.answerCallbackQuery({
-      text: "thread not found",
+      text: "گفتگو پیدا نشد",
       show_alert: true,
     });
     return;
@@ -1496,7 +1511,7 @@ async function handleAutoSummaryCallback(
     return;
   }
 
-  await ctx.answerCallbackQuery({ text: "unknown action" });
+  await ctx.answerCallbackQuery({ text: "عملیات ناشناخته" });
 }
 
 // Owner typed a reply (or any message) inside the summary_inbox
@@ -2137,7 +2152,7 @@ function buildBot(): Bot {
       if (data === "ui:login") {
         if (!hasDb()) {
           await ctx.answerCallbackQuery({
-            text: "Dashboard not configured.",
+            text: "داشبورد تنظیم نشده.",
             show_alert: true,
           });
           return;
@@ -2172,7 +2187,7 @@ function buildBot(): Bot {
         }
         if (!hasDb()) {
           await ctx.answerCallbackQuery({
-            text: "DB not configured.",
+            text: "دیتابیس تنظیم نشده.",
             show_alert: true,
           });
           return;
@@ -2245,7 +2260,7 @@ function buildBot(): Bot {
     if (!from) return;
     if (!hasDb()) {
       await ctx.reply(
-        "Dashboard is not configured (DATABASE_URL missing on the server).",
+        "داشبورد تنظیم نشده (DATABASE_URL روی سرور موجود نیست).",
       );
       return;
     }
@@ -3360,7 +3375,11 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
 
   let alerted = false;
   let autoReplied = false;
-  const chatLabel = chatTitle ?? (msg.chat.type === "private" ? `DM from ${senderName}` : `chat ${msg.chat.id}`);
+  const chatLabel =
+    chatTitle ??
+    (msg.chat.type === "private"
+      ? `پیام خصوصی از ${senderName}`
+      : `گروه ${msg.chat.id}`);
 
   const mode: ChatMode = rule?.mode ?? "off";
   const isDmPrivate = msg.chat.type === "private";
@@ -3384,11 +3403,11 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       try {
         await bot.api.sendMessage(
           notifyChat,
-          `🚨 Urgent (mode: ${mode})\n` +
-            `From: ${senderName}\n` +
-            `In: ${chatLabel}\n` +
-            `Importance: ${verdict.importance}/10\n` +
-            `Reason: ${verdict.reason}\n\n` +
+          `🚨 فوری (حالت: ${CHAT_MODE_FA[mode] ?? mode})\n` +
+            `از: ${senderName}\n` +
+            `در: ${chatLabel}\n` +
+            `اهمیت: ${faNum(verdict.importance)}/${faNum(10)}\n` +
+            `دلیل: ${verdict.reason}\n\n` +
             text.slice(0, 500),
         );
       } catch (err) {
@@ -4483,7 +4502,7 @@ async function maybeForwardToSecretary(args: {
           if (tr.text) {
             const sent = await bot.api.sendMessage(
               secId,
-              `📝 transcript:\n${tr.text}`.slice(0, 4096),
+              `📝 متن پیاده‌شده:\n${tr.text}`.slice(0, 4096),
               { reply_parameters: { message_id: lastSecretaryMsgId } },
             );
             await recordSecretaryLink({
@@ -5839,7 +5858,7 @@ async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
   if (!session) {
     await bot.api.sendMessage(
       msg.chat.id,
-      "No active thread to relay to. Reply to a forwarded message to respond.",
+      "گفتگوی فعالی برای ارسال وجود ندارد. برای پاسخ، روی یکی از پیام‌های فوروارد‌شده ریپلای کن.",
       { reply_parameters: { message_id: msg.message_id } },
     );
     return;
@@ -5847,7 +5866,7 @@ async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
   if (session.endedAt) {
     await bot.api.sendMessage(
       msg.chat.id,
-      "That thread is closed (owner took over or it expired).",
+      "این گفتگو بسته شده (صاحب اکانت خودش وارد شد یا منقضی شد).",
       { reply_parameters: { message_id: msg.message_id } },
     );
     return;

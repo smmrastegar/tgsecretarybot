@@ -125,7 +125,18 @@ async function transcribeViaOpenRouter(
   const base64 = Buffer.from(data).toString("base64");
   const format = mimeToFormat(mime);
 
-  const langHint = args.language ? ` The speaker is using ${args.language}.` : "";
+  // A bare ISO code ("fa") is a weak hint — models often answer in
+  // English or transliterate into Latin script. Name the language and
+  // demand its native script.
+  const LANG_NAMES: Record<string, string> = {
+    fa: "Persian/Farsi (فارسی), written in Persian script",
+    ar: "Arabic (العربية), written in Arabic script",
+    en: "English",
+    tr: "Turkish",
+  };
+  const langHint = args.language
+    ? ` The audio is in ${LANG_NAMES[args.language] ?? args.language}. Write the transcript in that language and its native script — never translate or transliterate it.`
+    : "";
   const body = {
     model: OPENROUTER_STT_MODEL,
     messages: [

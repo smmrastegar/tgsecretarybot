@@ -98,7 +98,7 @@ Reply with STRICT JSON only, no prose, no code fences:
   "importance": <integer 0-10>,
   "urgent": <true|false>,
   "concerns_owner": <true|false>,
-  "reason": "<one short sentence, English>"
+  "reason": "<یک جمله‌ی کوتاه فارسی که می‌گوید چرا>"
 }
 
 Scoring rubric:
@@ -111,6 +111,9 @@ Set "urgent" = true ONLY if the message cannot wait a few hours.
 Set "concerns_owner" = true if the message is addressed to the owner, mentions
 them by any owner_alias, contains a priority_keyword, or clearly expects them
 to act. In group chats default to false UNLESS one of those signals fires.
+
+"reason" MUST ALWAYS be written in Persian (فارسی), regardless of the
+language of the message being classified. Never answer it in English.
 
 Be conservative. False alarms train the owner to ignore the alert device.`;
 
@@ -537,9 +540,10 @@ Reply with JSON only, no prose, no code fences:
 }
 
 Guidance:
-- LANGUAGE: if the payload sets "output_language", write the summary,
-  topics, and action_items IN that language. Otherwise default to the
-  language used by most of the messages.
+- LANGUAGE: write the summary, topics, and action_items in the language
+  named by "output_language". When that field is absent, default to
+  Persian (فارسی) — the owner reads Persian. Never answer in English
+  unless "output_language" explicitly says English.
 - Topics: 3-7 short labels, prefer concrete nouns over generic ones.
 - Action items: things still open, especially anything the owner should look at.
   Each should be a SHORT imperative the owner can turn into a task or
