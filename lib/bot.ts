@@ -1221,18 +1221,23 @@ async function handleTranscribeCallback(
     await ctx.answerCallbackQuery({ text: "قبلاً پیاده‌سازی شده." });
     return;
   }
-  await ctx.answerCallbackQuery({ text: "در حال transcribe…" });
+  await ctx.answerCallbackQuery({ text: "در حال پیاده‌سازی متن…" });
   try {
+    // Without an explicit language hint Whisper auto-detects, and short
+    // or noisy Persian clips (especially video notes) routinely come back
+    // as English/Arabic. Always pass the configured language.
+    const sttSettings = await getSettings();
     const { text } = await transcribeAudio({
       botToken: config.telegramBotToken,
       fileId,
+      language: sttSettings.sttLanguage || "fa",
       chatId: storageChatId,
     });
     const transcript = (text ?? "").trim();
     if (!transcript) {
       await bot.api.sendMessage(
         storageChatId,
-        "📝 transcript خالی برگشت.",
+        "📝 متنی از این فایل استخراج نشد.",
         { reply_to_message_id: storageMessageId },
       ).catch(() => {});
       return;
@@ -1267,7 +1272,7 @@ async function handleTranscribeCallback(
     console.error("[transcribe] failed:", msg);
     await bot.api.sendMessage(
       storageChatId,
-      `📝 transcribe ناموفق: ${msg.slice(0, 200)}`,
+      `📝 پیاده‌سازی متن ناموفق بود: ${msg.slice(0, 200)}`,
       { reply_to_message_id: storageMessageId },
     ).catch(() => {});
   }

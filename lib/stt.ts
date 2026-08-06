@@ -225,7 +225,18 @@ async function transcribeViaGroq(
   form.append("file", new Blob([data as BlobPart], { type: mime }), name);
   form.append("model", GROQ_MODEL);
   form.append("response_format", "verbose_json");
-  if (args.language) form.append("language", args.language);
+  if (args.language) {
+    form.append("language", args.language);
+    // Whisper uses `prompt` as a style/script primer. On short or noisy
+    // clips (video notes especially) the language flag alone can still
+    // yield Latin transliteration, so prime it with native-script text.
+    const PRIMER: Record<string, string> = {
+      fa: "این یک گفتگوی فارسی است. متن را با خط فارسی بنویس.",
+      ar: "هذه محادثة بالعربية. اكتب النص بالحروف العربية.",
+    };
+    const primer = PRIMER[args.language];
+    if (primer) form.append("prompt", primer);
+  }
 
   const res = await fetchWithTimeout(
     GROQ_TRANSCRIBE_URL,
