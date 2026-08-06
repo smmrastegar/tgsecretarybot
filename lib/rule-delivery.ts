@@ -83,6 +83,37 @@ export async function sendRuleForward(args: {
   }
 }
 
+// Placeholders an operator can use inside a rule's header. Kept here so
+// the UI and the renderer can never drift apart.
+export const HEADER_PLACEHOLDERS: Array<{ token: string; label: string }> = [
+  { token: "{sender}", label: "نام فرستنده (مثلاً نام بات مبدأ)" },
+  { token: "{chat}", label: "نام چت مبدأ" },
+  { token: "{rule}", label: "نام قانون" },
+  { token: "{date}", label: "تاریخ (شمسی)" },
+  { token: "{time}", label: "ساعت" },
+];
+
+function renderHeader(
+  raw: string | null | undefined,
+  vars: { sender: string; chat: string | null; rule: string },
+): string {
+  const t = (raw ?? "").trim();
+  if (!t) return "";
+  const now = new Date();
+  const map: Record<string, string> = {
+    "{sender}": vars.sender || "",
+    "{bot}": vars.sender || "",
+    "{chat}": vars.chat || vars.sender || "",
+    "{rule}": vars.rule || "",
+    "{date}": now.toLocaleDateString("fa-IR"),
+    "{time}": now.toLocaleTimeString("fa-IR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+  };
+  return t.replace(/\{(sender|bot|chat|rule|date|time)\}/g, (m) => map[m] ?? m);
+}
+
 const HTML_ESC: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",
@@ -108,10 +139,17 @@ export function buildRuleForwardText(args: {
   showRulePrefix: boolean;
   formatAsOtp: boolean;
   otpCode?: string | null;
-  /** Operator-written static header prepended to the forward. */
+  /** Operator-written header prepended to the forward. Supports the
+   *  placeholders documented in HEADER_PLACEHOLDERS. */
   forwardHeader?: string | null;
+  /** Title of the chat the message came from (for {chat}). */
+  chatTitle?: string | null;
 }): { text: string; parseMode?: "HTML" } {
-  const header = (args.forwardHeader ?? "").trim();
+  const header = renderHeader(args.forwardHeader, {
+    sender: args.senderName,
+    chat: args.chatTitle ?? null,
+    rule: args.ruleName,
+  });
   if (args.formatAsOtp) {
     // No extractable OTP = the matched message wasn't actually an
     // OTP carrier. Returning empty signals the caller to SKIP the

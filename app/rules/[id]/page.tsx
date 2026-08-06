@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
@@ -68,6 +68,14 @@ type TestResult = {
   createdAt: string;
 };
 
+const HEADER_VARS: Array<{ token: string; label: string }> = [
+  { token: "{sender}", label: "نام فرستنده — مثلاً نام باتی که پیام رو فرستاده" },
+  { token: "{chat}", label: "نام چت مبدأ" },
+  { token: "{rule}", label: "نام همین قانون" },
+  { token: "{date}", label: "تاریخ" },
+  { token: "{time}", label: "ساعت" },
+];
+
 export default function RuleDetailPage() {
   const params = useParams<{ id: string }>();
   const id = Number(params?.id);
@@ -93,6 +101,20 @@ export default function RuleDetailPage() {
   const [showRulePrefix, setShowRulePrefix] = useState(true);
   const [formatAsOtp, setFormatAsOtp] = useState(false);
   const [header, setHeader] = useState("");
+  // Mirrors renderHeader() in lib/rule-delivery.ts so the operator sees
+  // exactly what the recipient will get.
+  const previewHeader = useMemo(() => {
+    const now = new Date();
+    const map: Record<string, string> = {
+      "{sender}": "Asainternet",
+      "{bot}": "Asainternet",
+      "{chat}": "Asainternet",
+      "{rule}": name || "قانون",
+      "{date}": now.toLocaleDateString("fa-IR"),
+      "{time}": now.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" }),
+    };
+    return header.replace(/\{(sender|bot|chat|rule|date|time)\}/g, (m) => map[m] ?? m);
+  }, [header, name]);
 
   // recipient form
   const [newChat, setNewChat] = useState("");
@@ -893,17 +915,42 @@ export default function RuleDetailPage() {
                 بفرست.
               </span>
             </label>
-            <div>
+            <div className="p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]">
               <div className="text-[11px] font-medium mb-1">
-                🪧 هدر پیام <span className="text-[var(--color-text-dim)]">(متن ثابت، اول هر فوروارد)</span>
+                🪧 هدر پیام{" "}
+                <span className="text-[var(--color-text-dim)]">
+                  (اول هر فوروارد می‌آید — خالی = بدون هدر)
+                </span>
               </div>
-              <input
-                type="text"
+              <textarea
                 value={header}
                 onChange={(e) => setHeader(e.target.value)}
-                placeholder="مثلاً: 🎫 درخواست تیک جدید داریم — خالی = بدون هدر"
-                className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+                rows={2}
+                placeholder="مثلاً: 🎫 درخواست تیک جدید داریم&#10;از {sender}"
+                className="w-full text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-3 py-2"
               />
+              <div className="text-[10px] text-[var(--color-text-dim)] mt-2 leading-relaxed">
+                متغیرها (کلیک = افزودن):
+                <span className="inline-flex flex-wrap gap-1 mx-1 align-middle">
+                  {HEADER_VARS.map((v) => (
+                    <button
+                      key={v.token}
+                      type="button"
+                      title={v.label}
+                      onClick={() => setHeader((h) => (h ? `${h} ${v.token}` : v.token))}
+                      className="px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] hover:border-[var(--color-accent)] font-mono"
+                    >
+                      {v.token}
+                    </button>
+                  ))}
+                </span>
+              </div>
+              {header.trim() && (
+                <div className="text-[11px] mt-2 p-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap">
+                  <span className="text-[var(--color-text-dim)]">پیش‌نمایش: </span>
+                  {previewHeader}
+                </div>
+              )}
             </div>
             <label className="flex items-center gap-2 text-[11px] cursor-pointer">
               <input

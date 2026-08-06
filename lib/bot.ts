@@ -3795,6 +3795,7 @@ async function maybeApplyMessageRules(args: {
         formatAsOtp: rule.formatAsOtp,
         otpCode,
         forwardHeader: rule.forwardHeader,
+        chatTitle: args.chatTitle,
       });
       const outText = built.text;
       const outParseMode = built.parseMode;
