@@ -3296,7 +3296,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           console.log(`[grace] chat=${msg.chat.id} ${reason}`);
           if (hasDb()) {
             try {
-              await logMessage({
+              const graceLogId = await logMessage({
                 businessConnectionId: bcId,
                 ownerUserId: owner?.userId ?? null,
                 chatId: msg.chat.id,
@@ -3317,6 +3317,24 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
                 mediaFileId,
                 mediaKind,
               });
+              // The grace window exists to stop the bot REPLYING while the
+              // owner is mid-conversation. Rule forwarding is routing, not
+              // a reply — suppressing it silently drops messages the
+              // operator explicitly asked to be delivered elsewhere.
+              if (text && text.trim()) {
+                await maybeApplyMessageRules({
+                  logId: graceLogId,
+                  chatId: msg.chat.id,
+                  chatTitle,
+                  senderName,
+                  messageText: text,
+                  businessConnectionId: bcId,
+                  fromOwner: false,
+                  bot,
+                }).catch((err) =>
+                  console.warn("[rules] apply failed (grace path):", err),
+                );
+              }
             } catch (err) {
               console.error("[db] grace-log failed:", err);
             }
