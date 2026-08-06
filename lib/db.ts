@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-07-24.board-tabs-structured";
+const SCHEMA_VERSION = "2026-08-06.rule-forward-header";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
