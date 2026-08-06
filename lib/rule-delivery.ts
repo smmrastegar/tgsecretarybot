@@ -91,7 +91,17 @@ export const HEADER_PLACEHOLDERS: Array<{ token: string; label: string }> = [
   { token: "{rule}", label: "نام قانون" },
   { token: "{date}", label: "تاریخ (شمسی)" },
   { token: "{time}", label: "ساعت" },
+  { token: "{dest}", label: "نام مقصد (برچسبِ گیرنده)" },
 ];
+
+// {dest} is per-RECIPIENT, so it survives renderHeader untouched and is
+// filled in just before each send.
+export function fillDestPlaceholder(
+  text: string,
+  destLabel: string | null,
+): string {
+  return text.replace(/\{dest\}/g, (destLabel ?? "").trim());
+}
 
 function renderHeader(
   raw: string | null | undefined,

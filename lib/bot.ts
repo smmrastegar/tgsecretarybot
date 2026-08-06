@@ -3869,10 +3869,11 @@ async function maybeApplyMessageRules(args: {
           }).catch(() => false);
         }
         if (!shouldForward) continue;
+        const { fillDestPlaceholder } = await import("./rule-delivery");
         const out = await sendRuleForward({
           bot: args.bot,
           chatId: r.recipientChatId,
-          text: outText,
+          text: fillDestPlaceholder(outText, r.recipientLabel),
           parseMode: outParseMode,
         });
         if (out.ok) {

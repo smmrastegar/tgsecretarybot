@@ -74,6 +74,7 @@ const HEADER_VARS: Array<{ token: string; label: string }> = [
   { token: "{rule}", label: "نام همین قانون" },
   { token: "{date}", label: "تاریخ" },
   { token: "{time}", label: "ساعت" },
+  { token: "{dest}", label: "نام مقصد — برچسبِ گیرنده" },
 ];
 
 export default function RuleDetailPage() {
@@ -112,8 +113,9 @@ export default function RuleDetailPage() {
       "{rule}": name || "قانون",
       "{date}": now.toLocaleDateString("fa-IR"),
       "{time}": now.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" }),
+      "{dest}": "SingBox(Support)",
     };
-    return header.replace(/\{(sender|bot|chat|rule|date|time)\}/g, (m) => map[m] ?? m);
+    return header.replace(/\{(sender|bot|chat|rule|date|time|dest)\}/g, (m) => map[m] ?? m);
   }, [header, name]);
 
   // recipient form
