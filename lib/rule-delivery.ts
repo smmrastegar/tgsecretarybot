@@ -108,7 +108,10 @@ export function buildRuleForwardText(args: {
   showRulePrefix: boolean;
   formatAsOtp: boolean;
   otpCode?: string | null;
+  /** Operator-written static header prepended to the forward. */
+  forwardHeader?: string | null;
 }): { text: string; parseMode?: "HTML" } {
+  const header = (args.forwardHeader ?? "").trim();
   if (args.formatAsOtp) {
     // No extractable OTP = the matched message wasn't actually an
     // OTP carrier. Returning empty signals the caller to SKIP the
@@ -120,6 +123,10 @@ export function buildRuleForwardText(args: {
       return { text: "" };
     }
     const lines: string[] = [];
+    if (header) {
+      lines.push(`<b>${escapeHtml(header)}</b>`);
+      lines.push("");
+    }
     if (args.showRulePrefix) {
       lines.push(
         `🏷 <b>${escapeHtml(args.ruleName)}</b> · از ${escapeHtml(args.senderName)}`,
@@ -131,11 +138,13 @@ export function buildRuleForwardText(args: {
     lines.push(`🔑 <code>${escapeHtml(args.otpCode)}</code>`);
     return { text: lines.join("\n"), parseMode: "HTML" };
   }
-  // Default: plain text. Prefix optional.
+  // Default: plain text. Header and rule-prefix are both optional and
+  // compose: header first, then the "[rule: …]" line, then the body.
+  const parts: string[] = [];
+  if (header) parts.push(header);
   if (args.showRulePrefix) {
-    return {
-      text: `🏷 [rule: ${args.ruleName}] · از ${args.senderName}\n\n${args.body}`,
-    };
+    parts.push(`🏷 [rule: ${args.ruleName}] · از ${args.senderName}`);
   }
-  return { text: args.body };
+  parts.push(args.body);
+  return { text: parts.join("\n\n") };
 }

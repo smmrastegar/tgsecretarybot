@@ -12,6 +12,7 @@ type Rule = {
   name: string;
   description: string;
   forwardFormat: string | null;
+  forwardHeader: string | null;
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
   sourceChatIds: number[] | null;
@@ -91,6 +92,7 @@ export default function RuleDetailPage() {
   const [variationStatus, setVariationStatus] = useState<string | null>(null);
   const [showRulePrefix, setShowRulePrefix] = useState(true);
   const [formatAsOtp, setFormatAsOtp] = useState(false);
+  const [header, setHeader] = useState("");
 
   // recipient form
   const [newChat, setNewChat] = useState("");
@@ -127,6 +129,7 @@ export default function RuleDetailPage() {
         setName(j.rule.name);
         setDesc(j.rule.description);
         setFormat(j.rule.forwardFormat ?? "");
+        setHeader(j.rule.forwardHeader ?? "");
         setRequestTrigger(j.rule.requestTrigger ?? "");
         setRequestWindow(j.rule.requestWindowSeconds);
         setSourceChats((j.rule.sourceChatIds ?? []).join(", "));
@@ -260,6 +263,7 @@ export default function RuleDetailPage() {
           name,
           description: desc,
           forwardFormat: format || null,
+          forwardHeader: header || null,
           requestTrigger: requestTrigger || null,
           requestWindowSeconds: requestWindow,
           sourceChatIds: sourceChats || null,
@@ -282,6 +286,7 @@ export default function RuleDetailPage() {
     sourceChats,
     matchAllFromSource,
     showRulePrefix,
+    header,
     formatAsOtp,
     load,
   ]);
@@ -888,6 +893,18 @@ export default function RuleDetailPage() {
                 بفرست.
               </span>
             </label>
+            <div>
+              <div className="text-[11px] font-medium mb-1">
+                🪧 هدر پیام <span className="text-[var(--color-text-dim)]">(متن ثابت، اول هر فوروارد)</span>
+              </div>
+              <input
+                type="text"
+                value={header}
+                onChange={(e) => setHeader(e.target.value)}
+                placeholder="مثلاً: 🎫 درخواست تیک جدید داریم — خالی = بدون هدر"
+                className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+              />
+            </div>
             <label className="flex items-center gap-2 text-[11px] cursor-pointer">
               <input
                 type="checkbox"

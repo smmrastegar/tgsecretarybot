@@ -1534,6 +1534,10 @@ export async function ensureSchema(
     // renders it as a tap-to-copy block. The custom forward_format
     // prompt is ignored in this mode.
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS format_as_otp BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Operator-written header line(s) prepended to every forward of this
+    // rule (e.g. «🎫 درخواست تیک جدید داریم»). Static text — unlike
+    // forward_format it costs no model call. NULL = no header.
+    await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS forward_header TEXT`;
     // Per (rule, recipient) timestamp of the last request_trigger
     // match. The gate window is BIDIRECTIONAL: a code arriving WITHIN
     // last_request_at + window also forwards immediately. Without
@@ -10645,6 +10649,7 @@ export type MessageRule = {
   name: string;
   description: string;
   forwardFormat: string | null;
+  forwardHeader: string | null;
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
   sourceChatIds: number[] | null;
@@ -10690,6 +10695,7 @@ function rowToRule(r: Record<string, unknown>): MessageRule {
     name: r.name as string,
     description: r.description as string,
     forwardFormat: (r.forward_format as string) ?? null,
+    forwardHeader: (r.forward_header as string) ?? null,
     requestTrigger: (r.request_trigger as string) ?? null,
     requestWindowSeconds:
       r.request_window_seconds != null
@@ -10716,7 +10722,7 @@ export async function listMessageRules(args?: {
   const enabledOnly = args?.enabledOnly ?? false;
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
-    SELECT id, tenant_id, name, description, forward_format,
+    SELECT id, tenant_id, name, description, forward_format, forward_header,
            request_trigger, request_window_seconds, source_chat_ids, match_all_from_source,
            show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
@@ -10731,7 +10737,7 @@ export async function getMessageRule(id: number): Promise<MessageRule | null> {
   if (!hasDb()) return null;
   await ensureSchema();
   const rows = await sql()`
-    SELECT id, tenant_id, name, description, forward_format,
+    SELECT id, tenant_id, name, description, forward_format, forward_header,
            request_trigger, request_window_seconds, source_chat_ids, match_all_from_source,
            show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
@@ -10760,7 +10766,7 @@ export async function createMessageRule(args: {
       ${args.enabled ?? true},
       ${args.createdBy ?? null}
     )
-    RETURNING id, tenant_id, name, description, forward_format,
+    RETURNING id, tenant_id, name, description, forward_format, forward_header,
               request_trigger, request_window_seconds, source_chat_ids, match_all_from_source,
               show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
@@ -10773,6 +10779,7 @@ export async function updateMessageRule(
     name: string;
     description: string;
     forwardFormat: string | null;
+    forwardHeader: string | null;
     requestTrigger: string | null;
     requestWindowSeconds: number | null;
     sourceChatIds: string | null;
@@ -10788,6 +10795,8 @@ export async function updateMessageRule(
   // (undefined) from "set to NULL" (null).
   const ffMarker = patch.forwardFormat === undefined ? 0 : 1;
   const ffValue = patch.forwardFormat ?? null;
+  const fhMarker = patch.forwardHeader === undefined ? 0 : 1;
+  const fhValue = patch.forwardHeader ?? null;
   const rtMarker = patch.requestTrigger === undefined ? 0 : 1;
   const rtValue = patch.requestTrigger ?? null;
   const rwMarker = patch.requestWindowSeconds === undefined ? 0 : 1;
@@ -10799,6 +10808,7 @@ export async function updateMessageRule(
       name = COALESCE(${patch.name ?? null}, name),
       description = COALESCE(${patch.description ?? null}, description),
       forward_format = CASE WHEN ${ffMarker}::int = 1 THEN ${ffValue} ELSE forward_format END,
+      forward_header = CASE WHEN ${fhMarker}::int = 1 THEN ${fhValue} ELSE forward_header END,
       request_trigger = CASE WHEN ${rtMarker}::int = 1 THEN ${rtValue} ELSE request_trigger END,
       request_window_seconds = CASE WHEN ${rwMarker}::int = 1 THEN ${rwValue}::int ELSE request_window_seconds END,
       source_chat_ids = CASE WHEN ${scMarker}::int = 1 THEN ${scValue} ELSE source_chat_ids END,
@@ -10808,7 +10818,7 @@ export async function updateMessageRule(
       enabled = COALESCE(${patch.enabled ?? null}::boolean, enabled),
       updated_at = NOW()
     WHERE id = ${id}
-    RETURNING id, tenant_id, name, description, forward_format,
+    RETURNING id, tenant_id, name, description, forward_format, forward_header,
               request_trigger, request_window_seconds, source_chat_ids, match_all_from_source,
               show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
@@ -11217,7 +11227,7 @@ export async function listRulesForRecipient(
   if (!hasDb()) return [];
   await ensureSchema();
   const rows = await sql()`
-    SELECT r.id, r.tenant_id, r.name, r.description, r.forward_format,
+    SELECT r.id, r.tenant_id, r.name, r.description, r.forward_format, r.forward_header,
            r.request_trigger, r.request_window_seconds,
            r.show_rule_prefix, r.format_as_otp, r.enabled,
            r.created_by, r.created_at, r.updated_at

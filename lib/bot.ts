@@ -3794,6 +3794,7 @@ async function maybeApplyMessageRules(args: {
         showRulePrefix: rule.showRulePrefix,
         formatAsOtp: rule.formatAsOtp,
         otpCode,
+        forwardHeader: rule.forwardHeader,
       });
       const outText = built.text;
       const outParseMode = built.parseMode;

@@ -52,6 +52,7 @@ export async function PUT(
     name?: string;
     description?: string;
     forwardFormat?: string | null;
+    forwardHeader?: string | null;
     requestTrigger?: string | null;
     requestWindowSeconds?: number | null;
     sourceChatIds?: string | null;
@@ -67,6 +68,12 @@ export async function PUT(
     patch.forwardFormat =
       typeof body.forwardFormat === "string" && body.forwardFormat.trim()
         ? body.forwardFormat.trim()
+        : null;
+  }
+  if (body.forwardHeader !== undefined) {
+    patch.forwardHeader =
+      typeof body.forwardHeader === "string" && body.forwardHeader.trim()
+        ? body.forwardHeader.trim()
         : null;
   }
   if (body.requestTrigger !== undefined) {
