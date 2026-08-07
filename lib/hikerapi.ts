@@ -299,7 +299,17 @@ function pickMedia(raw: Record<string, unknown>): {
 }
 
 function takenAtOf(raw: Record<string, unknown>): Date {
-  const ta = raw.taken_at ?? raw.takenAt ?? raw.device_timestamp;
+  // /gql/user/medias returns the timestamp under a GraphQL-prefixed key
+  // ("1ltaken_at") and leaves taken_at null, so fall back to any key that
+  // ends in taken_at before giving up and using "now".
+  const prefixed = Object.keys(raw).find(
+    (k) => k !== "taken_at" && /taken_at$/i.test(k) && raw[k] != null,
+  );
+  const ta =
+    raw.taken_at ??
+    raw.takenAt ??
+    (prefixed ? raw[prefixed] : undefined) ??
+    raw.device_timestamp;
   if (typeof ta === "number") {
     // seconds vs ms — Instagram returns seconds.
     const ms = ta < 1e12 ? ta * 1000 : ta;
@@ -849,21 +859,42 @@ function expandCarousel(
   return out;
 }
 
+// Pull the media array out of a HikerAPI response. The shape differs per
+// endpoint family and HAS CHANGED: every /v2/* media endpoint now nests
+// the list under `response` ({response:{items:[…]}}), while /gql/* with
+// flat=true returns {items:[…]} at the top level. We previously only
+// looked at the top level, so all three /v2 media calls silently
+// returned an empty list.
+function extractMediaArray(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== "object") return [];
+  const obj = data as Record<string, unknown>;
+  const KEYS = ["medias", "items", "media"] as const;
+  for (const k of KEYS) {
+    if (Array.isArray(obj[k])) return obj[k] as unknown[];
+  }
+  const nested = obj.response;
+  if (nested && typeof nested === "object") {
+    const r = nested as Record<string, unknown>;
+    for (const k of KEYS) {
+      if (Array.isArray(r[k])) return r[k] as unknown[];
+    }
+  }
+  if (Array.isArray(nested)) return nested;
+  return [];
+}
+
 async function fetchMediaList(
   path: string,
   userId: string,
+  extraParams?: Record<string, string>,
 ): Promise<Record<string, unknown>[]> {
   const data = await call<Record<string, unknown>>(path, {
     user_id: userId,
-    count: "12",
+    ...(extraParams ?? { count: "12" }),
   });
-  const items =
-    (Array.isArray(data) ? data : null) ??
-    (data.medias as unknown[]) ??
-    (data.items as unknown[]) ??
-    (data.media as unknown[]) ??
-    [];
-  return (Array.isArray(items) ? items : []).filter(
+  const items = extractMediaArray(data);
+  return items.filter(
     (m): m is Record<string, unknown> => !!m && typeof m === "object",
   );
 }
@@ -872,7 +903,12 @@ export async function getUserPosts(
   userId: string,
   username: string,
 ): Promise<IGMedia[]> {
-  const items = await fetchMediaList("/v2/user/medias", userId);
+  // /v2/user/medias is deprecated upstream ("Prefer /gql/user/medias").
+  // flat=true keeps the response a plain item list instead of nested
+  // GraphQL edge objects.
+  const items = await fetchMediaList("/gql/user/medias", userId, {
+    flat: "true",
+  });
   return items
     .filter((m) => {
       // 1 photo, 2 video, 8 carousel
