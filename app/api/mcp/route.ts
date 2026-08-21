@@ -2102,7 +2102,11 @@ async function authorize(request: Request): Promise<Scope | null> {
   if (secret && safeEqual(presented, secret)) return { full: true };
   const { getMcpTokenScope } = await import("@/lib/db");
   const scope = await getMcpTokenScope(presented).catch(() => null);
-  return scope ? { full: false, scope } : null;
+  if (!scope) return null;
+  // A token can carry the master key's power without BEING the master
+  // key: revoking it is one row flip instead of rotating MCP_SECRET
+  // across every client that already has it.
+  return scope.fullAccess ? { full: true } : { full: false, scope };
 }
 
 // Throws when a scoped caller steps outside its allowance. Full-access

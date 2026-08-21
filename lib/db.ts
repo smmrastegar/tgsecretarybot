@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-08-20.mcp-scoped-tokens";
+const SCHEMA_VERSION = "2026-08-20.mcp-token-full-access";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1555,6 +1555,11 @@ export async function ensureSchema(
         created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         last_used_at    TIMESTAMPTZ
       )`;
+    // A token may instead be marked full_access — the same power as the
+    // master MCP_SECRET, but individually labelled and revocable, so a
+    // leak means disabling one row rather than rotating the master key
+    // across every client that uses it.
+    await q`ALTER TABLE mcp_tokens ADD COLUMN IF NOT EXISTS full_access BOOLEAN NOT NULL DEFAULT FALSE`;
     // Per (rule, recipient) timestamp of the last request_trigger
     // match. The gate window is BIDIRECTIONAL: a code arriving WITHIN
     // last_request_at + window also forwards immediately. Without
@@ -12002,6 +12007,7 @@ export type McpTokenScope = {
   writeChatId: number | null;
   writeThreadId: number | null;
   canCreateTopic: boolean;
+  fullAccess: boolean;
 };
 
 export async function getMcpTokenScope(
@@ -12011,7 +12017,7 @@ export async function getMcpTokenScope(
   await ensureSchema();
   const rows = await sql()`
     SELECT id, label, read_chat_ids, write_chat_id, write_thread_id,
-           can_create_topic
+           can_create_topic, full_access
       FROM mcp_tokens
      WHERE token = ${token} AND enabled = TRUE
      LIMIT 1`;
@@ -12033,6 +12039,7 @@ export async function getMcpTokenScope(
     writeThreadId:
       r.write_thread_id == null ? null : Number(r.write_thread_id),
     canCreateTopic: Boolean(r.can_create_topic),
+    fullAccess: Boolean(r.full_access),
   };
 }
 
