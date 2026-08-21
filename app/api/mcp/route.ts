@@ -266,6 +266,55 @@ const TOOLS = [
     },
   },
   {
+    name: "chat_history",
+    description:
+      "Search and page through the FULL stored history of one chat. Unlike chat_messages (newest 300 only) this supports a date range, a text search, a topic filter and an offset, so you can walk back through everything that was ever logged. Returns total_matching so you know how much is left.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: {
+          type: "number",
+          description: "Chat to read (group is negative).",
+        },
+        search: {
+          type: "string",
+          description:
+            "Optional case-insensitive substring to match in the message text / transcript.",
+        },
+        sender: {
+          type: "string",
+          description: "Optional case-insensitive sender-name filter.",
+        },
+        after: {
+          type: "string",
+          description: "Optional ISO date/时间 lower bound, e.g. '2026-07-01'.",
+        },
+        before: {
+          type: "string",
+          description: "Optional ISO date/time upper bound, e.g. '2026-08-01'.",
+        },
+        message_thread_id: {
+          type: "number",
+          description: "Optional forum topic id to restrict to one topic.",
+        },
+        limit: {
+          type: "number",
+          description: "Max messages to return (default 100, max 500).",
+        },
+        offset: {
+          type: "number",
+          description: "Skip this many matches — use with limit to page.",
+        },
+        order: {
+          type: "string",
+          description: "'asc' (oldest first, default) or 'desc'.",
+        },
+      },
+      required: ["chat_id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "create_forum_topic",
     description:
       "Create a new forum topic in a supergroup that has topics enabled. Returns the new message_thread_id, which you then pass as message_thread_id to send_message to post inside it.",
@@ -1057,6 +1106,65 @@ async function callTool(
         [gid],
       );
       return toolText({ count: rows.length, members: rows });
+    }
+
+    case "chat_history": {
+      const cid = Number(args.chat_id);
+      if (!Number.isFinite(cid)) throw new Error("chat_id required");
+      const limit = Math.min(Math.max(Number(args.limit ?? 100) || 100, 1), 500);
+      const offset = Math.max(Number(args.offset ?? 0) || 0, 0);
+      const asc = String(args.order ?? "asc").toLowerCase() !== "desc";
+      // Build the filter once and reuse it for both the page and the
+      // total, so `total_matching` always describes the same query.
+      const where: string[] = ["chat_id = $1"];
+      const params: unknown[] = [cid];
+      const add = (sql: string, val: unknown) => {
+        params.push(val);
+        where.push(sql.replace("$?", `$${params.length}`));
+      };
+      if (args.search != null && String(args.search).trim()) {
+        add(
+          "(COALESCE(message_text,'') || ' ' || COALESCE(transcript,'')) ILIKE $?",
+          `%${String(args.search).trim()}%`,
+        );
+      }
+      if (args.sender != null && String(args.sender).trim()) {
+        add("sender_name ILIKE $?", `%${String(args.sender).trim()}%`);
+      }
+      if (args.after != null && String(args.after).trim()) {
+        add("created_at >= $?::timestamptz", String(args.after).trim());
+      }
+      if (args.before != null && String(args.before).trim()) {
+        add("created_at <= $?::timestamptz", String(args.before).trim());
+      }
+      if (args.message_thread_id != null) {
+        add("message_thread_id = $?", Number(args.message_thread_id));
+      }
+      const filter = where.join(" AND ");
+      const totalRows = await runParams(
+        `SELECT COUNT(*)::int AS n FROM messages_log WHERE ${filter}`,
+        params,
+      );
+      const total = Number(
+        (totalRows[0] as { n?: number } | undefined)?.n ?? 0,
+      );
+      const rows = await runParams(
+        `SELECT created_at, from_owner, sender_name, message_thread_id,
+                COALESCE(NULLIF(message_text, ''), transcript,
+                  '[' || COALESCE(media_kind, 'media') || ']') AS text
+           FROM messages_log
+          WHERE ${filter}
+          ORDER BY created_at ${asc ? "ASC" : "DESC"}
+          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset],
+      );
+      return toolText({
+        total_matching: total,
+        returned: rows.length,
+        offset,
+        has_more: offset + rows.length < total,
+        messages: rows,
+      });
     }
 
     case "create_forum_topic": {
@@ -1980,6 +2088,7 @@ const SCOPED_TOOLS = new Set([
   "group_topic_messages",
   "group_members",
   "chat_messages",
+  "chat_history",
   "send_message",
   "create_forum_topic",
 ]);
