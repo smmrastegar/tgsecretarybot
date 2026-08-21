@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-08-06.rule-forward-header";
+const SCHEMA_VERSION = "2026-08-20.mcp-scoped-tokens";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1538,6 +1538,23 @@ export async function ensureSchema(
     // rule (e.g. «🎫 درخواست تیک جدید داریم»). Static text — unlike
     // forward_format it costs no model call. NULL = no header.
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS forward_header TEXT`;
+    // Scoped MCP tokens. A token here is NOT the master MCP_SECRET: it
+    // may only touch the chats listed in read_chat_ids, may only write
+    // into (write_chat_id, write_thread_id), and never gets the raw
+    // SQL tools. Handing one to another agent/session is therefore safe.
+    await q`
+      CREATE TABLE IF NOT EXISTS mcp_tokens (
+        id              BIGSERIAL PRIMARY KEY,
+        token           TEXT NOT NULL UNIQUE,
+        label           TEXT NOT NULL,
+        read_chat_ids   TEXT,
+        write_chat_id   BIGINT,
+        write_thread_id INTEGER,
+        can_create_topic BOOLEAN NOT NULL DEFAULT FALSE,
+        enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_used_at    TIMESTAMPTZ
+      )`;
     // Per (rule, recipient) timestamp of the last request_trigger
     // match. The gate window is BIDIRECTIONAL: a code arriving WITHIN
     // last_request_at + window also forwards immediately. Without
@@ -11975,4 +11992,73 @@ export async function deleteEmailPendingReply(
   await sql()`
     DELETE FROM email_pending_replies
     WHERE prompt_chat_id = ${promptChatId} AND prompt_message_id = ${promptMessageId}`;
+}
+
+// --- Scoped MCP tokens ---
+export type McpTokenScope = {
+  id: number;
+  label: string;
+  readChatIds: number[];
+  writeChatId: number | null;
+  writeThreadId: number | null;
+  canCreateTopic: boolean;
+};
+
+export async function getMcpTokenScope(
+  token: string,
+): Promise<McpTokenScope | null> {
+  if (!hasDb() || !token) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id, label, read_chat_ids, write_chat_id, write_thread_id,
+           can_create_topic
+      FROM mcp_tokens
+     WHERE token = ${token} AND enabled = TRUE
+     LIMIT 1`;
+  const r = rows[0] as Record<string, unknown> | undefined;
+  if (!r) return null;
+  // Best-effort usage stamp; never block the call on it.
+  void sql()`UPDATE mcp_tokens SET last_used_at = NOW() WHERE id = ${Number(r.id)}`.catch(
+    () => {},
+  );
+  const ids = String(r.read_chat_ids ?? "")
+    .split(",")
+    .map((x) => Number(x.trim()))
+    .filter((n) => Number.isFinite(n) && n !== 0);
+  return {
+    id: Number(r.id),
+    label: String(r.label ?? ""),
+    readChatIds: ids,
+    writeChatId: r.write_chat_id == null ? null : Number(r.write_chat_id),
+    writeThreadId:
+      r.write_thread_id == null ? null : Number(r.write_thread_id),
+    canCreateTopic: Boolean(r.can_create_topic),
+  };
+}
+
+export async function createMcpToken(args: {
+  token: string;
+  label: string;
+  readChatIds: number[];
+  writeChatId?: number | null;
+  writeThreadId?: number | null;
+  canCreateTopic?: boolean;
+}): Promise<number> {
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO mcp_tokens (token, label, read_chat_ids, write_chat_id,
+                            write_thread_id, can_create_topic)
+    VALUES (${args.token}, ${args.label}, ${args.readChatIds.join(",")},
+            ${args.writeChatId ?? null}, ${args.writeThreadId ?? null},
+            ${args.canCreateTopic ?? false})
+    RETURNING id`;
+  return Number((rows[0] as { id: number }).id);
+}
+
+export async function setMcpTokenWriteThread(
+  id: number,
+  threadId: number | null,
+): Promise<void> {
+  await ensureSchema();
+  await sql()`UPDATE mcp_tokens SET write_thread_id = ${threadId} WHERE id = ${id}`;
 }

@@ -266,6 +266,28 @@ const TOOLS = [
     },
   },
   {
+    name: "create_forum_topic",
+    description:
+      "Create a new forum topic in a supergroup that has topics enabled. Returns the new message_thread_id, which you then pass as message_thread_id to send_message to post inside it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: {
+          type: ["number", "string"],
+          description: "Target supergroup chat_id (negative).",
+        },
+        name: { type: "string", description: "Topic title." },
+        icon_color: {
+          type: "number",
+          description:
+            "Optional colour as an RGB int (e.g. 7322096 blue, 16766590 yellow, 13338331 purple, 9367192 green, 16749490 pink, 16478047 red).",
+        },
+      },
+      required: ["chat_id", "name"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "send_message",
     description:
       "Send a text message AS THE BOT to a Telegram chat (group/user) the bot is a member of. Supports HTML parse_mode (<b>, <i>, <code>, <a href>). Use to post reports into a group. Max 4096 chars per message — split long content into multiple calls.",
@@ -1037,6 +1059,35 @@ async function callTool(
       return toolText({ count: rows.length, members: rows });
     }
 
+    case "create_forum_topic": {
+      const chatId = args.chat_id as number | string;
+      const topicName = String(args.name ?? "").trim();
+      if (!chatId || !topicName) throw new Error("chat_id and name required");
+      const body: Record<string, unknown> = {
+        chat_id: chatId,
+        name: topicName.slice(0, 128),
+      };
+      if (args.icon_color != null) body.icon_color = Number(args.icon_color);
+      const r = await fetch(
+        `https://api.telegram.org/bot${config.telegramBotToken}/createForumTopic`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const j = (await r.json()) as {
+        ok: boolean;
+        description?: string;
+        result?: { message_thread_id: number; name: string };
+      };
+      if (!j.ok) throw new Error(j.description ?? "createForumTopic failed");
+      return toolText({
+        ok: true,
+        message_thread_id: j.result?.message_thread_id,
+        name: j.result?.name,
+      });
+    }
     case "send_message": {
       // chat_id may be a numeric id OR an "@username" string (only
       // resolvable when sending via a business connection / public peer).
@@ -1913,16 +1964,95 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
-function authorized(request: Request): boolean {
-  const secret = config.mcpSecret;
-  if (!secret) return false; // hard-disabled until MCP_SECRET is set
+// A caller is either the master key (full access) or a scoped token that
+// may only read a fixed set of chats and write into one topic.
+type Scope =
+  | { full: true }
+  | { full: false; scope: import("@/lib/db").McpTokenScope };
+
+// Tools a scoped token may call. Deliberately excludes every raw-SQL and
+// schema tool (query/execute/tidb_*/db_*): arbitrary SQL would read any
+// chat in the database and defeat the whole point of scoping.
+const SCOPED_TOOLS = new Set([
+  "list_groups",
+  "group_overview",
+  "group_tasks",
+  "group_topic_messages",
+  "group_members",
+  "chat_messages",
+  "send_message",
+  "create_forum_topic",
+]);
+
+async function authorize(request: Request): Promise<Scope | null> {
   const header = request.headers.get("authorization") ?? "";
   const m = header.match(/^Bearer\s+(.+)$/i);
-  return m != null && safeEqual(m[1] ?? "", secret);
+  const presented = m?.[1] ?? "";
+  if (!presented) return null;
+  const secret = config.mcpSecret;
+  if (secret && safeEqual(presented, secret)) return { full: true };
+  const { getMcpTokenScope } = await import("@/lib/db");
+  const scope = await getMcpTokenScope(presented).catch(() => null);
+  return scope ? { full: false, scope } : null;
+}
+
+// Throws when a scoped caller steps outside its allowance. Full-access
+// callers pass straight through.
+function enforceScope(
+  auth: Scope,
+  name: string,
+  args: Record<string, unknown>,
+): void {
+  if (auth.full) return;
+  const sc = auth.scope;
+  if (!SCOPED_TOOLS.has(name)) {
+    throw new Error(
+      `tool "${name}" is not available to this token (scoped: ${sc.label})`,
+    );
+  }
+  const readable = new Set(sc.readChatIds);
+  const asId = (v: unknown): number | null => {
+    const n = Number(v);
+    return Number.isFinite(n) && n !== 0 ? n : null;
+  };
+  const target =
+    asId(args.chat_id) ?? asId(args.group_id) ?? asId(args.source_chat_id);
+  if (target != null && !readable.has(target)) {
+    throw new Error(
+      `chat ${target} is outside this token's scope (allowed: ${sc.readChatIds.join(", ")})`,
+    );
+  }
+  if (name === "send_message" || name === "create_forum_topic") {
+    if (sc.writeChatId == null) {
+      throw new Error("this token is read-only");
+    }
+    if (target != null && target !== sc.writeChatId) {
+      throw new Error(
+        `this token may only write in chat ${sc.writeChatId}, not ${target}`,
+      );
+    }
+    if (name === "create_forum_topic" && !sc.canCreateTopic) {
+      throw new Error("this token may not create topics");
+    }
+    if (name === "send_message") {
+      // Writing is confined to one topic; the General channel and every
+      // other topic stay read-only.
+      const thread = asId(args.message_thread_id);
+      if (sc.writeThreadId != null && thread !== sc.writeThreadId) {
+        throw new Error(
+          `this token may only post in topic ${sc.writeThreadId} of chat ${sc.writeChatId}`,
+        );
+      }
+      if (args.business_connection_id) {
+        throw new Error("this token may not send as the owner");
+      }
+    }
+  }
 }
 
 export async function POST(request: Request): Promise<Response> {
-  if (!authorized(request)) {
+  const auth = await authorize(request);
+  if (!auth) {
     return new Response(
       JSON.stringify({
         jsonrpc: "2.0",
@@ -1960,12 +2090,17 @@ export async function POST(request: Request): Promise<Response> {
       case "ping":
         return ok(msg.id, {});
       case "tools/list":
-        return ok(msg.id, { tools: TOOLS });
+        return ok(msg.id, {
+          tools: auth.full
+            ? TOOLS
+            : TOOLS.filter((t) => SCOPED_TOOLS.has((t as { name: string }).name)),
+        });
       case "tools/call": {
         const params = msg.params ?? {};
         const name = String(params.name ?? "");
         const args = (params.arguments as Record<string, unknown>) ?? {};
         try {
+          enforceScope(auth, name, args);
           const result = await callTool(name, args);
           return ok(msg.id, result);
         } catch (e) {
