@@ -11,6 +11,7 @@
 // permalink, caption}.
 
 import { config } from "./config";
+import { reportError, reportWarn } from "./report";
 import {
   assertBudget,
   HikerApprovalNeededError,
@@ -185,7 +186,7 @@ async function callOne<T>(
   }
   // Only record cost on success — 4xx/5xx don't bill us.
   await recordCall({ path }).catch((err) =>
-    console.warn("[hiker] recordCall failed:", err),
+    reportWarn("hikerapi", "[hiker] recordCall failed:", err),
   );
   const data = (await res.json()) as T;
   return { data, status: res.status };

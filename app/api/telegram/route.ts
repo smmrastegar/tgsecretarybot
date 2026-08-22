@@ -1,4 +1,5 @@
 import { webhookCallback } from "grammy";
+import { reportError, reportWarn } from "@/lib/report";
 import { config } from "@/lib/config";
 import { getBot } from "@/lib/bot";
 import { logTelegramUpdate, markUpdateProcessed } from "@/lib/db";
@@ -142,7 +143,7 @@ export async function POST(request: Request): Promise<Response> {
   // X-Telegram-Bot-Api-Secret-Token and anyone can POST forged
   // updates (spoofed messages/commands driving real bot sends).
   if (!config.webhookSecretToken) {
-    console.error(
+    reportError("webhook", 
       "[webhook] WEBHOOK_SECRET_TOKEN is not set — rejecting update",
     );
     return new Response("webhook secret not configured", { status: 503 });
@@ -157,11 +158,11 @@ export async function POST(request: Request): Promise<Response> {
         preview: meta.preview,
       });
       if (!isNew) {
-        console.warn(`[webhook] dup update_id=${meta.updateId}, skipping`);
+        reportWarn("webhook", `[webhook] dup update_id=${meta.updateId}, skipping`);
         return new Response("OK (dup)", { status: 200 });
       }
     } catch (err) {
-      console.warn("[webhook] dedup check failed, processing anyway:", err);
+      reportWarn("webhook", "[webhook] dedup check failed, processing anyway:", err);
     }
   }
   console.log(

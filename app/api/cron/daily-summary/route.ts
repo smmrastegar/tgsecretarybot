@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reportError, reportWarn } from "@/lib/report";
 import { config } from "@/lib/config";
 import { getCurrentSession } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
@@ -137,7 +138,7 @@ async function run(request: Request): Promise<NextResponse> {
       await markChatSummaryRun(a.chatId).catch(() => {});
       summarized++;
     } catch (err) {
-      console.error(`[summary] chat=${a.chatId} failed:`, err);
+      reportError("cron:daily-summary", `[summary] chat=${a.chatId} failed:`, err);
     }
   }
   await audit({

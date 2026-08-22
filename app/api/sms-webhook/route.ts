@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reportError, reportWarn } from "@/lib/report";
 import { getBot, maybeApplyNoteWatch } from "@/lib/bot";
 import { classifyPrivateSms } from "@/lib/classifier";
 import {
@@ -55,7 +56,7 @@ async function handle(request: Request): Promise<NextResponse> {
   // we can fix in the dashboard. The body carries ok:false + a
   // reason so curl-based debugging still sees the problem.
   if (!token) {
-    console.warn(`[sms-webhook] no token in request from ${request.headers.get("user-agent") ?? "?"}`);
+    reportWarn("sms-webhook", `[sms-webhook] no token in request from ${request.headers.get("user-agent") ?? "?"}`);
     return NextResponse.json({
       ok: false,
       error: "missing ?token query param",
@@ -63,7 +64,7 @@ async function handle(request: Request): Promise<NextResponse> {
   }
   const webhook = await findSmsWebhookBySecret(token);
   if (!webhook) {
-    console.warn(`[sms-webhook] token "${token.slice(0, 6)}…" not found or webhook disabled`);
+    reportWarn("sms-webhook", `[sms-webhook] token "${token.slice(0, 6)}…" not found or webhook disabled`);
     return NextResponse.json({
       ok: false,
       error: "unknown or disabled token — create one at /webhooks",
@@ -99,7 +100,7 @@ async function handle(request: Request): Promise<NextResponse> {
           ? (body.payload as string)
           : "";
   if (!text.trim()) {
-    console.warn(
+    reportWarn("sms-webhook", 
       `[sms-webhook] webhook=${webhook.name} got empty text; body keys=${Object.keys(body).join(",")}`,
     );
     return NextResponse.json({ ok: false, error: "missing 'text' field" });
@@ -166,7 +167,7 @@ async function handle(request: Request): Promise<NextResponse> {
         source: "sms_webhook",
       });
     } catch (err) {
-      console.error("[sms-webhook] log failed:", err);
+      reportError("sms-webhook", "[sms-webhook] log failed:", err);
     }
   }
   await touchSmsWebhook(webhook.id).catch(() => {});
@@ -201,7 +202,7 @@ async function handle(request: Request): Promise<NextResponse> {
       privateConversation: isPrivate ? { logId, reason: privacyReason } : null,
     });
   } catch (err) {
-    console.warn("[sms-webhook] route failed:", err);
+    reportWarn("sms-webhook", "[sms-webhook] route failed:", err);
   }
   if (logId) {
     try {
@@ -210,7 +211,7 @@ async function handle(request: Request): Promise<NextResponse> {
       const code = await extractOtpCodeAi(text);
       if (code) await saveOtpCode(logId, code);
     } catch (err) {
-      console.warn("[sms-webhook] otp extract failed:", err);
+      reportWarn("sms-webhook", "[sms-webhook] otp extract failed:", err);
     }
     // Watchlist scan on the SMS body too — concepts like "بانک
     // ملت" / "اعلام رفع تعهد" / etc. now trigger the same
@@ -230,7 +231,7 @@ async function handle(request: Request): Promise<NextResponse> {
         bot,
       });
     } catch (err) {
-      console.warn("[sms-webhook] watchlist scan failed:", err);
+      reportWarn("sms-webhook", "[sms-webhook] watchlist scan failed:", err);
     }
   }
 

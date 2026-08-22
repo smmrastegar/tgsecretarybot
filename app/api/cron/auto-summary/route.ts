@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reportError, reportWarn } from "@/lib/report";
 import { config } from "@/lib/config";
 import { deliverAutoSummary } from "@/lib/bot";
 import { getBot } from "@/lib/bot";
@@ -104,7 +105,7 @@ async function run(request: Request): Promise<NextResponse> {
       });
       if (ok) delivered++;
     } catch (err) {
-      console.error(
+      reportError("cron:auto-summary", 
         `[cron auto_summary] chat=${chatId} failed:`,
         err,
       );

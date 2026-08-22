@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reportError, reportWarn } from "@/lib/report";
 import { config } from "@/lib/config";
 import {
   clearMonitoredAccountPending,
@@ -198,7 +199,7 @@ async function run(request: Request): Promise<NextResponse> {
   try {
     await warnIfBudgetNearlyExhausted(tenants.map((t) => t.id));
   } catch (err) {
-    console.warn("[cron ig] budget warn failed:", err);
+    reportWarn("cron:instagram", "[cron ig] budget warn failed:", err);
   }
   return NextResponse.json({
     ok: true,
@@ -234,7 +235,7 @@ async function warnIfBudgetNearlyExhausted(tenantIds: number[]): Promise<void> {
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`;
       console.log(`[cron ig] budget warning sent tenant=${tenantId} pct=${pct}`);
     } catch (err) {
-      console.warn(`[cron ig] budget warning send failed tenant=${tenantId}:`, err);
+      reportWarn("cron:instagram", `[cron ig] budget warning send failed tenant=${tenantId}:`, err);
     }
   }
 }

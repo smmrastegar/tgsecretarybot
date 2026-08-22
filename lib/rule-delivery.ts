@@ -9,6 +9,7 @@
 // direct bot send when the recipient isn't reachable that way.
 
 import type { Bot } from "grammy";
+import { reportError, reportWarn } from "./report";
 import { listBusinessConnections } from "./db";
 
 export type ForwardResult =
@@ -33,7 +34,7 @@ async function pickActiveBusinessConnectionId(): Promise<string | null> {
     bcCache = { id: usable.id, expiresAt: Date.now() + 30_000 };
     return usable.id;
   } catch (err) {
-    console.warn("[rules] business connection lookup failed:", err);
+    reportWarn("rules", "[rules] business connection lookup failed:", err);
     return null;
   }
 }
@@ -64,7 +65,7 @@ export async function sendRuleForward(args: {
       };
     } catch (bErr) {
       const reason = bErr instanceof Error ? bErr.message : String(bErr);
-      console.warn(
+      reportWarn("rules", 
         `[rules] business-mode send to ${args.chatId} failed: ${reason} — falling back to direct`,
       );
     }

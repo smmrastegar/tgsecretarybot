@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reportError, reportWarn } from "@/lib/report";
 import { InlineKeyboard } from "grammy";
 import { getBot } from "@/lib/bot";
 import {
@@ -187,12 +188,12 @@ async function handle(request: Request): Promise<NextResponse> {
     } catch (err) {
       const e = err as { error_code?: number; description?: string };
       inboxStatus.error = `${e?.error_code ?? "?"}: ${e?.description ?? String(err)}`;
-      console.error(
+      reportError("insta-webhook", 
         `[insta-webhook] inbox notice failed inbox=${inbox.chatId}: ${inboxStatus.error}`,
       );
     }
   } else {
-    console.warn(
+    reportWarn("insta-webhook", 
       `[insta-webhook] no chat tagged with storage/downloader/download_archive — notice dropped`,
     );
   }
