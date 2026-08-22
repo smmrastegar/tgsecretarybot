@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-08-23.link-download-jobs";
+const SCHEMA_VERSION = "2026-08-23.link-downloaders";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1580,6 +1580,28 @@ export async function ensureSchema(
       )`;
     await q`CREATE INDEX IF NOT EXISTS link_jobs_pending_idx
       ON link_download_jobs (relay_bot_id, status, created_at) WHERE status = 'pending'`;
+    // Operator-configurable downloader routes: which hosts go to which
+    // bot. hosts is a comma-separated list matched against the parsed
+    // hostname (exact or as a parent domain) — never a substring, so a
+    // lookalike like open.spotify.com.attacker.net cannot match.
+    await q`
+      CREATE TABLE IF NOT EXISTS link_downloaders (
+        id         BIGSERIAL PRIMARY KEY,
+        label      TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        bot_id     BIGINT NOT NULL,
+        hosts      TEXT NOT NULL,
+        enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    // Seed the two the operator started with; ON CONFLICT-free because
+    // we only insert when the table is empty.
+    const seeded = await q`SELECT 1 FROM link_downloaders LIMIT 1`;
+    if ((seeded as unknown[]).length === 0) {
+      await q`INSERT INTO link_downloaders (label, kind, bot_id, hosts) VALUES
+        ('Instagram', 'instagram', 2010101852, 'instagram.com,instagr.am'),
+        ('Spotify', 'spotify', 5984546179, 'open.spotify.com,spotify.link')`;
+    }
     // Token-gated read-only feeds that expose ONLY the code-carrying
     // messages of one chat, and only those inside a short time window.
     // allowed_ips is an optional CIDR/plain-IP allowlist evaluated
@@ -12231,45 +12253,98 @@ export async function recentChatMessagesForFeed(
 }
 
 // --- Media-link download relay ---
-// Which downloader handles which link. Kept in code (not settings) so a
-// typo can never point a contact's link at an arbitrary chat.
-export const LINK_DOWNLOADERS: Array<{
+export type LinkDownloader = {
+  id: number;
+  label: string;
   kind: string;
   botId: number;
+  hosts: string[];
+  enabled: boolean;
+};
+
+// Cached briefly: this runs on every private message.
+let dlCache: { rows: LinkDownloader[]; at: number } | null = null;
+
+export function invalidateLinkDownloaders(): void {
+  dlCache = null;
+}
+
+export async function listLinkDownloaders(
+  all = false,
+): Promise<LinkDownloader[]> {
+  if (!hasDb()) return [];
+  if (!all && dlCache && Date.now() - dlCache.at < 30_000) return dlCache.rows;
+  await ensureSchema();
+  const rows = await sql()`SELECT * FROM link_downloaders ORDER BY id`;
+  const out = rows.map((r) => ({
+    id: Number(r.id),
+    label: String(r.label ?? ""),
+    kind: String(r.kind ?? ""),
+    botId: Number(r.bot_id),
+    hosts: String(r.hosts ?? "")
+      .split(",")
+      .map((h) => h.trim().toLowerCase().replace(/^\.+/, ""))
+      .filter(Boolean),
+    enabled: Boolean(r.enabled),
+  }));
+  if (!all) {
+    const on = out.filter((d) => d.enabled);
+    dlCache = { rows: on, at: Date.now() };
+    return on;
+  }
+  return out;
+}
+
+export async function upsertLinkDownloader(a: {
+  id?: number;
   label: string;
-  test: (url: string) => boolean;
-}> = [
-  {
-    kind: "instagram",
-    botId: 2010101852, // @instagram_load_bot
-    label: "Instagram",
-    test: (u) => /(^|\.)instagram\.com\//i.test(u) || /(^|\.)instagr\.am\//i.test(u),
-  },
-  {
-    kind: "spotify",
-    botId: 5984546179, // @Spotify_downlbot
-    label: "Spotify",
-    test: (u) => /(^|\.)open\.spotify\.com\//i.test(u) || /(^|\.)spotify\.link\//i.test(u),
-  },
-];
+  kind: string;
+  botId: number;
+  hosts: string[];
+  enabled: boolean;
+}): Promise<void> {
+  await ensureSchema();
+  const hosts = a.hosts.join(",");
+  if (a.id) {
+    await sql()`UPDATE link_downloaders SET label=${a.label}, kind=${a.kind},
+      bot_id=${a.botId}, hosts=${hosts}, enabled=${a.enabled} WHERE id=${a.id}`;
+  } else {
+    await sql()`INSERT INTO link_downloaders (label, kind, bot_id, hosts, enabled)
+      VALUES (${a.label}, ${a.kind}, ${a.botId}, ${hosts}, ${a.enabled})`;
+  }
+  invalidateLinkDownloaders();
+}
+
+export async function deleteLinkDownloader(id: number): Promise<void> {
+  await ensureSchema();
+  await sql()`DELETE FROM link_downloaders WHERE id = ${id}`;
+  invalidateLinkDownloaders();
+}
+
+// Host must equal the pattern or be a subdomain of it. Substring
+// matching would let "open.spotify.com.attacker.net" through.
+function hostMatches(host: string, pattern: string): boolean {
+  return host === pattern || host.endsWith("." + pattern);
+}
 
 const URL_RE = /https?:\/\/[^\s<>()"']+/gi;
 
-// First supported media link in a message, if any.
-export function findDownloadableLink(
+export async function findDownloadableLink(
   text: string,
-): { kind: string; botId: number; label: string; url: string } | null {
+): Promise<{ kind: string; botId: number; label: string; url: string } | null> {
   if (!text) return null;
+  const downloaders = await listLinkDownloaders();
+  if (downloaders.length === 0) return null;
   for (const raw of text.match(URL_RE) ?? []) {
     const url = raw.replace(/[).,،]+$/, "");
     let host = "";
     try {
-      host = new URL(url).hostname;
+      host = new URL(url).hostname.toLowerCase();
     } catch {
       continue;
     }
-    for (const d of LINK_DOWNLOADERS) {
-      if (d.test(host + "/")) {
+    for (const d of downloaders) {
+      if (d.hosts.some((h) => hostMatches(host, h))) {
         return { kind: d.kind, botId: d.botId, label: d.label, url };
       }
     }

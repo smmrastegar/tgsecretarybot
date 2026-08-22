@@ -2763,13 +2763,13 @@ async function maybeRelayDownloadLink(msg: Message, bot: Bot): Promise<void> {
   if (msg.chat.type !== "private") return;
   const text = msg.text ?? msg.caption ?? "";
   if (!text) return;
-  const { findDownloadableLink, createLinkJob } = await import("./db");
-  const hit = findDownloadableLink(text);
+  const { findDownloadableLink, createLinkJob, listLinkDownloaders } =
+    await import("./db");
+  // Never relay a downloader's own chat back into itself, or we'd loop.
+  const downloaders = await listLinkDownloaders();
+  if (downloaders.some((d) => d.botId === msg.chat.id)) return;
+  const hit = await findDownloadableLink(text);
   if (!hit) return;
-  // Never relay the downloader's own chat back into itself, and ignore
-  // links the owner sent (they can talk to the bot directly).
-  const { LINK_DOWNLOADERS } = await import("./db");
-  if (LINK_DOWNLOADERS.some((d) => d.botId === msg.chat.id)) return;
   const bcId = await activeBusinessConnectionId();
   if (!bcId) return;
   try {
@@ -2797,8 +2797,11 @@ async function maybeReturnDownloadedMedia(
   msg: Message,
   bot: Bot,
 ): Promise<boolean> {
-  const { LINK_DOWNLOADERS, findPendingLinkJob, finishLinkJob } = await import("./db");
-  const downloader = LINK_DOWNLOADERS.find((d) => d.botId === msg.chat.id);
+  const { listLinkDownloaders, findPendingLinkJob, finishLinkJob } =
+    await import("./db");
+  const downloader = (await listLinkDownloaders()).find(
+    (d) => d.botId === msg.chat.id,
+  );
   if (!downloader) return false;
   const hasMedia = !!(
     msg.photo || msg.video || msg.audio || msg.document ||
