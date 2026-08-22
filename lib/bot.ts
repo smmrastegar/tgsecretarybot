@@ -121,6 +121,7 @@ import { isTransientDbError } from "./pg-driver";
 import { summarizeEmail } from "./classifier";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
+import { reportWarn } from "./report";
 import { randomBytes } from "node:crypto";
 
 let _bot: Bot | null = null;
@@ -2752,6 +2753,92 @@ function harvestContactShare(msg: Message): void {
   }).catch((err) => console.warn("[phone_contacts] save failed:", err));
 }
 
+// --- Media-link download relay -------------------------------------
+// A contact drops an Instagram/Spotify link in a DM. We forward the URL
+// to the matching downloader bot AS THE OWNER (bots cannot message
+// bots; the business connection makes us the user), then hand whatever
+// the downloader sends back to the person who asked.
+
+async function maybeRelayDownloadLink(msg: Message, bot: Bot): Promise<void> {
+  if (msg.chat.type !== "private") return;
+  const text = msg.text ?? msg.caption ?? "";
+  if (!text) return;
+  const { findDownloadableLink, createLinkJob } = await import("./db");
+  const hit = findDownloadableLink(text);
+  if (!hit) return;
+  // Never relay the downloader's own chat back into itself, and ignore
+  // links the owner sent (they can talk to the bot directly).
+  const { LINK_DOWNLOADERS } = await import("./db");
+  if (LINK_DOWNLOADERS.some((d) => d.botId === msg.chat.id)) return;
+  const bcId = await activeBusinessConnectionId();
+  if (!bcId) return;
+  try {
+    const sent = await bot.api.sendMessage(hit.botId, hit.url, {
+      business_connection_id: bcId,
+    });
+    await createLinkJob({
+      kind: hit.kind,
+      relayBotId: hit.botId,
+      sourceChatId: msg.chat.id,
+      sourceMessageId: msg.message_id,
+      link: hit.url,
+      relayMessageId: sent.message_id,
+    });
+    console.log(
+      `[link-relay] ${hit.kind} link from chat=${msg.chat.id} → bot=${hit.botId}`,
+    );
+  } catch (err) {
+    reportWarn("link-relay", `send to ${hit.label} bot failed:`, err);
+  }
+}
+
+// Returns true when this message WAS a downloader reply we consumed.
+async function maybeReturnDownloadedMedia(
+  msg: Message,
+  bot: Bot,
+): Promise<boolean> {
+  const { LINK_DOWNLOADERS, findPendingLinkJob, finishLinkJob } = await import("./db");
+  const downloader = LINK_DOWNLOADERS.find((d) => d.botId === msg.chat.id);
+  if (!downloader) return false;
+  const hasMedia = !!(
+    msg.photo || msg.video || msg.audio || msg.document ||
+    msg.animation || msg.voice
+  );
+  // Status chatter ("downloading…", menus) carries no media — leave it.
+  if (!hasMedia) return false;
+  const replyTo = msg.reply_to_message?.message_id ?? null;
+  const job = await findPendingLinkJob(downloader.botId, replyTo);
+  if (!job) return false;
+  const bcId = await activeBusinessConnectionId();
+  if (!bcId) return false;
+  try {
+    await bot.api.copyMessage(job.sourceChatId, msg.chat.id, msg.message_id, {
+      business_connection_id: bcId,
+      ...(job.sourceMessageId
+        ? { reply_parameters: { message_id: job.sourceMessageId } }
+        : {}),
+    } as Parameters<typeof bot.api.copyMessage>[3]);
+    await finishLinkJob(job.id, 1);
+    console.log(
+      `[link-relay] returned ${downloader.kind} media to chat=${job.sourceChatId}`,
+    );
+  } catch (err) {
+    reportWarn("link-relay", "copy back to requester failed:", err);
+  }
+  return true;
+}
+
+// The owner's active business connection, used to act as the owner.
+async function activeBusinessConnectionId(): Promise<string | null> {
+  try {
+    const { listBusinessConnections } = await import("./db");
+    const rows = await listBusinessConnections();
+    return rows.find((r) => r.isEnabled && r.canReply)?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   // Hard ignore: operator marked this chat as "do not process". Bail
   // before any classifier / log / route / rule work. Cached briefly
@@ -2762,6 +2849,21 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     return;
   }
   harvestContactShare(msg);
+  // Media-link relay. Runs before the rest of the pipeline (and before
+  // the active-grace gate) because it is a service to the sender, not a
+  // reply the bot decides to make. PRIVATE CHATS ONLY — a group is
+  // never allowed to drive the owner's account into messaging bots.
+  if (msg.chat.type === "private") {
+    await maybeRelayDownloadLink(msg, bot).catch((err) =>
+      reportWarn("link-relay", "relay failed:", err),
+    );
+    if (await maybeReturnDownloadedMedia(msg, bot).catch((err) => {
+      reportWarn("link-relay", "return failed:", err);
+      return false;
+    })) {
+      return; // downloader's reply — already handed back, don't log/classify
+    }
+  }
   // Diagnostic — every media payload that reaches this handler gets a
   // "received_business" row in media_routing_log so we can tell apart
   // "the bot never saw it" (no received row) from "the bot saw it but

@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-08-22.code-feeds";
+const SCHEMA_VERSION = "2026-08-23.link-download-jobs";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1560,6 +1560,26 @@ export async function ensureSchema(
     // leak means disabling one row rather than rotating the master key
     // across every client that uses it.
     await q`ALTER TABLE mcp_tokens ADD COLUMN IF NOT EXISTS full_access BOOLEAN NOT NULL DEFAULT FALSE`;
+    // A contact sends a media link in a PRIVATE chat; we relay it to the
+    // matching downloader bot as the owner (over the business
+    // connection — a bot cannot message another bot) and return whatever
+    // comes back to whoever sent the link. One row per in-flight request.
+    await q`
+      CREATE TABLE IF NOT EXISTS link_download_jobs (
+        id                BIGSERIAL PRIMARY KEY,
+        kind              TEXT NOT NULL,
+        relay_bot_id      BIGINT NOT NULL,
+        source_chat_id    BIGINT NOT NULL,
+        source_message_id BIGINT,
+        link              TEXT NOT NULL,
+        relay_message_id  BIGINT,
+        status            TEXT NOT NULL DEFAULT 'pending',
+        delivered         INTEGER NOT NULL DEFAULT 0,
+        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at      TIMESTAMPTZ
+      )`;
+    await q`CREATE INDEX IF NOT EXISTS link_jobs_pending_idx
+      ON link_download_jobs (relay_bot_id, status, created_at) WHERE status = 'pending'`;
     // Token-gated read-only feeds that expose ONLY the code-carrying
     // messages of one chat, and only those inside a short time window.
     // allowed_ips is an optional CIDR/plain-IP allowlist evaluated
@@ -12208,4 +12228,123 @@ export async function recentChatMessagesForFeed(
     createdAt: r.created_at as Date,
     text: String(r.text ?? ""),
   }));
+}
+
+// --- Media-link download relay ---
+// Which downloader handles which link. Kept in code (not settings) so a
+// typo can never point a contact's link at an arbitrary chat.
+export const LINK_DOWNLOADERS: Array<{
+  kind: string;
+  botId: number;
+  label: string;
+  test: (url: string) => boolean;
+}> = [
+  {
+    kind: "instagram",
+    botId: 2010101852, // @instagram_load_bot
+    label: "Instagram",
+    test: (u) => /(^|\.)instagram\.com\//i.test(u) || /(^|\.)instagr\.am\//i.test(u),
+  },
+  {
+    kind: "spotify",
+    botId: 5984546179, // @Spotify_downlbot
+    label: "Spotify",
+    test: (u) => /(^|\.)open\.spotify\.com\//i.test(u) || /(^|\.)spotify\.link\//i.test(u),
+  },
+];
+
+const URL_RE = /https?:\/\/[^\s<>()"']+/gi;
+
+// First supported media link in a message, if any.
+export function findDownloadableLink(
+  text: string,
+): { kind: string; botId: number; label: string; url: string } | null {
+  if (!text) return null;
+  for (const raw of text.match(URL_RE) ?? []) {
+    const url = raw.replace(/[).,،]+$/, "");
+    let host = "";
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      continue;
+    }
+    for (const d of LINK_DOWNLOADERS) {
+      if (d.test(host + "/")) {
+        return { kind: d.kind, botId: d.botId, label: d.label, url };
+      }
+    }
+  }
+  return null;
+}
+
+export type LinkJob = {
+  id: number;
+  kind: string;
+  relayBotId: number;
+  sourceChatId: number;
+  sourceMessageId: number | null;
+  link: string;
+};
+
+function rowToLinkJob(r: Record<string, unknown>): LinkJob {
+  return {
+    id: Number(r.id),
+    kind: String(r.kind ?? ""),
+    relayBotId: Number(r.relay_bot_id),
+    sourceChatId: Number(r.source_chat_id),
+    sourceMessageId: r.source_message_id == null ? null : Number(r.source_message_id),
+    link: String(r.link ?? ""),
+  };
+}
+
+export async function createLinkJob(args: {
+  kind: string;
+  relayBotId: number;
+  sourceChatId: number;
+  sourceMessageId: number | null;
+  link: string;
+  relayMessageId: number | null;
+}): Promise<number | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    INSERT INTO link_download_jobs
+      (kind, relay_bot_id, source_chat_id, source_message_id, link, relay_message_id)
+    VALUES (${args.kind}, ${args.relayBotId}, ${args.sourceChatId},
+            ${args.sourceMessageId}, ${args.link}, ${args.relayMessageId})
+    RETURNING id`;
+  return Number((rows[0] as { id: number }).id);
+}
+
+// The downloader answers inside the owner's DM with it. Prefer an exact
+// match on the message it replied to; otherwise take that bot's oldest
+// pending job — correct because we relay one link at a time per bot.
+export async function findPendingLinkJob(
+  relayBotId: number,
+  replyToMessageId: number | null,
+): Promise<LinkJob | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  if (replyToMessageId != null) {
+    const exact = await sql()`
+      SELECT * FROM link_download_jobs
+       WHERE status = 'pending' AND relay_bot_id = ${relayBotId}
+         AND relay_message_id = ${replyToMessageId}
+       ORDER BY created_at ASC LIMIT 1`;
+    if (exact[0]) return rowToLinkJob(exact[0]);
+  }
+  const rows = await sql()`
+    SELECT * FROM link_download_jobs
+     WHERE status = 'pending' AND relay_bot_id = ${relayBotId}
+       AND created_at > NOW() - INTERVAL '10 minutes'
+     ORDER BY created_at ASC LIMIT 1`;
+  return rows[0] ? rowToLinkJob(rows[0]) : null;
+}
+
+export async function finishLinkJob(id: number, delivered: number): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE link_download_jobs
+       SET status = 'done', delivered = delivered + ${delivered}, completed_at = NOW()
+     WHERE id = ${id}`;
 }
