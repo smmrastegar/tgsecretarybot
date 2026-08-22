@@ -2814,21 +2814,32 @@ async function maybeReturnDownloadedMedia(
   if (!job) return false;
   const bcId = await activeBusinessConnectionId();
   if (!bcId) return false;
+  // copyMessage cannot address a message that arrived over a business
+  // connection ("message to copy not found"), so re-send the media by
+  // its file_id instead.
+  const media = mediaFileId(msg);
+  if (!media) return false;
   try {
-    await bot.api.copyMessage(job.sourceChatId, msg.chat.id, msg.message_id, {
-      business_connection_id: bcId,
-      ...(job.sourceMessageId
-        ? { reply_parameters: { message_id: job.sourceMessageId } }
-        : {}),
-    } as Parameters<typeof bot.api.copyMessage>[3]);
+    await sendMediaAsOwner({
+      bot,
+      toChatId: job.sourceChatId,
+      businessConnectionId: bcId,
+      kind: media.kind,
+      file: media.fileId,
+      caption: msg.caption ?? undefined,
+      replyToMessageId: job.sourceMessageId ?? undefined,
+    });
     await finishLinkJob(job.id, 1);
     console.log(
-      `[link-relay] returned ${downloader.kind} media to chat=${job.sourceChatId}`,
+      `[link-relay] returned ${downloader.kind} ${media.kind} to chat=${job.sourceChatId}`,
     );
+    return true;
   } catch (err) {
-    reportWarn("link-relay", "copy back to requester failed:", err);
+    // Leave the job pending and DON'T swallow the message: a consumed
+    // message that never arrived would vanish from the log too.
+    reportWarn("link-relay", "send back to requester failed:", err);
+    return false;
   }
-  return true;
 }
 
 // The owner's active business connection, used to act as the owner.
