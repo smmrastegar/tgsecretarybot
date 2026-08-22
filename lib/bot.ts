@@ -2761,6 +2761,11 @@ function harvestContactShare(msg: Message): void {
 
 async function maybeRelayDownloadLink(msg: Message, bot: Bot): Promise<void> {
   if (msg.chat.type !== "private") return;
+  // Only links a PERSON sends. Bots in the owner's DMs (SMS forwarders,
+  // monitoring bots, newsletters) routinely carry links that have
+  // nothing to do with a download request, and relaying those would
+  // burn the downloader on every notification.
+  if (msg.from?.is_bot) return;
   const text = msg.text ?? msg.caption ?? "";
   if (!text) return;
   const { findDownloadableLink, createLinkJob, listLinkDownloaders } =
