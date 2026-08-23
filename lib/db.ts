@@ -11,7 +11,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-08-23.link-downloaders";
+const SCHEMA_VERSION = "2026-08-23.self-voice-transcript";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -743,6 +743,11 @@ export async function ensureSchema(
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_forward_photo BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_forward_location BOOLEAN NOT NULL DEFAULT FALSE`;
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS auto_extract_notes BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Owner's OWN voice notes, transcribed straight back under the
+    // voice as a plain reply. Per-chat because it's a habit, not a
+    // global preference: you want it in the chats where you dictate,
+    // not in every DM you ever open.
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS self_voice_transcript BOOLEAN NOT NULL DEFAULT FALSE`;
     // Follow-up reminders: when ON, a cron tick checks whether the
     // owner has left this person hanging — if there's a non-owner
     // message that's older than threshold_hours with no owner reply
@@ -3341,6 +3346,7 @@ export type ChatRule = {
   autoForwardPhoto: boolean;
   autoForwardLocation: boolean;
   autoExtractNotes: boolean;
+  selfVoiceTranscript: boolean;
   isBot: boolean;
   ignored: boolean;
   phoneNumber: string | null;
@@ -3425,6 +3431,7 @@ function rowToChatRule(r: Record<string, unknown>): ChatRule {
     autoForwardPhoto: Boolean(r.auto_forward_photo),
     autoForwardLocation: Boolean(r.auto_forward_location),
     autoExtractNotes: Boolean(r.auto_extract_notes),
+    selfVoiceTranscript: Boolean(r.self_voice_transcript),
     isBot: Boolean(r.is_bot),
     ignored: Boolean(r.ignored),
     phoneNumber: (r.phone_number as string) ?? null,
@@ -3471,6 +3478,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            last_auto_summary_at,
            auto_forward_voice, auto_forward_video, auto_forward_photo,
            auto_forward_location, auto_extract_notes,
+           self_voice_transcript,
            is_bot, ignored, phone_number,
            grace_skipped_at,
            summary_interval_hours, last_summary_run_at, analytics_share_token,
@@ -3807,6 +3815,7 @@ export type ChatAutomationPatch = {
   autoForwardPhoto?: boolean;
   autoForwardLocation?: boolean;
   autoExtractNotes?: boolean;
+  selfVoiceTranscript?: boolean;
 };
 
 export async function setChatAutomation(
@@ -3824,7 +3833,7 @@ export async function setChatAutomation(
   await sql()`
     INSERT INTO chat_rules (chat_id, chat_type,
       auto_forward_voice, auto_forward_video, auto_forward_photo,
-      auto_forward_location, auto_extract_notes, updated_at)
+      auto_forward_location, auto_extract_notes, self_voice_transcript, updated_at)
     VALUES (${chatId},
       COALESCE(
         (SELECT chat_type FROM messages_log WHERE chat_id = ${chatId} LIMIT 1),
@@ -3835,6 +3844,7 @@ export async function setChatAutomation(
       ${patch.autoForwardPhoto ?? false},
       ${patch.autoForwardLocation ?? false},
       ${patch.autoExtractNotes ?? false},
+      ${patch.selfVoiceTranscript ?? false},
       NOW())
     ON CONFLICT (chat_id) DO UPDATE SET
       auto_forward_voice = COALESCE(${patch.autoForwardVoice ?? null}::boolean, chat_rules.auto_forward_voice),
@@ -3842,6 +3852,7 @@ export async function setChatAutomation(
       auto_forward_photo = COALESCE(${patch.autoForwardPhoto ?? null}::boolean, chat_rules.auto_forward_photo),
       auto_forward_location = COALESCE(${patch.autoForwardLocation ?? null}::boolean, chat_rules.auto_forward_location),
       auto_extract_notes = COALESCE(${patch.autoExtractNotes ?? null}::boolean, chat_rules.auto_extract_notes),
+      self_voice_transcript = COALESCE(${patch.selfVoiceTranscript ?? null}::boolean, chat_rules.self_voice_transcript),
       updated_at = NOW()`;
 }
 
@@ -3854,13 +3865,14 @@ export async function bulkSetChatAutomation(
   const rows = await sql()`
     INSERT INTO chat_rules (chat_id, chat_type, chat_title,
       auto_forward_voice, auto_forward_video, auto_forward_photo,
-      auto_forward_location, auto_extract_notes, updated_at)
+      auto_forward_location, auto_extract_notes, self_voice_transcript, updated_at)
     SELECT m.chat_id, MAX(m.chat_type), MAX(m.chat_title),
            ${patch.autoForwardVoice ?? false},
            ${patch.autoForwardVideo ?? false},
            ${patch.autoForwardPhoto ?? false},
            ${patch.autoForwardLocation ?? false},
            ${patch.autoExtractNotes ?? false},
+           ${patch.selfVoiceTranscript ?? false},
            NOW()
     FROM messages_log m
     WHERE m.chat_id = ANY(${chatIds}::bigint[])
@@ -3871,6 +3883,7 @@ export async function bulkSetChatAutomation(
       auto_forward_photo = COALESCE(${patch.autoForwardPhoto ?? null}::boolean, chat_rules.auto_forward_photo),
       auto_forward_location = COALESCE(${patch.autoForwardLocation ?? null}::boolean, chat_rules.auto_forward_location),
       auto_extract_notes = COALESCE(${patch.autoExtractNotes ?? null}::boolean, chat_rules.auto_extract_notes),
+      self_voice_transcript = COALESCE(${patch.selfVoiceTranscript ?? null}::boolean, chat_rules.self_voice_transcript),
       updated_at = NOW()
     RETURNING chat_id`;
   return rows.length;

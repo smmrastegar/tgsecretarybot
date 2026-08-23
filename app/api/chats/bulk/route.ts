@@ -48,6 +48,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       autoForwardPhoto?: boolean;
       autoForwardLocation?: boolean;
       autoExtractNotes?: boolean;
+      selfVoiceTranscript?: boolean;
     };
   };
   const op = body.op;

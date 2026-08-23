@@ -2858,6 +2858,50 @@ async function activeBusinessConnectionId(): Promise<string | null> {
   }
 }
 
+// The owner's OWN voice note, transcribed straight back under itself.
+// Deliberately narrow, because that's exactly what was asked for:
+//   * only msg.voice — not video notes, not audio files
+//   * only the owner's own voices — the other party's already go
+//     through the classifier / Transcribe-button path
+//   * the reply is the bare transcript: no header, no rule label,
+//     no emoji. Anything prepended shows up in the other person's
+//     chat too, so "no preamble" is a real requirement, not polish.
+// Gated per-chat by chat_rules.self_voice_transcript.
+async function maybeTranscribeOwnVoice(args: {
+  msg: Message;
+  bot: Bot;
+  bcId: string;
+  rule: ChatRule | null;
+  logId: number | null;
+}): Promise<void> {
+  const { msg, bot, bcId, rule } = args;
+  if (!msg.voice) return;
+  if (!rule?.selfVoiceTranscript) return;
+  if (!sttConfigured()) return;
+  const settings = await getSettings();
+  const { text } = await transcribeAudio({
+    botToken: config.telegramBotToken,
+    fileId: msg.voice.file_id,
+    language: settings.sttLanguage || "fa",
+    chatId: msg.chat.id,
+    businessConnectionId: bcId,
+  });
+  const transcript = (text ?? "").trim();
+  if (!transcript) return;
+  if (args.logId != null) {
+    await saveTranscript(args.logId, transcript).catch(() => {});
+  }
+  // Sent WITH business_connection_id so it lands as the owner's own
+  // message, and reply_parameters so it sits under the voice it
+  // belongs to. Chunked because Telegram caps a text message at 4096.
+  for (const chunk of chunkText(transcript, 4000)) {
+    await bot.api.sendMessage(msg.chat.id, chunk, {
+      business_connection_id: bcId,
+      reply_parameters: { message_id: msg.message_id },
+    });
+  }
+}
+
 async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   // Hard ignore: operator marked this chat as "do not process". Bail
   // before any classifier / log / route / rule work. Cached briefly
@@ -3068,9 +3112,10 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         console.error("[secretary] takeover notice failed:", err);
       }
     }
+    let ownerLogId: number | null = null;
     if (hasDb()) {
       try {
-        await logMessage({
+        ownerLogId = await logMessage({
           businessConnectionId: bcId,
           ownerUserId: owner.userId,
           chatId: msg.chat.id,
@@ -3094,6 +3139,19 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       } catch (err) {
         console.error("[db] owner-log failed:", err);
       }
+    }
+    // AWAITED, not detached: on a frozen serverless invocation a void
+    // promise here would drop the transcript silently. Bounded by the
+    // STT timeouts in lib/stt.ts, well inside the webhook budget.
+    if (msg.voice) {
+      const ownRule = await getChatRule(msg.chat.id).catch(() => null);
+      await maybeTranscribeOwnVoice({
+        msg,
+        bot,
+        bcId,
+        rule: ownRule,
+        logId: ownerLogId,
+      }).catch((err) => reportWarn("self-voice", "transcribe failed:", err));
     }
     // Owner-sent voices / videos / photos are NOT routed to the
     // *_storage channels. The owner already has these on their own

@@ -140,6 +140,7 @@ type Rule = {
   autoForwardPhoto: boolean;
   autoForwardLocation: boolean;
   autoExtractNotes: boolean;
+  selfVoiceTranscript: boolean;
   isBot: boolean;
   ignored: boolean;
   phoneNumber: string | null;
@@ -598,6 +599,7 @@ export default function ChatDetailPage() {
     autoForwardPhoto?: boolean;
     autoForwardLocation?: boolean;
     autoExtractNotes?: boolean;
+    selfVoiceTranscript?: boolean;
   }) {
     setSaving(true);
     try {
@@ -1535,6 +1537,11 @@ export default function ChatDetailPage() {
                       "autoExtractNotes",
                       "📒 استخراج خودکار آدرس/تماس/نکات مهم با AI",
                       rule.autoExtractNotes,
+                    ],
+                    [
+                      "selfVoiceTranscript",
+                      "🗣 ویسِ خودم → متنش ریپلای بشه زیر همون ویس (بدون هدر — طرف مقابل هم می‌بینه)",
+                      rule.selfVoiceTranscript,
                     ],
                   ] as const
                 ).map(([key, label, value]) => (

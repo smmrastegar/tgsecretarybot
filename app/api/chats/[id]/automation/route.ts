@@ -28,6 +28,7 @@ export async function PATCH(
     autoForwardPhoto?: boolean;
     autoForwardLocation?: boolean;
     autoExtractNotes?: boolean;
+    selfVoiceTranscript?: boolean;
   };
   await setChatAutomation(chatId, body);
   await audit({
