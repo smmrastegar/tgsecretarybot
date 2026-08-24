@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 import { config } from "./config";
 import { driverKind, makeMysqlClient } from "./sql-driver";
@@ -11,7 +12,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-08-23.self-voice-transcript";
+const SCHEMA_VERSION = "2026-08-24.email-public-token";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -437,6 +438,23 @@ export async function ensureSchema(
     await q`CREATE INDEX IF NOT EXISTS emails_created_idx ON emails (created_at DESC)`;
     await q`CREATE INDEX IF NOT EXISTS emails_thread_idx ON emails (thread_key)`;
     await q`ALTER TABLE emails ADD COLUMN IF NOT EXISTS attachments JSONB`;
+    // Per-email public link token, STORED rather than derived. It used
+    // to be an HMAC of the id under SESSION_SECRET, which meant every
+    // link already sent to Telegram silently 401'd the moment that
+    // secret was rotated — and nothing surfaced the breakage, because
+    // the cards still looked fine. A stored token survives rotation.
+    // Backfilled for existing rows; verification still falls back to
+    // the old HMAC so links minted before this keep working.
+    await q`ALTER TABLE emails ADD COLUMN IF NOT EXISTS public_token TEXT`;
+    // sha256() is core Postgres; gen_random_bytes() would need the
+    // pgcrypto extension, which we can't assume is installed.
+    await q`UPDATE emails
+            SET public_token = substr(
+              encode(sha256((random()::text || clock_timestamp()::text || id::text)::bytea), 'hex'),
+              1, 24)
+            WHERE public_token IS NULL`;
+    await q`CREATE UNIQUE INDEX IF NOT EXISTS emails_public_token_idx
+            ON emails (public_token) WHERE public_token IS NOT NULL`;
     // Multiple email accounts: each has its own Resend API key, from
     // address, inbound token (routes inbound webhooks), and Telegram
     // channel/group where its mail is posted + operated from.
@@ -11718,6 +11736,7 @@ export type EmailRow = {
   tgMessageId: number | null;
   status: string | null;
   error: string | null;
+  publicToken: string | null;
   createdAt: Date;
 };
 
@@ -11776,6 +11795,7 @@ function rowToEmail(r: Record<string, unknown>): EmailRow {
     tgMessageId: r.tg_message_id != null ? Number(r.tg_message_id) : null,
     status: (r.status as string) ?? null,
     error: (r.error as string) ?? null,
+    publicToken: (r.public_token as string) ?? null,
     createdAt: r.created_at as Date,
   };
 }
@@ -11806,13 +11826,14 @@ export async function insertEmail(e: {
     INSERT INTO emails
       (direction, account_id, resend_id, message_id, in_reply_to, thread_key,
        from_email, from_name, to_emails, cc_emails, subject,
-       text_body, html_body, attachments, status, error)
+       text_body, html_body, attachments, status, error, public_token)
     VALUES
       (${e.direction}, ${e.accountId ?? null}, ${e.resendId ?? null},
        ${e.messageId ?? null}, ${e.inReplyTo ?? null}, ${e.threadKey ?? null},
        ${e.fromEmail ?? null}, ${e.fromName ?? null}, ${e.toEmails ?? null},
        ${e.ccEmails ?? null}, ${e.subject ?? null}, ${e.textBody ?? null},
-       ${e.htmlBody ?? null}, ${attachments}::jsonb, ${e.status ?? null}, ${e.error ?? null})
+       ${e.htmlBody ?? null}, ${attachments}::jsonb, ${e.status ?? null}, ${e.error ?? null},
+       ${randomBytes(12).toString("hex")})
     RETURNING id`;
   return Number((rows[0] as { id: string | number }).id);
 }

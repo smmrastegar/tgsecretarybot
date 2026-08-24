@@ -1,6 +1,6 @@
-import { getEmail, getEmailAccount } from "@/lib/db";
+import { getEmailAccount } from "@/lib/db";
 import { fetchReceivedEmailAttachmentUrl } from "@/lib/email";
-import { verifyEmailLink } from "@/lib/email-link";
+import { authorizeEmailLink } from "@/lib/email-link";
 import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
@@ -15,11 +15,9 @@ export async function GET(
   const { id, aid } = await ctx.params;
   const emailId = Number(id);
   const token = new URL(request.url).searchParams.get("t") ?? "";
-  if (!Number.isFinite(emailId) || !verifyEmailLink(emailId, token)) {
-    return new Response("unauthorized", { status: 401 });
-  }
-  const e = await getEmail(emailId);
-  if (!e || !e.resendId) return new Response("not found", { status: 404 });
+  const e = await authorizeEmailLink(emailId, token);
+  if (!e) return new Response("unauthorized", { status: 401 });
+  if (!e.resendId) return new Response("not found", { status: 404 });
   const att = (e.attachments ?? []).find((a) => String(a.id) === aid);
   if (!att) return new Response("attachment not found", { status: 404 });
 

@@ -1,5 +1,4 @@
-import { getEmail } from "@/lib/db";
-import { verifyEmailLink } from "@/lib/email-link";
+import { authorizeEmailLink } from "@/lib/email-link";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,11 +13,8 @@ export async function GET(
   const emailId = Number(id);
   const url = new URL(request.url);
   const token = url.searchParams.get("t") ?? "";
-  if (!Number.isFinite(emailId) || !verifyEmailLink(emailId, token)) {
-    return new Response("unauthorized", { status: 401 });
-  }
-  const e = await getEmail(emailId);
-  if (!e) return new Response("not found", { status: 404 });
+  const e = await authorizeEmailLink(emailId, token);
+  if (!e) return new Response("unauthorized", { status: 401 });
   const format = url.searchParams.get("format") === "html" ? "html" : "text";
   if (format === "html") {
     const html =

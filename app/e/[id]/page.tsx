@@ -1,5 +1,4 @@
-import { getEmail } from "@/lib/db";
-import { verifyEmailLink } from "@/lib/email-link";
+import { authorizeEmailLink } from "@/lib/email-link";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,18 +29,11 @@ export default async function PublicEmailPage({
   const { t } = await searchParams;
   const emailId = Number(id);
 
-  if (!Number.isFinite(emailId) || !verifyEmailLink(emailId, t ?? "")) {
-    return (
-      <main style={{ maxWidth: 720, margin: "0 auto", padding: 24, fontFamily: "system-ui, sans-serif" }}>
-        <h1 style={{ fontSize: 18 }}>لینک نامعتبر است</h1>
-      </main>
-    );
-  }
-  const email = await getEmail(emailId);
+  const email = await authorizeEmailLink(emailId, t ?? "");
   if (!email) {
     return (
       <main style={{ maxWidth: 720, margin: "0 auto", padding: 24, fontFamily: "system-ui, sans-serif" }}>
-        <h1 style={{ fontSize: 18 }}>ایمیل پیدا نشد</h1>
+        <h1 style={{ fontSize: 18 }}>لینک نامعتبر است</h1>
       </main>
     );
   }

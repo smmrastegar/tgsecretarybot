@@ -23,6 +23,21 @@ export function emailLinkToken(emailId: number): string {
     .slice(0, 24);
 }
 
+// Constant-time compare of a stored (DB) token against a presented one.
+export function matchesStoredToken(stored: string | null, token: unknown): boolean {
+  if (!stored || typeof token !== "string" || !token) return false;
+  if (token.length !== stored.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(token), Buffer.from(stored));
+  } catch {
+    return false;
+  }
+}
+
+// Legacy check: the token derived from SESSION_SECRET. Kept as a
+// fallback so links minted before emails.public_token existed still
+// open — but new cards carry the stored token, which survives a
+// secret rotation.
 export function verifyEmailLink(emailId: number, token: unknown): boolean {
   // A duplicated `?t=a&t=b` yields string[] in some callers; anything
   // non-string is not a valid token.
@@ -34,4 +49,25 @@ export function verifyEmailLink(emailId: number, token: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+// The single auth check every public email link should use. Accepts
+// the row's stored token first, then falls back to the derived HMAC so
+// links minted before emails.public_token existed still open. Returns
+// the row when authorised so callers don't fetch it twice.
+export async function authorizeEmailLink(
+  emailId: number,
+  token: unknown,
+): Promise<Awaited<ReturnType<typeof import("./db").getEmail>>> {
+  if (!Number.isFinite(emailId)) return null;
+  const { getEmail } = await import("./db");
+  const email = await getEmail(emailId).catch(() => null);
+  if (!email) {
+    // No row: still run the derived check so a missing email and a bad
+    // token are indistinguishable to the caller.
+    return null;
+  }
+  if (matchesStoredToken(email.publicToken, token)) return email;
+  if (verifyEmailLink(emailId, token)) return email;
+  return null;
 }

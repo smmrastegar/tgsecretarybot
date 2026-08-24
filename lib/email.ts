@@ -108,7 +108,9 @@ export function buildEmailCard(
   const preview = (email.textBody ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
   const attachments = email.attachments ?? [];
   const site = accountBaseUrl(account);
-  const token = emailLinkToken(emailId);
+  // Prefer the stored token; fall back to the derived one for rows
+  // written before emails.public_token existed.
+  const token = email.publicToken ?? emailLinkToken(emailId);
 
   // Show at most 8 attachment links; note any overflow in plain text.
   const MAX_ATT = 8;
