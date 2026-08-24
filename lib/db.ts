@@ -11817,6 +11817,24 @@ export async function insertEmail(e: {
   return Number((rows[0] as { id: string | number }).id);
 }
 
+// Has this exact Resend event already been turned into a row? Resend
+// retries a webhook it didn't get a 2xx for, and the dashboard's
+// "send test event" reuses one fixed id — both produced duplicate
+// cards in the channel before this check existed.
+export async function findEmailByResendId(
+  resendId: string,
+  direction: "in" | "out",
+): Promise<number | null> {
+  if (!hasDb() || !resendId) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT id FROM emails
+    WHERE resend_id = ${resendId} AND direction = ${direction}
+    LIMIT 1`;
+  const r = rows[0] as { id: string | number } | undefined;
+  return r ? Number(r.id) : null;
+}
+
 export async function getEmail(id: number): Promise<EmailRow | null> {
   if (!hasDb()) return null;
   await ensureSchema();

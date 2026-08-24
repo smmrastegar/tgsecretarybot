@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { getSettings } from "@/lib/settings";
 import {
+  findEmailByResendId,
   getEmailAccountByRecipientDomain,
   getEmailAccountByToken,
   hasDb,
   insertEmail,
 } from "@/lib/db";
+import { reportWarn } from "@/lib/report";
 import {
   emailThreadKey,
   fetchReceivedEmailBody,
@@ -45,9 +47,32 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ ok: false, error: "invalid json" }, { status: 400 });
   }
+  // Resend sends EVERY webhook event to the same endpoint, not just
+  // inbound mail: email.sent / delivered / bounced / opened for
+  // outgoing mail, contact.* and domain.* events, plus the dashboard's
+  // "send test event". None of those are an incoming email, and
+  // treating them as one is what produced the empty "از: ? / موضوع:
+  // (بدون موضوع)" cards in the channel. Only act on receive events;
+  // acknowledge the rest so Resend doesn't retry them forever.
+  const eventType =
+    payload && typeof payload === "object" && typeof (payload as { type?: unknown }).type === "string"
+      ? ((payload as { type: string }).type)
+      : null;
+  if (eventType && !/(^|\.)(received|inbound)/i.test(eventType)) {
+    return NextResponse.json({ ok: true, ignored: "event-type" });
+  }
+
   const e = parseInboundEmail(payload);
   if (!e.fromEmail && !e.subject && !e.text && !e.html && !e.emailId) {
     return NextResponse.json({ ok: true, ignored: true });
+  }
+  // Same event twice — a Resend retry, or the dashboard's test event
+  // (which reuses one fixed id). Already have it; don't post again.
+  if (e.emailId) {
+    const dupe = await findEmailByResendId(e.emailId, "in").catch(() => null);
+    if (dupe) {
+      return NextResponse.json({ ok: true, ignored: "duplicate" });
+    }
   }
   // If the webhook wasn't scoped by a per-account token, link the mail
   // to an account by its recipient domain (e.g. admin@rateklend.ir →
@@ -64,6 +89,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     const s = await getSettings().catch(() => null);
     const apiKey = (matchedAccount?.resendApiKey || s?.resendApiKey || "").trim();
     const body = await fetchReceivedEmailBody(apiKey, e.emailId);
+    if (!body) {
+      reportWarn(
+        "email-webhook",
+        `body fetch returned nothing for resend id ${e.emailId}` +
+          (apiKey ? "" : " (no Resend API key configured)"),
+      );
+    }
     if (body) {
       if (!text && !html) {
         text = body.text;
@@ -72,6 +104,20 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (attachments.length === 0) attachments = body.attachments;
     }
   }
+  // Last gate, and the decisive one: an "email" with no sender, no
+  // subject and no body is not an email — it's an event we couldn't
+  // parse, or an id whose body Resend wouldn't hand back. Posting it
+  // yields a card that says nothing. Drop it here rather than
+  // guessing upstream, so any future unknown payload shape fails
+  // quietly instead of spamming the channel.
+  if (!e.fromEmail && !e.subject && !text && !html && attachments.length === 0) {
+    reportWarn(
+      "email-webhook",
+      `dropped an empty inbound payload (resend id ${e.emailId ?? "none"}, type ${eventType ?? "none"})`,
+    );
+    return NextResponse.json({ ok: true, ignored: "empty" });
+  }
+
   const id = await insertEmail({
     direction: "in",
     accountId: matchedAccount?.id ?? null,
