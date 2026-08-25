@@ -13,6 +13,19 @@ LOG=/var/log/tgsecretarybot-autodeploy.log
 
 # Best-effort operator ping, shared by the deploy notice and the
 # self-heal blocks below.
+# Report a deploy-box event into the app's System Log. The self-heal
+# blocks below used to write only to $LOG, which meant a failure and a
+# block that never ran looked identical from outside the box.
+report_status() {
+  local tok
+  tok=$(grep -E '^WEBHOOK_SECRET_TOKEN=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
+  [[ -n "${tok:-}" ]] || return 0
+  curl -fsS -m 10 -X POST "http://127.0.0.1:3000/api/deploy-status" \
+    -H "Content-Type: application/json" -H "x-deploy-token: ${tok}" \
+    --data-raw "{\"source\":\"$1\",\"level\":\"$2\",\"message\":\"$3\"}" \
+    >/dev/null 2>&1 || true
+}
+
 notify_owner() {
   local tok owner
   tok=$(grep -E '^TELEGRAM_BOT_TOKEN=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
@@ -49,8 +62,14 @@ caddy_vhost_selfheal() {
   local caddyfile=/etc/caddy/Caddyfile
   local marker="# managed:wildcard-vhost"
   local tmp
-  command -v caddy >/dev/null || return 0
-  [[ -f "$caddyfile" ]] || return 0
+  if ! command -v caddy >/dev/null; then
+    report_status "caddy" "error" "caddy binary not on PATH — cannot add the wildcard vhost"
+    return 0
+  fi
+  if [[ ! -f "$caddyfile" ]]; then
+    report_status "caddy" "error" "no $caddyfile on this box — caddy may not be the reverse proxy"
+    return 0
+  fi
   grep -qF "$marker" "$caddyfile" && return 0
   tmp=$(mktemp) || return 0
   cat "$caddyfile" >"$tmp"
@@ -69,11 +88,14 @@ CADDY
     cp "$tmp" "$caddyfile"
     if systemctl reload caddy >/dev/null 2>&1; then
       echo "  ✓ caddy: wildcard vhost added + reloaded"
+    report_status "caddy" "warn" "wildcard vhost *.text.bz added and caddy reloaded"
     else
       echo "  ✗ caddy: reload failed after adding wildcard vhost"
+      report_status "caddy" "error" "wildcard vhost written but caddy reload FAILED"
     fi
   else
     echo "  ✗ caddy: validate failed — config left untouched"
+    report_status "caddy" "error" "caddy validate rejected the wildcard vhost; config left untouched"
     notify_owner "⚠️ کدی: افزودن vhost وایلدکارت رد شد (validate failed) — کانفیگ دست‌نخورده موند"
   fi
   rm -f "$tmp"

@@ -43,6 +43,10 @@ const PUBLIC_PREFIXES = [
   // Note: only the /ingest sub-path is public; /api/site-monitors
   // itself stays session-gated.
   "/api/site-monitors/ingest",
+  // Status sink for the deploy box — authed by its own
+  // x-deploy-token: <WEBHOOK_SECRET_TOKEN> header, not a session
+  // cookie, because the caller is deploy/auto-deploy.sh.
+  "/api/deploy-status",
   "/_next",
   "/favicon",
 ];
