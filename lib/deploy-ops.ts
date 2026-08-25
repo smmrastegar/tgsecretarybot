@@ -164,6 +164,14 @@ export async function caddyEnsureVhost(): Promise<Record<string, unknown>> {
     return trace;
   }
   trace.markerPresent = caddyfile.includes("managed:wildcard-vhost");
+  // The site addresses as written. Caddy groups sites into servers by
+  // listener address, so how these are spelled decides whether a new
+  // block joins the existing :443 server or tries to open a second one.
+  trace.siteAddresses = caddyfile
+    .split("\n")
+    .filter((l) => /^\S.*\{\s*$/.test(l))
+    .map((l) => l.trim());
+  trace.caddyfileLines = caddyfile.split("\n").length;
 
   const validate = await run(
     "caddy",
