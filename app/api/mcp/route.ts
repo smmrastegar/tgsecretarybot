@@ -725,6 +725,37 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  // ─── Deploy box. Named, bounded operations — deliberately not a
+  // shell tool: no MCP argument reaches a command string, so these
+  // can't become arbitrary RCE. Absent from SCOPED_TOOLS, so only a
+  // full-access caller can reach them. ──
+  {
+    name: "deploy_status",
+    description:
+      "Read the deploy box's state: current git SHA + branch, whether it matches the remote, systemd status for the app / caddy / autodeploy timer, whether the wildcard Caddy vhost is installed, and the tail of the autodeploy log. READ-ONLY — start here when a push seems not to have taken effect.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        log_lines: {
+          type: "number",
+          description: "lines of autodeploy log to return (default 40, max 200)",
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "deploy_now",
+    description:
+      "Run the deploy immediately instead of waiting for the 30s timer: fetch the tracked branch, build, restart the service, and run the config self-heals. Returns the script output plus the resulting deploy_status. Takes 30-120s. Safe to call when nothing changed — the script exits early.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 function toolText(value: unknown): {
@@ -1616,6 +1647,16 @@ async function callTool(
       };
       if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
       return toolText({ ok: true, message_id: j.result?.message_id });
+    }
+
+    case "deploy_status": {
+      const { deployStatus } = await import("@/lib/deploy-ops");
+      return toolText(await deployStatus(Number(args.log_lines ?? 40)));
+    }
+
+    case "deploy_now": {
+      const { deployNow } = await import("@/lib/deploy-ops");
+      return toolText(await deployNow());
     }
 
     case "site_probe": {
