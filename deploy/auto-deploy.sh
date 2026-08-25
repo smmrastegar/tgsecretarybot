@@ -60,43 +60,72 @@ cd "$APP_DIR"
 # parse, and a failed validation leaves the running config alone.
 caddy_vhost_selfheal() {
   local caddyfile=/etc/caddy/Caddyfile
-  local marker="# managed:wildcard-vhost"
-  local tmp
+  local begin="# managed:wildcard-vhost:begin"
+  local endm="# managed:wildcard-vhost:end"
+  local tmp addr port desired
   if ! command -v caddy >/dev/null; then
-    report_status "caddy" "error" "caddy binary not on PATH — cannot add the wildcard vhost"
+    report_status "caddy" "error" "caddy binary not on PATH — cannot manage the wildcard vhost"
     return 0
   fi
   if [[ ! -f "$caddyfile" ]]; then
     report_status "caddy" "error" "no $caddyfile on this box — caddy may not be the reverse proxy"
     return 0
   fi
-  grep -qF "$marker" "$caddyfile" && return 0
-  tmp=$(mktemp) || return 0
-  cat "$caddyfile" >"$tmp"
-  cat >>"$tmp" <<'CADDY'
 
-# managed:wildcard-vhost — added by deploy/auto-deploy.sh
-*.text.bz {
-	tls internal
-	encode zstd gzip
-	reverse_proxy 127.0.0.1:3000
-}
-CADDY
+  # Derive the listener from the FIRST site block and reuse it verbatim.
+  # This box serves bot.text.bz on :8443 (a Cloudflare-supported origin
+  # port), not :443. A wildcard block written without the port defaults
+  # to :443, which Caddy treats as a second server on a port something
+  # else already holds — "listening on :443: bind: address already in
+  # use", and the reload fails while the file looks perfectly correct.
+  addr=$(grep -m1 -E '^[^[:space:]#].*\{[[:space:]]*$' "$caddyfile" | awk '{print $1}')
+  port=""
+  case "$addr" in *:*) port=":${addr##*:}" ;; esac
+  desired="*.text.bz${port}"
+
+  # Regenerate rather than skip-if-present: the first version treated its
+  # own marker as proof of success, so a block that was written but never
+  # loaded could never be corrected.
+  tmp=$(mktemp) || return 0
+  awk -v b="$begin" -v e="$endm" '
+    index($0, b) { drop=1 }
+    index($0, "managed:wildcard-vhost") && !drop { legacy=1; next }
+    legacy { if ($0 == "}") legacy=0; next }
+    drop { if (index($0, e)) drop=0; next }
+    { print }
+  ' "$caddyfile" >"$tmp"
+
+  # Trim trailing blank lines, or the separator below accumulates one
+  # extra per run and cmp never reports the file as unchanged.
+  printf '%s\n' "$(cat "$tmp")" >"${tmp}.trim" && mv "${tmp}.trim" "$tmp"
+
+  {
+    echo ""
+    echo "$begin  (deploy/auto-deploy.sh — do not edit between the markers)"
+    echo "$desired {"
+    echo "	tls internal"
+    echo "	encode zstd gzip"
+    echo "	reverse_proxy 127.0.0.1:3000"
+    echo "}"
+    echo "$endm"
+  } >>"$tmp"
+
+  if cmp -s "$tmp" "$caddyfile"; then rm -f "$tmp"; return 0; fi
+
   if caddy validate --adapter caddyfile --config "$tmp" >/dev/null 2>&1; then
     mkdir -p /var/backups
     cp "$caddyfile" "/var/backups/Caddyfile.$(date +%s)"
     cp "$tmp" "$caddyfile"
     if systemctl reload caddy >/dev/null 2>&1; then
-      echo "  ✓ caddy: wildcard vhost added + reloaded"
-    report_status "caddy" "warn" "wildcard vhost *.text.bz added and caddy reloaded"
+      echo "  ✓ caddy: wildcard vhost ${desired} loaded"
+      report_status "caddy" "warn" "wildcard vhost ${desired} installed and caddy reloaded"
     else
-      echo "  ✗ caddy: reload failed after adding wildcard vhost"
-      report_status "caddy" "error" "wildcard vhost written but caddy reload FAILED"
+      echo "  ✗ caddy: reload failed for ${desired}"
+      report_status "caddy" "error" "wildcard vhost ${desired} written but caddy reload FAILED"
     fi
   else
     echo "  ✗ caddy: validate failed — config left untouched"
-    report_status "caddy" "error" "caddy validate rejected the wildcard vhost; config left untouched"
-    notify_owner "⚠️ کدی: افزودن vhost وایلدکارت رد شد (validate failed) — کانفیگ دست‌نخورده موند"
+    report_status "caddy" "error" "caddy validate rejected wildcard vhost ${desired}; config untouched"
   fi
   rm -f "$tmp"
 }
