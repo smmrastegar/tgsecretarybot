@@ -43,6 +43,57 @@ if ! grep -q "OnUnitActiveSec=30" /etc/systemd/system/tgsecretarybot-autodeploy.
   systemctl restart tgsecretarybot-autodeploy.timer 2>/dev/null || true
 fi
 
+# Self-heal the Caddy vhost for per-account email subdomains.
+# Cloudflare proxies *.text.bz to this box, but Caddy only knows
+# bot.text.bz, so every other subdomain got an empty response (CF 520)
+# and the email cards' Preview/Text/HTML links were dead.
+#
+# `tls internal` is deliberate: the zone runs SSL mode "Full" (not
+# strict), so Cloudflare encrypts to the origin without validating the
+# certificate. That lets Caddy serve its own local CA cert and avoids
+# needing a wildcard ACME cert (which would require a DNS-01 challenge
+# and the Cloudflare DNS plugin baked into the Caddy binary).
+#
+# Explicit site blocks beat wildcards in Caddy, so bot.text.bz keeps
+# its own block untouched.
+#
+# The new config is validated in a temp file BEFORE it is copied into
+# place — /etc/caddy/Caddyfile is never left in a state Caddy can't
+# parse, and a failed validation leaves the running config alone.
+caddy_vhost_selfheal() {
+  local caddyfile=/etc/caddy/Caddyfile
+  local marker="# managed:wildcard-vhost"
+  local tmp
+  command -v caddy >/dev/null || return 0
+  [[ -f "$caddyfile" ]] || return 0
+  grep -qF "$marker" "$caddyfile" && return 0
+  tmp=$(mktemp) || return 0
+  cat "$caddyfile" >"$tmp"
+  cat >>"$tmp" <<'CADDY'
+
+# managed:wildcard-vhost — added by deploy/auto-deploy.sh
+*.text.bz {
+	tls internal
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3000
+}
+CADDY
+  if caddy validate --adapter caddyfile --config "$tmp" >/dev/null 2>&1; then
+    mkdir -p /var/backups
+    cp "$caddyfile" "/var/backups/Caddyfile.$(date +%s)"
+    cp "$tmp" "$caddyfile"
+    if systemctl reload caddy >/dev/null 2>&1; then
+      echo "  ✓ caddy: wildcard vhost added + reloaded"
+    else
+      echo "  ✗ caddy: reload failed after adding wildcard vhost"
+    fi
+  else
+    echo "  ✗ caddy: validate failed — config left untouched"
+  fi
+  rm -f "$tmp"
+}
+caddy_vhost_selfheal >>"$LOG" 2>&1 || true
+
 # Best-effort Telegram notice.
 BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
 OWNER=$(grep -E '^OWNER_NOTIFY_CHAT_ID=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
