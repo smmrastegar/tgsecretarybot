@@ -11,37 +11,22 @@ BRANCH=claude/telegram-secretary-bot-A0UsO
 LOCK=/run/tgsecretarybot-autodeploy.lock
 LOG=/var/log/tgsecretarybot-autodeploy.log
 
+# Best-effort operator ping, shared by the deploy notice and the
+# self-heal blocks below.
+notify_owner() {
+  local tok owner
+  tok=$(grep -E '^TELEGRAM_BOT_TOKEN=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
+  owner=$(grep -E '^OWNER_NOTIFY_CHAT_ID=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
+  [[ -n "${tok:-}" && -n "${owner:-}" ]] || return 0
+  curl -fsS "https://api.telegram.org/bot${tok}/sendMessage" \
+    -d "chat_id=${owner}" -d "disable_notification=true" \
+    --data-urlencode "text=$1" >/dev/null 2>&1 || true
+}
+
 exec 9>"$LOCK"
 flock -n 9 || { echo "$(date -Is) busy, skip" >>"$LOG"; exit 0; }
 
 cd "$APP_DIR"
-git fetch --quiet origin "$BRANCH"
-LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse "origin/$BRANCH")
-if [[ "$LOCAL" == "$REMOTE" ]]; then exit 0; fi
-
-{
-  START=$(date +%s)
-  echo "$(date -Is) → deploying ${REMOTE:0:7} (was ${LOCAL:0:7})"
-  DEPS_CHANGED=$(git diff --name-only "$LOCAL" "$REMOTE" | grep -cE '^(package-lock\.json|package\.json)$' || true)
-  git reset --hard --quiet "$REMOTE"
-  if [[ "$DEPS_CHANGED" != "0" ]]; then
-    echo "  deps changed → npm ci"
-    npm ci --no-audit --no-fund --prefer-offline
-  else
-    echo "  no dep change → skipping install"
-  fi
-  npm run build
-  systemctl restart tgsecretarybot
-  echo "$(date -Is) ✓ deploy OK → ${REMOTE:0:7} in $(( $(date +%s) - START ))s"
-} >>"$LOG" 2>&1
-
-# Self-heal the timer cadence (faster pickup) if the on-disk unit is stale.
-if ! grep -q "OnUnitActiveSec=30" /etc/systemd/system/tgsecretarybot-autodeploy.timer 2>/dev/null; then
-  cp "$APP_DIR/deploy/tgsecretarybot-autodeploy.timer" /etc/systemd/system/tgsecretarybot-autodeploy.timer 2>/dev/null || true
-  systemctl daemon-reload 2>/dev/null || true
-  systemctl restart tgsecretarybot-autodeploy.timer 2>/dev/null || true
-fi
 
 # Self-heal the Caddy vhost for per-account email subdomains.
 # Cloudflare proxies *.text.bz to this box, but Caddy only knows
@@ -89,16 +74,40 @@ CADDY
     fi
   else
     echo "  ✗ caddy: validate failed — config left untouched"
+    notify_owner "⚠️ کدی: افزودن vhost وایلدکارت رد شد (validate failed) — کانفیگ دست‌نخورده موند"
   fi
   rm -f "$tmp"
 }
 caddy_vhost_selfheal >>"$LOG" 2>&1 || true
 
-# Best-effort Telegram notice.
-BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
-OWNER=$(grep -E '^OWNER_NOTIFY_CHAT_ID=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
-if [[ -n "${BOT_TOKEN:-}" && -n "${OWNER:-}" ]]; then
-  curl -fsS "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-    -d "chat_id=${OWNER}" -d "disable_notification=true" \
-    --data-urlencode "text=🚀 دیپلوی خودکار — کامیت ${REMOTE:0:7}" >/dev/null 2>&1 || true
+cd "$APP_DIR"
+git fetch --quiet origin "$BRANCH"
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git rev-parse "origin/$BRANCH")
+if [[ "$LOCAL" == "$REMOTE" ]]; then exit 0; fi
+
+{
+  START=$(date +%s)
+  echo "$(date -Is) → deploying ${REMOTE:0:7} (was ${LOCAL:0:7})"
+  DEPS_CHANGED=$(git diff --name-only "$LOCAL" "$REMOTE" | grep -cE '^(package-lock\.json|package\.json)$' || true)
+  git reset --hard --quiet "$REMOTE"
+  if [[ "$DEPS_CHANGED" != "0" ]]; then
+    echo "  deps changed → npm ci"
+    npm ci --no-audit --no-fund --prefer-offline
+  else
+    echo "  no dep change → skipping install"
+  fi
+  npm run build
+  systemctl restart tgsecretarybot
+  echo "$(date -Is) ✓ deploy OK → ${REMOTE:0:7} in $(( $(date +%s) - START ))s"
+} >>"$LOG" 2>&1
+
+# Self-heal the timer cadence (faster pickup) if the on-disk unit is stale.
+if ! grep -q "OnUnitActiveSec=30" /etc/systemd/system/tgsecretarybot-autodeploy.timer 2>/dev/null; then
+  cp "$APP_DIR/deploy/tgsecretarybot-autodeploy.timer" /etc/systemd/system/tgsecretarybot-autodeploy.timer 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl restart tgsecretarybot-autodeploy.timer 2>/dev/null || true
 fi
+
+# Best-effort Telegram notice.
+notify_owner "🚀 دیپلوی خودکار — کامیت ${REMOTE:0:7}"
