@@ -150,6 +150,26 @@ export async function caddyEnsureVhost(): Promise<Record<string, unknown>> {
     ok: reload.ok,
     detail: (reload.stderr || reload.stdout).trim().slice(-600),
   };
+  if (!reload.ok) {
+    // systemd only ever says "Job for caddy.service failed". Ask Caddy
+    // itself — `caddy reload` talks to the admin API and prints the
+    // actual reason — and take the journal tail as a second opinion.
+    const direct = await run(
+      "caddy",
+      ["reload", "--adapter", "caddyfile", "--config", CADDYFILE],
+      30_000,
+    );
+    trace.caddyReloadDirect = {
+      ok: direct.ok,
+      detail: (direct.stderr || direct.stdout).trim().slice(-1200),
+    };
+    const journal = await run(
+      "journalctl",
+      ["-u", "caddy", "-n", "25", "--no-pager", "-o", "cat"],
+      15_000,
+    );
+    trace.journalTail = journal.stdout.trim().slice(-1500) || "(empty)";
+  }
 
   // The real test: does an arbitrary *.text.bz name reach the app? 401 is
   // the app answering (deploy-status rejects an unauthenticated POST), so
