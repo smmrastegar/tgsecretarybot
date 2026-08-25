@@ -107,3 +107,63 @@ export async function deployNow(): Promise<{
     status: await deployStatus(30),
   };
 }
+
+// Ensure Caddy is actually SERVING the wildcard vhost — not merely that
+// the block exists in the file. The first self-heal only checked for its
+// own marker, so once the block was written but the reload failed, every
+// later run skipped and the vhost stayed dead. This probes the running
+// server and reports each step, so a failure names itself.
+export async function caddyEnsureVhost(): Promise<Record<string, unknown>> {
+  const trace: Record<string, unknown> = {};
+
+  const unit = await run("systemctl", ["cat", "caddy"], 5_000);
+  // Which config file the RUNNING service was started with — appending to
+  // the wrong file would look exactly like a failed reload.
+  trace.unitExecStart =
+    unit.stdout
+      .split("\n")
+      .filter((l) => l.trim().startsWith("ExecStart"))
+      .join(" | ") || "(unreadable)";
+
+  let caddyfile = "";
+  try {
+    caddyfile = await readFile(CADDYFILE, "utf8");
+  } catch (err) {
+    trace.readError = err instanceof Error ? err.message : String(err);
+    return trace;
+  }
+  trace.markerPresent = caddyfile.includes("managed:wildcard-vhost");
+
+  const validate = await run(
+    "caddy",
+    ["validate", "--adapter", "caddyfile", "--config", CADDYFILE],
+    20_000,
+  );
+  trace.validate = {
+    ok: validate.ok,
+    detail: (validate.stderr || validate.stdout).trim().slice(-600),
+  };
+  if (!validate.ok) return trace;
+
+  const reload = await run("systemctl", ["reload", "caddy"], 30_000);
+  trace.reload = {
+    ok: reload.ok,
+    detail: (reload.stderr || reload.stdout).trim().slice(-600),
+  };
+
+  // The real test: does an arbitrary *.text.bz name reach the app? 401 is
+  // the app answering (deploy-status rejects an unauthenticated POST), so
+  // it proves the wildcard vhost matched and proxied.
+  const probe = await run(
+    "curl",
+    [
+      "-sk", "-m", "8", "-o", "/dev/null", "-w", "%{http_code}",
+      "--resolve", "probe.text.bz:443:127.0.0.1",
+      "-X", "POST", "https://probe.text.bz/api/deploy-status",
+    ],
+    15_000,
+  );
+  trace.probeHttpCode = probe.stdout.trim() || `(curl failed: ${probe.stderr.trim()})`;
+  trace.serving = probe.stdout.trim() === "401";
+  return trace;
+}

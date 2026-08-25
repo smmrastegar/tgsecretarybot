@@ -746,6 +746,17 @@ const TOOLS = [
     },
   },
   {
+    name: "caddy_ensure_vhost",
+    description:
+      "Verify Caddy is actually SERVING the wildcard *.text.bz vhost, not just that the block exists in the file: reports which config the running unit uses, validates it, reloads, then probes the running server over localhost. Use when a subdomain returns Cloudflare 520.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "deploy_now",
     description:
       "Run the deploy immediately instead of waiting for the 30s timer: fetch the tracked branch, build, restart the service, and run the config self-heals. Returns the script output plus the resulting deploy_status. Takes 30-120s. Safe to call when nothing changed — the script exits early.",
@@ -1652,6 +1663,11 @@ async function callTool(
     case "deploy_status": {
       const { deployStatus } = await import("@/lib/deploy-ops");
       return toolText(await deployStatus(Number(args.log_lines ?? 40)));
+    }
+
+    case "caddy_ensure_vhost": {
+      const { caddyEnsureVhost } = await import("@/lib/deploy-ops");
+      return toolText(await caddyEnsureVhost());
     }
 
     case "deploy_now": {
