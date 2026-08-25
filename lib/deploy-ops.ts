@@ -89,22 +89,53 @@ export async function deployStatus(logLines = 40): Promise<{
 
 // Pull + build + restart right now instead of waiting for the 30s timer.
 // Runs the SAME script the timer runs, so there is exactly one deploy
-// path to reason about. The script takes its own flock, so a concurrent
-// timer tick can't collide with this.
+// path to reason about; the script's own flock keeps a concurrent timer
+// tick from colliding.
+//
+// It MUST be detached. The script ends with `systemctl restart
+// tgsecretarybot` — this app — and a child process lives in the
+// service's cgroup, so restarting kills the deploy mid-flight. The
+// first version did exactly that: it died after `git reset` but before
+// the restart, which left HEAD pointing at the new commit while the
+// running code was still the old one. Every later run then saw
+// LOCAL == REMOTE and exited early, so the deploy could never finish.
+//
+// systemd-run puts it in its own transient unit, outside our cgroup, so
+// it survives us being restarted. That makes this asynchronous: poll
+// deploy_status until `sha` matches and the log shows "deploy OK".
 export async function deployNow(): Promise<{
-  ok: boolean;
-  output: string;
+  started: boolean;
+  detachedVia: string;
+  note: string;
   status: Awaited<ReturnType<typeof deployStatus>>;
 }> {
-  const r = await run(
-    "/bin/bash",
-    [`${APP_DIR}/deploy/auto-deploy.sh`],
-    240_000,
+  const script = `${APP_DIR}/deploy/auto-deploy.sh`;
+  let detachedVia = "systemd-run";
+  let r = await run(
+    "systemd-run",
+    [
+      "--unit",
+      `tgsecretarybot-deploy-now-${Date.now()}`,
+      "--collect",
+      "--quiet",
+      "/bin/bash",
+      script,
+    ],
+    20_000,
   );
+  if (!r.ok) {
+    detachedVia = "setsid";
+    r = await run(
+      "setsid",
+      ["--fork", "/bin/bash", "-c", `nohup ${script} >/dev/null 2>&1 &`],
+      20_000,
+    );
+  }
   return {
-    ok: r.ok,
-    output: [r.stdout.trimEnd(), r.stderr.trimEnd()].filter(Boolean).join("\n"),
-    status: await deployStatus(30),
+    started: r.ok,
+    detachedVia: r.ok ? detachedVia : `failed: ${r.stderr.trim().slice(0, 300)}`,
+    note: "Deploy runs detached (it restarts this app). Poll deploy_status until sha matches the remote and the log ends with 'deploy OK'.",
+    status: await deployStatus(15),
   };
 }
 
