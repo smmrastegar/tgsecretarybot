@@ -12,7 +12,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-08-28.rule-source-threads";
+const SCHEMA_VERSION = "2026-08-28.rule-match-pattern";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -1548,6 +1548,13 @@ export async function ensureSchema(
     // tickets should forward, the rest of the group should not.
     // Empty/NULL = every topic in the allowed chats.
     await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS source_thread_ids TEXT`;
+    // Deterministic pre-filter, applied BEFORE the LLM classifier. The
+    // classifier decides what a message means, which is the wrong tool
+    // for "must literally start with a ticket header" — it will always
+    // be willing to read intent into free text somebody typed. A regex
+    // that has to match first makes the shape a hard requirement, and
+    // cuts the classifier out of the loop entirely for everything else.
+    await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS match_pattern TEXT`;
     // When ON together with source_chat_ids, EVERY message from an
     // allowed source chat matches — no LLM content check. For a
     // dedicated feed (e.g. a bank's SMS-forwarder chat) content
@@ -10774,6 +10781,7 @@ export type MessageRule = {
   requestWindowSeconds: number | null;
   sourceChatIds: number[] | null;
   sourceThreadIds: number[] | null;
+  matchPattern: string | null;
   matchAllFromSource: boolean;
   showRulePrefix: boolean;
   formatAsOtp: boolean;
@@ -10824,6 +10832,7 @@ function rowToRule(r: Record<string, unknown>): MessageRule {
         : null,
     sourceChatIds: parseSourceChatIds(r.source_chat_ids),
     sourceThreadIds: parseSourceChatIds(r.source_thread_ids),
+    matchPattern: (r.match_pattern as string) ?? null,
     matchAllFromSource: Boolean(r.match_all_from_source),
     showRulePrefix:
       r.show_rule_prefix == null ? true : Boolean(r.show_rule_prefix),
@@ -10845,7 +10854,7 @@ export async function listMessageRules(args?: {
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
     SELECT id, tenant_id, name, description, forward_format, forward_header,
-           request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_all_from_source,
+           request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
            show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
     FROM message_rules
@@ -10860,7 +10869,7 @@ export async function getMessageRule(id: number): Promise<MessageRule | null> {
   await ensureSchema();
   const rows = await sql()`
     SELECT id, tenant_id, name, description, forward_format, forward_header,
-           request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_all_from_source,
+           request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
            show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
     FROM message_rules WHERE id = ${id} LIMIT 1`;
@@ -10889,7 +10898,7 @@ export async function createMessageRule(args: {
       ${args.createdBy ?? null}
     )
     RETURNING id, tenant_id, name, description, forward_format, forward_header,
-              request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_all_from_source,
+              request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
               show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
   return rowToRule(rows[0] as Record<string, unknown>);
@@ -10906,6 +10915,7 @@ export async function updateMessageRule(
     requestWindowSeconds: number | null;
     sourceChatIds: string | null;
     sourceThreadIds: string | null;
+    matchPattern: string | null;
     matchAllFromSource: boolean;
     showRulePrefix: boolean;
     formatAsOtp: boolean;
@@ -10928,6 +10938,8 @@ export async function updateMessageRule(
   const scValue = patch.sourceChatIds ?? null;
   const stMarker = patch.sourceThreadIds === undefined ? 0 : 1;
   const stValue = patch.sourceThreadIds ?? null;
+  const mpMarker = patch.matchPattern === undefined ? 0 : 1;
+  const mpValue = patch.matchPattern ?? null;
   const rows = await sql()`
     UPDATE message_rules SET
       name = COALESCE(${patch.name ?? null}, name),
@@ -10938,6 +10950,7 @@ export async function updateMessageRule(
       request_window_seconds = CASE WHEN ${rwMarker}::int = 1 THEN ${rwValue}::int ELSE request_window_seconds END,
       source_chat_ids = CASE WHEN ${scMarker}::int = 1 THEN ${scValue} ELSE source_chat_ids END,
       source_thread_ids = CASE WHEN ${stMarker}::int = 1 THEN ${stValue} ELSE source_thread_ids END,
+      match_pattern = CASE WHEN ${mpMarker}::int = 1 THEN ${mpValue} ELSE match_pattern END,
       match_all_from_source = COALESCE(${patch.matchAllFromSource ?? null}::boolean, match_all_from_source),
       show_rule_prefix = COALESCE(${patch.showRulePrefix ?? null}::boolean, show_rule_prefix),
       format_as_otp = COALESCE(${patch.formatAsOtp ?? null}::boolean, format_as_otp),
@@ -10945,7 +10958,7 @@ export async function updateMessageRule(
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id, tenant_id, name, description, forward_format, forward_header,
-              request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_all_from_source,
+              request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
               show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;

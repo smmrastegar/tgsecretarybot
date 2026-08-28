@@ -17,6 +17,7 @@ type Rule = {
   requestWindowSeconds: number | null;
   sourceChatIds: number[] | null;
   sourceThreadIds: number[] | null;
+  matchPattern: string | null;
   matchAllFromSource: boolean;
   showRulePrefix: boolean;
   formatAsOtp: boolean;
@@ -98,6 +99,7 @@ export default function RuleDetailPage() {
   const [requestWindow, setRequestWindow] = useState<number | null>(null);
   const [sourceChats, setSourceChats] = useState("");
   const [sourceThreads, setSourceThreads] = useState("");
+  const [matchPattern, setMatchPattern] = useState("");
   const [matchAllFromSource, setMatchAllFromSource] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [variationStatus, setVariationStatus] = useState<string | null>(null);
@@ -160,6 +162,7 @@ export default function RuleDetailPage() {
         setRequestWindow(j.rule.requestWindowSeconds);
         setSourceChats((j.rule.sourceChatIds ?? []).join(", "));
         setSourceThreads((j.rule.sourceThreadIds ?? []).join(", "));
+        setMatchPattern(j.rule.matchPattern ?? "");
         setMatchAllFromSource(!!j.rule.matchAllFromSource);
         setShowRulePrefix(j.rule.showRulePrefix !== false);
         setFormatAsOtp(!!j.rule.formatAsOtp);
@@ -295,6 +298,7 @@ export default function RuleDetailPage() {
           requestWindowSeconds: requestWindow,
           sourceChatIds: sourceChats || null,
           sourceThreadIds: sourceThreads || null,
+          matchPattern: matchPattern || null,
           matchAllFromSource,
           showRulePrefix,
           formatAsOtp,
@@ -313,6 +317,7 @@ export default function RuleDetailPage() {
     requestWindow,
     sourceChats,
     sourceThreads,
+    matchPattern,
     matchAllFromSource,
     showRulePrefix,
     header,
@@ -1002,6 +1007,26 @@ export default function RuleDetailPage() {
               به کل چت معمولاً خیلی گشاد است. شناسه‌ی تاپیک را از آدرس پیام در
               تلگرام وب یا از ستون <code dir="ltr">message_thread_id</code>{" "}
               بردار.
+            </div>
+            <div className="mt-3 pt-2 border-t border-[var(--color-border)]">
+              <div className="text-[11px] font-medium mb-1">
+                🔒 الگوی اجباری (regex)
+              </div>
+              <input
+                type="text"
+                dir="ltr"
+                value={matchPattern}
+                onChange={(e) => setMatchPattern(e.target.value)}
+                placeholder="مثلاً ^\s*🎫?\s*تیکت — خالی = بدون الگو"
+                className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 font-mono"
+              />
+              <div className="text-[10px] text-[var(--color-text-dim)] mt-1">
+                اگر پر باشد، پیام <b>اول</b> باید با این الگو بخواند وگرنه قانون
+                اصلاً بررسی نمی‌شود — AI هم نظری نمی‌دهد. برای وقتی که فرمت
+                پیام مهم است (مثل «باید با تیکت #شماره شروع شود») و نمی‌خواهی
+                هر چیزی که کسی تایپ کرد رد شود. الگوی نامعتبر یعنی قانون هیچ
+                پیامی را نمی‌گیرد، نه اینکه همه را بگیرد.
+              </div>
             </div>
             <label className="flex items-center gap-2 text-[11px] cursor-pointer mt-2">
               <input

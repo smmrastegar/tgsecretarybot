@@ -3961,7 +3961,7 @@ async function maybeApplyMessageRules(args: {
     // messages arriving from those chats. Deterministic scoping so a
     // broad description ("any message with a code") can't grab numbers
     // out of unrelated conversations.
-    const rules = allRules.filter((r) => {
+    const scoped = allRules.filter((r) => {
       if (r.sourceChatIds && !r.sourceChatIds.includes(args.chatId)) return false;
       // Topic scope narrows an allowed chat to specific forum threads.
       // A group carries unrelated traffic in a dozen topics, so "this
@@ -3970,8 +3970,38 @@ async function maybeApplyMessageRules(args: {
         const t = args.messageThreadId ?? null;
         if (t == null || !r.sourceThreadIds.includes(t)) return false;
       }
+      // Deterministic shape gate. When a rule demands a literal format,
+      // the classifier must never get a say — it will read intent into
+      // anything a person types. A bad pattern fails CLOSED: a rule
+      // that asked for a shape should forward nothing rather than
+      // everything.
+      if (r.matchPattern) {
+        let re: RegExp;
+        try {
+          re = new RegExp(r.matchPattern, "u");
+        } catch {
+          console.warn(`[rules] rule ${r.id} has an invalid match_pattern — skipping`);
+          return false;
+        }
+        if (!re.test(args.messageText)) return false;
+      }
       return true;
     });
+    // Loop guard. A forward carries the original text, so a rule whose
+    // own output lands somewhere it also watches would re-match it
+    // forever. Never evaluate a rule against a message sitting in one
+    // of that rule's own recipient chats.
+    const rules: typeof scoped = [];
+    for (const r of scoped) {
+      const dests = await listRuleRecipients(r.id).catch(() => []);
+      if (dests.some((d) => d.recipientChatId === args.chatId)) {
+        console.log(
+          `[rules] rule ${r.id} skipped: chat ${args.chatId} is its own recipient`,
+        );
+        continue;
+      }
+      rules.push(r);
+    }
     console.log(
       `[rules] eval chat=${args.chatId} log=${args.logId} enabledRules=${rules.length}/${allRules.length} text="${args.messageText.slice(0, 80).replace(/\n/g, " ")}"`,
     );

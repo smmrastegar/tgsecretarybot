@@ -57,6 +57,7 @@ export async function PUT(
     requestWindowSeconds?: number | null;
     sourceChatIds?: string | null;
     sourceThreadIds?: string | null;
+    matchPattern?: string | null;
     matchAllFromSource?: boolean;
     showRulePrefix?: boolean;
     formatAsOtp?: boolean;
@@ -111,6 +112,19 @@ export async function PUT(
             .join(",")
         : "";
     patch.sourceThreadIds = cleaned || null;
+  }
+  if (body.matchPattern !== undefined) {
+    const raw = typeof body.matchPattern === "string" ? body.matchPattern.trim() : "";
+    if (raw) {
+      // Reject an invalid regex here rather than letting it silently
+      // disable the rule at match time.
+      try {
+        new RegExp(raw, "u");
+      } catch {
+        return NextResponse.json({ error: "invalid match_pattern regex" }, { status: 400 });
+      }
+    }
+    patch.matchPattern = raw || null;
   }
   if (body.matchAllFromSource != null)
     patch.matchAllFromSource = Boolean(body.matchAllFromSource);
