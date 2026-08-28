@@ -358,6 +358,11 @@ const TOOLS = [
           description:
             "Optional forum topic thread id to post INTO a specific topic of a supergroup. Omit for the General channel.",
         },
+        reply_to_message_id: {
+          type: "number",
+          description:
+            "Optional message_id to reply to, so the post appears threaded under it. Use this rather than calling the Telegram API directly — messages sent outside this tool are invisible to message rules, because Telegram never echoes a bot's own sends back.",
+        },
         business_connection_id: {
           type: "string",
           description:
@@ -1263,6 +1268,14 @@ async function callTool(
       if (pm !== "none") body.parse_mode = pm;
       if (args.message_thread_id != null) {
         body.message_thread_id = Number(args.message_thread_id);
+      }
+      if (args.reply_to_message_id != null) {
+        // reply_parameters is the current form; allow_sending_without_reply
+        // keeps a deleted parent from failing the whole send.
+        body.reply_parameters = {
+          message_id: Number(args.reply_to_message_id),
+          allow_sending_without_reply: true,
+        };
       }
       if (args.business_connection_id) {
         body.business_connection_id = String(args.business_connection_id);
