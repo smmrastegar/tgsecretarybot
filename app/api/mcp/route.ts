@@ -1287,6 +1287,20 @@ async function callTool(
       // path uses. Best-effort: a rule failure must not fail the send.
       try {
         const { applyRulesToBotOutgoing } = await import("@/lib/bot");
+        // `text` is the HTML we sent to Telegram. Log and forward what a
+        // reader actually SEES, or the markup leaks into the forward as
+        // literal "<b>…</b>" — and the classifier scores tags as content.
+        const plain =
+          pm === "HTML"
+            ? text
+                .replace(/<br\s*\/?>/gi, "\n")
+                .replace(/<[^>]+>/g, "")
+                .replace(/&lt;/g, "<")
+                .replace(/&gt;/g, ">")
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/&amp;/g, "&")
+            : text;
         await applyRulesToBotOutgoing({
           chatId: Number(chatTarget),
           chatType: Number(chatTarget) < 0 ? "supergroup" : "private",
@@ -1296,7 +1310,7 @@ async function callTool(
               ? Number(args.message_thread_id)
               : null,
           messageId: j.result?.message_id ?? 0,
-          text,
+          text: plain,
           senderName: "MCP agent",
         });
       } catch (err) {
