@@ -5,6 +5,7 @@ import {
   listCodeFeeds,
   upsertCodeFeed,
   deleteCodeFeed,
+  rotateCodeFeedToken,
   audit,
 } from "@/lib/db";
 
@@ -39,7 +40,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     Math.max(Number(b.windowSeconds ?? 300) || 300, 10),
     86400,
   );
-  const format = ["json", "text", "codes"].includes(String(b.format))
+  const format = ["json", "text", "codes", "html"].includes(String(b.format))
     ? String(b.format)
     : "json";
   const id = await upsertCodeFeed({
@@ -63,6 +64,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     action: b.id ? "code_feed.update" : "code_feed.create",
   }).catch(() => {});
   return NextResponse.json({ ok: true, id });
+}
+
+// Rotate the token: the URL is the credential, so a leaked one needs to
+// be revocable without losing the feed's configuration. The old link
+// stops working immediately.
+export async function PATCH(request: Request): Promise<NextResponse> {
+  const session = await requireSession();
+  const b = (await request.json().catch(() => ({}))) as {
+    id?: number;
+    action?: string;
+  };
+  const id = Number(b.id);
+  if (!Number.isFinite(id) || b.action !== "rotate_token") {
+    return NextResponse.json({ error: "id + action=rotate_token required" }, { status: 400 });
+  }
+  const token = await rotateCodeFeedToken(id, randomBytes(24).toString("base64url"));
+  if (!token) return NextResponse.json({ error: "not found" }, { status: 404 });
+  await audit({
+    actorId: session.userId,
+    actorName: session.username ?? null,
+    action: "code_feed.rotate_token",
+    target: String(id),
+  }).catch(() => {});
+  return NextResponse.json({ ok: true, token });
 }
 
 export async function DELETE(request: Request): Promise<NextResponse> {

@@ -91,7 +91,7 @@ export async function GET(
 
   const fmt = (url.searchParams.get("format") ?? feed.format) as FeedFormat;
   const { body, contentType } = renderFeed(
-    ["json", "text", "codes"].includes(fmt) ? fmt : "json",
+    ["json", "text", "codes", "html"].includes(fmt) ? fmt : "json",
     items,
   );
   return new Response(body, {

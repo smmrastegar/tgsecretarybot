@@ -12276,6 +12276,24 @@ export async function upsertCodeFeed(args: {
   return Number((rows[0] as { id: number }).id);
 }
 
+// Replace a feed's token, invalidating the old URL. The whole point of
+// the feed is that the token IS the credential, so there has to be a way
+// to burn one that leaked without rebuilding the feed's config.
+export async function rotateCodeFeedToken(
+  id: number,
+  token: string,
+): Promise<string | null> {
+  if (!hasDb()) return null;
+  await ensureSchema();
+  const rows = await sql()`
+    UPDATE code_feeds
+    SET token = ${token}, last_access_at = NULL, last_access_ip = NULL
+    WHERE id = ${id}
+    RETURNING token`;
+  const r = rows[0] as { token: string } | undefined;
+  return r ? r.token : null;
+}
+
 export async function deleteCodeFeed(id: number): Promise<void> {
   await ensureSchema();
   await sql()`DELETE FROM code_feeds WHERE id = ${id}`;
