@@ -16,6 +16,7 @@ type Rule = {
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
   sourceChatIds: number[] | null;
+  sourceThreadIds: number[] | null;
   matchAllFromSource: boolean;
   showRulePrefix: boolean;
   formatAsOtp: boolean;
@@ -96,6 +97,7 @@ export default function RuleDetailPage() {
   const [requestTrigger, setRequestTrigger] = useState("");
   const [requestWindow, setRequestWindow] = useState<number | null>(null);
   const [sourceChats, setSourceChats] = useState("");
+  const [sourceThreads, setSourceThreads] = useState("");
   const [matchAllFromSource, setMatchAllFromSource] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [variationStatus, setVariationStatus] = useState<string | null>(null);
@@ -157,6 +159,7 @@ export default function RuleDetailPage() {
         setRequestTrigger(j.rule.requestTrigger ?? "");
         setRequestWindow(j.rule.requestWindowSeconds);
         setSourceChats((j.rule.sourceChatIds ?? []).join(", "));
+        setSourceThreads((j.rule.sourceThreadIds ?? []).join(", "));
         setMatchAllFromSource(!!j.rule.matchAllFromSource);
         setShowRulePrefix(j.rule.showRulePrefix !== false);
         setFormatAsOtp(!!j.rule.formatAsOtp);
@@ -291,6 +294,7 @@ export default function RuleDetailPage() {
           requestTrigger: requestTrigger || null,
           requestWindowSeconds: requestWindow,
           sourceChatIds: sourceChats || null,
+          sourceThreadIds: sourceThreads || null,
           matchAllFromSource,
           showRulePrefix,
           formatAsOtp,
@@ -308,6 +312,7 @@ export default function RuleDetailPage() {
     requestTrigger,
     requestWindow,
     sourceChats,
+    sourceThreads,
     matchAllFromSource,
     showRulePrefix,
     header,
@@ -983,6 +988,21 @@ export default function RuleDetailPage() {
               placeholder="فقط از این چت‌ها (chat_id با کاما) — خالی = همه چت‌ها"
               className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
             />
+            <input
+              type="text"
+              dir="ltr"
+              value={sourceThreads}
+              onChange={(e) => setSourceThreads(e.target.value)}
+              disabled={!sourceChats.trim()}
+              placeholder="فقط این تاپیک‌ها (message_thread_id با کاما) — خالی = همه‌ی تاپیک‌ها"
+              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 mt-2 disabled:opacity-50"
+            />
+            <div className="text-[10px] text-[var(--color-text-dim)] mt-1">
+              برای گروه‌های فورومی: یک گروه ده‌ها تاپیک بی‌ربط دارد، پس محدودکردن
+              به کل چت معمولاً خیلی گشاد است. شناسه‌ی تاپیک را از آدرس پیام در
+              تلگرام وب یا از ستون <code dir="ltr">message_thread_id</code>{" "}
+              بردار.
+            </div>
             <label className="flex items-center gap-2 text-[11px] cursor-pointer mt-2">
               <input
                 type="checkbox"

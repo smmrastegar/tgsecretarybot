@@ -56,6 +56,7 @@ export async function PUT(
     requestTrigger?: string | null;
     requestWindowSeconds?: number | null;
     sourceChatIds?: string | null;
+    sourceThreadIds?: string | null;
     matchAllFromSource?: boolean;
     showRulePrefix?: boolean;
     formatAsOtp?: boolean;
@@ -98,6 +99,18 @@ export async function PUT(
             .join(",")
         : "";
     patch.sourceChatIds = cleaned || null;
+  }
+  if (body.sourceThreadIds !== undefined) {
+    // Forum topic ids are positive small ints; same normalisation.
+    const cleaned =
+      typeof body.sourceThreadIds === "string"
+        ? body.sourceThreadIds
+            .split(/[\s,]+/)
+            .map((s) => s.trim())
+            .filter((s) => s && Number.isFinite(Number(s)) && Number(s) > 0)
+            .join(",")
+        : "";
+    patch.sourceThreadIds = cleaned || null;
   }
   if (body.matchAllFromSource != null)
     patch.matchAllFromSource = Boolean(body.matchAllFromSource);

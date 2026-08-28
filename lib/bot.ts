@@ -3505,6 +3505,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
                   logId: graceLogId,
                   chatId: msg.chat.id,
                   chatTitle,
+                  messageThreadId: msg.message_thread_id ?? null,
                   senderName,
                   messageText: text,
                   businessConnectionId: bcId,
@@ -3820,6 +3821,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         logId,
         chatId: msg.chat.id,
         chatTitle,
+        messageThreadId: msg.message_thread_id ?? null,
         senderName,
         messageText: text,
         businessConnectionId: bcId,
@@ -3867,6 +3869,8 @@ async function maybeApplyMessageRules(args: {
   logId: number;
   chatId: number;
   chatTitle: string | null;
+  /** Forum topic the message arrived in, for rules scoped to a topic. */
+  messageThreadId?: number | null;
   senderName: string;
   messageText: string;
   businessConnectionId: string | null;
@@ -3899,9 +3903,17 @@ async function maybeApplyMessageRules(args: {
     // messages arriving from those chats. Deterministic scoping so a
     // broad description ("any message with a code") can't grab numbers
     // out of unrelated conversations.
-    const rules = allRules.filter(
-      (r) => !r.sourceChatIds || r.sourceChatIds.includes(args.chatId),
-    );
+    const rules = allRules.filter((r) => {
+      if (r.sourceChatIds && !r.sourceChatIds.includes(args.chatId)) return false;
+      // Topic scope narrows an allowed chat to specific forum threads.
+      // A group carries unrelated traffic in a dozen topics, so "this
+      // chat" is usually too broad a unit to route on.
+      if (r.sourceThreadIds) {
+        const t = args.messageThreadId ?? null;
+        if (t == null || !r.sourceThreadIds.includes(t)) return false;
+      }
+      return true;
+    });
     console.log(
       `[rules] eval chat=${args.chatId} log=${args.logId} enabledRules=${rules.length}/${allRules.length} text="${args.messageText.slice(0, 80).replace(/\n/g, " ")}"`,
     );
@@ -5920,6 +5932,26 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         inlineButtons: extractInlineUrlButtons(msg),
       });
       void maybeExtractOtp({ logId, text });
+      // Rules used to run only on the business-connection path, so a
+      // rule pointed at a group or one of its forum topics silently
+      // never fired — the messages were logged and then dropped on the
+      // floor. Groups go through the same evaluator now; the source
+      // chat / topic scope is what keeps a rule from over-reaching.
+      if (text && text.trim()) {
+        await maybeApplyMessageRules({
+          logId,
+          chatId: msg.chat.id,
+          chatTitle,
+          messageThreadId: msg.message_thread_id ?? null,
+          senderName,
+          messageText: text,
+          businessConnectionId: null,
+          fromOwner: false,
+          bot,
+        }).catch((err) =>
+          console.warn("[rules] apply failed (group path):", err),
+        );
+      }
       // AWAITED — see the matching comment in handleBusinessMessage.
       await maybeApplyNoteWatch({
         logId,
