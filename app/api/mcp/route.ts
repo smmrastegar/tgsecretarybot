@@ -1281,6 +1281,27 @@ async function callTool(
         description?: string;
       };
       if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
+      // Telegram never echoes a bot's own sends back as an update, so
+      // without this an agent posting here is invisible to messages_log
+      // and to message rules. Hand it to the same evaluator the group
+      // path uses. Best-effort: a rule failure must not fail the send.
+      try {
+        const { applyRulesToBotOutgoing } = await import("@/lib/bot");
+        await applyRulesToBotOutgoing({
+          chatId: Number(chatTarget),
+          chatType: Number(chatTarget) < 0 ? "supergroup" : "private",
+          chatTitle: null,
+          messageThreadId:
+            args.message_thread_id != null
+              ? Number(args.message_thread_id)
+              : null,
+          messageId: j.result?.message_id ?? 0,
+          text,
+          senderName: "MCP agent",
+        });
+      } catch (err) {
+        console.warn("[mcp] outgoing rule pass failed:", err);
+      }
       return toolText({ ok: true, message_id: j.result?.message_id });
     }
 

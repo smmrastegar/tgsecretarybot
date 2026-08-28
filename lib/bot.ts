@@ -3865,6 +3865,64 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   }
 }
 
+// Messages the bot itself writes into a chat never come back as an
+// update — Telegram does not echo a bot's own sends — so nothing in the
+// normal pipeline ever sees them. An agent posting through the MCP
+// send_message tool is exactly that case: its tickets landed in the
+// topic and were invisible to rules and to messages_log alike. Callers
+// that write on the bot's behalf hand the text here instead.
+export async function applyRulesToBotOutgoing(args: {
+  chatId: number;
+  chatType: string;
+  chatTitle: string | null;
+  messageThreadId: number | null;
+  messageId: number;
+  text: string;
+  senderName: string;
+}): Promise<void> {
+  if (!args.text.trim()) return;
+  if (!hasDb()) return;
+  let logId = 0;
+  try {
+    logId = await logMessage({
+      businessConnectionId: null,
+      ownerUserId: null,
+      chatId: args.chatId,
+      chatType: args.chatType,
+      chatTitle: args.chatTitle,
+      senderId: null,
+      senderUsername: null,
+      senderName: args.senderName,
+      messageId: args.messageId,
+      messageText: args.text,
+      importance: 0,
+      urgent: false,
+      concernsOwner: false,
+      reason: "bot outgoing (mcp)",
+      alerted: false,
+      autoReplied: false,
+      fromOwner: false,
+      messageThreadId: args.messageThreadId,
+    });
+  } catch (err) {
+    console.warn("[rules] outgoing log failed:", err);
+    return;
+  }
+  await maybeApplyMessageRules({
+    logId,
+    chatId: args.chatId,
+    chatTitle: args.chatTitle,
+    messageThreadId: args.messageThreadId,
+    senderName: args.senderName,
+    messageText: args.text,
+    businessConnectionId: null,
+    fromOwner: false,
+    bot: getBot(),
+  }).catch((err) =>
+    console.warn("[rules] apply failed (bot-outgoing path):", err),
+  );
+}
+
 async function maybeApplyMessageRules(args: {
   logId: number;
   chatId: number;
