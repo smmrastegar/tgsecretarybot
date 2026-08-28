@@ -45,10 +45,15 @@ function stripUrls(s: string): string {
 }
 
 // 1405/05/30 or 2026-08-21 — a date, never a verification code.
+//
+// The separator alone is not enough: a code ending an English sentence
+// ("Your verification code is 20458.") has a trailing dot too, and
+// treating that as a date silently dropped real OTPs. A date part has
+// DIGITS on the far side of the separator, so require that.
 function looksLikeDate(text: string, at: number, len: number): boolean {
-  const before = text.slice(Math.max(0, at - 1), at);
-  const after = text.slice(at + len, at + len + 1);
-  return /[/\-.]/.test(before) || /[/\-.]/.test(after);
+  const before = text.slice(Math.max(0, at - 2), at); // e.g. "5/" in 1405/05
+  const after = text.slice(at + len, at + len + 2); // e.g. "/3" in 05/30
+  return /\d[/\-.]$/.test(before) || /^[/\-.]\d/.test(after);
 }
 
 export function extractCodes(raw: string): string[] {
