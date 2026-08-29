@@ -4010,7 +4010,16 @@ async function maybeApplyMessageRules(args: {
     // SOURCE alone — they already passed the source filter above, so no
     // LLM check. The rest go through the content classifier.
     const forced = rules.filter(
-      (r) => r.matchAllFromSource && r.sourceChatIds && r.sourceChatIds.length > 0,
+      (r) =>
+        // Source-feed rules: matched by SOURCE alone.
+        (r.matchAllFromSource && r.sourceChatIds && r.sourceChatIds.length > 0) ||
+        // Pattern rules: matched by SHAPE alone. Everything reaching
+        // here already passed the regex, and asking the classifier to
+        // second-guess a format the operator specified exactly is how a
+        // structurally perfect ticket got dropped for having a body that
+        // "read like" a status request. If the shape is the rule, the
+        // shape decides.
+        Boolean(r.matchPattern),
     );
     const llmRules = rules.filter((r) => !forced.includes(r));
     const matchedLlm = llmRules.length
