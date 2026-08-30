@@ -328,7 +328,13 @@ export default function GroupsPage() {
                         href={`/groups/${g.chatId}`}
                         className="text-[11px] px-3 py-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] inline-flex items-center"
                       >
-                        📊 تحلیل کارها و تاپیک‌ها
+                        📊 تحلیل کارها
+                      </Link>
+                      <Link
+                        href={`/groups/${g.chatId}`}
+                        className="text-[11px] px-3 py-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] inline-flex items-center"
+                      >
+                        ✎ ویرایشِ نام و یادداشتِ تاپیک‌ها
                       </Link>
                       <Link
                         href={`/groups/summaries?q=${encodeURIComponent(g.chatTitle ?? "")}`}

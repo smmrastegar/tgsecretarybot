@@ -729,12 +729,15 @@ function TopicNameEditor({
     <div className="flex-1 flex items-center gap-1 min-w-0">
       <button
         onClick={() => setEditing(true)}
-        className={`text-sm font-medium truncate flex-1 text-right hover:text-amber-200 ${
+        className={`flex-1 min-w-0 flex items-center gap-1.5 text-sm font-medium text-right hover:text-amber-200 ${
           archived ? "line-through opacity-60" : ""
         }`}
-        title="کلیک کن تا اسم تاپیک رو دستی ویرایش کنی"
+        title="ویرایش نام تاپیک"
       >
-        🧵 {initialName} <span className="text-[10px] opacity-50">✎</span>
+        <span className="truncate">🧵 {initialName}</span>
+        <span className="shrink-0 text-[11px] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-dim)]">
+          ✎ ویرایش
+        </span>
       </button>
       {archived ? (
         <button
