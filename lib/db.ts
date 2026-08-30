@@ -3956,6 +3956,26 @@ function rowToChatNote(r: Record<string, unknown>): ChatNote {
   };
 }
 
+// Has this exact note already been recorded for this chat? Re-running a
+// group analysis produces the same critical items again, and without
+// this every re-run appended another copy — 79 rows for 52 distinct
+// titles by the time anyone noticed.
+export async function chatNoteExists(args: {
+  chatId: number;
+  kind: string;
+  title: string;
+}): Promise<boolean> {
+  if (!hasDb()) return false;
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT 1 FROM chat_notes
+    WHERE chat_id = ${args.chatId}
+      AND kind = ${args.kind}
+      AND title = ${args.title}
+    LIMIT 1`;
+  return rows.length > 0;
+}
+
 export async function addChatNote(args: {
   chatId: number;
   tenantId?: number | null;

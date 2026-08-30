@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import {
   addChatNote,
+  chatNoteExists,
   deleteGroupAnalytics,
   getCachedGroupAnalytics,
   getChatRule,
   getGroupAnalyticsShareToken,
   listChatMessagesForAnalysis,
-  listChatsByFunction,
   listForumTopics,
   upsertGroupAnalytics,
 } from "@/lib/db";import { getSettings } from "@/lib/settings";
@@ -15,7 +15,6 @@ import {
   analyzeGroupTasksV2,
   type GroupCriticalItem,
 } from "@/lib/classifier";
-import { getBot } from "@/lib/bot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -209,15 +208,14 @@ async function handle(
     analysis,
   }).catch((err) => console.warn("[groups] cache write failed:", err));
 
-  // Push critical items into notes_inbox + chat_notes so the operator
-  // gets a Telegram ping in the configured inbox channel and the
-  // dashboard /notes viewer reflects the same items.
+  // Record critical items so the dashboard /notes viewer shows them.
+  // Deliberately no Telegram push — see recordCriticalItems.
   if (analysis.criticalForInbox.length > 0) {
-    await postCriticalToInbox({
+    await recordCriticalItems({
       chatId,
       chatTitle,
       items: analysis.criticalForInbox,
-    }).catch((err) => console.warn("[groups] critical inbox failed:", err));
+    }).catch((err) => console.warn("[groups] critical record failed:", err));
   }
   // Send the full topic list (including archived) so the frontend
   // can render correctly without an extra round-trip — archived
@@ -255,20 +253,29 @@ function escHtml(s: string): string {
   );
 }
 
-async function postCriticalToInbox(args: {
+// Records critical items from an analysis.
+//
+// This used to also push every item into the notes_inbox channel on
+// EVERY run. Re-analysing a group is a normal thing to do — the
+// dashboard button, the MCP tool — and each run re-sent the same cards,
+// so the channel filled up with repeats of items the operator had
+// already read. Nothing is pushed to Telegram from here now; the items
+// still land in chat_notes, which is what /notes renders.
+async function recordCriticalItems(args: {
   chatId: number;
   chatTitle: string | null;
   items: GroupCriticalItem[];
 }): Promise<void> {
-  const inboxes = await listChatsByFunction("notes_inbox").catch(() => []);
-  const inbox = inboxes[0];
-  const bot = getBot();
   for (const it of args.items) {
-    // chat_notes mirror so /notes viewer reflects the critical item.
+    const title = `${KIND_BADGE[it.kind]} — ${it.title}`;
+    // Same reason: a re-run must not append a second copy.
+    if (await chatNoteExists({ chatId: args.chatId, kind: "group_critical", title }).catch(() => false)) {
+      continue;
+    }
     await addChatNote({
       chatId: args.chatId,
       kind: "group_critical",
-      title: `${KIND_BADGE[it.kind]} — ${it.title}`,
+      title,
       content: it.details,
       metadata: {
         kind: it.kind,
@@ -280,39 +287,5 @@ async function postCriticalToInbox(args: {
     }).catch((err) =>
       console.warn(`[groups] chat_notes write failed (${it.kind}):`, err),
     );
-    if (!inbox) continue;
-    try {
-      const peopleLine =
-        it.people.length > 0
-          ? `\n👥 ${escHtml(it.people.join(" / "))}`
-          : "";
-      const topicLine = it.topicName
-        ? `\n🧵 ${escHtml(it.topicName)}`
-        : "";
-      const evidenceLine =
-        it.evidence.length > 0
-          ? "\n\n" +
-            it.evidence
-              .slice(0, 3)
-              .map((q) =>
-                q.speaker
-                  ? `💬 <b>${escHtml(q.speaker)}</b>: «${escHtml(q.text)}»`
-                  : `💬 «${escHtml(q.text)}»`,
-              )
-              .join("\n")
-          : "";
-      const text =
-        `${KIND_BADGE[it.kind]} <b>${escHtml(it.title)}</b>\n` +
-        `📍 ${escHtml(args.chatTitle ?? `chat ${args.chatId}`)}` +
-        topicLine +
-        peopleLine +
-        `\n\n${escHtml(it.details)}` +
-        evidenceLine;
-      await bot.api.sendMessage(inbox.chatId, text.slice(0, 4096), {
-        parse_mode: "HTML",
-      });
-    } catch (err) {
-      console.warn(`[groups] inbox send failed (${it.kind}):`, err);
-    }
   }
 }
