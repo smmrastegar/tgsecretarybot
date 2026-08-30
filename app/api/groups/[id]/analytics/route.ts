@@ -294,7 +294,11 @@ async function postCriticalToInbox(args: {
           ? "\n\n" +
             it.evidence
               .slice(0, 3)
-              .map((q) => `💬 «${escHtml(q)}»`)
+              .map((q) =>
+                q.speaker
+                  ? `💬 <b>${escHtml(q.speaker)}</b>: «${escHtml(q.text)}»`
+                  : `💬 «${escHtml(q.text)}»`,
+              )
               .join("\n")
           : "";
       const text =

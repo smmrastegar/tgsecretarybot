@@ -1,3 +1,4 @@
+import { normalizeEvidence, type TaskEvidence } from "./evidence";
 import { config } from "./config";
 import { getSettings } from "./settings";
 import { findKnowledgeMatches, recordAiUsage, getBoardPromptForChat } from "./db";
@@ -741,7 +742,7 @@ Reply with STRICT JSON only, no prose, no code fences. All free-text fields MUST
       "completed_on_time": <true|false|null>,
       "delay_hours": <number یا null>,
       "blocked_reason": "<یک جمله فارسی یا null — اگر دلیل تأخیر/توقف معلومه>",
-      "evidence": ["<نقل قول کوتاه از پیام مرتبط>", "..."]
+      "evidence": [{"speaker": "<نامِ گوینده، دقیقاً همان‌طور که در پیام‌ها آمده>", "text": "<نقل قول کوتاه از پیام مرتبط>"}]
     }
   ],
   "people": [
@@ -780,7 +781,7 @@ Reply with STRICT JSON only, no prose, no code fences. All free-text fields MUST
       "details": "<۱ تا ۳ خط توضیح فارسی — کافیه برای این که owner بدونه چی شده و چی کار باید بکنه>",
       "topic_name": "<اسم تاپیک یا null>",
       "people": ["<اسامی درگیر>"],
-      "evidence": ["<نقل قول کوتاه>"]
+      "evidence": [{"speaker": "<نامِ گوینده>", "text": "<نقل قول کوتاه>"}]
     }
   ]
 }
@@ -830,7 +831,7 @@ critical_for_inbox rules:
     * "conflict" = a real argument / blame / personal escalation in the messages. Casual debate or
       a single disagreement isn't a conflict.
     * "escalation" = someone in the chat explicitly asks for the owner / manager / supervisor.
-- Max 5 items. Quote actual messages in "evidence". List who's involved in "people".
+- Max 5 items. Quote actual messages in "evidence", each with the speaker's name exactly as it appears in the transcript. List who's involved in "people".
 - If nothing critical, return an empty array — DON'T pad it.`;
 
 export type PersonRoleLabel =
@@ -871,7 +872,7 @@ export type GroupTaskRecord = {
   completedOnTime: boolean | null;
   delayHours: number | null;
   blockedReason: string | null;
-  evidence: string[];
+  evidence: TaskEvidence[];
 };
 
 export type GroupPersonRecord = {
@@ -906,7 +907,7 @@ export type GroupCriticalItem = {
   details: string;
   topicName: string | null;
   people: string[];
-  evidence: string[];
+  evidence: TaskEvidence[];
 };
 
 export type GroupTaskAnalysis = {
@@ -1071,11 +1072,7 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
       const r = t as Record<string, unknown>;
       const status = asStr(r.status).toLowerCase();
       if (!validStatuses.has(status)) return null;
-      const evidence = Array.isArray(r.evidence)
-        ? (r.evidence as unknown[]).filter(
-            (x): x is string => typeof x === "string",
-          )
-        : [];
+      const evidence = normalizeEvidence(r.evidence);
       return {
         title: asStr(r.title).trim(),
         topicName: r.topic_name ? asStr(r.topic_name).trim() || null : null,
@@ -1183,11 +1180,7 @@ function parseTaskAnalysis(raw: string): GroupTaskAnalysis {
             (x): x is string => typeof x === "string",
           )
         : [];
-      const evidence = Array.isArray(r.evidence)
-        ? (r.evidence as unknown[]).filter(
-            (x): x is string => typeof x === "string",
-          )
-        : [];
+      const evidence = normalizeEvidence(r.evidence);
       return {
         kind: kind as GroupCriticalItem["kind"],
         title,
@@ -1583,7 +1576,12 @@ function buildTaskRecordsFromEvents(
     const evidence = evs.slice(0, 5).map((e) => {
       const msg = messages[e.msgIdx];
       const text = msg?.text ?? e.note;
-      return text.slice(0, 180);
+      // Who actually said it. Falls back to the event's actor when the
+      // quote came from the event note rather than a stored message.
+      return {
+        speaker: msg?.sender ?? e.actor ?? null,
+        text: text.slice(0, 180),
+      };
     });
     const owner =
       evs.find((e) => e.eventKind === "update" || e.eventKind === "complete")

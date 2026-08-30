@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { normalizeEvidence } from "@/lib/evidence";
 import type { Analysis, Task, TaskStatus } from "@/components/GroupAnalyticsView";
 import { SHARE_CSS } from "./share.css";
 
@@ -489,7 +490,12 @@ function TaskRow({ t, open, onToggle }: { t: Task; open: boolean; onToggle: () =
           {t.blockedReason && <p className="sg-block">⛔ {t.blockedReason}</p>}
           {t.evidence?.length > 0 && (
             <ul className="sg-ev">
-              {t.evidence.slice(0, 3).map((e, i) => <li key={i}>«{e}»</li>)}
+              {normalizeEvidence(t.evidence).slice(0, 3).map((e, i) => (
+                <li key={i}>
+                  {e.speaker && <b className="sg-ev-who">{e.speaker}</b>}
+                  «{e.text}»
+                </li>
+              ))}
             </ul>
           )}
         </div>

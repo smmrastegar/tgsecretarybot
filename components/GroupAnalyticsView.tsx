@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { normalizeEvidence } from "@/lib/evidence";
 import { Badge, Card, StatCard } from "@/components/Card";
 import { relTime } from "@/lib/format";
 
@@ -326,9 +327,12 @@ export default function GroupAnalyticsView({
                 )}
                 {c.evidence.length > 0 && (
                   <ul className="mt-1.5 text-[11px] text-[var(--color-text-dim)] list-disc pr-5 space-y-0.5">
-                    {c.evidence.slice(0, 3).map((q, j) => (
+                    {normalizeEvidence(c.evidence).slice(0, 3).map((q, j) => (
                       <li key={j} className="break-words">
-                        «{q}»
+                        {q.speaker && (
+                          <b className="text-[var(--color-text)]">{q.speaker}: </b>
+                        )}
+                        «{q.text}»
                       </li>
                     ))}
                   </ul>
@@ -545,9 +549,12 @@ function TaskRow({ task, emphasize }: { task: Task; emphasize?: boolean }) {
 
       {task.evidence.length > 0 && (
         <ul className="mt-2 text-xs text-[var(--color-text-dim)] list-disc pr-5 space-y-0.5">
-          {task.evidence.slice(0, 4).map((e, i) => (
+          {normalizeEvidence(task.evidence).slice(0, 4).map((e, i) => (
             <li key={i} className="break-words">
-              «{e}»
+              {e.speaker && (
+                <b className="text-[var(--color-text)]">{e.speaker}: </b>
+              )}
+              «{e.text}»
             </li>
           ))}
         </ul>

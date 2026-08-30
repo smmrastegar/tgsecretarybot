@@ -95,6 +95,10 @@ export const SHARE_CSS = `
 .sg-bar-seg{transition:width .8s cubic-bezier(.4,0,.2,1);border-radius:999px;min-width:0}
 .sg-done{background:var(--done)} .sg-prog{background:var(--prog)}
 .sg-stall{background:var(--stall)} .sg-ann{background:var(--ann)}
+/* Speaker attribution on a quote. Three quotes in a row with no names
+   read as one voice arguing with itself. */
+.sg-ev-who{color:var(--txt);font-weight:700;margin-inline-end:6px}
+.sg-ev-who::after{content:"";}
 .sg-legend{display:flex;flex-wrap:wrap;gap:18px;margin-top:16px;font-size:13px;color:var(--dim)}
 .sg-leg{display:flex;align-items:center;gap:7px}
 .sg-leg b{color:var(--txt)}
