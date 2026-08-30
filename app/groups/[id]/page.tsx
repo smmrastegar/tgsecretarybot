@@ -33,14 +33,6 @@ const WINDOWS: Array<{ label: string; days: number }> = [
   { label: "۳۰ روز", days: 30 },
 ];
 
-const INTERVAL_OPTIONS: Array<{ label: string; hours: number | null }> = [
-  { label: "هر ۱ ساعت", hours: 1 },
-  { label: "هر ۳ ساعت", hours: 3 },
-  { label: "هر ۶ ساعت", hours: 6 },
-  { label: "هر ۱۲ ساعت", hours: 12 },
-  { label: "هر ۲۴ ساعت (پیش‌فرض)", hours: 24 },
-  { label: "هر ۴۸ ساعت", hours: 48 },
-];
 
 export default function GroupAnalyticsPage({
   params,
@@ -55,10 +47,7 @@ export default function GroupAnalyticsPage({
   // Default to "از ابتدا" — operator wants the full history first,
   // then can drill into bounded windows.
   const [days, setDays] = useState(0);
-  const [intervalHours, setIntervalHours] = useState<number | null>(null);
-  const [shareToken, setShareToken] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
-  const [copied, setCopied] = useState(false);
   const [showRawMessages, setShowRawMessages] = useState(false);
 
   useEffect(() => {
@@ -78,7 +67,6 @@ export default function GroupAnalyticsPage({
         const j = (await r.json()) as AnalyticsResponse;
         if (!r.ok) throw new Error(j.error ?? "failed");
         setData(j);
-        if (j.shareToken !== undefined) setShareToken(j.shareToken);
       } catch (e) {
         setErr(e instanceof Error ? e.message : String(e));
       } finally {
@@ -88,60 +76,12 @@ export default function GroupAnalyticsPage({
     [chatId],
   );
 
-  const loadInterval = useCallback(async () => {
-    const r = await fetch(`/api/groups/${chatId}/interval`);
-    if (r.ok) {
-      const j = (await r.json()) as { hours: number | null };
-      setIntervalHours(j.hours);
-    }
-  }, [chatId]);
-
-  const saveInterval = useCallback(
-    async (hours: number | null) => {
-      const r = await fetch(`/api/groups/${chatId}/interval`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hours }),
-      });
-      if (r.ok) setIntervalHours(hours);
-    },
-    [chatId],
-  );
-
-  const generateShare = useCallback(async () => {
-    const r = await fetch(`/api/groups/${chatId}/share`, { method: "POST" });
-    if (r.ok) {
-      const j = (await r.json()) as { token: string };
-      setShareToken(j.token);
-    }
-  }, [chatId]);
-
-  const revokeShare = useCallback(async () => {
-    if (!confirm("لینک عمومی فعلی پاک می‌شه و دسترسی کسی که لینک رو داشته قطع می‌شه. ادامه؟"))
-      return;
-    const r = await fetch(`/api/groups/${chatId}/share`, { method: "DELETE" });
-    if (r.ok) setShareToken(null);
-  }, [chatId]);
-
   useEffect(() => {
     if (Number.isFinite(chatId)) {
       load(days);
-      loadInterval();
     }
-  }, [chatId, days, load, loadInterval]);
+  }, [chatId, days, load]);
 
-  const shareUrl = shareToken
-    ? `${origin}/share/groups/${shareToken}?days=${days}`
-    : "";
-
-  const copy = async () => {
-    if (!shareUrl) return;
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {}
-  };
 
   return (
     <Shell>
@@ -227,71 +167,20 @@ export default function GroupAnalyticsPage({
                 href="/groups"
                 className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
               >
-                ← خلاصه‌ها
+                ← گروه‌ها
               </Link>
             </div>
           }
         />
 
         <Card className="mb-4">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium mb-1">⏱ فرکانس خلاصه‌سازی این گروه</div>
-              <p className="text-[11px] text-[var(--color-text-dim)] mb-2">
-                cron هر ساعت اجرا می‌شه و فقط گروه‌هایی که زمان جدید رسیده پردازش می‌کنه.
-              </p>
-              <div className="flex gap-2 flex-wrap">
-                {INTERVAL_OPTIONS.map((opt) => (
-                  <button
-                    key={String(opt.hours)}
-                    onClick={() => saveInterval(opt.hours)}
-                    className={`text-[11px] px-2.5 py-1 rounded-md border ${
-                      (intervalHours ?? 24) === opt.hours
-                        ? "bg-[var(--color-accent)] text-white border-transparent"
-                        : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium mb-1">🔗 لینک اشتراک‌گذاری عمومی</div>
-              <p className="text-[11px] text-[var(--color-text-dim)] mb-2">
-                هر کسی این لینک رو داشته باشه فقط می‌تونه گزارش رو ببینه (read-only).
-              </p>
-              {shareToken ? (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <code
-                    dir="ltr"
-                    className="flex-1 min-w-0 text-[10px] tabular-nums break-all bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-                  >
-                    {shareUrl}
-                  </code>
-                  <button
-                    onClick={copy}
-                    className="text-[11px] px-2 py-1 rounded-md bg-[var(--color-accent)] text-white"
-                  >
-                    {copied ? "✓ کپی شد" : "📋 کپی"}
-                  </button>
-                  <button
-                    onClick={revokeShare}
-                    className="text-[11px] px-2 py-1 rounded-md border border-red-900/40 text-red-300 hover:bg-red-900/30"
-                  >
-                    🗑 لغو
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={generateShare}
-                  className="text-[11px] px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white"
-                >
-                  + ساخت لینک
-                </button>
-              )}
-            </div>
-          </div>
+          <p className="text-[11px] text-[var(--color-text-dim)]">
+            لینکِ اشتراک‌گذاری عمومی و فرکانسِ خلاصه‌سازیِ این گروه از{" "}
+            <Link href="/groups" className="text-[var(--color-accent)] underline">
+              صفحه‌ی گروه‌ها
+            </Link>{" "}
+            تنظیم می‌شود.
+          </p>
         </Card>
 
         {err && (
