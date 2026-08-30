@@ -358,12 +358,13 @@ export default function GroupsPage() {
             {groups.map((g) => (
               <div
                 key={g.chatId}
-                className="flex items-center justify-between gap-3 flex-wrap p-3 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]"
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 p-3 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]"
               >
                 <div className="min-w-0 flex-1">
                   <Link
                     href={`/groups/${g.chatId}`}
                     className="text-sm font-medium text-[var(--color-accent)] hover:underline break-words"
+                    dir="auto"
                   >
                     {g.chatTitle ?? `گروه ${g.chatId}`}
                   </Link>
@@ -376,14 +377,12 @@ export default function GroupsPage() {
                         : "بدون خلاصه"}
                     </span>
                     {g.lastSeen && <span>آخرین پیام {relTime(g.lastSeen)}</span>}
+                    <span className={g.shareToken ? "text-emerald-400" : ""}>
+                      {g.shareToken ? "🔗 لینک عمومی دارد" : "بدون لینک عمومی"}
+                    </span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                  {g.shareToken ? (
-                    <Badge tone="success">🔗 لینک عمومی دارد</Badge>
-                  ) : (
-                    <Badge tone="neutral">بدون لینک</Badge>
-                  )}
+                <div className="flex items-center gap-2 flex-wrap sm:shrink-0">
                   <button
                     onClick={() => summarizeOne(g.chatId)}
                     disabled={busyChat === g.chatId}
