@@ -2,13 +2,26 @@
 // from the operator dashboard's styles on purpose: this page is seen by
 // outsiders and should stand on its own.
 export const SHARE_CSS = `
+/* Persian text and Persian digits both need a face that actually draws
+   them. system-ui resolves to Roboto / Segoe UI, which carry no Persian
+   glyphs, so the browser silently substituted a fallback per-glyph — the
+   reason the script looked flat and the numbers looked pasted in.
+   Vazirmatn is loaded with swap so the page never blocks on it, and the
+   old stack stays behind it as the fallback. */
+@font-face{font-family:Vazirmatn;font-style:normal;font-weight:400;font-display:swap;
+  src:url(https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/fonts/webfonts/Vazirmatn-Regular.woff2) format("woff2")}
+@font-face{font-family:Vazirmatn;font-style:normal;font-weight:700;font-display:swap;
+  src:url(https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/fonts/webfonts/Vazirmatn-Bold.woff2) format("woff2")}
+@font-face{font-family:Vazirmatn;font-style:normal;font-weight:800;font-display:swap;
+  src:url(https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/fonts/webfonts/Vazirmatn-ExtraBold.woff2) format("woff2")}
 .sg{
   --bg:#080c17; --bg2:#0d1424; --card:#111a2e; --card2:#16203a;
   --line:#1e2b47; --line2:#2b3b5e; --txt:#e8eefc; --dim:#93a3c4; --dim2:#66789c;
   --acc:#6d8cff; --done:#2fd48f; --prog:#ffb02e; --stall:#ff6b6b; --ann:#7c8db5;
   --radius:16px;
   background:var(--bg); color:var(--txt); min-height:100vh;
-  font-family:system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;
+  font-family:Vazirmatn,system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;
+  font-feature-settings:"ss01";
   -webkit-font-smoothing:antialiased;
 }
 .sg *{box-sizing:border-box}
@@ -47,10 +60,11 @@ export const SHARE_CSS = `
 @media(max-width:820px){.sg-pulse{grid-template-columns:1fr}}
 .sg-ring-card{display:flex;align-items:center;gap:18px;padding:22px;border-radius:var(--radius);
   background:linear-gradient(160deg,var(--card2),var(--card));border:1px solid var(--line)}
-.sg-ring{position:relative;flex:none;width:112px;height:112px}
+.sg-ring{position:relative;flex:none;width:124px;height:124px}
 .sg-ring-svg{width:100%;height:100%;transform:rotate(-90deg)}
 .sg-ring-bg{fill:none;stroke:#1c2842;stroke-width:11}
-.sg-ring-fg{fill:none;stroke:var(--done);stroke-width:11;stroke-linecap:round;
+.sg-ring-fg{fill:none;stroke:url(#sgRingGrad);stroke-width:11;stroke-linecap:round;
+  filter:drop-shadow(0 0 6px rgba(47,212,143,.35));
   transition:stroke-dashoffset .9s cubic-bezier(.4,0,.2,1)}
 .sg-ring-num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:1px}
 .sg-ring-num b{font-size:28px;font-weight:800}
@@ -58,16 +72,17 @@ export const SHARE_CSS = `
 .sg-ring-label{font-size:15px;font-weight:700;margin-bottom:6px}
 .sg-ring-sub{font-size:12px;color:var(--dim);line-height:1.9}
 .sg-ring-sub b{color:var(--txt)}
-.sg-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:12px}
-.sg-kpi{padding:16px 14px;border-radius:14px;background:var(--card);border:1px solid var(--line);
-  position:relative;overflow:hidden;transition:.15s}
+.sg-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:12px;justify-items:stretch}
+.sg-kpi{padding:18px 14px;border-radius:14px;background:var(--card);border:1px solid var(--line);
+  position:relative;overflow:hidden;transition:.15s;text-align:center;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:96px}
 .sg-kpi:hover{transform:translateY(-2px);border-color:var(--line2)}
 .sg-kpi::before{content:"";position:absolute;inset-inline-start:0;top:0;bottom:0;width:3px;background:var(--dim2)}
 .sg-kpi--done::before{background:var(--done)} .sg-kpi--prog::before{background:var(--prog)}
 .sg-kpi--stall::before{background:var(--stall)} .sg-kpi--over::before{background:#ff8f5a}
 .sg-kpi--base::before{background:var(--acc)}
-.sg-kpi-n{font-size:26px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}
-.sg-kpi-l{font-size:12px;color:var(--dim);margin-top:5px}
+.sg-kpi-n{font-size:28px;font-weight:800;line-height:1.15;letter-spacing:.01em}
+.sg-kpi-l{font-size:12px;color:var(--dim);margin-top:6px;line-height:1.5}
 
 /* CARD / SECTION */
 .sg-card,.sg-sec{margin-bottom:28px}
@@ -76,13 +91,13 @@ export const SHARE_CSS = `
 .sg-h2-ico{font-size:19px}
 
 /* DISTRIBUTION */
-.sg-bar{display:flex;height:16px;border-radius:999px;overflow:hidden;background:#0a1120;gap:2px}
-.sg-bar-seg{transition:width .8s cubic-bezier(.4,0,.2,1)}
+.sg-bar{display:flex;height:18px;border-radius:999px;background:#0a1120;gap:3px;padding:0;overflow:hidden}
+.sg-bar-seg{transition:width .8s cubic-bezier(.4,0,.2,1);border-radius:999px;min-width:0}
 .sg-done{background:var(--done)} .sg-prog{background:var(--prog)}
 .sg-stall{background:var(--stall)} .sg-ann{background:var(--ann)}
 .sg-legend{display:flex;flex-wrap:wrap;gap:18px;margin-top:16px;font-size:13px;color:var(--dim)}
 .sg-leg{display:flex;align-items:center;gap:7px}
-.sg-leg b{color:var(--txt);font-variant-numeric:tabular-nums}
+.sg-leg b{color:var(--txt)}
 .sg-leg em{font-style:normal;color:var(--dim2);font-size:12px}
 .sg-swatch{width:10px;height:10px;border-radius:3px;display:inline-block}
 
@@ -131,7 +146,7 @@ export const SHARE_CSS = `
 .sg-topic{padding:18px;border-radius:14px;background:var(--card);border:1px solid var(--line)}
 .sg-topic-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:10px}
 .sg-topic-head h3{font-size:14px;font-weight:700;margin:0}
-.sg-topic-n{font-size:12px;color:var(--dim2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.sg-topic-n{font-size:12px;color:var(--dim2);white-space:nowrap}
 .sg-tbar{height:5px;border-radius:999px;background:#0a1120;overflow:hidden;margin-bottom:12px}
 .sg-tbar-fill{height:100%;background:linear-gradient(90deg,var(--acc),#9db4ff);border-radius:999px}
 .sg-topic-sum{font-size:13px;color:var(--dim);line-height:1.9;margin:0 0 12px}

@@ -432,6 +432,14 @@ function Ring({ pct }: { pct: number }) {
   return (
     <div className="sg-ring">
       <svg viewBox="0 0 120 120" className="sg-ring-svg">
+        {/* A flat single-colour arc reads as a loading spinner. The
+            gradient gives the sweep a direction, so it reads as progress. */}
+        <defs>
+          <linearGradient id="sgRingGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#2fd48f" />
+            <stop offset="100%" stopColor="#6d8cff" />
+          </linearGradient>
+        </defs>
         <circle cx="60" cy="60" r={R} className="sg-ring-bg" />
         <circle cx="60" cy="60" r={R} className="sg-ring-fg"
           style={{ strokeDasharray: C, strokeDashoffset: C - (C * pct) / 100 }} />
