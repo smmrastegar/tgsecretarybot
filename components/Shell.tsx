@@ -150,7 +150,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </button>
       </header>
 
-      <main className="flex-1 min-w-0 p-4 md:p-8 md:max-w-6xl pb-24 md:pb-8">
+      <main className="flex-1 min-w-0 w-full md:mx-auto p-4 md:p-8 md:max-w-6xl pb-24 md:pb-8">
         {webhook && (!webhook.ok || webhook.missing.length > 0) && (
           <div className="mb-4 p-3 rounded-lg border border-amber-800 bg-amber-900/30 text-amber-100">
             <div className="text-sm font-medium">

@@ -25,6 +25,14 @@ type Item = {
   createdAt: string;
 };
 
+// These three were rendering their raw English keys as button labels in an
+// otherwise Persian UI.
+const FILTER_LABEL: Record<"upcoming" | "all" | "done", string> = {
+  upcoming: "پیشِ‌رو",
+  all: "همه",
+  done: "انجام‌شده",
+};
+
 const PRIORITY_LABEL: Record<
   string,
   { label: string; tone: "danger" | "warn" | "neutral" | "info" }
@@ -210,7 +218,7 @@ export default function RemindersPage() {
                       : "border-[var(--color-border)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
                   }`}
                 >
-                  {f}
+                  {FILTER_LABEL[f]}
                 </button>
               ))}
             </div>
@@ -406,7 +414,7 @@ export default function RemindersPage() {
                         href={googleCalendarUrl(it)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                        className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] inline-flex items-center min-h-9"
                         title="باز کردن رویداد ازپیش‌پرشده‌ی Google Calendar در تب جدید"
                       >
                         📅 افزودن به Google Calendar

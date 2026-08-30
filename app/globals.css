@@ -33,3 +33,29 @@ a {
 [dir="rtl"] {
   font-family: Tahoma, var(--font-sans);
 }
+
+/* Touch ergonomics. Measured across the dashboard, most controls came out
+   at 26–30px tall because they share one compact "text-xs px-3 py-1.5"
+   button style that was designed for a mouse. Rather than re-style every
+   call site, give interactive elements a floor on touch pointers only, so
+   the desktop density is untouched. */
+@media (pointer: coarse) {
+  button,
+  select,
+  [role="button"] {
+    min-height: 36px;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea {
+    min-height: 40px;
+    /* iOS zooms the whole page in when a focused field is under 16px. */
+    font-size: 16px;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: 20px;
+    height: 20px;
+  }
+}
