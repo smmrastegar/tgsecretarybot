@@ -189,8 +189,14 @@ export default function GroupsPage() {
         <div className="flex flex-col gap-3">
           {groups.map((g) => {
             const isOpen = open === g.chatId;
+            // One token, two views: the read-only report and the
+            // editable task board. The board had no link anywhere in the
+            // app, so it was reachable only by already knowing the URL.
             const shareUrl = g.shareToken
               ? `${origin}/share/groups/${g.shareToken}?days=0`
+              : null;
+            const boardUrl = g.shareToken
+              ? `${origin}/board/${g.shareToken}`
               : null;
             return (
               <Card key={g.chatId}>
@@ -239,8 +245,8 @@ export default function GroupsPage() {
                         🔗 لینک اشتراک‌گذاری عمومی
                       </div>
                       <p className="text-[11px] text-[var(--color-text-dim)] mb-2">
-                        هر کسی این لینک را داشته باشد فقط می‌تواند گزارش را
-                        ببیند — بدون ورود، و بدون امکان تغییر.
+                        یک توکن، دو نما: <b>گزارش</b> فقط‌خواندنی است، و{" "}
+                        <b>بورد کارها</b> قابل ویرایش.
                       </p>
                       {shareUrl ? (
                         <div className="flex flex-col gap-2">
@@ -263,8 +269,18 @@ export default function GroupsPage() {
                             rel="noreferrer"
                             className="text-[11px] px-3 py-2 rounded-md border border-[var(--color-border)]"
                           >
-                            باز کردن ↗
+                            📊 گزارش ↗
                           </a>
+                          {boardUrl && (
+                            <a
+                              href={boardUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] px-3 py-2 rounded-md border border-[var(--color-accent)] text-[var(--color-accent)]"
+                            >
+                              ✍️ بوردِ قابلِ ویرایش ↗
+                            </a>
+                          )}
                           <button
                             onClick={() => revokeLink(g.chatId)}
                             disabled={busy === g.chatId}
