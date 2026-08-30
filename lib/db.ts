@@ -8671,6 +8671,66 @@ export type GroupSummaryRow = {
   createdAt: Date;
 };
 
+export type GroupListRow = {
+  chatId: number;
+  chatTitle: string | null;
+  chatType: string;
+  messages: number;
+  senders: number;
+  firstSeen: Date | null;
+  lastSeen: Date | null;
+  summaryCount: number;
+  lastSummaryAt: Date | null;
+  hasAnalysis: boolean;
+  shareToken: string | null;
+};
+
+// EVERY group the bot has seen — not just the ones that happen to have a
+// summary already. The dashboard used to list group_summaries, so a group
+// the bot had just joined was invisible: you could not summarise it and
+// could not reach its share settings, because both live behind a link
+// that only rendered for groups already in that table.
+export async function listAllGroups(): Promise<GroupListRow[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    SELECT
+      m.chat_id,
+      (ARRAY_AGG(m.chat_title ORDER BY m.created_at DESC)
+         FILTER (WHERE m.chat_title IS NOT NULL))[1] AS chat_title,
+      (ARRAY_AGG(m.chat_type ORDER BY m.created_at DESC))[1] AS chat_type,
+      COUNT(*)::int AS messages,
+      COUNT(DISTINCT m.sender_id)::int AS senders,
+      MIN(m.created_at) AS first_seen,
+      MAX(m.created_at) AS last_seen,
+      COALESCE(s.n, 0)::int AS summary_count,
+      s.last_at AS last_summary_at,
+      EXISTS (SELECT 1 FROM group_analytics g WHERE g.chat_id = m.chat_id) AS has_analysis,
+      r.analytics_share_token AS share_token
+    FROM messages_log m
+    LEFT JOIN (
+      SELECT chat_id, COUNT(*) AS n, MAX(created_at) AS last_at
+      FROM group_summaries GROUP BY chat_id
+    ) s ON s.chat_id = m.chat_id
+    LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
+    WHERE m.chat_type IN ('group', 'supergroup')
+    GROUP BY m.chat_id, s.n, s.last_at, r.analytics_share_token
+    ORDER BY MAX(m.created_at) DESC`;
+  return rows.map((r) => ({
+    chatId: Number(r.chat_id),
+    chatTitle: (r.chat_title as string) ?? null,
+    chatType: (r.chat_type as string) ?? "group",
+    messages: Number(r.messages),
+    senders: Number(r.senders),
+    firstSeen: (r.first_seen as Date) ?? null,
+    lastSeen: (r.last_seen as Date) ?? null,
+    summaryCount: Number(r.summary_count ?? 0),
+    lastSummaryAt: (r.last_summary_at as Date) ?? null,
+    hasAnalysis: Boolean(r.has_analysis),
+    shareToken: (r.share_token as string) ?? null,
+  }));
+}
+
 export async function listGroupSummaries(
   chatId?: number,
   limit = 30,

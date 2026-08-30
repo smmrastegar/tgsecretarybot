@@ -71,10 +71,19 @@ async function run(request: Request): Promise<NextResponse> {
   const widestStart = new Date(
     end.getTime() - MAX_INTERVAL_HOURS * 3600_000,
   );
-  const activities = await groupActivityForPeriod({
+  // Optional single-chat scope, for the per-group "summarise now" button.
+  // Without it the dashboard could only ever run every group at once,
+  // which is slow and burns tokens on groups nobody asked about.
+  const onlyRaw = url.searchParams.get("chat_id");
+  const onlyChatId = onlyRaw ? Number(onlyRaw) : null;
+  const allActivities = await groupActivityForPeriod({
     start: widestStart,
     end,
   });
+  const activities =
+    onlyChatId != null && Number.isFinite(onlyChatId)
+      ? allActivities.filter((a) => a.chatId === onlyChatId)
+      : allActivities;
   let summarized = 0;
   let skipped = 0;
   let skipReasons: Record<string, number> = {};

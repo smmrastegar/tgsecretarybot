@@ -6,6 +6,19 @@ import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import { relTime } from "@/lib/format";
 
+type GroupRow = {
+  chatId: number;
+  chatTitle: string | null;
+  chatType: string;
+  messages: number;
+  senders: number;
+  lastSeen: string | null;
+  summaryCount: number;
+  lastSummaryAt: string | null;
+  hasAnalysis: boolean;
+  shareToken: string | null;
+};
+
 type Summary = {
   id: number;
   chatId: number;
@@ -121,18 +134,46 @@ export default function GroupsPage() {
   const [windowKey, setWindowKey] = useState<WindowKey>("7");
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [groups, setGroups] = useState<GroupRow[]>([]);
+  const [busyChat, setBusyChat] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     const r = await fetch("/api/groups");
-    const j = (await r.json()) as { summaries: Summary[] };
+    const j = (await r.json()) as { summaries: Summary[]; groups?: GroupRow[] };
     setSummaries(j.summaries);
+    setGroups(j.groups ?? []);
     setLoading(false);
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Summarise one group on demand. Previously the only control ran every
+  // group at once, and a group with no summary yet wasn't even listed, so
+  // there was no way to produce its first one from here.
+  async function summarizeOne(chatId: number) {
+    setBusyChat(chatId);
+    setMsg(null);
+    try {
+      const r = await fetch(
+        `/api/cron/daily-summary?hours=24&chat_id=${chatId}`,
+        { method: "POST" },
+      );
+      const j = (await r.json()) as { summarized?: number; error?: string };
+      setMsg(
+        j.error
+          ? `خطا: ${j.error}`
+          : j.summarized
+            ? "خلاصه ساخته شد ✓"
+            : "پیام کافی برای خلاصه‌سازی نبود (حداقل ۳ پیام در بازه).",
+      );
+      await load();
+    } finally {
+      setBusyChat(null);
+    }
+  }
 
   async function runNow() {
     setRunning(true);
@@ -292,6 +333,75 @@ export default function GroupsPage() {
           placeholder="🔍 جستجو در گروه‌ها، موضوعات، اقدامات، متن خلاصه"
           className="w-full text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
         />
+      </Card>
+
+      {/* Every group the bot is in — including ones with no summary yet.
+          This section is the entry point to each group's page, where the
+          public share link is managed. */}
+      <Card className="mb-4">
+        <div className="text-xs font-medium mb-1">
+          👥 گروه‌های بات{" "}
+          <span className="text-[var(--color-text-dim)] font-normal">
+            ({groups.length})
+          </span>
+        </div>
+        <p className="text-[11px] text-[var(--color-text-dim)] mb-3">
+          هر گروهی که بات توش هست، حتی اگر هنوز خلاصه‌ای نداشته باشد. برای
+          مدیریتِ لینکِ اشتراک‌گذاری روی اسم گروه بزن.
+        </p>
+        {groups.length === 0 ? (
+          <p className="text-xs text-[var(--color-text-dim)]">
+            هنوز پیامی از هیچ گروهی ثبت نشده.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {groups.map((g) => (
+              <div
+                key={g.chatId}
+                className="flex items-center justify-between gap-3 flex-wrap p-3 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)]"
+              >
+                <div className="min-w-0 flex-1">
+                  <Link
+                    href={`/groups/${g.chatId}`}
+                    className="text-sm font-medium text-[var(--color-accent)] hover:underline break-words"
+                  >
+                    {g.chatTitle ?? `گروه ${g.chatId}`}
+                  </Link>
+                  <div className="text-[10px] text-[var(--color-text-dim)] mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span>{g.messages.toLocaleString("fa-IR")} پیام</span>
+                    <span>{g.senders.toLocaleString("fa-IR")} نفر</span>
+                    <span>
+                      {g.summaryCount > 0
+                        ? `${g.summaryCount.toLocaleString("fa-IR")} خلاصه`
+                        : "بدون خلاصه"}
+                    </span>
+                    {g.lastSeen && <span>آخرین پیام {relTime(g.lastSeen)}</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  {g.shareToken ? (
+                    <Badge tone="success">🔗 لینک عمومی دارد</Badge>
+                  ) : (
+                    <Badge tone="neutral">بدون لینک</Badge>
+                  )}
+                  <button
+                    onClick={() => summarizeOne(g.chatId)}
+                    disabled={busyChat === g.chatId}
+                    className="text-[11px] px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-50"
+                  >
+                    {busyChat === g.chatId ? "…" : "▶ خلاصه‌گیری"}
+                  </button>
+                  <Link
+                    href={`/groups/${g.chatId}`}
+                    className="text-[11px] px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
+                  >
+                    🔗 لینک و تنظیمات
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       {loading ? (
