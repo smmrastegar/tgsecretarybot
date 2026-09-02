@@ -13,6 +13,7 @@ import {
 } from "./db";
 import { redisDelete, redisEnabled, redisGet, redisSet } from "./redis";
 
+import { reportError } from "./report";
 type SettingsCache = { values: Record<SettingKey, string>; expiresAt: number };
 let cache: SettingsCache | null = null;
 const TTL_SECONDS = 30;
@@ -27,7 +28,7 @@ async function loadSettings(): Promise<Record<SettingKey, string>> {
         if (stored[k] !== undefined) out[k] = stored[k]!;
       }
     } catch (err) {
-      console.error("[settings] load failed:", err);
+      reportError("settings", "[settings] load failed:", err);
     }
   }
   for (const k of SETTING_KEYS) {

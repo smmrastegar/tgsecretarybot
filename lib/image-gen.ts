@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { config } from "./config";
 import { getOwnerAsset, recordAiUsage } from "./db";
 
+import { reportError, reportWarn } from "./report";
 // Gemini 2.5 Flash Image ("nano-banana 2") on OpenRouter. Takes a
 // reference photo + a text prompt and returns a generated image.
 // Pricing: ~$0.04 per image (~$30 / 1000 generations).
@@ -144,13 +145,13 @@ export async function generatePersonalPhoto(args: {
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[image-gen] ${model} network error: ${msg}`);
+      reportWarn("image-gen", `[image-gen] ${model} network error: ${msg}`);
       errors.push(`${model}: ${msg}`);
       continue;
     }
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
-      console.warn(
+      reportWarn("image-gen", 
         `[image-gen] ${model} HTTP ${res.status}: ${txt.slice(0, 300)}`,
       );
       errors.push(`${model}: ${res.status} ${txt.slice(0, 120)}`);
@@ -168,7 +169,7 @@ export async function generatePersonalPhoto(args: {
       error?: { message?: string };
     };
     if (json.error) {
-      console.warn(`[image-gen] ${model} body error: ${json.error.message}`);
+      reportWarn("image-gen", `[image-gen] ${model} body error: ${json.error.message}`);
       errors.push(`${model}: ${json.error.message ?? "error"}`);
       continue;
     }
@@ -203,7 +204,7 @@ export async function generatePersonalPhoto(args: {
       }
     }
     if (!candidate) {
-      console.warn(
+      reportWarn("image-gen", 
         `[image-gen] ${model} no image in response. shape: ${JSON.stringify(json).slice(0, 500)}`,
       );
       errors.push(`${model}: no image in response`);
@@ -240,7 +241,7 @@ export async function generatePersonalPhoto(args: {
         completionTokens: 0,
         totalTokens: 0,
         costUsd: COST_PER_IMAGE_USD,
-      }).catch((err) => console.error("[image-gen] usage record failed:", err));
+      }).catch((err) => reportError("image-gen", "[image-gen] usage record failed:", err));
       return { data, mime };
     }
     throw new Error("image-gen response wasn't a data URL");
@@ -258,7 +259,7 @@ export async function generatePersonalPhoto(args: {
     completionTokens: 0,
     totalTokens: 0,
     costUsd: COST_PER_IMAGE_USD,
-  }).catch((err) => console.error("[image-gen] usage record failed:", err));
+  }).catch((err) => reportError("image-gen", "[image-gen] usage record failed:", err));
 
   return { data, mime };
 }

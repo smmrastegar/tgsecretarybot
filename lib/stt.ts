@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { config } from "./config";
 import { recordAiUsage } from "./db";
 
+import { reportError, reportWarn } from "./report";
 const OPENROUTER_STT_MODEL = "google/gemini-2.5-flash";
 const GROQ_TRANSCRIBE_URL =
   "https://api.groq.com/openai/v1/audio/transcriptions";
@@ -102,7 +103,7 @@ export async function transcribeAudio(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`Groq: ${msg}`);
-      console.warn("[stt] Groq failed:", msg);
+      reportWarn("stt", "[stt] Groq failed:", msg);
     }
   }
   if (config.openrouterApiKey) {
@@ -206,7 +207,7 @@ async function transcribeViaOpenRouter(
       completionTokens: ct,
       totalTokens: json.usage.total_tokens ?? pt + ct,
       costUsd: cost,
-    }).catch((err) => console.error("[stt] usage record failed:", err));
+    }).catch((err) => reportError("stt", "[stt] usage record failed:", err));
   }
 
   return { text, provider: "openrouter:gemini-2.5-flash" };
@@ -265,7 +266,7 @@ async function transcribeViaGroq(
     completionTokens: 0,
     totalTokens: 0,
     costUsd,
-  }).catch((err) => console.error("[stt] usage record failed:", err));
+  }).catch((err) => reportError("stt", "[stt] usage record failed:", err));
 
   return { text, durationSeconds: seconds, provider: "groq:whisper-turbo" };
 }

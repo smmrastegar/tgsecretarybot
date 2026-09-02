@@ -121,7 +121,7 @@ import { isTransientDbError } from "./pg-driver";
 import { summarizeEmail } from "./classifier";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { createMagicToken } from "./magic";
-import { reportWarn } from "./report";
+import { reportError, reportWarn } from "./report";
 import { randomBytes } from "node:crypto";
 
 let _bot: Bot | null = null;
@@ -227,7 +227,7 @@ async function logOwnerSent(args: {
       source: args.source,
     });
   } catch (err) {
-    console.error(`[db] logOwnerSent (${args.source}) failed:`, err);
+    reportError("bot", `[db] logOwnerSent (${args.source}) failed:`, err);
   }
 }
 
@@ -280,9 +280,9 @@ async function autoExtractAndSave(args: {
     // Auto-extract is best-effort — a transient DB blip shouldn't be
     // surfaced as a runtime error; the next message re-runs it anyway.
     if (isTransientDbError(err)) {
-      console.warn("[extract] auto skipped (transient DB)");
+      reportWarn("bot", "[extract] auto skipped (transient DB)");
     } else {
-      console.error("[extract] auto failed:", err);
+      reportError("bot", "[extract] auto failed:", err);
     }
   }
 }
@@ -350,7 +350,7 @@ async function humanTypingDelay(
     } catch (err) {
       // Non-fatal: typing indicator isn't critical, and some business
       // connections won't accept it.
-      console.warn("[typing] sendChatAction failed:", err);
+      reportWarn("bot", "[typing] sendChatAction failed:", err);
     }
   };
   // Telegram clears the typing indicator after ~5s, so re-send for
@@ -397,7 +397,7 @@ async function maybeDescribeMedia(args: {
       });
       if (tr.text) await saveTranscript(args.logId, tr.text);
     } catch (err) {
-      console.warn("[ai_listen] transcribe failed:", err);
+      reportWarn("bot", "[ai_listen] transcribe failed:", err);
     }
     return;
   }
@@ -417,7 +417,7 @@ async function maybeDescribeMedia(args: {
         lines.push(`[متن داخل تصویر] ${result.textInImage}`);
       await saveMediaDescription(args.logId, lines.join("\n"));
     } catch (err) {
-      console.warn("[ai_listen] describe failed:", err);
+      reportWarn("bot", "[ai_listen] describe failed:", err);
     }
   }
 }
@@ -476,7 +476,7 @@ async function handleFollowUpCallback(
       .answerCallbackQuery({ text: "✅ ثبت شد. تا پیام جدید پینگ نمی‌فرستم." })
       .catch(() => {});
   } catch (err) {
-    console.warn("[fu_cb] ack failed:", err);
+    reportWarn("bot", "[fu_cb] ack failed:", err);
     await ctx
       .answerCallbackQuery({ text: "ثبت نشد." })
       .catch(() => {});
@@ -576,7 +576,7 @@ async function handleNoteWatchCallback(
           .catch(() => {});
         return;
       } catch (err) {
-        console.warn(
+        reportWarn("bot", 
           "[nw_cb] edit notice with full-text failed, falling back to fresh send:",
           err,
         );
@@ -605,7 +605,7 @@ async function handleNoteWatchCallback(
         .answerCallbackQuery({ text: "✅ متن کامل ارسال شد." })
         .catch(() => {});
     } catch (err) {
-      console.warn("[nw_cb] full-text fresh send failed:", err);
+      reportWarn("bot", "[nw_cb] full-text fresh send failed:", err);
       await ctx
         .answerCallbackQuery({
           text: "ارسال نشد — احتمالاً بات توی این چت permission نداره.",
@@ -644,7 +644,7 @@ async function handleNoteWatchCallback(
         .answerCallbackQuery({ text: "✅ گزارش شد." })
         .catch(() => {});
     } catch (err) {
-      console.warn("[nw_cb] mark-wrong failed:", err);
+      reportWarn("bot", "[nw_cb] mark-wrong failed:", err);
       await ctx
         .answerCallbackQuery({ text: "ثبت نشد." })
         .catch(() => {});
@@ -681,7 +681,7 @@ async function handleNoteWatchCallback(
         .answerCallbackQuery({ text: "✅ ثبت شد." })
         .catch(() => {});
     } catch (err) {
-      console.warn("[nw_cb] mark-confirmed failed:", err);
+      reportWarn("bot", "[nw_cb] mark-confirmed failed:", err);
       await ctx
         .answerCallbackQuery({ text: "ثبت نشد." })
         .catch(() => {});
@@ -715,7 +715,7 @@ async function handleInstaCallback(
       })
       .catch(() => {});
   } catch (err) {
-    console.warn("[insta_cb] expedite failed:", err);
+    reportWarn("bot", "[insta_cb] expedite failed:", err);
     await ctx
       .answerCallbackQuery({ text: "نشد — خطا." })
       .catch(() => {});
@@ -774,7 +774,7 @@ async function handleSmsCallback(
       await deleteSmsDedup(dedupId);
       await ctx.answerCallbackQuery({ text: "پاک شد." }).catch(() => {});
     } catch (err) {
-      console.warn("[sms_cb] delete failed:", err);
+      reportWarn("bot", "[sms_cb] delete failed:", err);
       await ctx
         .answerCallbackQuery({
           text: "نشد پاک کنم — احتمالاً قبلاً پاک شده.",
@@ -807,7 +807,7 @@ async function handleSmsCallback(
         .answerCallbackQuery({ text: "✅ پذیرفته شد." })
         .catch(() => {});
     } catch (err) {
-      console.warn("[sms_cb] accept failed:", err);
+      reportWarn("bot", "[sms_cb] accept failed:", err);
       await ctx
         .answerCallbackQuery({ text: "ذخیره نشد — خطا." })
         .catch(() => {});
@@ -840,7 +840,7 @@ async function handleSmsCallback(
         })
         .catch(() => {});
     } catch (err) {
-      console.warn("[sms_cb] block failed:", err);
+      reportWarn("bot", "[sms_cb] block failed:", err);
       await ctx
         .answerCallbackQuery({ text: "بلاک نشد — خطا." })
         .catch(() => {});
@@ -1153,7 +1153,7 @@ async function handleSmsReveal(
       })
       .catch(() => {});
   } catch (err) {
-    console.warn("[sms_cb] reveal/hide failed:", err);
+    reportWarn("bot", "[sms_cb] reveal/hide failed:", err);
     await ctx.answerCallbackQuery({ text: "خطا." }).catch(() => {});
   }
 }
@@ -1270,7 +1270,7 @@ async function handleTranscribeCallback(
       .catch(() => {});
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[transcribe] failed:", msg);
+    reportError("bot", "[transcribe] failed:", msg);
     await bot.api.sendMessage(
       storageChatId,
       `📝 پیاده‌سازی متن ناموفق بود: ${msg.slice(0, 200)}`,
@@ -1399,10 +1399,10 @@ async function handleAutoSummaryCallback(
       try {
         await ctx.editMessageText(body, { reply_markup: keyboard });
       } catch (err) {
-        console.warn("[as_callback] editMessageText failed:", err);
+        reportWarn("bot", "[as_callback] editMessageText failed:", err);
       }
     } catch (err) {
-      console.error("[as_callback] resum failed:", err);
+      reportError("bot", "[as_callback] resum failed:", err);
     }
     return;
   }
@@ -1436,7 +1436,7 @@ async function handleAutoSummaryCallback(
         chatId: rule.chatId,
       });
     } catch (err) {
-      console.error("[as_callback] generate reply failed:", err);
+      reportError("bot", "[as_callback] generate reply failed:", err);
     }
     if (!reply) {
       try {
@@ -1456,7 +1456,7 @@ async function handleAutoSummaryCallback(
     try {
       await ctx.editMessageText(newBody, { reply_markup: keyboard });
     } catch (err) {
-      console.warn("[as_callback] editMessageText failed:", err);
+      reportWarn("bot", "[as_callback] editMessageText failed:", err);
     }
     return;
   }
@@ -1508,7 +1508,7 @@ async function handleAutoSummaryCallback(
         await ctx.editMessageText(newBody);
       } catch {}
     } catch (err) {
-      console.error("[as_callback] send failed:", err);
+      reportError("bot", "[as_callback] send failed:", err);
       await ctx.answerCallbackQuery({
         text: "ارسال نشد: " + String(err).slice(0, 80),
         show_alert: true,
@@ -1559,7 +1559,7 @@ async function handleInboxReply(msg: Message, bot: Bot): Promise<boolean> {
       (rows[0] as { business_connection_id: string } | undefined)
         ?.business_connection_id ?? null;
   } catch (err) {
-    console.warn("[inbox_reply] bcId lookup failed:", err);
+    reportWarn("bot", "[inbox_reply] bcId lookup failed:", err);
   }
 
   try {
@@ -1579,7 +1579,7 @@ async function handleInboxReply(msg: Message, bot: Bot): Promise<boolean> {
     } catch {}
     return true;
   } catch (err) {
-    console.error("[inbox_reply] send failed:", err);
+    reportError("bot", "[inbox_reply] send failed:", err);
     try {
       await bot.api.sendMessage(
         msg.chat.id,
@@ -1642,7 +1642,7 @@ export async function maybeAutoSummarizeOnArrival(args: {
       throughTs: new Date(prev.created_at),
     });
   } catch (err) {
-    console.error("[auto_summary] reactive trigger failed:", err);
+    reportError("bot", "[auto_summary] reactive trigger failed:", err);
   }
 }
 
@@ -1656,7 +1656,7 @@ export async function deliverAutoSummary(args: {
   const { bot, rule, throughTs } = args;
   const inbox = await getPrimarySummaryInbox();
   if (!inbox) {
-    console.warn(
+    reportWarn("bot", 
       "[auto_summary] no summary_inbox configured; skipping for chat=" +
         rule.chatId,
     );
@@ -1718,7 +1718,7 @@ export async function deliverAutoSummary(args: {
       })),
     });
   } catch (err) {
-    console.error("[auto_summary] summarise failed:", err);
+    reportError("bot", "[auto_summary] summarise failed:", err);
     return false;
   }
 
@@ -1731,7 +1731,7 @@ export async function deliverAutoSummary(args: {
     topics: summary.topics,
     actionItems: summary.actionItems,
   }).catch((err) =>
-    console.error("[auto_summary] upsertThreadSummary failed:", err),
+    reportError("bot", "[auto_summary] upsertThreadSummary failed:", err),
   );
 
   // Generate a suggested reply in parallel with the summary so the
@@ -1764,7 +1764,7 @@ export async function deliverAutoSummary(args: {
       chatId: rule.chatId,
     });
   } catch (err) {
-    console.warn("[auto_summary] suggested reply failed:", err);
+    reportWarn("bot", "[auto_summary] suggested reply failed:", err);
   }
 
   const header = `📬 خلاصه‌ی thread — ${chatLabel}`;
@@ -1810,11 +1810,11 @@ export async function deliverAutoSummary(args: {
       inboxChatId: inbox.chatId,
       inboxMessageId: sent.message_id,
     }).catch((err) =>
-      console.error("[auto_summary] setThreadSummaryInbox failed:", err),
+      reportError("bot", "[auto_summary] setThreadSummaryInbox failed:", err),
     );
     return true;
   } catch (err) {
-    console.error(
+    reportError("bot", 
       `[auto_summary] send to inbox=${inbox.chatId} failed:`,
       err,
     );
@@ -1835,11 +1835,11 @@ async function markBusinessRead(
   } catch (err) {
     const e = err as { error_code?: number; description?: string };
     if (e?.error_code === 400 || e?.error_code === 403) {
-      console.warn(
+      reportWarn("bot", 
         `[read] cannot mark message read (likely missing can_read_messages right): ${e.description}`,
       );
     } else {
-      console.error("[read] failed:", err);
+      reportError("bot", "[read] failed:", err);
     }
   }
 }
@@ -1879,7 +1879,7 @@ function buildBot(): Bot {
           isEnabled: bc.is_enabled,
         });
       } catch (err) {
-        console.error("[connection] persist failed:", err);
+        reportError("bot", "[connection] persist failed:", err);
       }
     }
     console.log(
@@ -1892,7 +1892,7 @@ function buildBot(): Bot {
   });
   bot.on("edited_business_message", async (ctx) => {
     await handleBusinessEdit(ctx.update.edited_business_message, bot).catch(
-      (err) => console.error("[edit] handler error:", err),
+      (err) => reportError("bot", "[edit] handler error:", err),
     );
   });
 
@@ -1913,7 +1913,7 @@ function buildBot(): Bot {
         `[delete] chat=${d.chat.id} marked ${n} of ${ids.length} message(s) deleted`,
       );
     } catch (err) {
-      console.error("[delete] mark failed:", err);
+      reportError("bot", "[delete] mark failed:", err);
     }
   });
 
@@ -2035,7 +2035,7 @@ function buildBot(): Bot {
           });
         }
       } catch (err) {
-        console.error("[invite] parse secretaries failed:", err);
+        reportError("bot", "[invite] parse secretaries failed:", err);
       }
 
       if (list.some((s) => s.userId === from.id)) {
@@ -2056,7 +2056,7 @@ function buildBot(): Bot {
           (invite.payload as { invitedBy?: number }).invitedBy,
         );
       } catch (err) {
-        console.error("[invite] updateSettings failed:", err);
+        reportError("bot", "[invite] updateSettings failed:", err);
         await ctx.reply(
           "ثبت موفق نبود. لطفاً به صاحب اکانت بگید تا دوباره لینک بفرسته.",
         );
@@ -2103,49 +2103,49 @@ function buildBot(): Bot {
     }
     if (data.startsWith("as:")) {
       await handleAutoSummaryCallback(ctx, data, bot).catch((err) =>
-        console.error("[as_callback] failed:", err),
+        reportError("bot", "[as_callback] failed:", err),
       );
       return;
     }
     if (data.startsWith("tx:")) {
       await handleTranscribeCallback(ctx, data, bot).catch((err) =>
-        console.error("[transcribe] failed:", err),
+        reportError("bot", "[transcribe] failed:", err),
       );
       return;
     }
     if (data.startsWith("insta:")) {
       await handleInstaCallback(ctx, data, bot).catch((err) =>
-        console.error("[insta_callback] failed:", err),
+        reportError("bot", "[insta_callback] failed:", err),
       );
       return;
     }
     if (data.startsWith("nw:")) {
       await handleNoteWatchCallback(ctx, data, bot).catch((err) =>
-        console.error("[nw_callback] failed:", err),
+        reportError("bot", "[nw_callback] failed:", err),
       );
       return;
     }
     if (data.startsWith("fu:")) {
       await handleFollowUpCallback(ctx, data, bot).catch((err) =>
-        console.error("[fu_callback] failed:", err),
+        reportError("bot", "[fu_callback] failed:", err),
       );
       return;
     }
     if (data.startsWith("sms:")) {
       await handleSmsCallback(ctx, data, bot).catch((err) =>
-        console.error("[sms_callback] failed:", err),
+        reportError("bot", "[sms_callback] failed:", err),
       );
       return;
     }
     if (data.startsWith("em:")) {
       await handleEmailCallback(ctx, data, bot).catch((err) =>
-        console.error("[email_callback] failed:", err),
+        reportError("bot", "[email_callback] failed:", err),
       );
       return;
     }
     if (data.startsWith("board:")) {
       await handleBoardAccessCallback(ctx, data, bot).catch((err) =>
-        console.error("[board_callback] failed:", err),
+        reportError("bot", "[board_callback] failed:", err),
       );
       return;
     }
@@ -2251,7 +2251,7 @@ function buildBot(): Bot {
         await ctx.answerCallbackQuery();
       }
     } catch (err) {
-      console.error("[ui] callback failed:", err);
+      reportError("bot", "[ui] callback failed:", err);
       try {
         await ctx.answerCallbackQuery({
           text: "خطا رخ داد. دوباره امتحان کن.",
@@ -2303,14 +2303,14 @@ function buildBot(): Bot {
     // summaries, route it back to the source chat. Runs BEFORE the
     // normal group handler so we don't classify our own routed reply.
     const routed = await handleInboxReply(m, bot).catch((err) => {
-      console.error("[inbox_reply] handler error:", err);
+      reportError("bot", "[inbox_reply] handler error:", err);
       return false;
     });
     if (routed) return;
     // Email: (a) a reply to the bot's ↩️ force-reply prompt → send the
     // email reply; (b) a /email compose command in the email channel.
     const handledEmail = await handleEmailGroupMessage(m, bot).catch((err) => {
-      console.error("[email] group handler error:", err);
+      reportError("bot", "[email] group handler error:", err);
       return false;
     });
     if (handledEmail) return;
@@ -2319,7 +2319,7 @@ function buildBot(): Bot {
     // forwards every message instead of just /commands and mentions.
     if (m.chat.type === "group" || m.chat.type === "supergroup") {
       await handleGroupMessage(m, bot).catch((err) =>
-        console.error("[group] handler error:", err),
+        reportError("bot", "[group] handler error:", err),
       );
       return;
     }
@@ -2327,7 +2327,7 @@ function buildBot(): Bot {
     // secretary replying to a forwarded message in their DM with the
     // bot). For anything else this no-ops.
     await handleSecretaryReply(m, bot).catch((err) =>
-      console.error("[secretary] handler error:", err),
+      reportError("bot", "[secretary] handler error:", err),
     );
     // NOTE: the multi-recipient Secretary Routes reply path used to
     // live here for bot-DM-style relays, but the operator wants
@@ -2354,7 +2354,7 @@ function buildBot(): Bot {
         messageText: incomingText,
         bot,
       }).catch((err) =>
-        console.warn("[rules] direct-DM release failed:", err),
+        reportWarn("bot", "[rules] direct-DM release failed:", err),
       );
     }
   });
@@ -2370,12 +2370,12 @@ function buildBot(): Bot {
       `[channel_post] chat=${m.chat.id} type=${m.chat.type} msg=${m.message_id} text=${(m.text ?? m.caption ?? "").slice(0, 60)}`,
     );
     const routed = await handleInboxReply(m, bot).catch((err) => {
-      console.error("[inbox_reply] channel handler error:", err);
+      reportError("bot", "[inbox_reply] channel handler error:", err);
       return false;
     });
     if (routed) return;
     await handleChannelPost(m, bot).catch((err) =>
-      console.error("[channel_post] handler error:", err),
+      reportError("bot", "[channel_post] handler error:", err),
     );
   });
 
@@ -2387,7 +2387,7 @@ function buildBot(): Bot {
     // Treat edits in channels as fresh classifies — for news channels
     // an edit is often a correction the owner should see.
     await handleChannelPost(m, bot).catch((err) =>
-      console.error("[edited_channel_post] handler error:", err),
+      reportError("bot", "[edited_channel_post] handler error:", err),
     );
   });
 
@@ -2402,7 +2402,7 @@ function buildBot(): Bot {
         `types=${(upd?.new_reaction ?? []).map((r) => r.type).join(",")}`,
     );
     await handleSecretaryReaction(ctx.update.message_reaction, bot).catch(
-      (err) => console.error("[secretary] reaction error:", err),
+      (err) => reportError("bot", "[secretary] reaction error:", err),
     );
   });
 
@@ -2427,7 +2427,7 @@ function buildBot(): Bot {
         status: upd.new_chat_member.status,
       });
     } catch (err) {
-      console.warn("[chat_member] upsert failed:", err);
+      reportWarn("bot", "[chat_member] upsert failed:", err);
     }
   });
   // my_chat_member fires when OUR bot's status in the chat changes.
@@ -2445,13 +2445,13 @@ function buildBot(): Bot {
     const e = err.error;
     let source = "bot:uncaught";
     if (e instanceof GrammyError) {
-      console.error("[bot] Telegram API:", e.description);
+      reportError("bot", "[bot] Telegram API:", e.description);
       source = "bot:telegram-api";
     } else if (e instanceof HttpError) {
-      console.error("[bot] network:", e);
+      reportError("bot", "[bot] network:", e);
       source = "bot:network";
     } else {
-      console.error("[bot] uncaught:", e);
+      reportError("bot", "[bot] uncaught:", e);
     }
     // Fire-and-forget — captureError swallows its own DB failures
     // so we never re-throw out of the grammy handler.
@@ -2503,7 +2503,7 @@ async function resolveOwner(bcId: string, bot: Bot): Promise<OwnerCacheEntry | n
     }
     return entry;
   } catch (err) {
-    console.error(`[connection] api lookup failed for ${bcId}:`, err);
+    reportError("bot", `[connection] api lookup failed for ${bcId}:`, err);
     return null;
   }
 }
@@ -2539,7 +2539,7 @@ async function maybeExtractOtp(args: {
       console.log(`[otp] saved code=${code} for log=${args.logId}`);
     }
   } catch (err) {
-    console.warn(`[otp] extract failed for log=${args.logId}:`, err);
+    reportWarn("bot", `[otp] extract failed for log=${args.logId}:`, err);
   }
 }
 
@@ -2618,7 +2618,7 @@ export async function maybeApplyNoteWatch(args: {
       businessConnectionId: args.businessConnectionId ?? undefined,
     });
   } catch (err) {
-    console.warn("[watchlist] scan failed:", err);
+    reportWarn("bot", "[watchlist] scan failed:", err);
     return;
   }
   console.log(
@@ -2670,7 +2670,7 @@ export async function maybeApplyNoteWatch(args: {
         : m.matchedAlias,
       forwardedTo: null,
     }).catch((err) => {
-      console.warn(`[watchlist] record failed item=${item.id}:`, err);
+      reportWarn("bot", `[watchlist] record failed item=${item.id}:`, err);
       return null;
     });
     let forwardedTo: number | null = null;
@@ -2707,7 +2707,7 @@ export async function maybeApplyNoteWatch(args: {
         });
         forwardedTo = inbox.chatId;
       } catch (err) {
-        console.warn(
+        reportWarn("bot", 
           `[watchlist] notes_inbox forward failed item=${item.id} chat=${inbox.chatId}:`,
           err,
         );
@@ -2728,7 +2728,7 @@ export async function maybeApplyNoteWatch(args: {
         chat_title: args.chatTitle,
       },
     }).catch((err) =>
-      console.warn(`[watchlist] addChatNote failed item=${item.id}:`, err),
+      reportWarn("bot", `[watchlist] addChatNote failed item=${item.id}:`, err),
     );
     console.log(
       `[watchlist] match item=${item.id} chat=${args.chatId} concept="${item.concept}"`,
@@ -2750,7 +2750,7 @@ function harvestContactShare(msg: Message): void {
     lastName: c.last_name ?? null,
     username: null,
     source: "contact_share",
-  }).catch((err) => console.warn("[phone_contacts] save failed:", err));
+  }).catch((err) => reportWarn("bot", "[phone_contacts] save failed:", err));
 }
 
 // --- Media-link download relay -------------------------------------
@@ -3056,7 +3056,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           source: "bot_echo",
         });
       } catch (err) {
-        console.error("[db] bot-outgoing-log failed:", err);
+        reportError("bot", "[db] bot-outgoing-log failed:", err);
       }
     }
     return;
@@ -3109,7 +3109,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           { reply_parameters: { message_id: active.headerMessageId } },
         );
       } catch (err) {
-        console.error("[secretary] takeover notice failed:", err);
+        reportError("bot", "[secretary] takeover notice failed:", err);
       }
     }
     let ownerLogId: number | null = null;
@@ -3137,7 +3137,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           mediaKind,
         });
       } catch (err) {
-        console.error("[db] owner-log failed:", err);
+        reportError("bot", "[db] owner-log failed:", err);
       }
     }
     // AWAITED, not detached: on a frozen serverless invocation a void
@@ -3187,7 +3187,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
   // copy — the same failure class that hit album flushing. The work is
   // bounded (one buffer write or one resend) and the webhook has 55s.
   await maybeMirrorBusinessMessage({ msg, bot }).catch((err) =>
-    console.warn("[mirror-dm] failed:", err),
+    reportWarn("bot", "[mirror-dm] failed:", err),
   );
 
   let rule = await getChatRule(msg.chat.id).catch(() => null);
@@ -3204,7 +3204,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           ? msg.chat.title
           : null,
     }).catch((err) =>
-      console.warn("[chat-defaults] ensure failed:", err),
+      reportWarn("bot", "[chat-defaults] ensure failed:", err),
     );
     rule = await getChatRule(msg.chat.id).catch(() => null);
   }
@@ -3235,7 +3235,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
     }
     void maybeRouteMedia({ rule, msg, bot }).then((r) => {
       if (r.errors.length > 0) {
-        console.warn("[media-router/main-early] errors:", r.errors);
+        reportWarn("bot", "[media-router/main-early] errors:", r.errors);
       }
     });
   }
@@ -3249,7 +3249,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       firstName: msg.from.first_name ?? null,
       lastName: msg.from.last_name ?? null,
       isBot: Boolean(msg.from.is_bot),
-    }).catch((err) => console.error("[db] autoFillChatNames failed:", err));
+    }).catch((err) => reportError("bot", "[db] autoFillChatNames failed:", err));
   }
 
   if (rule?.muted) {
@@ -3278,7 +3278,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           mediaKind,
         });
       } catch (err) {
-        console.error("[db] mute-log failed:", err);
+        reportError("bot", "[db] mute-log failed:", err);
       }
     }
     return;
@@ -3321,7 +3321,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
             { reply_parameters: { message_id: openSession.headerMessageId } },
           );
         } catch (err) {
-          console.error("[secretary] mode-switch notice failed:", err);
+          reportError("bot", "[secretary] mode-switch notice failed:", err);
         }
       } else {
         await maybeForwardToSecretary({
@@ -3358,7 +3358,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
             mediaKind,
           });
         } catch (err) {
-          console.error("[db] relay-log failed:", err);
+          reportError("bot", "[db] relay-log failed:", err);
         }
         return;
       }
@@ -3438,7 +3438,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           mediaKind,
         });
       } catch (err) {
-        console.error("[db] media-log failed:", err);
+        reportError("bot", "[db] media-log failed:", err);
       }
     }
     // Voice / video_note / photo without a caption all land here.
@@ -3512,11 +3512,11 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
                   fromOwner: false,
                   bot,
                 }).catch((err) =>
-                  console.warn("[rules] apply failed (grace path):", err),
+                  reportWarn("bot", "[rules] apply failed (grace path):", err),
                 );
               }
             } catch (err) {
-              console.error("[db] grace-log failed:", err);
+              reportError("bot", "[db] grace-log failed:", err);
             }
           }
           return;
@@ -3535,7 +3535,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       chatNotes: rule?.notes ?? null,
     });
   } catch (err) {
-    console.error("[classify] failed:", err);
+    reportError("bot", "[classify] failed:", err);
     verdict = { importance: 0, urgent: false, concernsOwner: false, reason: "classifier failed" };
   }
 
@@ -3599,7 +3599,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
-      console.error("[alert] failed:", err);
+      reportError("bot", "[alert] failed:", err);
     }
     const notifyChat = settings.ownerNotifyChatId;
     if (notifyChat) {
@@ -3614,7 +3614,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
             text.slice(0, 500),
         );
       } catch (err) {
-        console.error("[notify] failed:", err);
+        reportError("bot", "[notify] failed:", err);
       }
     }
   }
@@ -3643,7 +3643,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
       bcId,
       bot,
     }).catch((err) => {
-      console.error("[relay] recipient-reply failed:", err);
+      reportError("bot", "[relay] recipient-reply failed:", err);
       return false;
     });
     if (!replied) {
@@ -3653,7 +3653,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         senderName,
         bot,
       }).catch((err) => {
-        console.error("[relay] forward failed:", err);
+        reportError("bot", "[relay] forward failed:", err);
         return { delivered: 0, relays: 0 };
       });
       relayDelivered = relayed.delivered;
@@ -3751,7 +3751,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
               `تو چت «${chatTitle ?? senderName}» شروع به پاسخ‌دادن خودکار کرد (حالت: ${modeLabel}).\n` +
               `اگه نمی‌خوای، حالت این چت رو از داشبورد عوض کن.`,
           )
-          .catch((err) => console.warn("[ai-notify] failed:", err));
+          .catch((err) => reportWarn("bot", "[ai-notify] failed:", err));
       }
     }
   }
@@ -3797,7 +3797,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         businessConnectionId: bcId,
         bot,
       }).catch((err) =>
-        console.warn("[watchlist] apply failed:", err),
+        reportWarn("bot", "[watchlist] apply failed:", err),
       );
       void maybeDescribeMedia({
         mode,
@@ -3828,7 +3828,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         fromOwner: false,
         bot,
       }).catch((err) =>
-        console.warn("[rules] apply failed:", err),
+        reportWarn("bot", "[rules] apply failed:", err),
       );
       // If this message is itself from a rule-recipient and looks like a
       // trigger ("send me the code"), release any held matches for them
@@ -3838,7 +3838,7 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
         messageText: text,
         bot,
       }).catch((err) =>
-        console.warn("[rules] release failed:", err),
+        reportWarn("bot", "[rules] release failed:", err),
       );
       // SMS routing: when the message starts with "☎️ +PHONE …" we
       // treat it as an SMS forward (from the operator's SMS-to-
@@ -3854,13 +3854,13 @@ async function handleBusinessMessage(msg: Message, bot: Bot): Promise<void> {
           text,
         });
       } catch (err) {
-        console.warn("[sms] route failed:", err);
+        reportWarn("bot", "[sms] route failed:", err);
       }
       // media-router was already fired at the top of this function
       // (early-call right after we resolved the rule), so we don't
       // double-route here.
     } catch (err) {
-      console.error("[db] log failed:", err);
+      reportError("bot", "[db] log failed:", err);
     }
   }
 }
@@ -3905,7 +3905,7 @@ export async function applyRulesToBotOutgoing(args: {
       messageThreadId: args.messageThreadId,
     });
   } catch (err) {
-    console.warn("[rules] outgoing log failed:", err);
+    reportWarn("bot", "[rules] outgoing log failed:", err);
     return;
   }
   await maybeApplyMessageRules({
@@ -3919,7 +3919,7 @@ export async function applyRulesToBotOutgoing(args: {
     fromOwner: false,
     bot: getBot(),
   }).catch((err) =>
-    console.warn("[rules] apply failed (bot-outgoing path):", err),
+    reportWarn("bot", "[rules] apply failed (bot-outgoing path):", err),
   );
 }
 
@@ -3980,7 +3980,7 @@ async function maybeApplyMessageRules(args: {
         try {
           re = new RegExp(r.matchPattern, "u");
         } catch {
-          console.warn(`[rules] rule ${r.id} has an invalid match_pattern — skipping`);
+          reportWarn("bot", `[rules] rule ${r.id} has an invalid match_pattern — skipping`);
           return false;
         }
         if (!re.test(args.messageText)) return false;
@@ -4129,7 +4129,7 @@ async function maybeApplyMessageRules(args: {
             const ex = await listExamplesForGate(ruleId, "gate_match");
             gated = ex.length > 0;
           } catch (err) {
-            console.warn(
+            reportWarn("bot", 
               `[rules] gate-example read failed rule=${ruleId} — failing closed (holding):`,
               err,
             );
@@ -4174,13 +4174,13 @@ async function maybeApplyMessageRules(args: {
             chatId: r.recipientChatId,
             reason: out.error,
           });
-          console.warn(
+          reportWarn("bot", 
             `[rules] forward to ${r.recipientChatId} failed (both modes): ${out.error}`,
           );
         }
       }
       if (failures.length > 0) {
-        console.warn(
+        reportWarn("bot", 
           `[rules] partial forward rule=${ruleId} delivered=${delivered.length}/${recipients.length} failures=${JSON.stringify(failures)}`,
         );
       }
@@ -4200,7 +4200,7 @@ async function maybeApplyMessageRules(args: {
       }).catch(() => {});
     }
   } catch (err) {
-    console.warn("[rules] application failed:", err);
+    reportWarn("bot", "[rules] application failed:", err);
   }
 }
 
@@ -4337,7 +4337,7 @@ async function maybeReleaseGatedRules(args: {
           );
           break;
         } else {
-          console.warn(
+          reportWarn("bot", 
             `[rules] release-forward to ${args.senderChatId} failed: ${out.error}`,
           );
           break;
@@ -4345,7 +4345,7 @@ async function maybeReleaseGatedRules(args: {
       }
     }
   } catch (err) {
-    console.warn("[rules] release-gated failed:", err);
+    reportWarn("bot", "[rules] release-gated failed:", err);
   }
 }
 
@@ -4392,7 +4392,7 @@ async function maybeAutoReply(
     console.log(`[autoreply] sent chat=${msg.chat.id}`);
     return true;
   } catch (err) {
-    console.error("[autoreply] failed:", err);
+    reportError("bot", "[autoreply] failed:", err);
     return false;
   }
 }
@@ -4665,7 +4665,7 @@ async function relayAnyMessage(args: {
         "edit_date",
       ].includes(k),
   );
-  console.warn(
+  reportWarn("bot", 
     `[relay] no handler for message type; payload keys: ${keys.join(", ")}`,
   );
   return sent;
@@ -4767,7 +4767,7 @@ async function maybeForwardToSecretary(args: {
           }
         }
       } catch (err) {
-        console.error("[secretary] context send failed:", err);
+        reportError("bot", "[secretary] context send failed:", err);
       }
     }
 
@@ -4828,7 +4828,7 @@ async function maybeForwardToSecretary(args: {
             });
           }
         } catch (err) {
-          console.error("[secretary] auto-transcribe failed:", err);
+          reportError("bot", "[secretary] auto-transcribe failed:", err);
         }
       }
     }
@@ -4837,11 +4837,11 @@ async function maybeForwardToSecretary(args: {
   } catch (err) {
     const e = err as { error_code?: number; description?: string };
     if (e?.error_code === 403) {
-      console.error(
+      reportError("bot", 
         `[secretary] cannot DM secretary ${secId}: bot is blocked or /start was never sent.`,
       );
     } else {
-      console.error("[secretary] forward failed:", err);
+      reportError("bot", "[secretary] forward failed:", err);
     }
     return false;
   }
@@ -5078,7 +5078,7 @@ async function relayCopyViaBusiness(args: {
       return [id];
     } catch (err) {
       if (!isFileIdProblem(err)) throw err;
-      console.warn(
+      reportWarn("bot", 
         `[relay] ${media.kind} file_id rejected — falling back to download+reupload`,
       );
       // Fallback: download via the bot's File API and re-upload.
@@ -5171,7 +5171,7 @@ async function maybeForwardViaRelays(args: {
           // copyMessage refuses service / forwarded / unknown
           // payloads with 400. Tell the recipient what kind of
           // message they're missing so the relay doesn't go silent.
-          console.warn(
+          reportWarn("bot", 
             `[relay] copy kind=${kind} chat=${msg.chat.id}→${rcpt.chatId} failed: ${e?.error_code} ${e?.description}`,
           );
           const fallback = await bot.api.sendMessage(
@@ -5203,11 +5203,11 @@ async function maybeForwardViaRelays(args: {
       } catch (err) {
         const e = err as { error_code?: number; description?: string };
         if (e?.error_code === 403) {
-          console.warn(
+          reportWarn("bot", 
             `[relay] recipient ${rcpt.chatId} not reachable via business (no existing chat / blocked / privacy)`,
           );
         } else {
-          console.error(
+          reportError("bot", 
             `[relay] forward to ${rcpt.chatId} (relay=${relay.id}, kind=${kind}) failed: ${e?.error_code} ${e?.description}`,
           );
         }
@@ -5276,7 +5276,7 @@ async function maybeRelayRecipientReplyBusiness(args: {
       });
     } catch (err) {
       const e = err as { error_code?: number; description?: string };
-      console.warn(
+      reportWarn("bot", 
         `[relay] reply-copy kind=${kind} rcpt=${msg.chat.id}→source=${link.sourceChatId} failed: ${e?.error_code} ${e?.description}`,
       );
       // Fail loudly to the recipient so they know their reply didn't
@@ -5327,7 +5327,7 @@ async function maybeRelayRecipientReplyBusiness(args: {
     );
     return true;
   } catch (err) {
-    console.error("[relay] reply (business) failed:", err);
+    reportError("bot", "[relay] reply (business) failed:", err);
     return false;
   }
 }
@@ -5405,7 +5405,7 @@ async function handleSecretaryRelayReply(
     );
     return true;
   } catch (err) {
-    console.error("[relay] reply failed:", err);
+    reportError("bot", "[relay] reply failed:", err);
     await bot.api
       .sendMessage(
         msg.chat.id,
@@ -5465,7 +5465,7 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
         iconColor: forum.forum_topic_created.icon_color ?? null,
         iconEmoji: forum.forum_topic_created.icon_custom_emoji_id ?? null,
       }).catch((err) =>
-        console.warn("[forum] topic_created upsert failed:", err),
+        reportWarn("bot", "[forum] topic_created upsert failed:", err),
       );
     } else if (forum.forum_topic_edited) {
       await upsertForumTopic({
@@ -5474,7 +5474,7 @@ async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
         name: forum.forum_topic_edited.name ?? null,
         iconEmoji: forum.forum_topic_edited.icon_custom_emoji_id ?? null,
       }).catch((err) =>
-        console.warn("[forum] topic_edited upsert failed:", err),
+        reportWarn("bot", "[forum] topic_edited upsert failed:", err),
       );
     } else if (forum.forum_topic_closed) {
       await upsertForumTopic({
@@ -5512,7 +5512,7 @@ async function maybeMirrorPost(args: { msg: Message; bot: Bot }): Promise<void> 
     const settings = await getSettings();
     rules = parseChannelMirrors(settings.channelMirrors ?? "");
   } catch (err) {
-    console.warn("[mirror] settings read failed:", err);
+    reportWarn("bot", "[mirror] settings read failed:", err);
     return;
   }
   if (rules.length === 0) return;
@@ -5535,7 +5535,7 @@ async function maybeMirrorPost(args: { msg: Message; bot: Bot }): Promise<void> 
         `[mirror] ${msg.chat.id} → ${r.to}${r.threadId ? `#${r.threadId}` : ""} msg=${msg.message_id}`,
       );
     } catch (err) {
-      console.warn(`[mirror] copy ${msg.chat.id}→${r.to} failed:`, err);
+      reportWarn("bot", `[mirror] copy ${msg.chat.id}→${r.to} failed:`, err);
     }
   }
 }
@@ -5643,7 +5643,7 @@ export async function flushReadyMirrorAlbums(bot: Bot): Promise<number> {
   try {
     groups = await getReadyMirrorAlbumGroups(ALBUM_QUIET_SECONDS);
   } catch (err) {
-    console.warn("[mirror-dm] ready-groups query failed:", err);
+    reportWarn("bot", "[mirror-dm] ready-groups query failed:", err);
     return 0;
   }
   for (const groupKey of groups) {
@@ -5668,7 +5668,7 @@ export async function flushReadyMirrorAlbums(bot: Bot): Promise<number> {
         `[mirror-dm] album flushed group=${groupKey} (${parts.length} parts)`,
       );
     } catch (err) {
-      console.warn(`[mirror-dm] album flush failed group=${groupKey}:`, err);
+      reportWarn("bot", `[mirror-dm] album flush failed group=${groupKey}:`, err);
       // Release the claim so the next cron tick retries this group —
       // otherwise it would be stuck behind the claim forever.
       if (claimed) await deleteMirrorAlbumClaim(groupKey).catch(() => {});
@@ -5708,7 +5708,7 @@ async function sendAlbumParts(args: {
         opts,
       );
     } catch (err) {
-      console.warn(
+      reportWarn("bot", 
         `[mirror-dm] sendMediaGroup failed (${chunk.length} items) → individual fallback:`,
         err,
       );
@@ -5723,7 +5723,7 @@ async function sendAlbumParts(args: {
             messageThreadId: threadId,
           });
         } catch (e) {
-          console.warn("[mirror-dm] album fallback part failed:", e);
+          reportWarn("bot", "[mirror-dm] album fallback part failed:", e);
         }
       }
     }
@@ -5744,7 +5744,7 @@ async function maybeMirrorBusinessMessage(args: {
     const settings = await getSettings();
     rules = parseChannelMirrors(settings.channelMirrors ?? "");
   } catch (err) {
-    console.warn("[mirror-dm] settings read failed:", err);
+    reportWarn("bot", "[mirror-dm] settings read failed:", err);
     return;
   }
   if (rules.length === 0) return;
@@ -5785,7 +5785,7 @@ async function maybeMirrorBusinessMessage(args: {
           caption,
         });
       } catch (err) {
-        console.warn(`[mirror-dm] buffer failed group=${groupKey}:`, err);
+        reportWarn("bot", `[mirror-dm] buffer failed group=${groupKey}:`, err);
       }
     }
     // Opportunistic sweep: flush any PRIOR album that has gone quiet.
@@ -5805,7 +5805,7 @@ async function maybeMirrorBusinessMessage(args: {
         `[mirror-dm] ${msg.chat.id} → ${r.to}${r.threadId ? `#${r.threadId}` : ""} msg=${msg.message_id}`,
       );
     } catch (err) {
-      console.warn(`[mirror-dm] resend ${msg.chat.id}→${r.to} failed:`, err);
+      reportWarn("bot", `[mirror-dm] resend ${msg.chat.id}→${r.to} failed:`, err);
     }
   }
 }
@@ -5855,7 +5855,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
   // Runs even for muted chats: mirroring is about the feed, not
   // notifications.
   await maybeMirrorPost({ msg, bot }).catch((err) =>
-    console.warn("[mirror] failed:", err),
+    reportWarn("bot", "[mirror] failed:", err),
   );
 
   const text = describeMessage(msg);
@@ -5883,7 +5883,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
       chatType: msg.chat.type,
       chatTitle: chatTitle,
     }).catch((err) =>
-      console.warn("[chat-defaults] ensure failed:", err),
+      reportWarn("bot", "[chat-defaults] ensure failed:", err),
     );
     rule = await getChatRule(msg.chat.id).catch(() => null);
   }
@@ -5912,7 +5912,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         skippedReason: "muted",
         mediaFileId,
         mediaKind,
-      }).catch((err) => console.error("[db] group mute-log failed:", err));
+      }).catch((err) => reportError("bot", "[db] group mute-log failed:", err));
     }
     return;
   }
@@ -5927,7 +5927,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
       chatNotes: rule?.notes ?? null,
     });
   } catch (err) {
-    console.error("[classify] group failed:", err);
+    reportError("bot", "[classify] group failed:", err);
     verdict = {
       importance: 0,
       urgent: false,
@@ -5984,7 +5984,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
-      console.error("[alert] group failed:", err);
+      reportError("bot", "[alert] group failed:", err);
     }
     const notifyChat = settings.ownerNotifyChatId;
     if (notifyChat) {
@@ -5999,7 +5999,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
             text.slice(0, 500),
         );
       } catch (err) {
-        console.error("[notify] group failed:", err);
+        reportError("bot", "[notify] group failed:", err);
       }
     }
   }
@@ -6046,7 +6046,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
           fromOwner: false,
           bot,
         }).catch((err) =>
-          console.warn("[rules] apply failed (group path):", err),
+          reportWarn("bot", "[rules] apply failed (group path):", err),
         );
       }
       // AWAITED — see the matching comment in handleBusinessMessage.
@@ -6060,7 +6060,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         businessConnectionId: null,
         bot,
       }).catch((err) =>
-        console.warn("[watchlist] apply failed:", err),
+        reportWarn("bot", "[watchlist] apply failed:", err),
       );
       void maybeDescribeMedia({
         mode,
@@ -6087,7 +6087,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
           text,
         });
       } catch (err) {
-        console.warn("[sms] route failed (channel/group):", err);
+        reportWarn("bot", "[sms] route failed (channel/group):", err);
       }
       // Same media-router fan-out the business-message path has, so
       // voice/video/photo arriving in a group OR channel gets routed
@@ -6116,12 +6116,12 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
       } else {
         void maybeRouteMedia({ rule, msg, bot }).then((r) => {
           if (r.errors.length > 0) {
-            console.warn("[media-router/group] errors:", r.errors);
+            reportWarn("bot", "[media-router/group] errors:", r.errors);
           }
         });
       }
     } catch (err) {
-      console.error("[db] group-log failed:", err);
+      reportError("bot", "[db] group-log failed:", err);
     }
   }
 }
@@ -6156,7 +6156,7 @@ async function handleBusinessEdit(msg: Message, bot: Bot): Promise<void> {
       );
     }
   } catch (err) {
-    console.error("[edit] recordMessageEdit failed:", err);
+    reportError("bot", "[edit] recordMessageEdit failed:", err);
   }
   // Silence the no-unused-param lint while keeping the bot arg available
   // for future use (e.g. re-classifying or notifying the secretary).
@@ -6248,7 +6248,7 @@ async function handleSecretaryReply(msg: Message, bot: Bot): Promise<void> {
       `[secretary] relayed session=${session.id} to chat=${session.senderChatId} parts=${sentIds.length}`,
     );
   } catch (err) {
-    console.error("[secretary] relay failed:", err);
+    reportError("bot", "[secretary] relay failed:", err);
     await bot.api
       .sendMessage(
         msg.chat.id,
@@ -6317,7 +6317,7 @@ async function handleSecretaryReaction(
             `[reaction] owner-log OK chat=${upd.chat.id} emojis="${emojis}" types=${newReactions.map((r) => r.type).join(",")} bcId=${bcIdRaw}`,
           );
         } catch (err) {
-          console.warn(`[reaction] owner-log DB write failed chat=${upd.chat.id}:`, err);
+          reportWarn("bot", `[reaction] owner-log DB write failed chat=${upd.chat.id}:`, err);
         }
       }
     }
@@ -6353,7 +6353,7 @@ async function handleSecretaryReaction(
         `[reaction] sender→secretary session=${link.session.id} msg=${link.secretaryMessageId}`,
       );
     } catch (err) {
-      console.error("[reaction] sender→secretary failed:", err);
+      reportError("bot", "[reaction] sender→secretary failed:", err);
     }
     return;
   }
@@ -6390,7 +6390,7 @@ async function handleSecretaryReaction(
       `[reaction] relayed as text session=${link.id} to chat=${link.senderChatId} emojis=${emojis}`,
     );
   } catch (err) {
-    console.error("[reaction] text relay failed:", err);
+    reportError("bot", "[reaction] text relay failed:", err);
   }
 }
 
@@ -6420,7 +6420,7 @@ async function sendFriendlyReply(args: {
   try {
     history = await recentConversation(msg.chat.id, 20);
   } catch (err) {
-    console.error("[friendly] history fetch failed:", err);
+    reportError("bot", "[friendly] history fetch failed:", err);
   }
   const triggerText = msg.text ?? msg.caption;
   if (triggerText) {
@@ -6447,7 +6447,7 @@ async function sendFriendlyReply(args: {
         businessConnectionId: bcId,
       })) || awayMessage;
   } catch (err) {
-    console.error("[friendly] AI failed; falling back to literal:", err);
+    reportError("bot", "[friendly] AI failed; falling back to literal:", err);
   }
 
   await humanTypingDelay(bot, {
@@ -6478,7 +6478,7 @@ async function sendFriendlyReply(args: {
     });
     return true;
   } catch (err) {
-    console.error("[friendly] send failed:", err);
+    reportError("bot", "[friendly] send failed:", err);
     return false;
   }
 }
@@ -6623,7 +6623,7 @@ async function sendAiConversation(args: {
         processedMediaKind = msg.voice ? "voice" : "audio";
       }
     } catch (err) {
-      console.warn("[ai_chat] voice STT failed:", err);
+      reportWarn("bot", "[ai_chat] voice STT failed:", err);
     }
   }
   if (
@@ -6646,7 +6646,7 @@ async function sendAiConversation(args: {
         processedMediaKind = "video_note";
       }
     } catch (err) {
-      console.warn("[ai_chat] video_note STT failed:", err);
+      reportWarn("bot", "[ai_chat] video_note STT failed:", err);
     }
   }
 
@@ -6760,7 +6760,7 @@ async function sendAiConversation(args: {
         );
         return true;
       } catch (err) {
-        console.warn(
+        reportWarn("bot", 
           "[ai_chat] photo generation failed, falling back to text:",
           err,
         );
@@ -6801,7 +6801,7 @@ async function sendAiConversation(args: {
           await sleep(800);
         }
       } catch (err) {
-        console.warn("[ai_chat] persist transcript/description failed:", err);
+        reportWarn("bot", "[ai_chat] persist transcript/description failed:", err);
       }
     })();
   }
@@ -6866,7 +6866,7 @@ async function sendAiConversation(args: {
         });
         return true;
       } catch (err) {
-        console.error("[ai_chat] flood-deflection send failed:", err);
+        reportError("bot", "[ai_chat] flood-deflection send failed:", err);
       }
     }
     return false;
@@ -6876,7 +6876,7 @@ async function sendAiConversation(args: {
   try {
     history = await recentConversation(msg.chat.id, 40);
   } catch (err) {
-    console.error("[ai_chat] history fetch failed:", err);
+    reportError("bot", "[ai_chat] history fetch failed:", err);
   }
   // The current incoming message isn't in messages_log yet (handleBusinessMessage
   // logs at the end, after this runs). Append it so the AI replies to the
@@ -6904,7 +6904,7 @@ async function sendAiConversation(args: {
       businessConnectionId: bcId,
     });
   } catch (err) {
-    console.error("[ai_chat] generation failed:", err);
+    reportError("bot", "[ai_chat] generation failed:", err);
     return false;
   }
   if (!reply) return false;
@@ -6936,7 +6936,7 @@ async function sendAiConversation(args: {
     });
     return true;
   } catch (err) {
-    console.error("[ai_chat] send failed:", err);
+    reportError("bot", "[ai_chat] send failed:", err);
     return false;
   }
 }

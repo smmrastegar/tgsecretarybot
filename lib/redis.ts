@@ -1,5 +1,6 @@
 import { Redis } from "@upstash/redis";
 
+import { reportError } from "./report";
 let cached: Redis | null = null;
 let configured: boolean | null = null;
 
@@ -24,7 +25,7 @@ export async function redisGet<T = unknown>(key: string): Promise<T | null> {
     const v = await r.get<T>(key);
     return v ?? null;
   } catch (err) {
-    console.error("[redis] get failed:", err);
+    reportError("redis", "[redis] get failed:", err);
     return null;
   }
 }
@@ -43,7 +44,7 @@ export async function redisSet(
       await r.set(key, value);
     }
   } catch (err) {
-    console.error("[redis] set failed:", err);
+    reportError("redis", "[redis] set failed:", err);
   }
 }
 
@@ -53,7 +54,7 @@ export async function redisDelete(key: string): Promise<void> {
   try {
     await r.del(key);
   } catch (err) {
-    console.error("[redis] del failed:", err);
+    reportError("redis", "[redis] del failed:", err);
   }
 }
 
@@ -77,7 +78,7 @@ export async function redisListPush(args: {
       await r.expire(args.key, args.ttlSeconds);
     }
   } catch (err) {
-    console.error("[redis] lpush failed:", err);
+    reportError("redis", "[redis] lpush failed:", err);
   }
 }
 
@@ -104,7 +105,7 @@ export async function redisListRange<T = unknown>(
     }
     return out;
   } catch (err) {
-    console.error("[redis] lrange failed:", err);
+    reportError("redis", "[redis] lrange failed:", err);
     return [];
   }
 }

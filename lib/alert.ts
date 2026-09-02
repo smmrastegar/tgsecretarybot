@@ -1,5 +1,6 @@
 import { get, getSettings } from "./settings";
 
+import { reportError } from "./report";
 export type AlertPayload = {
   text: string;
   sender: string;
@@ -26,7 +27,7 @@ export async function fireAlert(payload: AlertPayload): Promise<boolean> {
         JSON.parse(s.alertWebhookHeaders) as Record<string, string>,
       );
     } catch (err) {
-      console.error("[alert] invalid alertWebhookHeaders JSON:", err);
+      reportError("alert", "[alert] invalid alertWebhookHeaders JSON:", err);
     }
   }
 

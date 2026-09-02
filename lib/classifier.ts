@@ -6,6 +6,7 @@ import { downloadTelegramFile } from "./stt";
 import { assertOpenrouterBudget } from "./openrouter-budget";
 import { isTransientDbError } from "./pg-driver";
 
+import { reportError, reportWarn } from "./report";
 // Look up knowledge-base entries whose title or any alias appears in
 // the given text and return them in a payload-friendly shape ready to
 // splice into a user message. The DB call is cheap (small table, JS
@@ -234,13 +235,13 @@ async function callOpenRouter(
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
       lastErr = new Error(`OpenRouter ${res.status} (${model}): ${txt.slice(0, 200)}`);
-      console.warn(`[ai] ${model} failed: ${res.status}, trying next.`);
+      reportWarn("classifier", `[ai] ${model} failed: ${res.status}, trying next.`);
       continue;
     }
     const data = (await res.json()) as ChatCompletionResponse;
     if (data.error) {
       lastErr = new Error(`OpenRouter error (${model}): ${data.error.message}`);
-      console.warn(`[ai] ${model} error: ${data.error.message}, trying next.`);
+      reportWarn("classifier", `[ai] ${model} error: ${data.error.message}, trying next.`);
       continue;
     }
 
@@ -261,8 +262,8 @@ async function callOpenRouter(
         costUsd: cost,
       }).catch((err) =>
         isTransientDbError(err)
-          ? console.warn("[ai_usage] record skipped (transient DB)")
-          : console.error("[ai_usage] record failed:", err),
+          ? reportWarn("classifier", "[ai_usage] record skipped (transient DB)")
+          : reportError("classifier", "[ai_usage] record failed:", err),
       );
     }
 
@@ -392,13 +393,13 @@ export async function describeMedia(args: {
     data = f.data;
     mime = f.mime;
   } catch (err) {
-    console.warn(`[describe_media] download failed: ${String(err)}`);
+    reportWarn("classifier", `[describe_media] download failed: ${String(err)}`);
     return null;
   }
   // 10MB cap: OpenRouter / Gemini will reject larger payloads anyway,
   // and we don't want a single sticker to blow the request body.
   if (data.length > 10 * 1024 * 1024) {
-    console.warn(
+    reportWarn("classifier", 
       `[describe_media] skipping ${args.kind} ${args.fileId} — ${data.length} bytes`,
     );
     return null;
@@ -433,7 +434,7 @@ export async function describeMedia(args: {
       },
     );
   } catch (err) {
-    console.warn(`[describe_media] call failed: ${String(err)}`);
+    reportWarn("classifier", `[describe_media] call failed: ${String(err)}`);
     return null;
   }
 
@@ -995,7 +996,7 @@ export async function analyzeGroupTasks(input: {
   }
   parsed.debug = { rawResponse: content.slice(0, 8000), parseStatus };
   if (parsed.tasks.length === 0) {
-    console.warn(
+    reportWarn("classifier", 
       `[ai] group_task_analysis returned 0 tasks (status=${parseStatus}, content_len=${content.length})`,
     );
   }
@@ -1361,7 +1362,7 @@ async function extractTaskEventsBatch(
       },
     );
   } catch (err) {
-    console.warn(`[ai] task-events batch failed: ${err}`);
+    reportWarn("classifier", `[ai] task-events batch failed: ${err}`);
     return [];
   }
   // The model sometimes wraps the array in {"events":[...]} despite
@@ -2381,7 +2382,7 @@ export async function extractWatchlistAliasesFromDescription(input: {
       },
     );
   } catch (err) {
-    console.warn("[watchlist] extract-aliases LLM call failed:", err);
+    reportWarn("classifier", "[watchlist] extract-aliases LLM call failed:", err);
     return [];
   }
   const json = extractJson(raw);
@@ -2460,7 +2461,7 @@ export async function scanForWatchlistConceptsDebug(input: {
       },
     );
   } catch (err) {
-    console.warn("[watchlist] scan failed:", err);
+    reportWarn("classifier", "[watchlist] scan failed:", err);
     return { ...empty, llmFailed: true };
   }
   const json = extractJson(raw);
@@ -3021,7 +3022,7 @@ export async function aiConversationReply(input: {
   // Last-ditch: if it's STILL a stall after retries, refuse to send so the
   // owner notices in the dashboard instead of seeing yet another loop reply.
   if (looksLikeStall(reply) || isRepeat(reply)) {
-    console.warn(
+    reportWarn("classifier", 
       `[ai_chat] gave up after retries; final attempt was a stall/repeat: "${reply.slice(0, 200)}"`,
     );
     return "";
@@ -3419,7 +3420,7 @@ export async function classifyPrivateSms(input: {
       },
     );
   } catch (err) {
-    console.warn("[sms-privacy] classifier failed:", err);
+    reportWarn("classifier", "[sms-privacy] classifier failed:", err);
     return null;
   }
   const json = extractJson(raw);
@@ -3510,7 +3511,7 @@ export async function analyzeFollowUpNeed(input: {
       },
     );
   } catch (err) {
-    console.warn(`[follow-up] AI judge failed chat=${input.chatId}:`, err);
+    reportWarn("classifier", `[follow-up] AI judge failed chat=${input.chatId}:`, err);
     return null;
   }
   const json = extractJson(raw);
@@ -3595,7 +3596,7 @@ export async function generateMessageVariations(input: {
       },
     );
   } catch (err) {
-    console.warn("[rule-example-gen] generation failed:", err);
+    reportWarn("classifier", "[rule-example-gen] generation failed:", err);
     return [];
   }
   const json = extractJson(raw);
@@ -3644,7 +3645,7 @@ export async function generateRequestTriggerVariations(input: {
       },
     );
   } catch (err) {
-    console.warn("[rule-paraphrase] generation failed:", err);
+    reportWarn("classifier", "[rule-paraphrase] generation failed:", err);
     return [];
   }
   const json = extractJson(raw);

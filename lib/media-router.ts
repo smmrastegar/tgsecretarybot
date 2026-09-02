@@ -21,6 +21,7 @@ import {
 } from "./db";
 import { getCurrentTenantId } from "./tenant-context";
 
+import { reportWarn } from "./report";
 type RouteResult = {
   routed: Array<{ to: "voice" | "video" | "photo" | "location"; chatId?: number; messageId?: number }>;
   errors: string[];
@@ -200,7 +201,7 @@ export async function maybeRouteMedia(args: {
             await bot.api
               .sendMessage(t.chatId, captionPrefix, { parse_mode: "HTML" })
               .catch((err) =>
-                console.warn(
+                reportWarn("media-router", 
                   "[media-router] video_note caption follow-up failed:",
                   err,
                 ),

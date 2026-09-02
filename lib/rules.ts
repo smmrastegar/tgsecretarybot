@@ -18,6 +18,7 @@ import {
 } from "./db";
 import { config } from "./config";
 
+import { reportWarn } from "./report";
 // Try multiple model slugs — OpenRouter has been renaming the Gemini
 // preview chain frequently and the old hardcoded "gemini-2.0-flash-001"
 // was returning empty objects on the suggest path. We pick the first
@@ -97,13 +98,13 @@ async function callLlm(args: {
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[rules] ${model} network: ${msg}`);
+      reportWarn("rules", `[rules] ${model} network: ${msg}`);
       errors.push(`${model}: ${msg}`);
       continue;
     }
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
-      console.warn(`[rules] ${model} HTTP ${res.status}: ${txt.slice(0, 200)}`);
+      reportWarn("rules", `[rules] ${model} HTTP ${res.status}: ${txt.slice(0, 200)}`);
       errors.push(`${model}: ${res.status}`);
       continue;
     }
@@ -112,13 +113,13 @@ async function callLlm(args: {
       error?: { message?: string };
     };
     if (json.error) {
-      console.warn(`[rules] ${model} error: ${json.error.message}`);
+      reportWarn("rules", `[rules] ${model} error: ${json.error.message}`);
       errors.push(`${model}: ${json.error.message ?? "error"}`);
       continue;
     }
     const text = (json.choices?.[0]?.message?.content ?? "").trim();
     if (!text) {
-      console.warn(`[rules] ${model} returned empty content`);
+      reportWarn("rules", `[rules] ${model} returned empty content`);
       errors.push(`${model}: empty content`);
       continue;
     }
@@ -330,7 +331,7 @@ export async function matchRules(
   if (llmRules.length > 0) {
     const llmIds = await llmMatchRules(ctx, llmRules, negativesMap).catch(
       (err) => {
-        console.warn("[rules] LLM fallback failed:", err);
+        reportWarn("rules", "[rules] LLM fallback failed:", err);
         return [] as number[];
       },
     );
@@ -472,7 +473,7 @@ Indexes are 1-based and refer to the "MESSAGES" list below. Never explain, never
     });
     raw = out2.text;
   } catch (err) {
-    console.warn("[rules] batch test call failed:", err);
+    reportWarn("rules", "[rules] batch test call failed:", err);
     return out;
   }
   const matchedLine = raw.match(/MATCHED\s*:\s*([^\n]+)/i);
@@ -521,7 +522,7 @@ Never leave either field blank. Never explain. Never wrap in code fences.`;
     raw = out.text;
     usedModel = out.model;
   } catch (err) {
-    console.warn("[rules] suggest call failed:", err);
+    reportWarn("rules", "[rules] suggest call failed:", err);
     return heuristicSuggest(text);
   }
   // Strip any stray code fences just in case.
@@ -543,7 +544,7 @@ Never leave either field blank. Never explain. Never wrap in code fences.`;
     const description = (parsed.description ?? "").trim().slice(0, 600);
     if (name || description) return { name, description };
   } catch {}
-  console.warn(
+  reportWarn("rules", 
     `[rules] suggest unusable from ${usedModel}. raw: ${raw.slice(0, 300)}`,
   );
   return heuristicSuggest(text);
@@ -627,7 +628,7 @@ output: CODE: 738261`;
     });
     raw = out.text;
   } catch (err) {
-    console.warn("[rules] OTP extract call failed:", err);
+    reportWarn("rules", "[rules] OTP extract call failed:", err);
     return null;
   }
   const m = raw.match(/CODE\s*[:：]\s*([^\s\n]+)/i);
@@ -643,7 +644,7 @@ output: CODE: 738261`;
   // hallucinated or reformatted — don't forward a code we can't point
   // to in the source. `body` is already normaliseDigits(text).
   if (!body.toLowerCase().includes(code.toLowerCase())) {
-    console.warn(
+    reportWarn("rules", 
       `[rules] OTP extract rejected — "${code}" not present in message body`,
     );
     return null;
@@ -692,7 +693,7 @@ ${text.slice(0, 1500)}`;
     });
     return /^\s*yes\b/i.test(out.text);
   } catch (err) {
-    console.warn("[rules] request-trigger check failed:", err);
+    reportWarn("rules", "[rules] request-trigger check failed:", err);
     return false;
   }
 }
@@ -772,7 +773,7 @@ export async function formatMessageForRule(
     });
     return out.text.trim() || null;
   } catch (err) {
-    console.warn("[rules] format call failed:", err);
+    reportWarn("rules", "[rules] format call failed:", err);
     return null;
   }
 }

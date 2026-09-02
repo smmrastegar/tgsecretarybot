@@ -27,6 +27,7 @@ import {
 import { config } from "./config";
 import { getSettings } from "./settings";
 
+import { reportWarn } from "./report";
 const GATE_MODELS = [
   process.env.OPENROUTER_RULE_MODEL,
   "google/gemini-2.5-flash",
@@ -154,7 +155,7 @@ Never explain.`;
         reason: `matches operator block rule #${ruleId} (${rule.label ?? rule.exampleBody.slice(0, 40)})`,
       };
     } catch (err) {
-      console.warn(`[sms] block-check ${model} failed:`, err);
+      reportWarn("sms-router", `[sms] block-check ${model} failed:`, err);
     }
   }
   return null;
@@ -276,7 +277,7 @@ ${args.body.slice(0, 1500)}`;
       usedModel = model;
       break;
     } catch (err) {
-      console.warn(`[sms] gate ${model} failed:`, err);
+      reportWarn("sms-router", `[sms] gate ${model} failed:`, err);
     }
   }
   if (!raw) {
@@ -477,7 +478,7 @@ export async function routeSmsForward(args: {
       const { extractOtpCodeAi } = await import("./rules");
       otp = await extractOtpCodeAi(sms.body);
     } catch (err) {
-      console.warn("[sms] otp pre-extract failed:", err);
+      reportWarn("sms-router", "[sms] otp pre-extract failed:", err);
     }
   }
 
@@ -596,7 +597,7 @@ export async function routeSmsForward(args: {
       }
     }
   } catch (err) {
-    console.warn("[sms] silent-pattern check failed:", err);
+    reportWarn("sms-router", "[sms] silent-pattern check failed:", err);
   }
   if (silent) {
     console.log(`[sms] silent publish sender="${sms.phone}"`);
@@ -674,7 +675,7 @@ export async function routeSmsForward(args: {
       } catch (err) {
         // editMessageText fails when the original message was
         // deleted by the operator — fall through to fresh send.
-        console.warn(
+        reportWarn("sms-router", 
           `[sms] dedup edit failed inbox=${inbox.chatId}, falling back to fresh send:`,
           err,
         );
@@ -722,7 +723,7 @@ export async function routeSmsForward(args: {
         `[sms] forwarded phone=${sms.phone} owner="${owner?.name ?? "?"}" → inbox=${inbox.chatId} msg=${sent.message_id} dedup=${dedup.id} accepted=${accepted}`,
       );
     } catch (err) {
-      console.warn(
+      reportWarn("sms-router", 
         `[sms] forward to inbox=${inbox.chatId} failed:`,
         err,
       );
@@ -747,7 +748,7 @@ export async function routeSmsForward(args: {
         `[sms] silent copy → chat=${silentCopyChatId} thread=${silentCopyThreadId ?? "-"}`,
       );
     } catch (err) {
-      console.warn(
+      reportWarn("sms-router", 
         `[sms] silent copy to chat=${silentCopyChatId} failed:`,
         err,
       );
