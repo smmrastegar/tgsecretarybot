@@ -15,6 +15,7 @@ import { describeMessage, extractInlineUrlButtons, extractMedia, harvestContactS
 import { maybeMirrorPost } from "./mirror";
 import { maybeApplyMessageRules } from "./rules-apply";
 import { maybeAutoSummarizeOnArrival } from "./summary";
+import { background } from "../background";
 
 // Handles email actions that arrive as plain group messages:
 //   (a) a reply to the bot's force-reply prompt → send the email reply
@@ -179,12 +180,12 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         : msg.video
           ? "video"
           : "photo";
-    void logMediaRouting({
+    background("logMediaRouting", logMediaRouting({
       sourceChatId: msg.chat.id,
       sourceMessageId: msg.message_id,
       kind,
       decision: "received_group",
-    }).catch(() => {});
+    }));
   }
 
   const hasContent = Boolean(
@@ -314,14 +315,14 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
     !msg.from?.is_bot &&
     verdict.importance >= extractMin
   ) {
-    void autoExtractAndSave({
+    background("autoExtractAndSave", autoExtractAndSave({
       text,
       chatId: msg.chat.id,
       chatTitle,
       senderName,
       messageId: msg.message_id,
       businessConnectionId: null,
-    });
+    }));
   }
 
   let alerted = false;
@@ -380,7 +381,7 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
         messageThreadId: msg.message_thread_id ?? null,
         inlineButtons: extractInlineUrlButtons(msg),
       });
-      void maybeExtractOtp({ logId, text });
+      background("maybeExtractOtp", maybeExtractOtp({ logId, text }));
       // Rules used to run only on the business-connection path, so a
       // rule pointed at a group or one of its forum topics silently
       // never fired — the messages were logged and then dropped on the
@@ -414,19 +415,19 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
       }).catch((err) =>
         reportWarn("bot", "[watchlist] apply failed:", err),
       );
-      void maybeDescribeMedia({
+      background("maybeDescribeMedia", maybeDescribeMedia({
         mode,
         logId,
         mediaFileId,
         mediaKind,
         chatId: msg.chat.id,
         bcId: null,
-      });
-      void maybeAutoSummarizeOnArrival({
+      }));
+      background("maybeAutoSummarizeOnArrival", maybeAutoSummarizeOnArrival({
         rule,
         msg,
         bot,
-      });
+      }));
       // SMS routing for channel/group messages too — the operator's
       // SMS-to-Telegram gateway usually delivers into a Channel like
       // "Mahdi SMS1", not the personal business chat.
@@ -458,19 +459,19 @@ async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
               : msg.video
                 ? "video"
                 : "photo";
-          void logMediaRouting({
+          background("logMediaRouting", logMediaRouting({
             sourceChatId: msg.chat.id,
             sourceMessageId: msg.message_id,
             kind,
             decision: "skipped_owner_self",
-          }).catch(() => {});
+          }));
         }
       } else {
-        void maybeRouteMedia({ rule, msg, bot }).then((r) => {
+        background("maybeRouteMedia", maybeRouteMedia({ rule, msg, bot }).then((r) => {
           if (r.errors.length > 0) {
             reportWarn("bot", "[media-router/group] errors:", r.errors);
           }
-        });
+        }));
       }
     } catch (err) {
       reportError("bot", "[db] group-log failed:", err);

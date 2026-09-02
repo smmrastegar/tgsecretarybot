@@ -20,6 +20,7 @@ import { maybeMirrorBusinessMessage } from "./mirror";
 import { maybeForwardToSecretary, maybeForwardViaRelays, maybeRelayDownloadLink, maybeRelayRecipientReplyBusiness, maybeReturnDownloadedMedia } from "./relay";
 import { maybeApplyMessageRules, maybeReleaseGatedRules } from "./rules-apply";
 import { maybeAutoSummarizeOnArrival } from "./summary";
+import { background } from "../background";
 
 async function getAutoReplyLast(key: string): Promise<number> {
   if (redisEnabled()) {
@@ -459,12 +460,12 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
         : msg.video
           ? "video"
           : "photo";
-    void logMediaRouting({
+    background("logMediaRouting", logMediaRouting({
       sourceChatId: msg.chat.id,
       sourceMessageId: msg.message_id,
       kind,
       decision: "received_business",
-    }).catch(() => {});
+    }));
   }
   const bcId = msg.business_connection_id;
   if (!bcId) {
@@ -476,12 +477,12 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
           : msg.video
             ? "video"
             : "photo";
-      void logMediaRouting({
+      background("logMediaRouting", logMediaRouting({
         sourceChatId: msg.chat.id,
         sourceMessageId: msg.message_id,
         kind,
         decision: "skipped_no_bcid",
-      }).catch(() => {});
+      }));
     }
     return;
   }
@@ -509,12 +510,12 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
           : msg.video
             ? "video"
             : "photo";
-      void logMediaRouting({
+      background("logMediaRouting", logMediaRouting({
         sourceChatId: msg.chat.id,
         sourceMessageId: msg.message_id,
         kind,
         decision: "skipped_no_content",
-      }).catch(() => {});
+      }));
     }
     return;
   }
@@ -535,12 +536,12 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
           : msg.video
             ? "video"
             : "photo";
-      void logMediaRouting({
+      background("logMediaRouting", logMediaRouting({
         sourceChatId: msg.chat.id,
         sourceMessageId: msg.message_id,
         kind,
         decision: "skipped_bot_echo",
-      }).catch(() => {});
+      }));
     }
     if (hasDb()) {
       const senderName =
@@ -607,12 +608,12 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
         : msg.video
           ? "video"
           : "photo";
-    void logMediaRouting({
+    background("logMediaRouting", logMediaRouting({
       sourceChatId: msg.chat.id,
       sourceMessageId: msg.message_id,
       kind,
       decision: "skipped_no_owner",
-    }).catch(() => {});
+    }));
   }
   if (owner && msg.from && msg.from.id === owner.userId) {
     const active = await findActiveSecretarySessionForSender({
@@ -687,12 +688,12 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
           : msg.video
             ? "video"
             : "photo";
-      void logMediaRouting({
+      background("logMediaRouting", logMediaRouting({
         sourceChatId: msg.chat.id,
         sourceMessageId: msg.message_id,
         kind,
         decision: "skipped_owner_self",
-      }).catch(() => {});
+      }));
     }
     return;
   }
@@ -746,18 +747,18 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
           : msg.video
             ? "video"
             : "photo";
-      void logMediaRouting({
+      background("logMediaRouting", logMediaRouting({
         sourceChatId: msg.chat.id,
         sourceMessageId: msg.message_id,
         kind,
         decision: "passed_to_router",
-      }).catch(() => {});
+      }));
     }
-    void maybeRouteMedia({ rule, msg, bot }).then((r) => {
+    background("maybeRouteMedia", maybeRouteMedia({ rule, msg, bot }).then((r) => {
       if (r.errors.length > 0) {
         reportWarn("bot", "[media-router/main-early] errors:", r.errors);
       }
-    });
+    }));
   }
 
   // Best-effort auto-fill of per-chat first/last name from the sender's
@@ -1086,14 +1087,14 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
   ) {
     // Fire and forget — the AI call shouldn't delay other handlers, and a
     // failed extraction shouldn't break the reply path.
-    void autoExtractAndSave({
+    background("autoExtractAndSave", autoExtractAndSave({
       text: text,
       chatId: msg.chat.id,
       chatTitle,
       senderName,
       messageId: msg.message_id,
       businessConnectionId: bcId,
-    });
+    }));
   }
 
   let alerted = false;
@@ -1300,7 +1301,7 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
         messageThreadId: msg.message_thread_id ?? null,
         inlineButtons: extractInlineUrlButtons(msg),
       });
-      void maybeExtractOtp({ logId, text });
+      background("maybeExtractOtp", maybeExtractOtp({ logId, text }));
       // AWAITED, not void — same Vercel-kills-the-promise problem
       // as maybeApplyMessageRules. void'd here meant most Telegram
       // messages never finished their watchlist scan before the
@@ -1319,19 +1320,19 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
       }).catch((err) =>
         reportWarn("bot", "[watchlist] apply failed:", err),
       );
-      void maybeDescribeMedia({
+      background("maybeDescribeMedia", maybeDescribeMedia({
         mode,
         logId,
         mediaFileId,
         mediaKind,
         chatId: msg.chat.id,
         bcId,
-      });
-      void maybeAutoSummarizeOnArrival({
+      }));
+      background("maybeAutoSummarizeOnArrival", maybeAutoSummarizeOnArrival({
         rule,
         msg,
         bot,
-      });
+      }));
       // AWAITED, not void: on Vercel a void-dispatched promise can be
       // killed when the request handler returns and the function gets
       // reclaimed. We were losing ~5 of every 7 incoming matches that
@@ -1654,9 +1655,9 @@ async function sendAiConversation(args: {
   // for a DM), so mark the incoming message read now. The post-send
   // markBusinessRead below becomes a backup; readBusinessMessage is
   // idempotent.
-  void markBusinessRead(bot, bcId, msg.chat.id, msg.message_id).catch(
+  background("markBusinessRead", markBusinessRead(bot, bcId, msg.chat.id, msg.message_id).catch(
     () => {},
-  );
+  ));
 
   // Default: only text/caption messages get an AI reply. With per-chat
   // ai_process_voice / _stickers / _gifs flags, we ALSO process the

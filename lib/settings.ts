@@ -14,6 +14,7 @@ import {
 import { redisDelete, redisEnabled, redisGet, redisSet } from "./redis";
 
 import { reportError } from "./report";
+import { background } from "./background";
 type SettingsCache = { values: Record<SettingKey, string>; expiresAt: number };
 let cache: SettingsCache | null = null;
 const TTL_SECONDS = 30;
@@ -61,7 +62,7 @@ export async function getSettings(): Promise<Record<SettingKey, string>> {
 export function invalidateSettingsCache(): void {
   cache = null;
   if (redisEnabled()) {
-    void redisDelete(REDIS_KEY);
+    background("redisDelete", redisDelete(REDIS_KEY));
   }
 }
 

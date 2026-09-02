@@ -14,6 +14,7 @@ import { buildMainMenu, handleAutoSummaryCallback, handleBoardAccessCallback, ha
 import { handleChannelPost, handleEmailGroupMessage, handleGroupMessage } from "./group";
 import { handleSecretaryReaction, handleSecretaryReply } from "./relay";
 import { maybeReleaseGatedRules } from "./rules-apply";
+import { background } from "../background";
 
 export let _bot: Bot | null = null;
 export function getBot(): Bot {
@@ -872,14 +873,14 @@ export async function resolveOwner(bcId: string, bot: Bot): Promise<OwnerCacheEn
 export function harvestContactShare(msg: Message): void {
   const c = msg.contact;
   if (!c || !c.phone_number) return;
-  void recordPhoneContact({
+  background("recordPhoneContact", recordPhoneContact({
     phoneFull: c.phone_number,
     telegramUserId: c.user_id ?? null,
     firstName: c.first_name ?? null,
     lastName: c.last_name ?? null,
     username: null,
     source: "contact_share",
-  }).catch((err) => reportWarn("bot", "[phone_contacts] save failed:", err));
+  }).catch((err) => reportWarn("bot", "[phone_contacts] save failed:", err)));
 }
 
 // The owner's active business connection, used to act as the owner.
