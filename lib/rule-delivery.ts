@@ -49,8 +49,15 @@ export async function sendRuleForward(args: {
   text: string;
   parseMode?: "HTML" | "MarkdownV2";
 }): Promise<ForwardResult> {
-  const bcId = await pickActiveBusinessConnectionId();
   const opts = args.parseMode ? { parse_mode: args.parseMode } : undefined;
+  // Business connections act on the OWNER's behalf inside a private
+  // chat, so business-mode can only ever work for a positive (user)
+  // chat_id. A channel or supergroup target has a negative id and would
+  // always fail with "chat must be a private chat" — which is exactly
+  // the warning that was logged on every LastSim forward. For those,
+  // skip business mode entirely and go straight to a direct bot send.
+  const bcId =
+    args.chatId > 0 ? await pickActiveBusinessConnectionId() : null;
   if (bcId) {
     try {
       const sent = await args.bot.api.sendMessage(args.chatId, args.text, {
