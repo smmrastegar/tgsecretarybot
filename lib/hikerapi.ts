@@ -11,12 +11,8 @@
 // permalink, caption}.
 
 import { config } from "./config";
-import { reportError, reportWarn } from "./report";
-import {
-  assertBudget,
-  HikerApprovalNeededError,
-  recordCall,
-} from "./hikerapi-budget";
+import { reportWarn } from "./report";
+import { assertBudget, HikerApprovalNeededError, recordCall } from "./hikerapi-budget";
 import { getSettings } from "./settings";
 import { getTenant } from "./tenant";
 import { getCurrentTenantId } from "./tenant-context";
@@ -733,61 +729,6 @@ function numOf(v: unknown): number | null {
   return null;
 }
 
-function strOf(v: unknown): string | null {
-  return typeof v === "string" && v.length > 0 ? v : null;
-}
-
-function normaliseUsage(raw: Record<string, unknown>): HikerUsage {
-  // Common shapes seen in the wild — flat, nested under {plan, usage}
-  // or {account: {...}}.
-  const flat = raw;
-  const usage =
-    (raw.usage as Record<string, unknown> | undefined) ?? {};
-  const plan =
-    (raw.plan as Record<string, unknown> | undefined) ?? {};
-  const account =
-    (raw.account as Record<string, unknown> | undefined) ?? {};
-  const merged = { ...account, ...flat, ...usage, ...plan };
-  const used =
-    numOf(merged.credits_used) ??
-    numOf(merged.requests_used) ??
-    numOf(merged.used) ??
-    numOf(merged.current) ??
-    null;
-  const limit =
-    numOf(merged.credits_limit) ??
-    numOf(merged.credits) ??
-    numOf(merged.requests_limit) ??
-    numOf(merged.limit) ??
-    numOf(merged.quota) ??
-    null;
-  const remaining =
-    numOf(merged.credits_remaining) ??
-    numOf(merged.remaining) ??
-    (used != null && limit != null ? limit - used : null);
-  const planName =
-    strOf(merged.plan_name) ??
-    strOf(merged.plan) ??
-    strOf(merged.tier) ??
-    strOf(merged.subscription);
-  const resetsAt =
-    strOf(merged.resets_at) ??
-    strOf(merged.next_reset) ??
-    strOf(merged.reset_at);
-  const expiresAt =
-    strOf(merged.expires_at) ??
-    strOf(merged.expiration) ??
-    strOf(merged.expire_at);
-  return {
-    plan: planName,
-    creditsUsed: used,
-    creditsLimit: limit,
-    creditsRemaining: remaining,
-    resetsAt,
-    expiresAt,
-    raw,
-  };
-}
 
 export async function getUserByUsername(username: string): Promise<IGUser> {
   const data = await call<Record<string, unknown>>("/v1/user/by/username", {

@@ -1,12 +1,7 @@
 import { NextResponse } from "next/server";
-import { reportError, reportWarn } from "@/lib/report";
+import { reportWarn } from "@/lib/report";
 import { config } from "@/lib/config";
-import {
-  clearMonitoredAccountPending,
-  dueMonitoredAccounts,
-  hasDb,
-  sql,
-} from "@/lib/db";
+import { clearMonitoredAccountPending, dueMonitoredAccounts, hasDb, sql } from "@/lib/db";
 import { getBudgetState } from "@/lib/hikerapi-budget";
 import { getSettings } from "@/lib/settings";
 import { processAccount, resolveTargetChat } from "@/lib/instagram-monitor";

@@ -12,10 +12,10 @@ import { defaultSecretary } from "../secretaries";
 import { redisEnabled, redisGet, redisSet } from "../redis";
 import { fireAlert } from "../alert";
 import { getSettings } from "../settings";
-import { autoFillChatNames, endSecretarySession, findActiveSecretarySessionForSender, getChatRule, hasDb, lastOwnerMessageAt, logMessage, recentIncomingCount, recordMessageEdit, saveMediaDescription, saveTranscript, setFloodCooldown, sql, type ChatRule, recentConversation, saveExtractedItems, logMediaRouting, type ChatMode, isChatIgnored, listNoteWatchItemsWithAliases, hasRecentNoteWatchMatch, recordNoteWatchMatch, addChatNote, listChatsByFunction, shouldNotifyAiActivity } from "../db";
+import { markNoteWatchMatchForwarded, autoFillChatNames, endSecretarySession, findActiveSecretarySessionForSender, getChatRule, hasDb, lastOwnerMessageAt, logMessage, recentIncomingCount, recordMessageEdit, saveMediaDescription, saveTranscript, setFloodCooldown, sql, type ChatRule, recentConversation, saveExtractedItems, logMediaRouting, type ChatMode, isChatIgnored, listNoteWatchItemsWithAliases, hasRecentNoteWatchMatch, recordNoteWatchMatch, addChatNote, listChatsByFunction, shouldNotifyAiActivity } from "../db";
 import { isTransientDbError } from "../pg-driver";
 import { reportError, reportWarn } from "../report";
-import { CHAT_MODE_FA, autoReplyCache, chatTitleOf, chunkText, describeMessage, extractInlineUrlButtons, extractMedia, faNum, harvestContactShare, humanTypingDelay, logOwnerSent, markBusinessRead, mediaFileId, resolveOwner, safeDate, sleep } from "./core";
+import { CHAT_MODE_FA, autoReplyCache, chatTitleOf, chunkText, describeMessage, extractInlineUrlButtons, extractMedia, faNum, harvestContactShare, humanTypingDelay, logOwnerSent, markBusinessRead, resolveOwner, safeDate, sleep } from "./core";
 import { maybeMirrorBusinessMessage } from "./mirror";
 import { maybeForwardToSecretary, maybeForwardViaRelays, maybeRelayDownloadLink, maybeRelayRecipientReplyBusiness, maybeReturnDownloadedMedia } from "./relay";
 import { maybeApplyMessageRules, maybeReleaseGatedRules } from "./rules-apply";
@@ -349,6 +349,11 @@ export async function maybeApplyNoteWatch(args: {
           ...(keyboard ? { reply_markup: keyboard } : {}),
         });
         forwardedTo = inbox.chatId;
+        if (matchRow) {
+          await markNoteWatchMatchForwarded(matchRow.id, inbox.chatId).catch((err) =>
+            reportWarn("bot", `[watchlist] mark forwarded failed match=${matchRow.id}:`, err),
+          );
+        }
       } catch (err) {
         reportWarn("bot", 
           `[watchlist] notes_inbox forward failed item=${item.id} chat=${inbox.chatId}:`,
@@ -369,6 +374,7 @@ export async function maybeApplyNoteWatch(args: {
         matched_alias: m.matchedAlias,
         reason: m.reason || null,
         chat_title: args.chatTitle,
+        forwarded_to: forwardedTo,
       },
     }).catch((err) =>
       reportWarn("bot", `[watchlist] addChatNote failed item=${item.id}:`, err),

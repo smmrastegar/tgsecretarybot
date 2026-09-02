@@ -47,12 +47,7 @@ export default function GroupAnalyticsPage({
   // Default to "از ابتدا" — operator wants the full history first,
   // then can drill into bounded windows.
   const [days, setDays] = useState(0);
-  const [origin, setOrigin] = useState("");
   const [showRawMessages, setShowRawMessages] = useState(false);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") setOrigin(window.location.origin);
-  }, []);
 
   const load = useCallback(
     async (windowDays: number, force = false) => {

@@ -1,7 +1,7 @@
 // Split out of the former single lib/db.ts. Import from "@/lib/db" —
 // that barrel re-exports every module here.
 import { CHAT_MODES, ChatMode, ChatRule, FUNCTION_ROLES, FunctionRole, RELATIONSHIPS, Relationship, getChatRule, rowToChatRule } from "./chats";
-import { cached, ensureSchema, hasDb, sql } from "./core";
+import { ensureSchema, hasDb, sql } from "./core";
 
 // --- Secretary relays ---
 

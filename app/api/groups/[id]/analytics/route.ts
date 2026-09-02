@@ -241,12 +241,6 @@ const KIND_BADGE: Record<GroupCriticalItem["kind"], string> = {
   escalation: "📣 درخواست رسیدگی",
 };
 
-function escHtml(s: string): string {
-  return s.replace(/[&<>]/g, (c) =>
-    c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;",
-  );
-}
-
 // Records critical items from an analysis.
 //
 // This used to also push every item into the notes_inbox channel on

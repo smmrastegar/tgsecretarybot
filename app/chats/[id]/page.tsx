@@ -682,7 +682,6 @@ export default function ChatDetailPage() {
     headPerson?.senderName ??
     (chatId ? `chat ${chatId}` : "—");
   const personHandle = headPerson?.senderUsername;
-  const personId = headPerson?.senderId ?? chatId;
   const updatePersonal = (patch: Partial<Personal>) => {
     setPersonal((p) => ({ ...p, ...patch }));
     setPersonalDirty(true);

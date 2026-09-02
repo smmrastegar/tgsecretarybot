@@ -123,17 +123,11 @@ export async function DELETE(
   if (!Number.isFinite(n)) {
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
   }
-  // Capture the username BEFORE delete so we can tell the external
-  // service. Only unregister if no other tenant still tracks it.
+  // Look the row up before deleting so the audit entry still carries the
+  // username. (The external change-detector unregistration that used to
+  // follow is gone — the owner moved to direct HikerAPI polling.)
   const acc = await getMonitoredAccount(n, tenant.id);
   await deleteMonitoredAccount(n, tenant.id);
-  if (acc?.username) {
-    // Re-check across all tenants — if anyone else tracks the same
-    // username, leave the subscription alone.
-    const { listMonitoredAccounts } = await import("@/lib/db");
-    // External change-detector unregistration removed — owner moved
-    // to direct HikerAPI polling. See /api/cron/instagram-stories.
-  }
   await audit({
     actorId: session.userId,
     actorName: session.username ?? null,

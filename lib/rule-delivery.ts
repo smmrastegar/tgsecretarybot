@@ -9,7 +9,7 @@
 // direct bot send when the recipient isn't reachable that way.
 
 import type { Bot } from "grammy";
-import { reportError, reportWarn } from "./report";
+import { reportWarn } from "./report";
 import { listBusinessConnections } from "./db";
 
 export type ForwardResult =

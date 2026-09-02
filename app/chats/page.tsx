@@ -23,18 +23,6 @@ const MODE_LABELS: Record<ChatMode, string> = {
   ai_listen: "شنود AI (بی‌صدا، خلاصه می‌کنه)",
 };
 
-const MODE_TONES: Record<
-  ChatMode,
-  "neutral" | "success" | "warn" | "danger" | "info"
-> = {
-  off: "neutral",
-  secretary: "warn",
-  auto_reply: "info",
-  friendly_reply: "info",
-  ai_chat: "success",
-  ai_listen: "info",
-};
-
 type Relationship =
   | "close_family"
   | "family"
@@ -330,31 +318,6 @@ export default function ChatsPage() {
       else next.add(id);
       return next;
     });
-  }
-
-  function chatMatchesSearch(c: Chat, q: string): boolean {
-    if (!q) return true;
-    const fields = [
-      c.chatTitle,
-      c.firstName,
-      c.lastName,
-      c.nickname,
-      String(c.chatId),
-    ];
-    return fields.some((f) => f && f.toLowerCase().includes(q));
-  }
-
-  function chatMatchesType(
-    c: Chat,
-    t: "all" | "private" | "bot" | "group" | "channel",
-  ): boolean {
-    if (t === "all") return true;
-    if (t === "bot") return c.isBot;
-    if (t === "private") return c.chatType === "private" && !c.isBot;
-    if (t === "group")
-      return c.chatType === "group" || c.chatType === "supergroup";
-    if (t === "channel") return c.chatType === "channel";
-    return true;
   }
 
   // Server applies the filters now; pass-through so existing

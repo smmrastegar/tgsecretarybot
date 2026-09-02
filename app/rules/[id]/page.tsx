@@ -1505,7 +1505,8 @@ function ExampleEditor({
   const toggleDel = (exId: number) =>
     setDels((d) => {
       const n = new Set(d);
-      n.has(exId) ? n.delete(exId) : n.add(exId);
+      if (n.has(exId)) n.delete(exId);
+      else n.add(exId);
       return n;
     });
   const aiGen = async () => {

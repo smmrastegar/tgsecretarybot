@@ -1930,7 +1930,7 @@ async function callTool(
           try {
             await conn.query(chunk);
             ran += Math.min(BATCH, ddl.length - i);
-          } catch (e) {
+          } catch {
             // Fall back to statement-by-statement for this chunk so one
             // bad statement doesn't drop 15.
             for (const s of ddl.slice(i, i + BATCH)) {
@@ -2070,11 +2070,11 @@ async function callTool(
         let tgtN: number | string = "?";
         try {
           srcN = Number((await src.query(`SELECT COUNT(*) AS n FROM "${table}"`))[0]?.n ?? 0);
-        } catch (e) { srcN = "err"; }
+        } catch { srcN = "err"; }
         try {
           const [tr] = await target.query(`SELECT COUNT(*) AS n FROM \`${table}\``);
           tgtN = Number((tr as { n?: number }[])[0]?.n ?? 0);
-        } catch (e) { tgtN = "missing"; }
+        } catch { tgtN = "missing"; }
         out.push({ table, source: srcN, tidb: tgtN, match: srcN === tgtN });
       }
       return toolText(out);

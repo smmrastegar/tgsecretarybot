@@ -1,15 +1,8 @@
 import { NextResponse } from "next/server";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { config } from "./config";
 import { isAllowedUser } from "./db";
-import {
-  SESSION_COOKIE_NAME,
-  SESSION_TTL,
-  createSession,
-  readSessionFromToken,
-  type Session,
-} from "./session";
+import { SESSION_COOKIE_NAME, SESSION_TTL, readSessionFromToken, type Session } from "./session";
 
 export type { Session };
 export {

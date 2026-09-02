@@ -3,12 +3,6 @@ import { authorizeEmailLink } from "@/lib/email-link";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function esc(s: string): string {
-  return (s ?? "").replace(/[&<>]/g, (c) =>
-    c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;",
-  );
-}
-
 function humanSize(n: number | null): string {
   if (!n || n <= 0) return "";
   if (n < 1024) return `${n} B`;

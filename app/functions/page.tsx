@@ -156,7 +156,6 @@ export default function FunctionsPage() {
     if (b.slug === "default" && a.slug !== "default") return 1;
     return a.sortOrder - b.sortOrder;
   });
-  const catMap = new Map(sortedCats.map((c) => [c.slug, c]));
 
   return (
     <Shell>

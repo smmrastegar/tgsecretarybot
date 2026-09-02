@@ -1,18 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
 import { relTime } from "@/lib/format";
 import WatchlistPanel from "@/components/WatchlistPanel";
-
-type SummaryRow = {
-  chatId: number;
-  total: number;
-  byKind: Record<string, number>;
-  lastNoteAt: string;
-};
 
 type Note = {
   id: number;

@@ -1,21 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
-import {
-  audit,
-  consumeRecipientRequest,
-  getMessageRule,
-  listRuleExamples,
-  listRuleRecipients,
-  logMessage,
-  recipientRequestedRecently,
-  recordRuleMatch,
-} from "@/lib/db";
+import { audit, consumeRecipientRequest, getMessageRule, listRuleExamples, listRuleRecipients, logMessage, recordRuleMatch } from "@/lib/db";
 import { getBot } from "@/lib/bot";
-import {
-  extractOtpCodeAi,
-  formatMessageForRule,
-  matchRules,
-} from "@/lib/rules";
+import { extractOtpCodeAi, formatMessageForRule, matchRules } from "@/lib/rules";
 import { buildRuleForwardText, sendRuleForward } from "@/lib/rule-delivery";
 
 export const runtime = "nodejs";

@@ -3,7 +3,7 @@
 import { Bot, GrammyError, HttpError, InlineKeyboard } from "grammy";
 import type { Message } from "grammy/types";
 import { config, IS_BUILD_PHASE } from "../config";
-import { getSecretaries, type Secretary } from "../secretaries";
+import { getSecretaries } from "../secretaries";
 import { getSettings, invalidateSettingsCache, updateSettings } from "../settings";
 import { consumeInvite, createInvite, getBusinessConnection, hasDb, isAllowedUser, getChatIdByShareToken, requestBoardAccess, logMessage, markMessagesDeleted, upsertBusinessConnection, audit, recordPhoneContact, captureError, upsertChatMember } from "../db";
 import { createMagicToken } from "../magic";

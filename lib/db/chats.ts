@@ -1,9 +1,7 @@
 // Split out of the former single lib/db.ts. Import from "@/lib/db" —
 // that barrel re-exports every module here.
 import { bool, date, dateOrNull, num, numOrNull, str, strOrNull, type Row } from "./row";
-import { config } from "../config";
 import { ensureSchema, hasDb, sql } from "./core";
-import { lastOwnerMessageAt } from "./topics";
 
 // --- Chat rules ---
 

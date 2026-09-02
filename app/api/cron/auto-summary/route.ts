@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { reportError, reportWarn } from "@/lib/report";
+import { reportError } from "@/lib/report";
 import { config } from "@/lib/config";
 import { deliverAutoSummary } from "@/lib/bot";
 import { getBot } from "@/lib/bot";

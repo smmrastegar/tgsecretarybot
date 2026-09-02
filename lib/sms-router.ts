@@ -183,8 +183,6 @@ async function classifySmsForForwarding(args: {
       category: "unknown",
     };
   }
-  const settings = await getSettings();
-  const ownerName = settings.ownerName || "the recipient";
 
   const systemPrompt = `You decide whether an incoming SMS should be forwarded to the operator's curated inbox or filtered out.
 

@@ -956,7 +956,7 @@ export default function BoardPage({ params }: { params: Promise<{ token: string 
                             <div key={g.key} style={S.groupBox}>
                               <div style={S.groupHead}>
                                 <button style={S.groupToggle}
-                                  onClick={() => setCollapsed((s) => { const n = new Set(s); n.has(ck) ? n.delete(ck) : n.add(ck); return n; })}>
+                                  onClick={() => setCollapsed((s) => { const n = new Set(s); if (n.has(ck)) n.delete(ck); else n.add(ck); return n; })}>
                                   {isCol ? "▸" : "▾"} <b>{g.label}</b>
                                   <span style={S.count}>{g.tasks.length}</span>
                                 </button>

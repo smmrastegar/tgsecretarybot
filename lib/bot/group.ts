@@ -11,7 +11,7 @@ import { getChatRule, hasDb, isAllowedUser, logMessage, logMediaRouting, type Ch
 import { replyToEmail, sendEmail } from "../email";
 import { reportError, reportWarn } from "../report";
 import { autoExtractAndSave, maybeApplyNoteWatch, maybeDescribeMedia, maybeExtractOtp } from "./business";
-import { describeMessage, extractInlineUrlButtons, extractMedia, harvestContactShare, mediaFileId } from "./core";
+import { describeMessage, extractInlineUrlButtons, extractMedia, harvestContactShare } from "./core";
 import { maybeMirrorPost } from "./mirror";
 import { maybeApplyMessageRules } from "./rules-apply";
 import { maybeAutoSummarizeOnArrival } from "./summary";

@@ -1,16 +1,9 @@
 import { NextResponse } from "next/server";
-import { reportError, reportWarn } from "@/lib/report";
+import { reportError } from "@/lib/report";
 import { config } from "@/lib/config";
 import { getCurrentSession } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
-import {
-  audit,
-  getChatRule,
-  groupActivityForPeriod,
-  hasDb,
-  markChatSummaryRun,
-  upsertGroupSummary,
-} from "@/lib/db";
+import { audit, getChatRule, groupActivityForPeriod, hasDb, markChatSummaryRun, upsertGroupSummary } from "@/lib/db";
 import { summarizeGroup } from "@/lib/classifier";
 
 export const runtime = "nodejs";

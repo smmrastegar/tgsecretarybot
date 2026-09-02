@@ -250,6 +250,17 @@ export async function listNoteWatchItemsWithAliases(args?: {
   return items.map((it) => ({ ...it, aliases: byItem.get(it.id) ?? [] }));
 }
 
+// The match row is written BEFORE the forward is attempted (so the
+// inline buttons have an id to point at), which meant forwarded_to was
+// always NULL and no match ever knew it had reached the inbox.
+export async function markNoteWatchMatchForwarded(
+  id: number,
+  chatId: number,
+): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`UPDATE note_watch_matches SET forwarded_to = ${chatId} WHERE id = ${id}`;
+}
+
 export async function recordNoteWatchMatch(args: {
   itemId: number;
   chatId: number;

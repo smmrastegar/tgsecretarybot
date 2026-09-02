@@ -27,10 +27,9 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: typecheck
         run: npm run typecheck
-      # Errors fail the job. The ~40 existing unused-variable warnings are
-      # real but not worth blocking a deploy over; tighten to
-      # --max-warnings=0 once they are cleared.
+      # Warnings block too: the backlog was cleared, and two of them turned
+      # out to be real bugs, so a new one is worth a red build.
       - name: lint
-        run: npm run lint
+        run: npm run lint -- --max-warnings=0
       - name: test
         run: npm test

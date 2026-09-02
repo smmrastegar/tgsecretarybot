@@ -444,7 +444,7 @@ export default function SettingsPage() {
 
     setValues(v);
     setEnvLocked(new Set(j.envLocked));
-  }, []);
+  }, [tenantQuery]);
 
   useEffect(() => {
     load();

@@ -704,7 +704,6 @@ ${text.slice(0, 1500)}`;
 function heuristicSuggest(
   text: string,
 ): { name: string; description: string } | null {
-  const t = text.toLowerCase();
   if (
     /\b(otp|verification|verify|code|verification code)\b/i.test(text) ||
     /\b(?:کد|رمز)\s*(?:تایید|ورود|یکبار|otp)\b/u.test(text) ||

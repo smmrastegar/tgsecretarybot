@@ -1,7 +1,6 @@
 // Split out of the former single lib/db.ts. Import from "@/lib/db" —
 // that barrel re-exports every module here.
-import { config } from "../config";
-import { cached, ensureSchema, hasDb, sql } from "./core";
+import { ensureSchema, hasDb, sql } from "./core";
 
 // --- Editable group task board ---
 export type BoardTask = {

@@ -2,20 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import RouteProgress from "./RouteProgress";
 import DebugTimings from "./DebugTimings";
-import {
-  AlertOctagon,
-  Bell,
-  LayoutDashboard,
-  LogOut,
-  MessageSquare,
-  NotebookText,
-  Settings,
-  Shield,
-  Users2,
-} from "lucide-react";
+import { AlertOctagon, Bell, LayoutDashboard, LogOut, MessageSquare, NotebookText, Settings, Shield, Users2 } from "lucide-react";
 
 type User = {
   userId: number;
