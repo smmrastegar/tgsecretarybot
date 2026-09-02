@@ -13,3 +13,4 @@
 0 * * * *   root  curl -fsS "http://127.0.0.1:3000/api/cron/daily-summary?secret=__CRON_SECRET__" >/dev/null 2>&1
 30 * * * *  root  curl -fsS "http://127.0.0.1:3000/api/cron/site-monitor?secret=__CRON_SECRET__" >/dev/null 2>&1
 30 5 * * *  root  curl -fsS "http://127.0.0.1:3000/api/cron/health-report?secret=__CRON_SECRET__" >/dev/null 2>&1
+15 4 * * *  root  curl -fsS "http://127.0.0.1:3000/api/cron/retention?secret=__CRON_SECRET__" >/dev/null 2>&1

@@ -131,6 +131,29 @@ caddy_vhost_selfheal() {
 }
 caddy_vhost_selfheal >>"$LOG" 2>&1 || true
 
+# Self-heal the cron table. setup.sh writes /etc/cron.d/tgsecretarybot
+# exactly once at install, so a job added to deploy/crontab later never
+# reached the box — the retention job would have sat in git and never
+# run. Regenerate from the repo copy whenever it differs, using the same
+# substitution setup.sh uses.
+cron_selfheal() {
+  local target=/etc/cron.d/tgsecretarybot
+  local secret tmp
+  secret=$(grep -E '^CRON_SECRET=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
+  if [[ -z "${secret:-}" ]]; then
+    report_status "cron" "error" "CRON_SECRET missing from .env — cron table not installed"
+    return 0
+  fi
+  tmp=$(mktemp) || return 0
+  sed "s/__CRON_SECRET__/${secret}/g" "$APP_DIR/deploy/crontab" >"$tmp"
+  if [[ -f "$target" ]] && cmp -s "$tmp" "$target"; then rm -f "$tmp"; return 0; fi
+  cp "$tmp" "$target" && chmod 644 "$target"
+  rm -f "$tmp"
+  echo "  ✓ cron: /etc/cron.d/tgsecretarybot regenerated from deploy/crontab"
+  report_status "cron" "warn" "cron table regenerated from deploy/crontab"
+}
+cron_selfheal >>"$LOG" 2>&1 || true
+
 cd "$APP_DIR"
 git fetch --quiet origin "$BRANCH"
 LOCAL=$(git rev-parse HEAD)
