@@ -12498,7 +12498,9 @@ export async function deleteLinkDownloader(id: number): Promise<void> {
 
 // Host must equal the pattern or be a subdomain of it. Substring
 // matching would let "open.spotify.com.attacker.net" through.
-function hostMatches(host: string, pattern: string): boolean {
+// Exported for tests: the anchored match is the whole point of this
+// function (it must not treat "notinstagram.com" as instagram.com).
+export function hostMatches(host: string, pattern: string): boolean {
   return host === pattern || host.endsWith("." + pattern);
 }
 
