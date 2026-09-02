@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import {
   deleteChatProfile,
   getChatProfile,
@@ -16,11 +16,8 @@ export async function GET(
   _request: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {
@@ -38,11 +35,8 @@ export async function PATCH(
   request: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   if (!hasDb()) {
     return NextResponse.json({ error: "DATABASE_URL not set" }, { status: 500 });
   }
@@ -61,11 +55,8 @@ export async function DELETE(
   _request: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const { id: idStr } = await ctx.params;
   const id = Number(idStr);
   if (!Number.isFinite(id)) {

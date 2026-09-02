@@ -3,6 +3,7 @@ import { reportError, reportWarn } from "@/lib/report";
 import { config } from "@/lib/config";
 import { getBot } from "@/lib/bot";
 import { logTelegramUpdate, markUpdateProcessed } from "@/lib/db";
+import { background } from "@/lib/background";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -169,7 +170,7 @@ export async function POST(request: Request): Promise<Response> {
     `[webhook] received type=${meta.updateType ?? "?"} chat=${meta.chatId ?? "?"} update_id=${meta.updateId ?? "?"}`,
   );
   if (meta.updateType) {
-    void logTelegramUpdate({
+    background("logTelegramUpdate", logTelegramUpdate({
       updateId: meta.updateId,
       updateType: meta.updateType,
       chatId: meta.chatId,
@@ -178,7 +179,7 @@ export async function POST(request: Request): Promise<Response> {
       businessConnectionId: meta.businessConnectionId,
       preview: meta.preview,
       payload: meta.payload,
-    });
+    }));
   }
   const cloned = new Request(request.url, {
     method: "POST",

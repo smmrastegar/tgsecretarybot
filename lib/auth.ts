@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { config } from "./config";
@@ -22,6 +23,16 @@ export async function getCurrentSession(): Promise<Session | null> {
   const c = store.get(SESSION_COOKIE_NAME);
   if (!c?.value) return null;
   return readSessionFromToken(c.value);
+}
+
+// The one-line route guard. 78 routes carried the same 5-line
+// try/catch around requireSession(); 61 more called it bare, which
+// throws — and a thrown 401 surfaces from Next as a 500. Both shapes
+// now collapse to:  const guard = await requireSessionOr401(); if (guard) return guard;
+export async function requireSessionOr401(): Promise<NextResponse | null> {
+  const s = await getCurrentSession();
+  if (s) return null;
+  return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 }
 
 export async function requireSession(): Promise<Session> {

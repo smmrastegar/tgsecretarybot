@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
-import { requireSession } from "@/lib/auth";
+import { requireSession, requireSessionOr401 } from "@/lib/auth";
 import {
   listCodeFeeds,
   upsertCodeFeed,
@@ -13,7 +13,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {
-  await requireSession();
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const feeds = await listCodeFeeds();
   return NextResponse.json({ ok: true, feeds });
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import {
   createChatProfile,
   hasDb,
@@ -10,22 +10,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   if (!hasDb()) return NextResponse.json({ profiles: [] });
   const profiles = await listChatProfiles();
   return NextResponse.json({ profiles });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   if (!hasDb()) {
     return NextResponse.json({ error: "DATABASE_URL not set" }, { status: 500 });
   }

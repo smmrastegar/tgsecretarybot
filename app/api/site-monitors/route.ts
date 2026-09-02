@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { createSiteMonitor, listSiteMonitors } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -12,13 +12,15 @@ function redact<T extends { password: string | null }>(m: T): Omit<T, "password"
 }
 
 export async function GET(): Promise<NextResponse> {
-  try { await requireSession(); } catch { return NextResponse.json({ error: "unauthorized" }, { status: 401 }); }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const monitors = (await listSiteMonitors()).map(redact);
   return NextResponse.json({ monitors });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  try { await requireSession(); } catch { return NextResponse.json({ error: "unauthorized" }, { status: 401 }); }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const b = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   if (!b.name || !b.loginUrl || !b.checkUrl) {
     return NextResponse.json({ error: "name, loginUrl, checkUrl required" }, { status: 400 });

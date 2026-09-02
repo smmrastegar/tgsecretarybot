@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { listMediaRoutingLog, type MediaRoutingDecision } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -9,11 +9,8 @@ export const dynamic = "force-dynamic";
 //   ?chatId=<id>   — only entries from that source chat
 //   ?decision=routed|flag_off|muted|no_target|no_rule|error
 export async function GET(request: Request): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const url = new URL(request.url);
   const chatIdRaw = url.searchParams.get("chatId");
   const decisionRaw = url.searchParams.get("decision");

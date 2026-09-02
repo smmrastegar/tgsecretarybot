@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { deleteNoteWatchAlias } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -9,11 +9,8 @@ export async function DELETE(
   _request: Request,
   ctx: { params: Promise<{ aliasId: string }> },
 ): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const { aliasId } = await ctx.params;
   const id = Number(aliasId);
   if (!Number.isFinite(id)) {

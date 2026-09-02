@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { sql, hasDb, recentConversation, getChatRule } from "@/lib/db";
 import { aiConversationReply } from "@/lib/classifier";
 import { getSettings } from "@/lib/settings";
@@ -12,11 +12,8 @@ export async function POST(
   _request: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   if (!hasDb()) {
     return NextResponse.json({ error: "db not configured" }, { status: 500 });
   }

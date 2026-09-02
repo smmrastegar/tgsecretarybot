@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import {
   listAudit,
   listSystemErrors,
@@ -11,11 +11,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const url = new URL(request.url);
   const kind = url.searchParams.get("kind") ?? "both"; // "audit" | "errors" | "both"
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? "200"), 1), 1000);

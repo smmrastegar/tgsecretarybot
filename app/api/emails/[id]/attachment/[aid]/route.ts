@@ -1,4 +1,4 @@
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { getEmail, getEmailAccount } from "@/lib/db";
 import { fetchReceivedEmailAttachmentUrl } from "@/lib/email";
 import { getSettings } from "@/lib/settings";
@@ -14,7 +14,8 @@ export async function GET(
   ctx: { params: Promise<{ id: string; aid: string }> },
 ): Promise<Response> {
   try {
-    await requireSession();
+    const guard = await requireSessionOr401();
+    if (guard) return guard;
   } catch {
     return new Response("unauthorized", { status: 401 });
   }

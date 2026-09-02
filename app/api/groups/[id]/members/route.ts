@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { listGroupMembersFromMessages } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -14,11 +14,8 @@ export async function GET(
   request: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const { id } = await ctx.params;
   const chatId = Number(id);
   if (!Number.isFinite(chatId)) {

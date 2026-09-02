@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import {
   addSecretaryRelaySource,
   removeSecretaryRelaySource,
@@ -12,11 +12,8 @@ export async function POST(
   request: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const { id } = await ctx.params;
   const relayId = Number(id);
   if (!Number.isFinite(relayId)) {
@@ -45,11 +42,8 @@ export async function DELETE(
   request: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const { id } = await ctx.params;
   const relayId = Number(id);
   if (!Number.isFinite(relayId)) {

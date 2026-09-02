@@ -5,6 +5,7 @@ import {
   stampCodeFeedAccess,
 } from "@/lib/db";
 import { extractCodes, renderFeed, type FeedFormat } from "@/lib/code-feed";
+import { background } from "@/lib/background";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,7 +88,7 @@ export async function GET(
     }))
     .filter((i) => (feed.codesOnly ? i.codes.length > 0 : true));
 
-  void stampCodeFeedAccess(feed.id, ip).catch(() => {});
+  background("stampCodeFeedAccess", stampCodeFeedAccess(feed.id, ip));
 
   const fmt = (url.searchParams.get("format") ?? feed.format) as FeedFormat;
   const { body, contentType } = renderFeed(

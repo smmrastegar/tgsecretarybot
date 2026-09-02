@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { getSiteMonitor } from "@/lib/db";
 import { fetchMonitoredPage, runSiteMonitor, tehranNow } from "@/lib/site-monitor";
 import { analyzeSiteChange } from "@/lib/classifier";
@@ -11,7 +11,8 @@ export const maxDuration = 60;
 // POST ?dryRun=1 → fetch + analyze but DON'T notify/record (for tuning
 // the login). Without dryRun → full run (notifies + records).
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<NextResponse> {
-  try { await requireSession(); } catch { return NextResponse.json({ error: "unauthorized" }, { status: 401 }); }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const { id } = await ctx.params;
   const mid = Number(id);
   const m = await getSiteMonitor(mid);

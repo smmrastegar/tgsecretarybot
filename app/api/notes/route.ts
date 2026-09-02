@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSession, requireSessionOr401 } from "@/lib/auth";
 import {
   addChatNote,
   audit,
@@ -15,11 +15,8 @@ export const dynamic = "force-dynamic";
 // GET /api/notes?view=flat       → flat list of notes with filters
 // GET /api/notes?chatId=…&kind=… → filtered notes
 export async function GET(request: Request): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const url = new URL(request.url);
   const chatIdRaw = url.searchParams.get("chatId");
   const kindRaw = url.searchParams.get("kind");

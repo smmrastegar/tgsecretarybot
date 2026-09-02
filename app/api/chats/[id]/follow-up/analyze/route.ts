@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { analyzeFollowUpNeed } from "@/lib/classifier";
 import {
   recentConversation,
@@ -19,11 +19,8 @@ export async function POST(
   _request: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const { id: idStr } = await ctx.params;
   const chatId = Number(idStr);
   if (!Number.isFinite(chatId)) {

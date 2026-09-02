@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { archiveOldChatNotes } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -10,11 +10,8 @@ export const dynamic = "force-dynamic";
 // how many rows were affected. Same logic the (future) auto-archive
 // cron would use, but on demand.
 export async function POST(request: Request): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const body = (await request.json().catch(() => ({}))) as { days?: number };
   const days = Math.max(Math.min(Number(body.days) || 0, 365 * 5), 1);
   const archived = await archiveOldChatNotes(days);

@@ -1,5 +1,5 @@
 import { Bot } from "grammy";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { ALLOWED_UPDATES } from "@/lib/bot";
 import { config } from "@/lib/config";
 
@@ -12,7 +12,8 @@ export const dynamic = "force-dynamic";
 // the client just checks `missing.length === 0`.
 export async function GET(): Promise<Response> {
   try {
-    await requireSession();
+    const guard = await requireSessionOr401();
+    if (guard) return guard;
   } catch {
     return new Response(JSON.stringify({ error: "unauthorized" }), {
       status: 401,

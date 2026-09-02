@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import {
   chatFacets,
   type ChatListFilters,
@@ -19,11 +19,8 @@ function bool(v: string | null): boolean | undefined {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const url = new URL(request.url);
   if (url.searchParams.get("facets") === "1") {
     try {

@@ -1,4 +1,4 @@
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { config } from "@/lib/config";
 import { getMessageForTranscript } from "@/lib/db";
 import { downloadTelegramFile } from "@/lib/stt";
@@ -62,7 +62,8 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   try {
-    await requireSession();
+    const guard = await requireSessionOr401();
+    if (guard) return guard;
   } catch {
     return new Response("unauthorized", { status: 401 });
   }

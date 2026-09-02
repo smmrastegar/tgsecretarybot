@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
-import { requireSession } from "@/lib/auth";
+import { requireSession, requireSessionOr401 } from "@/lib/auth";
 import {
   audit,
   findCachedAsk,
@@ -22,11 +22,8 @@ export const maxDuration = 60;
 const CACHE_TTL_MINUTES = 60;
 
 export async function GET(): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const items = await listAskQueries(30);
   return NextResponse.json({ items });
 }

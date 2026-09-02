@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSession, requireSessionOr401 } from "@/lib/auth";
 import {
   listLinkDownloaders,
   upsertLinkDownloader,
@@ -11,7 +11,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {
-  await requireSession();
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   return NextResponse.json({ ok: true, downloaders: await listLinkDownloaders(true) });
 }
 

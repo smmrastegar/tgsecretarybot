@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { getEmailAccount, listEmails } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 
@@ -7,7 +7,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request): Promise<NextResponse> {
-  try { await requireSession(); } catch { return NextResponse.json({ error: "unauthorized" }, { status: 401 }); }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const u = new URL(request.url);
   const dir = u.searchParams.get("direction");
   const direction = dir === "in" || dir === "out" ? dir : undefined;
@@ -25,7 +26,8 @@ export async function GET(request: Request): Promise<NextResponse> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  try { await requireSession(); } catch { return NextResponse.json({ error: "unauthorized" }, { status: 401 }); }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const b = (await request.json().catch(() => ({}))) as {
     to?: string; subject?: string; text?: string; html?: string; cc?: string; accountId?: number;
   };

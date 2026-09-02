@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
+import { requireSessionOr401 } from "@/lib/auth";
 import { getSettings, updateSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
@@ -20,11 +20,8 @@ const KEYS = [
 type Key = (typeof KEYS)[number];
 
 export async function GET(): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const s = await getSettings();
   const out: Partial<Record<Key, string>> = {};
   for (const k of KEYS) out[k] = s[k];
@@ -32,11 +29,8 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function PUT(request: Request): Promise<NextResponse> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const body = (await request.json().catch(() => ({}))) as Partial<
     Record<Key, string>
   >;

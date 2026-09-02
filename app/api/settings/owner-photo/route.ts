@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Buffer } from "node:buffer";
-import { requireSession } from "@/lib/auth";
+import { requireSession, requireSessionOr401 } from "@/lib/auth";
 import {
   audit,
   deleteOwnerAsset,
@@ -17,11 +17,8 @@ const MAX_BYTES = 5 * 1024 * 1024;
 // GET — stream the stored owner reference photo (the dashboard preview
 // loads it via <img src="/api/settings/owner-photo">). 404 when none.
 export async function GET(): Promise<Response> {
-  try {
-    await requireSession();
-  } catch {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const guard = await requireSessionOr401();
+  if (guard) return guard;
   const asset = await getOwnerAsset(KIND);
   if (!asset) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
