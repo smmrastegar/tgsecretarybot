@@ -4,6 +4,7 @@ import type { NeonQueryFunction } from "@neondatabase/serverless";
 import { config } from "../config";
 import { driverKind, makeMysqlClient } from "../sql-driver";
 import { makePgClient } from "../pg-driver";
+import { runMigrations } from "./migrations";
 import { neon } from "@neondatabase/serverless";
 
 export let cached: NeonQueryFunction<false, false> | null = null;
@@ -62,7 +63,8 @@ export async function ensureSchema(
         SELECT 1 FROM settings WHERE key = 'schema.version' AND value = ${SCHEMA_VERSION} LIMIT 1`
         .then((r) => (r as unknown[]).length > 0)
         .catch(() => false);
-      if (done) return;
+      if (done) await runMigrations(q);
+        return;
     }
     await q`
       CREATE TABLE IF NOT EXISTS business_connections (
@@ -1950,7 +1952,8 @@ export async function ensureSchema(
     }
     // Stamp the version so the next cold start takes the fast path.
     if (!clientOverride) {
-      await q`
+      await runMigrations(q);
+    await q`
         INSERT INTO settings (key, value) VALUES ('schema.version', ${SCHEMA_VERSION})
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`.catch(() => {});
     }
