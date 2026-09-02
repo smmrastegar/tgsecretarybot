@@ -370,10 +370,14 @@ export default function CodeFeedsPage() {
                 >
                   chat {f.chatId} · {f.windowSeconds}s · {f.format}
                   {f.codesOnly ? " · codes-only" : ""}
-                  {f.allowedIps.length
-                    ? ` · IP: ${f.allowedIps.join(", ")}`
-                    : " · any IP"}
+                  {f.allowedIps.length ? ` · IP: ${f.allowedIps.join(", ")}` : null}
                 </div>
+                {f.allowedIps.length === 0 && f.enabled && (
+                  <div className="text-[11px] text-amber-400 mt-1">
+                    ⚠️ بدون محدودیت IP — هر کسی که این لینک را داشته باشد کدها را می‌بیند.
+                  </div>
+                )}
+
 
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
                   <code

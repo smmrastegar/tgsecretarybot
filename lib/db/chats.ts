@@ -1,5 +1,6 @@
 // Split out of the former single lib/db.ts. Import from "@/lib/db" —
 // that barrel re-exports every module here.
+import { bool, date, dateOrNull, num, numOrNull, str, strOrNull, type Row } from "./row";
 import { config } from "../config";
 import { ensureSchema, hasDb, sql } from "./core";
 import { lastOwnerMessageAt } from "./topics";
@@ -143,91 +144,76 @@ export type ChatRule = {
   updatedAt: Date;
 };
 
-export function rowToChatRule(r: Record<string, unknown>): ChatRule {
-  const mode = (r.mode as string) ?? "off";
-  const rel = (r.relationship as string) ?? null;
+export function rowToChatRule(r: Row): ChatRule {
+  const mode = str(r, "mode") || "off";
+  const rel = strOrNull(r, "relationship");
+  const fnRole = strOrNull(r, "function_role");
   return {
-    chatId: Number(r.chat_id),
-    chatType: r.chat_type as string,
-    chatTitle: (r.chat_title as string) ?? null,
-    vip: r.vip as boolean,
-    muted: r.muted as boolean,
-    customReply: (r.custom_reply as string) ?? null,
-    notes: (r.notes as string) ?? null,
+    chatId: num(r, "chat_id"),
+    chatType: str(r, "chat_type"),
+    chatTitle: strOrNull(r, "chat_title"),
+    vip: bool(r, "vip"),
+    muted: bool(r, "muted"),
+    customReply: strOrNull(r, "custom_reply"),
+    notes: strOrNull(r, "notes"),
     mode: (CHAT_MODES.includes(mode as ChatMode) ? mode : "off") as ChatMode,
     modeChangedAt:
-      (r.mode_changed_at as Date) ?? (r.updated_at as Date) ?? new Date(),
-    secretaryUserId:
-      r.secretary_user_id != null ? Number(r.secretary_user_id) : null,
-    firstName: (r.first_name as string) ?? null,
-    lastName: (r.last_name as string) ?? null,
-    nickname: (r.nickname as string) ?? null,
+      dateOrNull(r, "mode_changed_at") ?? dateOrNull(r, "updated_at") ?? new Date(),
+    secretaryUserId: numOrNull(r, "secretary_user_id"),
+    firstName: strOrNull(r, "first_name"),
+    lastName: strOrNull(r, "last_name"),
+    nickname: strOrNull(r, "nickname"),
     relationship:
       rel && (RELATIONSHIPS as readonly string[]).includes(rel)
         ? (rel as Relationship)
         : null,
-    relationshipNotes: (r.relationship_notes as string) ?? null,
-    talkStyleNotes: (r.talk_style_notes as string) ?? null,
-    toneProfile: (r.tone_profile as string) ?? null,
-    toneProfileAt: (r.tone_profile_at as Date) ?? null,
-    floodCooldownUntil: (r.flood_cooldown_until as Date) ?? null,
-    floodDeflectedAt: (r.flood_deflected_at as Date) ?? null,
-    aiProcessVoice: Boolean(r.ai_process_voice),
-    aiProcessStickers: Boolean(r.ai_process_stickers),
-    aiProcessGifs: Boolean(r.ai_process_gifs),
-    aiProcessPhotos: Boolean(r.ai_process_photos),
-    aiProcessVideoNotes: Boolean(r.ai_process_video_notes),
-    aiGeneratePhoto: Boolean(r.ai_generate_photo),
+    relationshipNotes: strOrNull(r, "relationship_notes"),
+    talkStyleNotes: strOrNull(r, "talk_style_notes"),
+    toneProfile: strOrNull(r, "tone_profile"),
+    toneProfileAt: dateOrNull(r, "tone_profile_at"),
+    floodCooldownUntil: dateOrNull(r, "flood_cooldown_until"),
+    floodDeflectedAt: dateOrNull(r, "flood_deflected_at"),
+    aiProcessVoice: bool(r, "ai_process_voice"),
+    aiProcessStickers: bool(r, "ai_process_stickers"),
+    aiProcessGifs: bool(r, "ai_process_gifs"),
+    aiProcessPhotos: bool(r, "ai_process_photos"),
+    aiProcessVideoNotes: bool(r, "ai_process_video_notes"),
+    aiGeneratePhoto: bool(r, "ai_generate_photo"),
     functionRole:
-      typeof r.function_role === "string" &&
-      (FUNCTION_ROLES as readonly string[]).includes(r.function_role)
-        ? (r.function_role as FunctionRole)
+      fnRole && (FUNCTION_ROLES as readonly string[]).includes(fnRole)
+        ? (fnRole as FunctionRole)
         : null,
     functionConfig:
       r.function_config && typeof r.function_config === "object"
         ? (r.function_config as Record<string, unknown>)
         : null,
-    autoSummarizeEnabled: Boolean(r.auto_summarize_enabled),
+    autoSummarizeEnabled: bool(r, "auto_summarize_enabled"),
     autoSummarizeGapMinutes:
-      Number(r.auto_summarize_gap_minutes) > 0
-        ? Number(r.auto_summarize_gap_minutes)
-        : 5,
-    autoSummarizeSmartTiming:
-      r.auto_summarize_smart_timing == null
-        ? true
-        : Boolean(r.auto_summarize_smart_timing),
-    lastAutoSummaryAt: (r.last_auto_summary_at as Date) ?? null,
-    autoForwardVoice: Boolean(r.auto_forward_voice),
-    autoForwardVideo: Boolean(r.auto_forward_video),
-    autoForwardPhoto: Boolean(r.auto_forward_photo),
-    autoForwardLocation: Boolean(r.auto_forward_location),
-    autoExtractNotes: Boolean(r.auto_extract_notes),
-    selfVoiceTranscript: Boolean(r.self_voice_transcript),
-    isBot: Boolean(r.is_bot),
-    ignored: Boolean(r.ignored),
-    phoneNumber: (r.phone_number as string) ?? null,
-    graceSkippedAt: (r.grace_skipped_at as Date) ?? null,
-    summaryIntervalHours:
-      r.summary_interval_hours != null
-        ? Number(r.summary_interval_hours)
-        : null,
-    lastSummaryRunAt: (r.last_summary_run_at as Date) ?? null,
-    analyticsShareToken: (r.analytics_share_token as string) ?? null,
-    followUpEnabled:
-      r.follow_up_enabled == null ? true : Boolean(r.follow_up_enabled),
-    followUpThresholdHours:
-      r.follow_up_threshold_hours != null
-        ? Number(r.follow_up_threshold_hours)
-        : 2,
-    followUpEscalateHours:
-      r.follow_up_escalate_hours != null
-        ? Number(r.follow_up_escalate_hours)
-        : 12,
-    followUpLastPingAt: (r.follow_up_last_ping_at as Date) ?? null,
-    followUpLastPingKind: (r.follow_up_last_ping_kind as string) ?? null,
-    followUpAckedAt: (r.follow_up_acked_at as Date) ?? null,
-    profileId: r.profile_id == null ? null : Number(r.profile_id),
-    updatedAt: r.updated_at as Date,
+      num(r, "auto_summarize_gap_minutes") > 0 ? num(r, "auto_summarize_gap_minutes") : 5,
+    // NULL means "not set"; the historical default is on.
+    autoSummarizeSmartTiming: bool(r, "auto_summarize_smart_timing", true),
+    lastAutoSummaryAt: dateOrNull(r, "last_auto_summary_at"),
+    autoForwardVoice: bool(r, "auto_forward_voice"),
+    autoForwardVideo: bool(r, "auto_forward_video"),
+    autoForwardPhoto: bool(r, "auto_forward_photo"),
+    autoForwardLocation: bool(r, "auto_forward_location"),
+    autoExtractNotes: bool(r, "auto_extract_notes"),
+    selfVoiceTranscript: bool(r, "self_voice_transcript"),
+    isBot: bool(r, "is_bot"),
+    ignored: bool(r, "ignored"),
+    phoneNumber: strOrNull(r, "phone_number"),
+    graceSkippedAt: dateOrNull(r, "grace_skipped_at"),
+    summaryIntervalHours: numOrNull(r, "summary_interval_hours"),
+    lastSummaryRunAt: dateOrNull(r, "last_summary_run_at"),
+    analyticsShareToken: strOrNull(r, "analytics_share_token"),
+    followUpEnabled: bool(r, "follow_up_enabled", true),
+    followUpThresholdHours: num(r, "follow_up_threshold_hours", 2),
+    followUpEscalateHours: num(r, "follow_up_escalate_hours", 12),
+    followUpLastPingAt: dateOrNull(r, "follow_up_last_ping_at"),
+    followUpLastPingKind: strOrNull(r, "follow_up_last_ping_kind"),
+    followUpAckedAt: dateOrNull(r, "follow_up_acked_at"),
+    profileId: numOrNull(r, "profile_id"),
+    updatedAt: date(r, "updated_at"),
   };
 }
 

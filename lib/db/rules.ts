@@ -1,5 +1,6 @@
 // Split out of the former single lib/db.ts. Import from "@/lib/db" —
 // that barrel re-exports every module here.
+import { bool, date, num, numOrNull, str, strOrNull, type Row } from "./row";
 import { ensureSchema, hasDb, sql } from "./core";
 
 // --- Natural-language message rules ---
@@ -51,30 +52,27 @@ function parseSourceChatIds(v: unknown): number[] | null {
   return ids.length > 0 ? ids : null;
 }
 
-export function rowToRule(r: Record<string, unknown>): MessageRule {
+export function rowToRule(r: Row): MessageRule {
   return {
-    id: Number(r.id),
-    tenantId: r.tenant_id != null ? Number(r.tenant_id) : null,
-    name: r.name as string,
-    description: r.description as string,
-    forwardFormat: (r.forward_format as string) ?? null,
-    forwardHeader: (r.forward_header as string) ?? null,
-    requestTrigger: (r.request_trigger as string) ?? null,
-    requestWindowSeconds:
-      r.request_window_seconds != null
-        ? Number(r.request_window_seconds)
-        : null,
+    id: num(r, "id"),
+    tenantId: numOrNull(r, "tenant_id"),
+    name: str(r, "name"),
+    description: str(r, "description"),
+    forwardFormat: strOrNull(r, "forward_format"),
+    forwardHeader: strOrNull(r, "forward_header"),
+    requestTrigger: strOrNull(r, "request_trigger"),
+    requestWindowSeconds: numOrNull(r, "request_window_seconds"),
     sourceChatIds: parseSourceChatIds(r.source_chat_ids),
     sourceThreadIds: parseSourceChatIds(r.source_thread_ids),
-    matchPattern: (r.match_pattern as string) ?? null,
-    matchAllFromSource: Boolean(r.match_all_from_source),
-    showRulePrefix:
-      r.show_rule_prefix == null ? true : Boolean(r.show_rule_prefix),
-    formatAsOtp: Boolean(r.format_as_otp),
-    enabled: Boolean(r.enabled),
-    createdBy: r.created_by != null ? Number(r.created_by) : null,
-    createdAt: r.created_at as Date,
-    updatedAt: r.updated_at as Date,
+    matchPattern: strOrNull(r, "match_pattern"),
+    matchAllFromSource: bool(r, "match_all_from_source"),
+    // NULL means "not set" and the historical default is on.
+    showRulePrefix: bool(r, "show_rule_prefix", true),
+    formatAsOtp: bool(r, "format_as_otp"),
+    enabled: bool(r, "enabled"),
+    createdBy: numOrNull(r, "created_by"),
+    createdAt: date(r, "created_at"),
+    updatedAt: date(r, "updated_at"),
   };
 }
 
