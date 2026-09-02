@@ -1190,8 +1190,8 @@ async function handleTranscribeCallback(
   // voice/video_note, so the file_id is RIGHT THERE.
   const row = await getRoutedMessage({ storageChatId, storageMessageId });
   let fileId: string | null = row?.fileId ?? null;
-  let senderName: string | null = row?.sourceSenderName ?? null;
-  let alreadyTranscribed: string | null = row?.transcript ?? null;
+  const senderName: string | null = row?.sourceSenderName ?? null;
+  const alreadyTranscribed: string | null = row?.transcript ?? null;
   if (!fileId) {
     type MessageWithMedia = {
       voice?: { file_id: string };

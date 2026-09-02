@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 type Rule = { id: number; name: string };
@@ -150,9 +151,9 @@ export default function ChatRulesPanel({ chatId }: { chatId: number }) {
       ) : (
         <p className="text-[10px] text-[var(--color-text-dim)]">
           هنوز rule‌ای نساختی — برو{" "}
-          <a href="/rules" className="underline">
+          <Link href="/rules" className="underline">
             /rules
-          </a>
+          </Link>
           .
         </p>
       )}

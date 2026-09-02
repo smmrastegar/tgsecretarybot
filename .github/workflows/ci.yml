@@ -1,0 +1,36 @@
+name: ci
+
+# Typecheck, lint and unit tests on every push and PR. The production
+# box deploys by polling the branch, not from here, so this cannot block
+# a deploy by itself — auto-deploy.sh runs the same test suite and
+# refuses to restart the service if it fails. This job is the early,
+# visible signal on GitHub.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: typecheck
+        run: npm run typecheck
+      # Errors fail the job. The ~40 existing unused-variable warnings are
+      # real but not worth blocking a deploy over; tighten to
+      # --max-warnings=0 once they are cleared.
+      - name: lint
+        run: npm run lint
+      - name: test
+        run: npm test

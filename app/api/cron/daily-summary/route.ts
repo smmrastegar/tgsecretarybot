@@ -86,7 +86,7 @@ async function run(request: Request): Promise<NextResponse> {
       : allActivities;
   let summarized = 0;
   let skipped = 0;
-  let skipReasons: Record<string, number> = {};
+  const skipReasons: Record<string, number> = {};
   for (const a of activities) {
     if (a.messages.length < 3) {
       skipped++;

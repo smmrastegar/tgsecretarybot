@@ -172,6 +172,16 @@ if [[ "$LOCAL" == "$REMOTE" ]]; then exit 0; fi
     echo "  no dep change → skipping install"
   fi
   npm run build
+  # Test gate. The build already typechecks; this is the behavioural
+  # check. A red suite means the running service is left exactly as it
+  # was — HEAD has moved, so the next tick will not retry until a new
+  # commit lands, which is the intended outcome: fix it, then push.
+  if ! npm test >>"$LOG" 2>&1; then
+    echo "$(date -Is) ✗ tests FAILED for ${REMOTE:0:7} — service NOT restarted"
+    report_status "deploy" "error" "tests failed for ${REMOTE:0:7}; service left on the previous build"
+    notify_owner "❌ دیپلوی ${REMOTE:0:7} متوقف شد — تست‌ها رد شدند، سرویس روی بیلد قبلی ماند"
+    exit 0
+  fi
   systemctl restart tgsecretarybot
   echo "$(date -Is) ✓ deploy OK → ${REMOTE:0:7} in $(( $(date +%s) - START ))s"
 } >>"$LOG" 2>&1

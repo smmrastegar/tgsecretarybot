@@ -65,7 +65,7 @@ export function parseBoardLabels(raw: string | null): BoardLabel[] {
 }
 
 export function parseBoardPriorities(raw: string | null): BoardPriority[] {
-  let stored: Record<string, { label?: string; color?: string }> = {};
+  const stored: Record<string, { label?: string; color?: string }> = {};
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
@@ -104,7 +104,7 @@ export const DEFAULT_BOARD_COLUMNS: BoardColumn[] = [
 // always covering every fixed status key (falls back to the default
 // label/colour for any key the stored value omits or corrupts).
 export function parseBoardColumns(raw: string | null): BoardColumn[] {
-  let stored: Record<string, { label?: string; color?: string }> = {};
+  const stored: Record<string, { label?: string; color?: string }> = {};
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
