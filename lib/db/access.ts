@@ -9,6 +9,8 @@ export type McpTokenScope = {
   readChatIds: number[];
   writeChatId: number | null;
   writeThreadId: number | null;
+  /** Chats this token may post to in ANY topic (write_chat_ids). */
+  writeChatIds: number[];
   canCreateTopic: boolean;
   fullAccess: boolean;
 };
@@ -20,7 +22,7 @@ export async function getMcpTokenScope(
   await ensureSchema();
   const rows = await sql()`
     SELECT id, label, read_chat_ids, write_chat_id, write_thread_id,
-           can_create_topic, full_access
+           write_chat_ids, can_create_topic, full_access
       FROM mcp_tokens
      WHERE token = ${token} AND enabled = TRUE
      LIMIT 1`;
@@ -30,10 +32,12 @@ export async function getMcpTokenScope(
   void sql()`UPDATE mcp_tokens SET last_used_at = NOW() WHERE id = ${Number(r.id)}`.catch(
     () => {},
   );
-  const ids = String(r.read_chat_ids ?? "")
-    .split(",")
-    .map((x) => Number(x.trim()))
-    .filter((n) => Number.isFinite(n) && n !== 0);
+  const parseIds = (v: unknown): number[] =>
+    String(v ?? "")
+      .split(",")
+      .map((x) => Number(x.trim()))
+      .filter((n) => Number.isFinite(n) && n !== 0);
+  const ids = parseIds(r.read_chat_ids);
   return {
     id: Number(r.id),
     label: String(r.label ?? ""),
@@ -41,6 +45,7 @@ export async function getMcpTokenScope(
     writeChatId: r.write_chat_id == null ? null : Number(r.write_chat_id),
     writeThreadId:
       r.write_thread_id == null ? null : Number(r.write_thread_id),
+    writeChatIds: parseIds(r.write_chat_ids),
     canCreateTopic: Boolean(r.can_create_topic),
     fullAccess: Boolean(r.full_access),
   };

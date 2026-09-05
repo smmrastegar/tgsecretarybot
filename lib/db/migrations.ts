@@ -27,6 +27,16 @@ export type Migration = {
 };
 
 export const MIGRATIONS: Migration[] = [
+  {
+    // A scoped token could write to exactly one chat, and only inside
+    // one topic of it. The DevOps agent needs full write in a second
+    // group while keeping the topic-confined write in the first, so
+    // write_chat_ids lists chats it may post to in any topic.
+    id: "2026-09-05-001-mcp-write-chat-ids",
+    up: async (q) => {
+      await q`ALTER TABLE mcp_tokens ADD COLUMN IF NOT EXISTS write_chat_ids TEXT`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",

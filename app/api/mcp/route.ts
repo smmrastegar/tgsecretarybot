@@ -2241,18 +2241,22 @@ function enforceScope(
     );
   }
   if (name === "send_message" || name === "create_forum_topic") {
-    if (sc.writeChatId == null) {
+    // Two kinds of write grant: chats in writeChatIds are open in every
+    // topic; writeChatId is the single topic-confined one.
+    const openWrite = target != null && sc.writeChatIds.includes(target);
+    if (sc.writeChatId == null && sc.writeChatIds.length === 0) {
       throw new Error("this token is read-only");
     }
-    if (target != null && target !== sc.writeChatId) {
+    if (target != null && !openWrite && target !== sc.writeChatId) {
+      const allowed = [sc.writeChatId, ...sc.writeChatIds].filter((x) => x != null);
       throw new Error(
-        `this token may only write in chat ${sc.writeChatId}, not ${target}`,
+        `this token may only write in chat(s) ${allowed.join(", ")}, not ${target}`,
       );
     }
     if (name === "create_forum_topic" && !sc.canCreateTopic) {
       throw new Error("this token may not create topics");
     }
-    if (name === "send_message") {
+    if (name === "send_message" && !openWrite) {
       // Writing is confined to one topic; the General channel and every
       // other topic stay read-only.
       const thread = asId(args.message_thread_id);
