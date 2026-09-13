@@ -339,7 +339,7 @@ const TOOLS = [
   {
     name: "send_message",
     description:
-      "Send a text message AS THE BOT to a Telegram chat (group/user) the bot is a member of. Supports HTML parse_mode (<b>, <i>, <code>, <a href>). Use to post reports into a group. Max 4096 chars per message — split long content into multiple calls.",
+      "Send a plain/HTML text message AS THE BOT (classic parse_mode: <b>, <i>, <code>, <a href>; max 4096 chars). For reports, tables, headings or lists use send_rich_message instead — it renders real structure and allows 32768 chars.",
     inputSchema: {
       type: "object",
       properties: {
@@ -370,6 +370,33 @@ const TOOLS = [
         },
       },
       required: ["chat_id", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "send_rich_message",
+    description:
+      "Send a Telegram RICH MESSAGE (Bot API 10.2+): real headings, bullet/numbered/checkbox lists, tables, block quotes, collapsible <details>, footers, code blocks, formulas — rendered natively by Telegram clients, up to 32768 chars. Prefer this over send_message for reports, summaries, tables and anything longer than a few lines. Give content as `markdown` (GitHub-flavoured: # headings, - lists, - [ ] tasks, | tables |, > quotes, ```code```, **bold**, ==mark==, ||spoiler||, <details><summary>…</summary>…</details>) OR as `html` (<h1>-<h6>, <p>, <ul>/<ol>/<li>, <table>, <blockquote expandable>, <details>, <footer>, <hr>, <b>/<i>/<u>/<s>/<code>/<mark>/<a>). Rendered right-to-left by default (Persian). Set receiver_user_id to make it a Telegram ephemeral message visible to one user only. If Telegram rejects the rich payload the tool falls back to a flattened classic-HTML message and reports fallback=true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: { type: "number", description: "Target chat_id (group is negative)" },
+        markdown: { type: "string", description: "Rich Markdown content (use this OR html)" },
+        html: { type: "string", description: "Rich HTML content (use this OR markdown)" },
+        message_thread_id: { type: "number", description: "Optional forum topic thread id" },
+        reply_to_message_id: { type: "number", description: "Optional message_id to reply to" },
+        receiver_user_id: {
+          type: "number",
+          description: "Optional. Make it an ephemeral message shown only to this user (groups).",
+        },
+        silent: { type: "boolean", description: "Send without notification sound" },
+        is_rtl: { type: "boolean", description: "Right-to-left layout. Default true." },
+        business_connection_id: {
+          type: "string",
+          description: "Optional. Send on behalf of the connected business account.",
+        },
+      },
+      required: ["chat_id"],
       additionalProperties: false,
     },
   },
@@ -1509,6 +1536,65 @@ async function callTool(
       return toolText({ ok: true, message_id: r.message_id });
     }
 
+    case "send_rich_message": {
+      const chatId = Number(args.chat_id);
+      if (!Number.isFinite(chatId)) throw new Error("chat_id required");
+      const md = args.markdown != null ? String(args.markdown) : "";
+      const htmlIn = args.html != null ? String(args.html) : "";
+      if (!md.trim() && !htmlIn.trim()) throw new Error("markdown or html required");
+      if (md.trim() && htmlIn.trim()) throw new Error("pass markdown OR html, not both");
+      const { sendRichMessage, classicFallbackText } = await import("@/lib/telegram-rich");
+      const content = md.trim() ? { markdown: md.slice(0, 32768) } : { html: htmlIn.slice(0, 32768) };
+      const receiver =
+        args.receiver_user_id != null ? Number(args.receiver_user_id) : null;
+      const sent = await sendRichMessage({
+        ...content,
+        chatId,
+        messageThreadId:
+          args.message_thread_id != null ? Number(args.message_thread_id) : null,
+        replyToMessageId:
+          args.reply_to_message_id != null ? Number(args.reply_to_message_id) : null,
+        silent: args.silent === true,
+        isRtl: args.is_rtl !== false,
+        receiverUserId: receiver != null && Number.isFinite(receiver) ? receiver : null,
+        businessConnectionId: args.business_connection_id
+          ? String(args.business_connection_id)
+          : null,
+      });
+      if (receiver == null) {
+        // Same reason as send_message: Telegram never echoes our own
+        // sends, so rules/logging must be fed here. Ephemeral ones are
+        // private to one reader and stay out of it.
+        try {
+          const { applyRulesToBotOutgoing } = await import("@/lib/bot");
+          const plain = classicFallbackText(content)
+            .replace(/<[^>]+>/g, "")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"')
+            .replace(/&amp;/g, "&");
+          await applyRulesToBotOutgoing({
+            chatId,
+            chatType: chatId < 0 ? "supergroup" : "private",
+            chatTitle: null,
+            messageThreadId:
+              args.message_thread_id != null ? Number(args.message_thread_id) : null,
+            messageId: sent.message_id,
+            text: plain,
+            senderName: "MCP agent",
+          });
+        } catch (err) {
+          console.warn("[mcp] outgoing rule pass failed:", err);
+        }
+      }
+      return toolText({
+        ok: true,
+        message_id: sent.message_id,
+        ephemeral_message_id: sent.ephemeral_message_id ?? null,
+        fallback: sent.fallback,
+      });
+    }
+
     case "send_ephemeral_message": {
       const receiver = Number(args.receiver_user_id);
       if (!Number.isFinite(receiver) || receiver <= 0) {
@@ -2484,6 +2570,7 @@ const SCOPED_TOOLS = new Set([
   "chat_messages",
   "chat_history",
   "send_message",
+  "send_rich_message",
   "send_ephemeral_message",
   "delete_ephemeral_message",
   "edit_ephemeral_message",
@@ -2540,6 +2627,7 @@ function enforceScope(
   }
   const isSend =
     name === "send_message" ||
+    name === "send_rich_message" ||
     name === "send_ephemeral_message" ||
     name === "edit_ephemeral_message" ||
     name === "delete_ephemeral_message" ||
@@ -2569,9 +2657,10 @@ function enforceScope(
           `this token may only post in topic ${sc.writeThreadId} of chat ${sc.writeChatId}`,
         );
       }
-      if (args.business_connection_id) {
-        throw new Error("this token may not send as the owner");
-      }
+    }
+    // Whatever the write grant, a scoped token never speaks AS the owner.
+    if (isSend && args.business_connection_id) {
+      throw new Error("this token may not send as the owner");
     }
   }
 }

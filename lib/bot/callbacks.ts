@@ -13,6 +13,8 @@ import { buildEmailCard, resolveEmailAccount } from "../email";
 import { summarizeEmail } from "../classifier";
 import { reportError, reportWarn } from "../report";
 import { _bot, chunkText, escapeForHtml } from "./core";
+import { buildThreadSummaryHtml } from "./summary";
+import { editRichMessage } from "../telegram-rich";
 
 export function buildMainMenu(isOwner: boolean): InlineKeyboard {
   const kb = new InlineKeyboard()
@@ -567,13 +569,12 @@ export async function handleEmailCallback(
       const account = await resolveEmailAccount(e).catch(() => null);
       const card = buildEmailCard(e, account, { summary: e.summary });
       if (cardMsgId) {
-        await ctx.api
-          .editMessageText(chatId, cardMsgId, card.text, {
-            parse_mode: "HTML",
-            link_preview_options: { is_disabled: true },
-            reply_markup: card.reply_markup,
-          })
-          .catch(() => {});
+        await editRichMessage({
+          chatId,
+          messageId: cardMsgId,
+          content: { html: card.html },
+          replyMarkup: card.reply_markup,
+        }).catch(() => {});
       }
       return;
     }
@@ -590,13 +591,12 @@ export async function handleEmailCallback(
     const account = await resolveEmailAccount(e).catch(() => null);
     const card = buildEmailCard({ ...e, summary }, account);
     if (cardMsgId) {
-      await ctx.api
-        .editMessageText(chatId, cardMsgId, card.text, {
-          parse_mode: "HTML",
-          link_preview_options: { is_disabled: true },
-          reply_markup: card.reply_markup,
-        })
-        .catch(() => {});
+      await editRichMessage({
+        chatId,
+        messageId: cardMsgId,
+        content: { html: card.html },
+        replyMarkup: card.reply_markup,
+      }).catch(() => {});
     }
     return;
   }
@@ -916,25 +916,31 @@ export async function handleAutoSummaryCallback(
         [rule.firstName, rule.lastName].filter(Boolean).join(" ").trim() ||
         rule.chatTitle ||
         `chat ${rule.chatId}`;
-      const body = [
-        `📬 خلاصه‌ی thread — ${chatLabel} (re-generated)`,
-        "",
-        s.summary,
-        s.topics.length > 0 ? `\nموضوعات: ${s.topics.join(" · ")}` : "",
-        s.actionItems.length > 0
-          ? `\nاکشن‌ها:\n• ${s.actionItems.join("\n• ")}`
-          : "",
-      ]
-        .filter(Boolean)
-        .join("\n")
-        .slice(0, 3800);
+      const html = buildThreadSummaryHtml({
+        chatLabel,
+        summary: s.summary,
+        topics: s.topics,
+        actionItems: s.actionItems,
+        messageCount: threadMsgs.length,
+        from: threadMsgs[0]!.createdAt,
+        to: threadMsgs[threadMsgs.length - 1]!.createdAt,
+        regenerated: true,
+      });
       const keyboard = new InlineKeyboard()
         .text("💬 جواب پیشنهادی", `as:reply:${chatId}:${startSec}`)
         .text("🔄 Regenerate", `as:resum:${chatId}:${startSec}`);
-      try {
-        await ctx.editMessageText(body, { reply_markup: keyboard });
-      } catch (err) {
-        reportWarn("bot", "[as_callback] editMessageText failed:", err);
+      const msg = ctx.callbackQuery?.message;
+      if (msg) {
+        try {
+          await editRichMessage({
+            chatId: msg.chat.id,
+            messageId: msg.message_id,
+            content: { html },
+            replyMarkup: keyboard,
+          });
+        } catch (err) {
+          reportWarn("bot", "[as_callback] editMessageText failed:", err);
+        }
       }
     } catch (err) {
       reportError("bot", "[as_callback] resum failed:", err);

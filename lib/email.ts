@@ -11,6 +11,8 @@ import {
   type EmailRow,
 } from "./db";
 import { emailLinkToken } from "./email-link";
+import { reportError } from "./report";
+import { richHtmlToClassic, sendRichMessage } from "./telegram-rich";
 import { getSettings } from "./settings";
 
 const RESEND_API = "https://api.resend.com/emails";
@@ -90,7 +92,7 @@ export function buildEmailCard(
   email: EmailRow,
   account: EmailAccount | null,
   opts?: { summary?: string | null },
-): { text: string; reply_markup: { inline_keyboard: InlineBtn[][] } } {
+): { text: string; html: string; reply_markup: { inline_keyboard: InlineBtn[][] } } {
   const emailId = email.id;
   // Every attacker-controlled field is bounded here so the final card
   // stays well under Telegram's 4096 limit WITHOUT a blind slice that
@@ -115,29 +117,39 @@ export function buildEmailCard(
   // Show at most 8 attachment links; note any overflow in plain text.
   const MAX_ATT = 8;
   const shown = attachments.slice(0, MAX_ATT);
-  const attachmentLines = shown
-    .map((a) => {
-      // encodeURIComponent the id so a stray quote can't break out of
-      // the href attribute (esc() doesn't escape ").
-      const url = `${site}/api/public/emails/${emailId}/attachment/${encodeURIComponent(String(a.id))}?t=${token}`;
-      return `📎 <a href="${esc(url)}">${esc(cap(a.filename || "file", 80))}</a>`;
-    })
-    .join("\n");
   const attachmentExtra =
     attachments.length > MAX_ATT
       ? `\n… و ${attachments.length - MAX_ATT} پیوست دیگر`
       : "";
 
   const summary = cap((opts?.summary ?? "").trim(), 1000);
-  const text =
-    `📧 <b>ایمیل جدید</b>${accountName ? ` — ${esc(accountName)}` : ""}\n` +
-    `از: <b>${esc(from)}</b>\n` +
-    (toEmails ? `به: ${esc(toEmails)}\n` : "") +
-    `موضوع: <b>${esc(subject)}</b>\n` +
-    (attachmentLines ? `${attachmentLines}${attachmentExtra}\n` : "") +
-    `\n${esc(preview)}${preview.length >= 300 ? "…" : ""}` +
-    (summary ? `\n\n🧠 <b>خلاصه</b>\n${esc(summary)}` : "");
-
+  // Rich HTML (Bot API 10.2): heading, a compact key/value table, the
+  // attachment list, the preview as a quote and the AI summary as a
+  // collapsible block. `text` below is the classic-HTML flattening of
+  // the same card, used when the rich send has to fall back.
+  const rows: string[] = [];
+  rows.push(`<tr><td>از</td><td><b>${esc(from)}</b></td></tr>`);
+  if (toEmails) rows.push(`<tr><td>به</td><td>${esc(toEmails)}</td></tr>`);
+  rows.push(`<tr><td>موضوع</td><td><b>${esc(subject)}</b></td></tr>`);
+  const attachmentItems = shown
+    .map((a) => {
+      const url = `${site}/api/public/emails/${emailId}/attachment/${encodeURIComponent(String(a.id))}?t=${token}`;
+      return `<li>📎 <a href="${esc(url)}">${esc(cap(a.filename || "file", 80))}</a></li>`;
+    })
+    .join("");
+  const html =
+    `<h4>📧 ایمیل جدید${accountName ? ` — ${esc(accountName)}` : ""}</h4>` +
+    `<table compact>${rows.join("")}</table>` +
+    (attachmentItems
+      ? `<ul>${attachmentItems}</ul>${attachmentExtra ? `<p>${esc(attachmentExtra.trim())}</p>` : ""}`
+      : "") +
+    (preview
+      ? `<blockquote expandable>${esc(preview)}${preview.length >= 300 ? "…" : ""}</blockquote>`
+      : "") +
+    (summary
+      ? `<details open><summary>🧠 خلاصه</summary><p>${esc(summary).replace(/\n/g, "<br>")}</p></details>`
+      : "");
+  const text = richHtmlToClassic(html);
   const base = `${site}/e/${emailId}?t=${token}`;
   const reply_markup: { inline_keyboard: InlineBtn[][] } = {
     inline_keyboard: [
@@ -161,7 +173,7 @@ export function buildEmailCard(
     text.length <= 4096
       ? text
       : text.slice(0, text.lastIndexOf("\n", 4096) > 0 ? text.lastIndexOf("\n", 4096) : 4000);
-  return { text: safeText, reply_markup };
+  return { text: safeText, html, reply_markup };
 }
 
 // Post an incoming email to its account's channel. All the open-in-
@@ -179,28 +191,19 @@ export async function postIncomingEmailToChannel(
   if (!chatId) return { ok: false, chatId: null };
 
   const card = buildEmailCard(email, account, { summary: email.summary });
-  const res = await fetch(
-    `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: card.text,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-        reply_markup: card.reply_markup,
-      }),
-    },
-  );
-  const j = (await res.json().catch(() => ({}))) as {
-    ok?: boolean;
-    result?: { message_id: number };
-  };
-  if (j.ok && j.result) {
-    await setEmailTelegramRef(emailId, chatId, j.result.message_id).catch(() => {});
+  let ok = false;
+  try {
+    const sent = await sendRichMessage({
+      chatId,
+      html: card.html,
+      replyMarkup: card.reply_markup,
+    });
+    ok = true;
+    await setEmailTelegramRef(emailId, chatId, sent.message_id).catch(() => {});
+  } catch (err) {
+    reportError("email", `post card for email #${emailId} failed:`, err);
   }
-  return { ok: Boolean(j.ok), chatId };
+  return { ok, chatId };
 }
 
 // Core send. `account` selects credentials + records account_id.

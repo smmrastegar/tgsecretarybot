@@ -6,6 +6,50 @@ import { aiConversationReply, summarizeGroup } from "../classifier";
 import { getSettings } from "../settings";
 import { hasDb, getPrimarySummaryInbox, listChatThreaded, markAutoSummaryDelivered, setThreadSummaryInbox, sql, upsertThreadSummary, type ChatRule } from "../db";
 import { reportError, reportWarn } from "../report";
+import { escRich, faNum, sendRichMessage } from "../telegram-rich";
+
+// Rich-HTML body of a thread summary (auto-summary inbox card). Shared
+// with the "خلاصه دوباره" callback so both render identically.
+export function buildThreadSummaryHtml(a: {
+  chatLabel: string;
+  summary: string;
+  topics: string[];
+  actionItems: string[];
+  messageCount: number;
+  from: Date;
+  to: Date;
+  suggested?: string;
+  regenerated?: boolean;
+}): string {
+  const fmt = (d: Date) =>
+    d.toLocaleString("fa-IR", { timeZone: "Asia/Tehran", hour12: false });
+  const parts: string[] = [];
+  parts.push(
+    `<h4>📬 خلاصه‌ی گفتگو — ${escRich(a.chatLabel)}${a.regenerated ? " <i>(بازتولید)</i>" : ""}</h4>`,
+  );
+  parts.push(`<p>${escRich(a.summary).replace(/\n/g, "<br>")}</p>`);
+  if (a.topics.length > 0) {
+    parts.push(
+      `<p>🏷 ${a.topics.map((t) => `<mark>${escRich(t)}</mark>`).join(" · ")}</p>`,
+    );
+  }
+  if (a.actionItems.length > 0) {
+    parts.push(`<h5>✅ اکشن‌ها</h5>`);
+    parts.push(
+      `<ul>${a.actionItems.map((x) => `<li><input type="checkbox">${escRich(x)}</li>`).join("")}</ul>`,
+    );
+  }
+  if (a.suggested) {
+    parts.push(`<h5>🤖 پاسخ پیشنهادی</h5>`);
+    parts.push(
+      `<blockquote expandable>${escRich(a.suggested).replace(/\n/g, "<br>")}</blockquote>`,
+    );
+  }
+  parts.push(
+    `<footer>⏱ ${faNum(a.messageCount)} پیام · ${escRich(fmt(a.from))} ← ${escRich(fmt(a.to))}</footer>`,
+  );
+  return parts.join("");
+}
 
 // In ai_listen mode with auto_summarize_enabled, whenever a NEW
 // message arrives we check the gap from the previously logged
@@ -69,7 +113,7 @@ export async function deliverAutoSummary(args: {
   rule: ChatRule;
   throughTs: Date;
 }): Promise<boolean> {
-  const { bot, rule, throughTs } = args;
+  const { rule, throughTs } = args;
   const inbox = await getPrimarySummaryInbox();
   if (!inbox) {
     reportWarn("bot", 
@@ -183,23 +227,16 @@ export async function deliverAutoSummary(args: {
     reportWarn("bot", "[auto_summary] suggested reply failed:", err);
   }
 
-  const header = `📬 خلاصه‌ی thread — ${chatLabel}`;
-  const body = [
-    header,
-    "",
-    summary.summary,
-    summary.topics.length > 0
-      ? `\nموضوعات: ${summary.topics.join(" · ")}`
-      : "",
-    summary.actionItems.length > 0
-      ? `\nاکشن‌ها:\n• ${summary.actionItems.join("\n• ")}`
-      : "",
-    `\n⏱ ${threadMsgs.length} پیام · ${threadMsgs[0]!.createdAt.toLocaleString()} → ${threadMsgs[threadMsgs.length - 1]!.createdAt.toLocaleString()}`,
-    suggested ? `\n\n🤖 پاسخ پیشنهادی:\n${suggested}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n")
-    .slice(0, 3800);
+  const html = buildThreadSummaryHtml({
+    chatLabel,
+    summary: summary.summary,
+    topics: summary.topics,
+    actionItems: summary.actionItems,
+    messageCount: threadMsgs.length,
+    from: threadMsgs[0]!.createdAt,
+    to: threadMsgs[threadMsgs.length - 1]!.createdAt,
+    suggested: suggested || undefined,
+  });
 
   // callback_data limit is 64 bytes. We pack { action, chatId,
   // threadStartTs (unix seconds) }. The handler recovers the thread
@@ -216,8 +253,10 @@ export async function deliverAutoSummary(args: {
         .text("🔄 Regenerate", `as:resum:${rule.chatId}:${startSec}`);
 
   try {
-    const sent = await bot.api.sendMessage(inbox.chatId, body, {
-      reply_markup: keyboard,
+    const sent = await sendRichMessage({
+      chatId: inbox.chatId,
+      html,
+      replyMarkup: keyboard,
     });
     await markAutoSummaryDelivered(rule.chatId);
     await setThreadSummaryInbox({

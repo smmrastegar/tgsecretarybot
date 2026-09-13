@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { InlineKeyboard } from "grammy";
 import { config } from "@/lib/config";
 import { getCurrentSession } from "@/lib/auth";
-import { getBot } from "@/lib/bot";
+import { faNum, sendRichMessage } from "@/lib/telegram-rich";
 
 const TRANSCRIBABLE_KINDS = ["voice", "audio", "video_note"] as const;
 
@@ -110,7 +110,6 @@ async function processTenant(tenantId: number) {
     if (!inbox) return { tenantId, pinged: 0, skipped: "no notes_inbox" };
     // 10 oldest-waiting candidates that passed threshold + filters.
     const candidates = await listFollowUpCandidates({ tenantId });
-    const bot = getBot();
     let pinged = 0;
     let aiSkipped = 0;
     let aiAnalyzed = 0;
@@ -202,22 +201,17 @@ async function processTenant(tenantId: number) {
         c.lastCustomerMessageText.slice(0, 220).replace(/\s+/g, " ") ||
         "(پیام بدون متن)";
       const nameLink = `<a href="tg://user?id=${c.chatId}">${escHtml(displayName(c))}</a>`;
-      const text =
-        `${headerEmoji} <b>${headerLabel}</b> ${urgencyEmoji}\n` +
-        `👤 <b>${nameLink}</b>` +
-        ` · ${c.pendingCustomerMessageCount} پیام منتظر\n` +
-        `⏱ ${Math.round(hoursSince)} ساعت پیش\n\n` +
-        `🤖 ${escHtml(aiReason)}\n\n` +
-        `💬 «${escHtml(preview)}»`;
+      const html =
+        `<h4>${headerEmoji} ${escHtml(headerLabel)} ${urgencyEmoji}</h4>` +
+        `<p>👤 <b>${nameLink}</b> · ${faNum(c.pendingCustomerMessageCount)} پیام منتظر · ⏱ ${faNum(Math.round(hoursSince))} ساعت پیش</p>` +
+        `<p>🤖 ${escHtml(aiReason)}</p>` +
+        `<blockquote>${escHtml(preview)}</blockquote>`;
       const kb = new InlineKeyboard().text(
         "✅ متوجه شدم",
         `fu:ack:${c.chatId}`,
       );
       try {
-        await bot.api.sendMessage(inbox.chatId, text.slice(0, 4096), {
-          parse_mode: "HTML",
-          reply_markup: kb,
-        });
+        await sendRichMessage({ chatId: inbox.chatId, html, replyMarkup: kb });
         await recordChatFollowUpPing({ chatId: c.chatId, kind });
         pinged++;
       } catch (err) {

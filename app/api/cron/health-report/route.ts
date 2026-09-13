@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
-import { getBot } from "@/lib/bot";
 import { hasDb, sql } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { getBudgetState } from "@/lib/hikerapi-budget";
+import { faNum, sendRichMessage } from "@/lib/telegram-rich";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,27 +53,40 @@ async function run(request: Request): Promise<NextResponse> {
   const budget = await getBudgetState(1).catch(() => null);
 
   const num = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
-  const lines: string[] = ["🩺 گزارش روزانه‌ی سلامت سیستم", ""];
+  // Rich message: one status table, then a short note list. The
+  // classic fallback flattens the table to "k | v" rows.
+  const rows: Array<[string, string, string]> = [];
   if (budget && budget.budgetUsd > 0) {
     const pct = Math.round((budget.spentUsd / budget.budgetUsd) * 100);
-    lines.push(
-      `${pct >= 90 ? "🔴" : pct >= 70 ? "🟡" : "🟢"} بودجه‌ی HikerAPI: $${budget.spentUsd.toFixed(2)} از $${budget.budgetUsd.toFixed(2)} (${pct}٪)`,
-    );
+    rows.push([
+      pct >= 90 ? "🔴" : pct >= 70 ? "🟡" : "🟢",
+      "بودجه‌ی HikerAPI",
+      `$${budget.spentUsd.toFixed(2)} از $${budget.budgetUsd.toFixed(2)} (${faNum(pct)}٪)`,
+    ]);
   }
-  lines.push(
-    `${num(monErr.n) > 0 ? "🟡" : "🟢"} اکانت‌های پایش با خطا: ${num(monErr.n)}`,
-    `${num(errs24.n) > 0 ? "🟡" : "🟢"} خطاهای سیستم (۲۴س): ${num(errs24.n)}`,
-    `📨 پیام‌های پردازش‌شده (۲۴س): ${num(msg24.n)}`,
-    `📐 تطبیق قانون (۲۴س): ${num(matches24.total)} — ارسال‌شده: ${num(matches24.forwarded)}`,
+  rows.push(
+    [num(monErr.n) > 0 ? "🟡" : "🟢", "اکانت‌های پایش با خطا", faNum(num(monErr.n))],
+    [num(errs24.n) > 0 ? "🟡" : "🟢", "خطاهای سیستم (۲۴ ساعت)", faNum(num(errs24.n))],
+    ["📨", "پیام‌های پردازش‌شده (۲۴ ساعت)", faNum(num(msg24.n))],
+    [
+      "📐",
+      "تطبیق قانون (۲۴ ساعت)",
+      `${faNum(num(matches24.total))} — ارسال‌شده: ${faNum(num(matches24.forwarded))}`,
+    ],
   );
   if (num(stuckAlbums.n) > 0) {
-    lines.push(`🔴 آلبوم‌های گیرکرده در بافر آینه: ${num(stuckAlbums.n)}`);
+    rows.push(["🔴", "آلبوم‌های گیرکرده در بافر آینه", faNum(num(stuckAlbums.n))]);
   }
+  const worst = rows.some((r) => r[0] === "🔴") ? "🔴" : rows.some((r) => r[0] === "🟡") ? "🟡" : "🟢";
+  const html =
+    `<h4>🩺 گزارش روزانه‌ی سلامت سیستم ${worst}</h4>` +
+    `<table striped compact>` +
+    `<tr><th></th><th>شاخص</th><th>مقدار</th></tr>` +
+    rows.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join("") +
+    `</table>` +
+    `<footer>${new Date().toLocaleString("fa-IR", { timeZone: "Asia/Tehran", hour12: false })}</footer>`;
 
-  const bot = getBot();
-  await bot.api.sendMessage(notifyChat, lines.join("\n"), {
-    disable_notification: true,
-  });
+  await sendRichMessage({ chatId: notifyChat, html, silent: true });
   return NextResponse.json({ ok: true, sent: true });
 }
 
