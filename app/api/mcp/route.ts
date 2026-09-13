@@ -374,6 +374,73 @@ const TOOLS = [
     },
   },
   {
+    name: "send_ephemeral_message",
+    description:
+      "Send a SELF-DELETING text message as the bot. Same arguments as send_message plus ttl_seconds: the message is deleted automatically when the TTL elapses (in-process timer, backed by a per-minute sweep so a restart cannot leave it up). Telegram cannot delete messages older than 48h, so the maximum TTL is 47h (169200 s). Default TTL 60 s. A Persian '⏳ this message disappears in …' footer is appended unless footer=false. Use for one-time codes, temporary notices, or anything that should not stay in the chat history.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: {
+          type: "number",
+          description: "Target numeric chat_id (group is negative). @username is not supported here.",
+        },
+        text: { type: "string", description: "Message text (HTML allowed)" },
+        ttl_seconds: {
+          type: "number",
+          description: "Seconds until the message is deleted (5 … 169200). Default 60.",
+        },
+        parse_mode: {
+          type: "string",
+          description: "'HTML' (default) or 'MarkdownV2' or 'none'",
+        },
+        message_thread_id: {
+          type: "number",
+          description: "Optional forum topic thread id.",
+        },
+        reply_to_message_id: {
+          type: "number",
+          description: "Optional message_id to reply to.",
+        },
+        footer: {
+          type: "boolean",
+          description: "Append the countdown footer line. Default true.",
+        },
+        label: {
+          type: "string",
+          description: "Optional free-text label kept with the schedule row (e.g. 'otp for X').",
+        },
+      },
+      required: ["chat_id", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_ephemeral_messages",
+    description:
+      "List ephemeral messages that are still live (not yet deleted), soonest-to-expire first, with seconds_left. Optionally filter by chat_id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: { type: "number", description: "Optional chat filter" },
+        limit: { type: "number", description: "Max rows (default 100)" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "delete_ephemeral_now",
+    description:
+      "Delete an ephemeral message before its TTL elapses, by the ephemeral_id returned from send_ephemeral_message.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ephemeral_id: { type: "number", description: "Row id from send_ephemeral_message" },
+      },
+      required: ["ephemeral_id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "send_photo",
     description:
       "Send a photo (by public URL) AS THE BOT to a Telegram chat, with an optional HTML caption. Use for charts / diagrams that illustrate a report. The URL must be publicly fetchable by Telegram's servers.",
@@ -848,6 +915,114 @@ function redactDeep(node: unknown): unknown {
   return node;
 }
 
+// Shared by send_message and send_ephemeral_message: the Telegram call,
+// then the rule pass Telegram itself will never trigger for our own
+// sends. Returns the new message_id.
+async function sendTextMessage(
+  args: Record<string, unknown>,
+): Promise<{ message_id: number; chat_id: number | string }> {
+  // chat_id may be a numeric id OR an "@username" string (only
+  // resolvable when sending via a business connection / public peer).
+  const rawCid = args.chat_id as unknown;
+  const chatTarget =
+    typeof rawCid === "string" && rawCid.trim().startsWith("@")
+      ? rawCid.trim()
+      : Number(rawCid);
+  if (
+    chatTarget === "" ||
+    (typeof chatTarget === "number" && !Number.isFinite(chatTarget))
+  ) {
+    throw new Error("chat_id required (number or @username)");
+  }
+  const text = String(args.text ?? "");
+  if (!text.trim()) throw new Error("text required");
+  const pm = String(args.parse_mode ?? "HTML");
+  const body: Record<string, unknown> = {
+    chat_id: chatTarget,
+    text: text.slice(0, 4096),
+    disable_web_page_preview: true,
+  };
+  if (pm !== "none") body.parse_mode = pm;
+  if (args.message_thread_id != null) {
+    body.message_thread_id = Number(args.message_thread_id);
+  }
+  if (args.reply_to_message_id != null) {
+    // reply_parameters is the current form; allow_sending_without_reply
+    // keeps a deleted parent from failing the whole send.
+    body.reply_parameters = {
+      message_id: Number(args.reply_to_message_id),
+      allow_sending_without_reply: true,
+    };
+  }
+  if (args.business_connection_id) {
+    body.business_connection_id = String(args.business_connection_id);
+  }
+  const res = await fetch(
+    `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  const j = (await res.json()) as {
+    ok: boolean;
+    result?: { message_id: number };
+    description?: string;
+  };
+  if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
+  // Telegram never echoes a bot's own sends back as an update, so
+  // without this an agent posting here is invisible to messages_log
+  // and to message rules. Hand it to the same evaluator the group
+  // path uses. Best-effort: a rule failure must not fail the send.
+  try {
+    const { applyRulesToBotOutgoing } = await import("@/lib/bot");
+    // `text` is the HTML we sent to Telegram. Log and forward what a
+    // reader actually SEES, or the markup leaks into the forward as
+    // literal "<b>…</b>" — and the classifier scores tags as content.
+    const plain =
+      pm === "HTML"
+        ? text
+            .replace(/<br\s*\/?>/gi, "\n")
+            .replace(/<[^>]+>/g, "")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&amp;/g, "&")
+        : text;
+    await applyRulesToBotOutgoing({
+      chatId: Number(chatTarget),
+      chatType: Number(chatTarget) < 0 ? "supergroup" : "private",
+      chatTitle: null,
+      messageThreadId:
+        args.message_thread_id != null
+          ? Number(args.message_thread_id)
+          : null,
+      messageId: j.result?.message_id ?? 0,
+      text: plain,
+      senderName: "MCP agent",
+    });
+  } catch (err) {
+    console.warn("[mcp] outgoing rule pass failed:", err);
+  }
+  return { message_id: j.result?.message_id ?? 0, chat_id: chatTarget };
+}
+
+// Persian countdown line appended to an ephemeral message so readers
+// know it will vanish. Duration is rounded to the largest whole unit.
+function ephemeralFooter(ttl: number, parseMode: string): string {
+  const fa = (n: number) => String(n).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+  const span =
+    ttl >= 3600
+      ? `${fa(Math.round(ttl / 3600))} ساعت`
+      : ttl >= 60
+        ? `${fa(Math.round(ttl / 60))} دقیقه`
+        : `${fa(ttl)} ثانیه`;
+  const line = `⏳ این پیام تا ${span} دیگر خودبه‌خود پاک می‌شود`;
+  return parseMode === "HTML" ? `<i>${line}</i>` : line;
+}
+
 async function callTool(
   name: string,
   args: Record<string, unknown>,
@@ -1244,92 +1419,71 @@ async function callTool(
       });
     }
     case "send_message": {
-      // chat_id may be a numeric id OR an "@username" string (only
-      // resolvable when sending via a business connection / public peer).
-      const rawCid = args.chat_id as unknown;
-      const chatTarget =
-        typeof rawCid === "string" && rawCid.trim().startsWith("@")
-          ? rawCid.trim()
-          : Number(rawCid);
-      if (
-        chatTarget === "" ||
-        (typeof chatTarget === "number" && !Number.isFinite(chatTarget))
-      ) {
-        throw new Error("chat_id required (number or @username)");
+      const r = await sendTextMessage(args);
+      return toolText({ ok: true, message_id: r.message_id });
+    }
+
+    case "send_ephemeral_message": {
+      const { armEphemeralTimer, clampTtl, EPHEMERAL_MAX_TTL } = await import(
+        "@/lib/ephemeral"
+      );
+      const { scheduleEphemeralDelete } = await import("@/lib/db");
+      const ttl = clampTtl(args.ttl_seconds);
+      if (Number(args.ttl_seconds) > EPHEMERAL_MAX_TTL) {
+        throw new Error(
+          `ttl_seconds too large: Telegram cannot delete a message older than 48h (max ${EPHEMERAL_MAX_TTL})`,
+        );
       }
+      const pm = String(args.parse_mode ?? "HTML");
+      const footer = args.footer === false ? "" : ephemeralFooter(ttl, pm);
       const text = String(args.text ?? "");
       if (!text.trim()) throw new Error("text required");
-      const pm = String(args.parse_mode ?? "HTML");
-      const body: Record<string, unknown> = {
-        chat_id: chatTarget,
-        text: text.slice(0, 4096),
-        disable_web_page_preview: true,
+      const sendArgs: Record<string, unknown> = {
+        ...args,
+        text: footer ? `${text}\n\n${footer}` : text,
       };
-      if (pm !== "none") body.parse_mode = pm;
-      if (args.message_thread_id != null) {
-        body.message_thread_id = Number(args.message_thread_id);
+      delete sendArgs.ttl_seconds;
+      delete sendArgs.footer;
+      delete sendArgs.label;
+      const r = await sendTextMessage(sendArgs);
+      const chatId = Number(r.chat_id);
+      if (!Number.isFinite(chatId)) {
+        throw new Error(
+          "sent, but @username targets cannot be scheduled for deletion — use a numeric chat_id",
+        );
       }
-      if (args.reply_to_message_id != null) {
-        // reply_parameters is the current form; allow_sending_without_reply
-        // keeps a deleted parent from failing the whole send.
-        body.reply_parameters = {
-          message_id: Number(args.reply_to_message_id),
-          allow_sending_without_reply: true,
-        };
-      }
-      if (args.business_connection_id) {
-        body.business_connection_id = String(args.business_connection_id);
-      }
-      const res = await fetch(
-        `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        },
+      const id = await scheduleEphemeralDelete({
+        chatId,
+        messageId: r.message_id,
+        ttlSeconds: ttl,
+        label: args.label != null ? String(args.label).slice(0, 120) : null,
+      });
+      armEphemeralTimer(id, ttl);
+      return toolText({
+        ok: true,
+        message_id: r.message_id,
+        ephemeral_id: id,
+        ttl_seconds: ttl,
+        delete_at: new Date(Date.now() + ttl * 1000).toISOString(),
+      });
+    }
+
+    case "list_ephemeral_messages": {
+      const { pendingEphemeralMessages } = await import("@/lib/db");
+      const cid = args.chat_id != null ? Number(args.chat_id) : null;
+      const rows = await pendingEphemeralMessages(
+        cid != null && Number.isFinite(cid) ? cid : null,
+        Math.min(500, Math.max(1, Number(args.limit ?? 100))),
       );
-      const j = (await res.json()) as {
-        ok: boolean;
-        result?: { message_id: number };
-        description?: string;
-      };
-      if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
-      // Telegram never echoes a bot's own sends back as an update, so
-      // without this an agent posting here is invisible to messages_log
-      // and to message rules. Hand it to the same evaluator the group
-      // path uses. Best-effort: a rule failure must not fail the send.
-      try {
-        const { applyRulesToBotOutgoing } = await import("@/lib/bot");
-        // `text` is the HTML we sent to Telegram. Log and forward what a
-        // reader actually SEES, or the markup leaks into the forward as
-        // literal "<b>…</b>" — and the classifier scores tags as content.
-        const plain =
-          pm === "HTML"
-            ? text
-                .replace(/<br\s*\/?>/gi, "\n")
-                .replace(/<[^>]+>/g, "")
-                .replace(/&lt;/g, "<")
-                .replace(/&gt;/g, ">")
-                .replace(/&quot;/g, '"')
-                .replace(/&#39;/g, "'")
-                .replace(/&amp;/g, "&")
-            : text;
-        await applyRulesToBotOutgoing({
-          chatId: Number(chatTarget),
-          chatType: Number(chatTarget) < 0 ? "supergroup" : "private",
-          chatTitle: null,
-          messageThreadId:
-            args.message_thread_id != null
-              ? Number(args.message_thread_id)
-              : null,
-          messageId: j.result?.message_id ?? 0,
-          text: plain,
-          senderName: "MCP agent",
-        });
-      } catch (err) {
-        console.warn("[mcp] outgoing rule pass failed:", err);
-      }
-      return toolText({ ok: true, message_id: j.result?.message_id });
+      return toolText({ pending: rows.length, messages: rows });
+    }
+
+    case "delete_ephemeral_now": {
+      const { fireEphemeral } = await import("@/lib/ephemeral");
+      const id = Number(args.ephemeral_id);
+      if (!Number.isFinite(id)) throw new Error("ephemeral_id required");
+      const done = await fireEphemeral(id);
+      return toolText({ ok: done, ephemeral_id: id });
     }
 
     case "send_photo": {
@@ -2195,6 +2349,8 @@ const SCOPED_TOOLS = new Set([
   "chat_messages",
   "chat_history",
   "send_message",
+  "send_ephemeral_message",
+  "list_ephemeral_messages",
   "create_forum_topic",
 ]);
 
@@ -2240,7 +2396,12 @@ function enforceScope(
       `chat ${target} is outside this token's scope (allowed: ${sc.readChatIds.join(", ")})`,
     );
   }
-  if (name === "send_message" || name === "create_forum_topic") {
+  if (name === "list_ephemeral_messages" && target == null) {
+    // Without a chat filter the list would span every chat in the system.
+    throw new Error("chat_id is required for this token");
+  }
+  const isSend = name === "send_message" || name === "send_ephemeral_message";
+  if (isSend || name === "create_forum_topic") {
     // Two kinds of write grant: chats in writeChatIds are open in every
     // topic; writeChatId is the single topic-confined one.
     const openWrite = target != null && sc.writeChatIds.includes(target);
@@ -2256,7 +2417,7 @@ function enforceScope(
     if (name === "create_forum_topic" && !sc.canCreateTopic) {
       throw new Error("this token may not create topics");
     }
-    if (name === "send_message" && !openWrite) {
+    if (isSend && !openWrite) {
       // Writing is confined to one topic; the General channel and every
       // other topic stay read-only.
       const thread = asId(args.message_thread_id);

@@ -37,6 +37,28 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE mcp_tokens ADD COLUMN IF NOT EXISTS write_chat_ids TEXT`;
     },
   },
+  {
+    // Self-deleting messages: what the bot sent and when to delete it.
+    // See lib/db/ephemeral.ts.
+    id: "2026-09-13-001-ephemeral-messages",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS ephemeral_messages (
+          id          BIGSERIAL PRIMARY KEY,
+          chat_id     BIGINT NOT NULL,
+          message_id  BIGINT NOT NULL,
+          delete_at   TIMESTAMPTZ NOT NULL,
+          created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          deleted_at  TIMESTAMPTZ,
+          attempts    INT NOT NULL DEFAULT 0,
+          last_error  TEXT,
+          label       TEXT
+        )`;
+      await q`
+        CREATE INDEX IF NOT EXISTS ephemeral_messages_due_idx
+          ON ephemeral_messages (delete_at) WHERE deleted_at IS NULL`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",

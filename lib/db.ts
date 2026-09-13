@@ -17,3 +17,4 @@ export * from "./db/system";
 export * from "./db/monitoring";
 export * from "./db/rules";
 export * from "./db/access";
+export * from "./db/ephemeral";
