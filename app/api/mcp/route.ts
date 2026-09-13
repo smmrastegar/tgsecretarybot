@@ -376,6 +376,71 @@ const TOOLS = [
   {
     name: "send_ephemeral_message",
     description:
+      "Send a Telegram EPHEMERAL message in a group: it is visible ONLY to receiver_user_id (and the bot); nobody else in the group sees it (Bot API 10.2). Use for private confirmations, personal summaries, errors, or greetings inside a group without cluttering it. Same text/parse_mode/thread options as send_message. Returns ephemeral_message_id (message_id is 0 for these). Delivery is not guaranteed if the user is offline. The receiver must be a member of the chat. Supports HTML.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: {
+          type: "number",
+          description: "Target group/supergroup chat_id (negative).",
+        },
+        receiver_user_id: {
+          type: "number",
+          description: "The only user who will see the message.",
+        },
+        text: { type: "string", description: "Message text (HTML allowed)" },
+        parse_mode: {
+          type: "string",
+          description: "'HTML' (default) or 'MarkdownV2' or 'none'",
+        },
+        message_thread_id: {
+          type: "number",
+          description: "Optional forum topic thread id.",
+        },
+        reply_to_message_id: {
+          type: "number",
+          description: "Optional message_id to reply to (the ephemeral message appears under it, for the receiver).",
+        },
+      },
+      required: ["chat_id", "receiver_user_id", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "edit_ephemeral_message",
+    description:
+      "Edit the text of an ephemeral message previously sent with send_ephemeral_message.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: { type: "number", description: "Chat the message was sent in" },
+        receiver_user_id: { type: "number", description: "User who received it" },
+        ephemeral_message_id: { type: "number", description: "From send_ephemeral_message" },
+        text: { type: "string", description: "New text (HTML allowed)" },
+        parse_mode: { type: "string", description: "'HTML' (default) or 'MarkdownV2' or 'none'" },
+      },
+      required: ["chat_id", "receiver_user_id", "ephemeral_message_id", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "delete_ephemeral_message",
+    description:
+      "Delete an ephemeral message previously sent with send_ephemeral_message (for the receiver).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: { type: "number", description: "Chat the message was sent in" },
+        receiver_user_id: { type: "number", description: "User who received it" },
+        ephemeral_message_id: { type: "number", description: "From send_ephemeral_message" },
+      },
+      required: ["chat_id", "receiver_user_id", "ephemeral_message_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "send_self_deleting_message",
+    description:
       "Send a SELF-DELETING text message as the bot. Same arguments as send_message plus ttl_seconds: the message is deleted automatically when the TTL elapses (in-process timer, backed by a per-minute sweep so a restart cannot leave it up). Telegram cannot delete messages older than 48h, so the maximum TTL is 47h (169200 s). Default TTL 60 s. A Persian '⏳ this message disappears in …' footer is appended unless footer=false. Use for one-time codes, temporary notices, or anything that should not stay in the chat history.",
     inputSchema: {
       type: "object",
@@ -415,9 +480,9 @@ const TOOLS = [
     },
   },
   {
-    name: "list_ephemeral_messages",
+    name: "list_self_deleting_messages",
     description:
-      "List ephemeral messages that are still live (not yet deleted), soonest-to-expire first, with seconds_left. Optionally filter by chat_id.",
+      "List self-deleting messages that are still live (not yet deleted), soonest-to-expire first, with seconds_left. Optionally filter by chat_id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -428,13 +493,13 @@ const TOOLS = [
     },
   },
   {
-    name: "delete_ephemeral_now",
+    name: "delete_self_deleting_now",
     description:
-      "Delete an ephemeral message before its TTL elapses, by the ephemeral_id returned from send_ephemeral_message.",
+      "Delete a self-deleting message before its TTL elapses, by the ephemeral_id returned from send_self_deleting_message.",
     inputSchema: {
       type: "object",
       properties: {
-        ephemeral_id: { type: "number", description: "Row id from send_ephemeral_message" },
+        ephemeral_id: { type: "number", description: "Row id from send_self_deleting_message" },
       },
       required: ["ephemeral_id"],
       additionalProperties: false,
@@ -920,7 +985,11 @@ function redactDeep(node: unknown): unknown {
 // sends. Returns the new message_id.
 async function sendTextMessage(
   args: Record<string, unknown>,
-): Promise<{ message_id: number; chat_id: number | string }> {
+): Promise<{
+  message_id: number;
+  chat_id: number | string;
+  ephemeral_message_id?: number;
+}> {
   // chat_id may be a numeric id OR an "@username" string (only
   // resolvable when sending via a business connection / public peer).
   const rawCid = args.chat_id as unknown;
@@ -957,6 +1026,14 @@ async function sendTextMessage(
   if (args.business_connection_id) {
     body.business_connection_id = String(args.business_connection_id);
   }
+  // Telegram ephemeral message (Bot API 10.2): shown only to this user.
+  const ephemeralReceiver =
+    args.ephemeral_receiver_user_id != null
+      ? Number(args.ephemeral_receiver_user_id)
+      : null;
+  if (ephemeralReceiver != null) {
+    body.ephemeral_message_parameters = { receiver_user_id: ephemeralReceiver };
+  }
   const res = await fetch(
     `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`,
     {
@@ -967,10 +1044,19 @@ async function sendTextMessage(
   );
   const j = (await res.json()) as {
     ok: boolean;
-    result?: { message_id: number };
+    result?: { message_id: number; ephemeral_message_id?: number };
     description?: string;
   };
   if (!j.ok) throw new Error(`telegram: ${j.description ?? "send failed"}`);
+  if (ephemeralReceiver != null) {
+    // Private to one reader: nothing to log for the group and nothing a
+    // message rule should forward on.
+    return {
+      message_id: 0,
+      chat_id: chatTarget,
+      ephemeral_message_id: j.result?.ephemeral_message_id,
+    };
+  }
   // Telegram never echoes a bot's own sends back as an update, so
   // without this an agent posting here is invisible to messages_log
   // and to message rules. Hand it to the same evaluator the group
@@ -1424,6 +1510,55 @@ async function callTool(
     }
 
     case "send_ephemeral_message": {
+      const receiver = Number(args.receiver_user_id);
+      if (!Number.isFinite(receiver) || receiver <= 0) {
+        throw new Error("receiver_user_id required (positive user id)");
+      }
+      const r = await sendTextMessage({ ...args, ephemeral_receiver_user_id: receiver });
+      return toolText({
+        ok: true,
+        ephemeral_message_id: r.ephemeral_message_id ?? null,
+        receiver_user_id: receiver,
+        note: "visible only to receiver_user_id; delivery is not guaranteed if the user is offline",
+      });
+    }
+
+    case "edit_ephemeral_message":
+    case "delete_ephemeral_message": {
+      const chatId = Number(args.chat_id);
+      const receiver = Number(args.receiver_user_id);
+      const emid = Number(args.ephemeral_message_id);
+      if (!Number.isFinite(chatId)) throw new Error("chat_id required");
+      if (!Number.isFinite(receiver)) throw new Error("receiver_user_id required");
+      if (!Number.isFinite(emid)) throw new Error("ephemeral_message_id required");
+      const body: Record<string, unknown> = {
+        chat_id: chatId,
+        receiver_user_id: receiver,
+        ephemeral_message_id: emid,
+      };
+      let method = "deleteEphemeralMessage";
+      if (name === "edit_ephemeral_message") {
+        method = "editEphemeralMessageText";
+        const text = String(args.text ?? "");
+        if (!text.trim()) throw new Error("text required");
+        body.text = text.slice(0, 4096);
+        const pm = String(args.parse_mode ?? "HTML");
+        if (pm !== "none") body.parse_mode = pm;
+      }
+      const res = await fetch(
+        `https://api.telegram.org/bot${config.telegramBotToken}/${method}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const j = (await res.json()) as { ok: boolean; description?: string };
+      if (!j.ok) throw new Error(`telegram: ${j.description ?? `${method} failed`}`);
+      return toolText({ ok: true, ephemeral_message_id: emid });
+    }
+
+    case "send_self_deleting_message": {
       const { armEphemeralTimer, clampTtl, EPHEMERAL_MAX_TTL } = await import(
         "@/lib/ephemeral"
       );
@@ -1468,7 +1603,7 @@ async function callTool(
       });
     }
 
-    case "list_ephemeral_messages": {
+    case "list_self_deleting_messages": {
       const { pendingEphemeralMessages } = await import("@/lib/db");
       const cid = args.chat_id != null ? Number(args.chat_id) : null;
       const rows = await pendingEphemeralMessages(
@@ -1478,7 +1613,7 @@ async function callTool(
       return toolText({ pending: rows.length, messages: rows });
     }
 
-    case "delete_ephemeral_now": {
+    case "delete_self_deleting_now": {
       const { fireEphemeral } = await import("@/lib/ephemeral");
       const id = Number(args.ephemeral_id);
       if (!Number.isFinite(id)) throw new Error("ephemeral_id required");
@@ -2350,7 +2485,10 @@ const SCOPED_TOOLS = new Set([
   "chat_history",
   "send_message",
   "send_ephemeral_message",
-  "list_ephemeral_messages",
+  "delete_ephemeral_message",
+  "edit_ephemeral_message",
+  "send_self_deleting_message",
+  "list_self_deleting_messages",
   "create_forum_topic",
 ]);
 
@@ -2396,11 +2534,16 @@ function enforceScope(
       `chat ${target} is outside this token's scope (allowed: ${sc.readChatIds.join(", ")})`,
     );
   }
-  if (name === "list_ephemeral_messages" && target == null) {
+  if (name === "list_self_deleting_messages" && target == null) {
     // Without a chat filter the list would span every chat in the system.
     throw new Error("chat_id is required for this token");
   }
-  const isSend = name === "send_message" || name === "send_ephemeral_message";
+  const isSend =
+    name === "send_message" ||
+    name === "send_ephemeral_message" ||
+    name === "edit_ephemeral_message" ||
+    name === "delete_ephemeral_message" ||
+    name === "send_self_deleting_message";
   if (isSend || name === "create_forum_topic") {
     // Two kinds of write grant: chats in writeChatIds are open in every
     // topic; writeChatId is the single topic-confined one.
