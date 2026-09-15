@@ -15,7 +15,7 @@ import { fetchMonitoredPage } from "@/lib/site-monitor";
 import { getPool, makeCaptureClient, makeMysqlClient } from "@/lib/sql-driver";
 import { getPgPool, makePgClient } from "@/lib/pg-driver";
 import type { NeonQueryFunction } from "@neondatabase/serverless";
-import type { SiteMonitor } from "@/lib/db";
+import type { RoadmapStatus, SiteMonitor } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -370,6 +370,83 @@ const TOOLS = [
         },
       },
       required: ["chat_id", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "metrics_snapshot",
+    description:
+      "Continuous-improvement program: compute (and store) the daily productivity/reliability metrics for one Tehran calendar day. Default: yesterday. Pass send=true to also post the rich daily report to the owner. Pass backfill_days=N to snapshot the last N days silently (builds the 7-day trend baseline).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        day: { type: "string", description: "YYYY-MM-DD (Tehran). Default yesterday." },
+        send: { type: "boolean", description: "Also send the report to the owner (default false)" },
+        backfill_days: { type: "number", description: "Snapshot the last N days (1-60) instead" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "metrics_daily",
+    description:
+      "List stored daily metric snapshots (newest first): work counts, reliability, cost, roadmap items shipped, stability score. Use to judge whether the system is getting better day over day.",
+    inputSchema: {
+      type: "object",
+      properties: { days: { type: "number", description: "How many days (default 14, max 365)" } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "roadmap_list",
+    description:
+      "The improvement backlog (features, fixes, improvements, chores). status: open (default: idea+planned+in_progress), idea, planned, in_progress, done, dropped, all.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", description: "open | idea | planned | in_progress | done | dropped | all" },
+        limit: { type: "number" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "roadmap_add",
+    description:
+      "Add an item to the improvement backlog. kind: feature | fix | improvement | chore. priority 1 (high) … 3 (low). planned_for YYYY-MM-DD makes it part of that day's plan. source tells where it came from (agent, metrics, errors, owner).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        details: { type: "string" },
+        kind: { type: "string" },
+        priority: { type: "number" },
+        status: { type: "string", description: "idea (default) | planned | in_progress" },
+        planned_for: { type: "string" },
+        source: { type: "string", description: "default 'agent'" },
+      },
+      required: ["title"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "roadmap_update",
+    description:
+      "Update a backlog item: status (idea|planned|in_progress|done|dropped), priority, planned_for, commit_sha (set when done), outcome (what shipped / why dropped), title, details, kind.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number" },
+        status: { type: "string" },
+        priority: { type: "number" },
+        planned_for: { type: ["string", "null"] },
+        commit_sha: { type: ["string", "null"] },
+        outcome: { type: ["string", "null"] },
+        title: { type: "string" },
+        details: { type: ["string", "null"] },
+        kind: { type: "string" },
+      },
+      required: ["id"],
       additionalProperties: false,
     },
   },
@@ -1534,6 +1611,89 @@ async function callTool(
     case "send_message": {
       const r = await sendTextMessage(args);
       return toolText({ ok: true, message_id: r.message_id });
+    }
+
+    case "metrics_snapshot": {
+      const { snapshotDay, buildDailyReportHtml, tehranToday, tehranYesterday, tehranDayBounds } =
+        await import("@/lib/metrics");
+      const back = Number(args.backfill_days ?? 0);
+      if (back > 0) {
+        const days: string[] = [];
+        for (let i = 1; i <= Math.min(60, back); i++) {
+          days.push(tehranToday(new Date(Date.now() - i * 24 * 3600 * 1000)));
+        }
+        const out: Array<{ day: string; score: number; messages: number; errors: number }> = [];
+        for (const d of days) {
+          const m = await snapshotDay(d);
+          out.push({ day: d, score: m.derived.stabilityScore, messages: m.work.messages, errors: m.reliability.errors });
+        }
+        return toolText({ ok: true, backfilled: out });
+      }
+      const day = typeof args.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args.day) ? args.day : tehranYesterday();
+      const m = await snapshotDay(day);
+      let sent = false;
+      if (args.send === true) {
+        const notify = Number((await getSettings()).ownerNotifyChatId);
+        if (Number.isFinite(notify) && notify !== 0) {
+          const { roadmapDigest } = await import("@/lib/db");
+          const { sendRichMessage } = await import("@/lib/telegram-rich");
+          const today = tehranToday();
+          const { from, to } = tehranDayBounds(today);
+          const digest = await roadmapDigest(from, to, today);
+          const html = await buildDailyReportHtml(m, { planned: digest.planned, inProgress: digest.inProgress });
+          await sendRichMessage({ chatId: notify, html, silent: true });
+          sent = true;
+        }
+      }
+      return toolText({ ok: true, sent, metrics: m });
+    }
+
+    case "metrics_daily": {
+      const { listMetricsSnapshots } = await import("@/lib/db");
+      const snaps = await listMetricsSnapshots(Number(args.days ?? 14));
+      return toolText({ count: snaps.length, snapshots: snaps });
+    }
+
+    case "roadmap_list": {
+      const { listRoadmap } = await import("@/lib/db");
+      const status = String(args.status ?? "open") as RoadmapStatus | "open" | "all";
+      const items = await listRoadmap({ status, limit: Number(args.limit ?? 200) });
+      return toolText({ count: items.length, items });
+    }
+
+    case "roadmap_add": {
+      const { addRoadmapItem } = await import("@/lib/db");
+      const title = String(args.title ?? "").trim();
+      if (!title) throw new Error("title required");
+      const item = await addRoadmapItem({
+        title,
+        details: args.details != null ? String(args.details) : null,
+        kind: args.kind != null ? String(args.kind) : undefined,
+        priority: args.priority != null ? Number(args.priority) : undefined,
+        status: args.status != null ? String(args.status) : undefined,
+        plannedFor: args.planned_for != null ? String(args.planned_for) : null,
+        source: args.source != null ? String(args.source) : "agent",
+        createdBy: "mcp",
+      });
+      return toolText({ ok: true, item });
+    }
+
+    case "roadmap_update": {
+      const { updateRoadmapItem } = await import("@/lib/db");
+      const id = Number(args.id);
+      if (!Number.isFinite(id)) throw new Error("id required");
+      const item = await updateRoadmapItem(id, {
+        status: args.status != null ? String(args.status) : undefined,
+        priority: args.priority != null ? Number(args.priority) : undefined,
+        plannedFor: args.planned_for === null ? null : args.planned_for != null ? String(args.planned_for) : undefined,
+        commitSha: args.commit_sha === null ? null : args.commit_sha != null ? String(args.commit_sha) : undefined,
+        outcome: args.outcome === null ? null : args.outcome != null ? String(args.outcome) : undefined,
+        title: args.title != null ? String(args.title) : undefined,
+        details: args.details === null ? null : args.details != null ? String(args.details) : undefined,
+        kind: args.kind != null ? String(args.kind) : undefined,
+      });
+      if (!item) throw new Error(`roadmap item ${id} not found`);
+      return toolText({ ok: true, item });
     }
 
     case "send_rich_message": {

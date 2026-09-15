@@ -69,6 +69,18 @@ the current topic names + operator topic notes.
 | `send_photo` | send a photo by URL (same options) |
 | `send_chart` | render a Chart.js config via QuickChart and send it as a photo (same options) |
 | `delete_message` | delete a bot message |
+| `send_rich_message` | Telegram Rich Message (Bot API 10.2): headings, lists, checkboxes, tables, quotes, `<details>` — from `markdown` or `html`, up to 32k chars; `receiver_user_id` makes it ephemeral |
+| `send_ephemeral_message` / `edit_ephemeral_message` / `delete_ephemeral_message` | group message visible to ONE user only (`receiver_user_id`) |
+| `send_self_deleting_message` / `list_self_deleting_messages` / `delete_self_deleting_now` | normal message the bot deletes after `ttl_seconds` (5 s … 47 h) |
+
+### Continuous-improvement program (see `docs/IMPROVEMENT_LOOP.md`)
+
+| Tool | What it does |
+|------|--------------|
+| `metrics_snapshot` | compute + store the daily productivity/reliability metrics for a Tehran day; `send=true` posts the rich report; `backfill_days=N` |
+| `metrics_daily` | stored snapshots, newest first (work, reliability, cost, shipped items, stability score) |
+| `roadmap_list` / `roadmap_add` / `roadmap_update` | the improvement backlog: features, fixes, improvements with status idea → planned → in_progress → done |
+| `deploy_status` / `deploy_now` / `caddy_ensure_vhost` | production box: last deploy, trigger a deploy now, self-heal the Caddy vhost |
 
 Sending **as the owner** (so it appears from the owner's account, not
 the bot) requires `business_connection_id` — get it from `find_chat`.

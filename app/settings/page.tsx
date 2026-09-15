@@ -143,6 +143,12 @@ const TILES: Array<{
     desc: "debug: چرا یه voice/video/photo توی کانال هدف کپی نشد",
   },
   {
+    href: "/roadmap",
+    emoji: "📈",
+    label: "نقشه‌ی راه و بهره‌وری",
+    desc: "دستور کار بهبود روزانه + شاخص‌های کارکرد و پایداری سیستم، روز به روز",
+  },
+  {
     href: "/costs",
     emoji: "💵",
     label: "هزینه‌ها",

@@ -184,6 +184,16 @@ if [[ "$LOCAL" == "$REMOTE" ]]; then exit 0; fi
   fi
   systemctl restart tgsecretarybot
   echo "$(date -Is) ✓ deploy OK → ${REMOTE:0:7} in $(( $(date +%s) - START ))s"
+  # Record the success in the System Log too (level info) so the daily
+  # metrics can count deploys. The service is booting right now, so
+  # retry for ~30 s before giving up.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if curl -fsS -m 5 -o /dev/null "http://127.0.0.1:3000/api/health" 2>/dev/null; then
+      report_status "deploy" "info" "deploy OK → ${REMOTE:0:7} in $(( $(date +%s) - START ))s"
+      break
+    fi
+    sleep 3
+  done
 } >>"$LOG" 2>&1
 
 # Self-heal the timer cadence (faster pickup) if the on-disk unit is stale.

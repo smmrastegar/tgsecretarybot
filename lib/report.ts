@@ -26,11 +26,14 @@ function split(args: unknown[]): { error: unknown; scope: string | null } {
 }
 
 function emit(
-  level: "error" | "warn",
+  level: "error" | "warn" | "info",
   source: string,
   args: unknown[],
 ): void {
-  (level === "error" ? console.error : console.warn)(`[${source}]`, ...args);
+  (level === "error" ? console.error : level === "warn" ? console.warn : console.log)(
+    `[${source}]`,
+    ...args,
+  );
   const { error, scope } = split(args);
   void captureError({ source, error, scope, level }).catch(() => {});
 }
@@ -41,4 +44,9 @@ export function reportError(source: string, ...args: unknown[]): void {
 
 export function reportWarn(source: string, ...args: unknown[]): void {
   emit("warn", source, args);
+}
+
+/** Operational events worth a row (a deploy, a snapshot) but not a worry. */
+export function reportInfo(source: string, ...args: unknown[]): void {
+  emit("info", source, args);
 }

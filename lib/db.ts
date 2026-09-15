@@ -18,3 +18,4 @@ export * from "./db/monitoring";
 export * from "./db/rules";
 export * from "./db/access";
 export * from "./db/ephemeral";
+export * from "./db/roadmap";

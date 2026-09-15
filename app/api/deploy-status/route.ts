@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { config } from "@/lib/config";
-import { reportError, reportWarn } from "@/lib/report";
+import { reportError, reportInfo, reportWarn } from "@/lib/report";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +45,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       ? `deploy:${body.source.trim().slice(0, 40)}`
       : "deploy";
   if (body.level === "error") reportError(source, message);
+  else if (body.level === "info") reportInfo(source, message);
   else reportWarn(source, message);
   return NextResponse.json({ ok: true });
 }

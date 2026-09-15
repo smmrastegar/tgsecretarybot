@@ -18,7 +18,7 @@ type AuditRow = {
 type ErrorRow = {
   id: number;
   createdAt: string;
-  level: "warn" | "error";
+  level: "info" | "warn" | "error";
   source: string;
   message: string;
   stack: string | null;
@@ -53,7 +53,7 @@ export default function SystemLogPage() {
   const [loading, setLoading] = useState(true);
 
   // Error filters
-  const [level, setLevel] = useState<"" | "error" | "warn">("");
+  const [level, setLevel] = useState<"" | "error" | "warn" | "info">("");
   const [source, setSource] = useState<string>("");
   const [q, setQ] = useState("");
   const [sinceDays, setSinceDays] = useState<number | null>(null);
@@ -172,11 +172,12 @@ export default function SystemLogPage() {
                   ["", `همه (${totalErrors})`],
                   ["error", `❌ error (${errorOnly})`],
                   ["warn", `⚠ warn (${warnOnly})`],
+                  ["info", "ℹ info"],
                 ] as const
               ).map(([v, label]) => (
                 <button
                   key={v}
-                  onClick={() => setLevel(v as "" | "error" | "warn")}
+                  onClick={() => setLevel(v as "" | "error" | "warn" | "info")}
                   className={`text-[11px] px-2 py-1 rounded-md border ${
                     level === v
                       ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
@@ -252,7 +253,7 @@ export default function SystemLogPage() {
             <div className="flex flex-col gap-2">
               {errors.map((e) => {
                 const tone =
-                  e.level === "error" ? "danger" : ("warn" as const);
+                  e.level === "error" ? "danger" : e.level === "info" ? "info" : ("warn" as const);
                 return (
                   <Card key={e.id} className="!p-3">
                     <div className="flex items-start justify-between gap-2 mb-1.5 flex-wrap">

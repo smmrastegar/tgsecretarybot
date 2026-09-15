@@ -59,6 +59,40 @@ export const MIGRATIONS: Migration[] = [
           ON ephemeral_messages (delete_at) WHERE deleted_at IS NULL`;
     },
   },
+  {
+    // Continuous-improvement program: one metrics snapshot per day and
+    // the backlog of features / fixes / improvements. See lib/metrics.ts
+    // and lib/db/roadmap.ts.
+    id: "2026-09-15-001-metrics-and-roadmap",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS system_metrics_daily (
+          day          DATE PRIMARY KEY,
+          metrics      JSONB NOT NULL,
+          computed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+      await q`
+        CREATE TABLE IF NOT EXISTS improvement_items (
+          id          BIGSERIAL PRIMARY KEY,
+          kind        TEXT NOT NULL DEFAULT 'improvement',
+          title       TEXT NOT NULL,
+          details     TEXT,
+          priority    INT NOT NULL DEFAULT 2,
+          status      TEXT NOT NULL DEFAULT 'idea',
+          source      TEXT NOT NULL DEFAULT 'owner',
+          planned_for DATE,
+          commit_sha  TEXT,
+          outcome     TEXT,
+          created_by  TEXT,
+          created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          done_at     TIMESTAMPTZ
+        )`;
+      await q`
+        CREATE INDEX IF NOT EXISTS improvement_items_status_idx
+          ON improvement_items (status, priority, planned_for)`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",

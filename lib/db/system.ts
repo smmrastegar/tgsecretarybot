@@ -88,7 +88,7 @@ export async function audit(args: {
 
 // --- System errors (the "fire department" side of System Log) ---
 
-export type SystemErrorLevel = "warn" | "error";
+export type SystemErrorLevel = "info" | "warn" | "error";
 export type SystemErrorRow = {
   id: number;
   createdAt: Date;
