@@ -414,6 +414,7 @@ export async function handleSmsCallback(
         bodySignature: row.bodySignature,
         bodyPreview: row.bodyPreview ?? row.bodySignature,
         createdBy: ctx.from?.id ?? null,
+        sender: row.sender,
       });
       // Remove the action keyboard from the current message — the
       // operator told us they're fine with this pattern, no reason
@@ -428,7 +429,9 @@ export async function handleSmsCallback(
           .catch(() => {});
       }
       await ctx
-        .answerCallbackQuery({ text: "✅ پذیرفته شد." })
+        .answerCallbackQuery({
+          text: "✅ پذیرفته شد. پیامک‌های هم‌جنس این از این به بعد بی‌دکمه و بدون فیلتر می‌رسند.",
+        })
         .catch(() => {});
     } catch (err) {
       reportWarn("bot", "[sms_cb] accept failed:", err);

@@ -13,6 +13,7 @@ export type SmsDedupRow = {
   lastSeenAt: Date;
   repeatCount: number;
   telegramMessageId: number | null;
+  sender: string | null;
 };
 
 // Stable signature for dedup. Strips whitespace + lowercases + drops
@@ -57,6 +58,7 @@ export async function findSmsDedup(
     repeatCount: Number(r.repeat_count),
     telegramMessageId:
       r.telegram_message_id != null ? Number(r.telegram_message_id) : null,
+    sender: r.sender != null ? String(r.sender) : null,
   };
 }
 
@@ -65,19 +67,21 @@ export async function upsertSmsDedup(args: {
   bodySignature: string;
   bodyPreview: string;
   telegramMessageId: number | null;
+  sender?: string | null;
 }): Promise<SmsDedupRow> {
   await ensureSchema();
   const rows = await sql()`
-    INSERT INTO sms_dedup (inbox_chat_id, body_signature, body_preview, telegram_message_id)
+    INSERT INTO sms_dedup (inbox_chat_id, body_signature, body_preview, telegram_message_id, sender)
     VALUES (${args.inboxChatId}, ${args.bodySignature},
-            ${args.bodyPreview.slice(0, 400)}, ${args.telegramMessageId})
+            ${args.bodyPreview.slice(0, 400)}, ${args.telegramMessageId}, ${args.sender ?? null})
     ON CONFLICT (inbox_chat_id, body_signature) DO UPDATE SET
       last_seen_at = NOW(),
       repeat_count = sms_dedup.repeat_count + 1,
       telegram_message_id = COALESCE(EXCLUDED.telegram_message_id,
-                                     sms_dedup.telegram_message_id)
+                                     sms_dedup.telegram_message_id),
+      sender = COALESCE(EXCLUDED.sender, sms_dedup.sender)
     RETURNING id, inbox_chat_id, body_signature, body_preview,
-              first_sent_at, last_seen_at, repeat_count, telegram_message_id`;
+              first_sent_at, last_seen_at, repeat_count, telegram_message_id, sender`;
   const r = rows[0] as Record<string, unknown>;
   return {
     id: Number(r.id),
@@ -89,6 +93,7 @@ export async function upsertSmsDedup(args: {
     repeatCount: Number(r.repeat_count),
     telegramMessageId:
       r.telegram_message_id != null ? Number(r.telegram_message_id) : null,
+    sender: r.sender != null ? String(r.sender) : null,
   };
 }
 
@@ -149,7 +154,7 @@ export async function getSmsDedup(
   await ensureSchema();
   const rows = await sql()`
     SELECT id, inbox_chat_id, body_signature, body_preview,
-           first_sent_at, last_seen_at, repeat_count, telegram_message_id
+           first_sent_at, last_seen_at, repeat_count, telegram_message_id, sender
     FROM sms_dedup WHERE id = ${dedupId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   if (!r) return null;
@@ -163,6 +168,7 @@ export async function getSmsDedup(
     repeatCount: Number(r.repeat_count),
     telegramMessageId:
       r.telegram_message_id != null ? Number(r.telegram_message_id) : null,
+    sender: r.sender != null ? String(r.sender) : null,
   };
 }
 
@@ -268,14 +274,42 @@ export async function addSmsAcceptSignature(args: {
   bodySignature: string;
   bodyPreview: string;
   createdBy?: number | null;
+  sender?: string | null;
 }): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
   await sql()`
-    INSERT INTO sms_accept_signatures (body_signature, body_preview, created_by)
+    INSERT INTO sms_accept_signatures (body_signature, body_preview, created_by, sender)
     VALUES (${args.bodySignature}, ${args.bodyPreview.slice(0, 400)},
-            ${args.createdBy ?? null})
-    ON CONFLICT (body_signature) DO NOTHING`;
+            ${args.createdBy ?? null}, ${args.sender ?? null})
+    ON CONFLICT (body_signature) DO UPDATE SET
+      sender = COALESCE(sms_accept_signatures.sender, EXCLUDED.sender)`;
+}
+
+export type SmsAcceptExample = {
+  signature: string;
+  text: string;
+  sender: string | null;
+  hitCount: number;
+};
+
+// Accepted examples for the "same kind" check: the most-used ones plus
+// the most recent, bounded so the ranking stays cheap.
+export async function listSmsAcceptExamples(limit = 300): Promise<SmsAcceptExample[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = await sql()`
+    (SELECT body_signature, body_preview, sender, hit_count
+       FROM sms_accept_signatures ORDER BY hit_count DESC, id DESC LIMIT ${Math.ceil(limit / 2)})
+    UNION
+    (SELECT body_signature, body_preview, sender, hit_count
+       FROM sms_accept_signatures ORDER BY id DESC LIMIT ${Math.ceil(limit / 2)})`;
+  return (rows as Array<Record<string, unknown>>).map((r) => ({
+    signature: String(r.body_signature),
+    text: String(r.body_preview ?? r.body_signature ?? ""),
+    sender: r.sender != null ? String(r.sender) : null,
+    hitCount: Number(r.hit_count ?? 0),
+  }));
 }
 
 export async function isSmsAcceptedSignature(

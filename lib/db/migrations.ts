@@ -93,6 +93,15 @@ export const MIGRATIONS: Migration[] = [
           ON improvement_items (status, priority, planned_for)`;
     },
   },
+  {
+    // SMS feedback generalisation: remember who sent an accepted /
+    // deduped SMS so "same sender, similar wording" can be scored.
+    id: "2026-09-18-001-sms-sender-columns",
+    up: async (q) => {
+      await q`ALTER TABLE sms_dedup ADD COLUMN IF NOT EXISTS sender TEXT`;
+      await q`ALTER TABLE sms_accept_signatures ADD COLUMN IF NOT EXISTS sender TEXT`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",

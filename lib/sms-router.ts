@@ -23,11 +23,13 @@ import {
   touchSmsAcceptSignature,
   touchSmsBlockRule,
   upsertSmsDedup,
+  listSmsAcceptExamples,
 } from "./db";
 import { config } from "./config";
 import { getSettings } from "./settings";
 
 import { reportWarn } from "./report";
+import { ACCEPT_SURE, BLOCK_SURE, CANDIDATE_MIN, rankSimilar } from "./sms-similarity";
 const GATE_MODELS = [
   process.env.OPENROUTER_RULE_MODEL,
   "google/gemini-2.5-flash",
@@ -70,27 +72,28 @@ type GateDecision = {
 // bump hit_count and the operator can see which rule fired) or null
 // when nothing matched. Fail-open: any error returns null so the
 // gate flow still decides.
-async function checkBlockedByOperator(args: {
+async function sameKindByLlm(args: {
   body: string;
-}): Promise<{ ruleId: number; reason: string } | null> {
-  if (!config.openrouterApiKey) return null;
-  const rules = await listSmsBlockRules({ enabledOnly: true }).catch(() => []);
-  if (rules.length === 0) return null;
+  candidates: Array<{ id: number; text: string }>;
+  purpose: "sms_block_check" | "sms_accept_check";
+  kind: "blocked" | "accepted";
+}): Promise<number | null> {
+  if (!config.openrouterApiKey || args.candidates.length === 0) return null;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${config.openrouterApiKey}`,
     "Content-Type": "application/json",
     "X-Title": config.openrouterAppName,
   };
   if (config.openrouterAppUrl) headers["HTTP-Referer"] = config.openrouterAppUrl;
-  const systemPrompt = `You are a junk-mail filter. The operator has saved a list of
-EXAMPLE SMS bodies they want blocked — "don't bring me this kind again". Each
-example is one full message. A new SMS just arrived; tell me if it's the SAME
-KIND as ANY of the blocked examples.
+  const verb = args.kind === "blocked" ? "want blocked — \"don't bring me this kind again\"" : "already ACCEPTED — \"this kind is fine, deliver it quietly\"";
+  const systemPrompt = `You are an SMS sorter. The operator has saved a list of
+EXAMPLE SMS bodies they ${verb}. Each example is one full message. A new SMS
+just arrived; tell me if it's the SAME KIND as ANY of the examples.
 
 "Same kind" means: same sender role + same purpose + similar phrasing pattern
-(e.g. two real-estate listings from different agencies are the same kind; two
-beauty-salon discount ads are the same kind; an OTP and a real-estate ad are
-NOT the same kind even if they share words).
+(e.g. two balance notices from the same bank with different amounts are the
+same kind; two beauty-salon discount ads are the same kind; an OTP and a
+real-estate ad are NOT the same kind even if they share words).
 
 Reply on EXACTLY one line, no preamble:
 
@@ -101,11 +104,10 @@ or, when nothing matches:
 MATCH: none
 
 Never explain.`;
-  const rulesBlock = rules
-    .slice(0, 30)
-    .map((r) => `- id=${r.id}: ${r.exampleBody.replace(/\s+/g, " ").slice(0, 300)}`)
+  const list = args.candidates
+    .map((c) => `- id=${c.id}: ${c.text.replace(/\s+/g, " ").slice(0, 300)}`)
     .join("\n");
-  const userPrompt = `BLOCKED EXAMPLES:\n${rulesBlock}\n\nNEW SMS:\n${args.body.slice(0, 1500)}`;
+  const userPrompt = `${args.kind.toUpperCase()} EXAMPLES:\n${list}\n\nNEW SMS:\n${args.body.slice(0, 1500)}`;
   for (const model of GATE_MODELS) {
     try {
       const res = await fetchWithTimeout(
@@ -137,7 +139,7 @@ Never explain.`;
         chatId: null,
         businessConnectionId: null,
         model,
-        purpose: "sms_block_check",
+        purpose: args.purpose,
         promptTokens: 0,
         completionTokens: 0,
         totalTokens: 0,
@@ -146,19 +148,98 @@ Never explain.`;
       const m = text.match(/MATCH\s*:\s*(\d+|none)/i);
       const tok = m?.[1]?.toLowerCase();
       if (!tok || tok === "none") return null;
-      const ruleId = Number(tok);
-      if (!Number.isFinite(ruleId)) return null;
-      const rule = rules.find((r) => r.id === ruleId);
-      if (!rule) return null;
-      return {
-        ruleId,
-        reason: `matches operator block rule #${ruleId} (${rule.label ?? rule.exampleBody.slice(0, 40)})`,
-      };
+      const id = Number(tok);
+      return args.candidates.some((c) => c.id === id) ? id : null;
     } catch (err) {
-      reportWarn("sms-router", `[sms] block-check ${model} failed:`, err);
+      reportWarn("sms-router", `[sms] ${args.purpose} ${model} failed:`, err);
     }
   }
   return null;
+}
+
+// "Does this new SMS match ANY of the operator's blocked examples?"
+// Lexically obvious repeats (Jaccard ≥ BLOCK_SURE) are blocked with no
+// model call; otherwise only the nearest examples go to the model,
+// not the first 30 rows. Fail-open: any error returns null so the
+// gate flow still decides.
+async function checkBlockedByOperator(args: {
+  body: string;
+  sender?: string | null;
+}): Promise<{ ruleId: number; reason: string } | null> {
+  const rules = await listSmsBlockRules({ enabledOnly: true }).catch(() => []);
+  if (rules.length === 0) return null;
+  const ranked = rankSimilar(
+    args.body,
+    args.sender,
+    rules.map((r) => ({ id: r.id, text: r.exampleBody, sender: null })),
+    { min: CANDIDATE_MIN, limit: 10 },
+  );
+  if (ranked.length === 0) return null;
+  const top = ranked[0]!;
+  if (top.score >= BLOCK_SURE) {
+    const rule = rules.find((r) => r.id === top.example.id)!;
+    return {
+      ruleId: rule.id,
+      reason: `lexically ${Math.round(top.score * 100)}% like block rule #${rule.id} (${rule.label ?? rule.exampleBody.slice(0, 40)})`,
+    };
+  }
+  const id = await sameKindByLlm({
+    body: args.body,
+    candidates: ranked.map((r) => ({ id: r.example.id, text: r.example.text })),
+    purpose: "sms_block_check",
+    kind: "blocked",
+  });
+  if (id == null) return null;
+  const rule = rules.find((r) => r.id === id);
+  if (!rule) return null;
+  return {
+    ruleId: rule.id,
+    reason: `matches operator block rule #${rule.id} (${rule.label ?? rule.exampleBody.slice(0, 40)})`,
+  };
+}
+
+// The operator's ✅ used to be exact-signature only. Now: exact
+// signature → accepted; lexically obvious variant of an accepted
+// example (same bank notice, different amount) → accepted; grey zone →
+// the model decides against the nearest accepted examples. Accepted
+// means: forwarded without the gate, delivered without buttons.
+async function checkAcceptedKind(args: {
+  body: string;
+  sender: string | null;
+  signature: string;
+}): Promise<{ accepted: boolean; via: "exact" | "similar" | "llm" | null; detail?: string }> {
+  if (await isSmsAcceptedSignature(args.signature).catch(() => false)) {
+    await touchSmsAcceptSignature(args.signature).catch(() => {});
+    return { accepted: true, via: "exact" };
+  }
+  const examples = await listSmsAcceptExamples(300).catch(() => []);
+  if (examples.length === 0) return { accepted: false, via: null };
+  const ranked = rankSimilar(
+    args.body,
+    args.sender,
+    examples.map((e, i) => ({ id: i + 1, text: e.text, sender: e.sender, signature: e.signature })),
+    { min: CANDIDATE_MIN, limit: 8 },
+  );
+  if (ranked.length === 0) return { accepted: false, via: null };
+  const top = ranked[0]!;
+  if (top.score >= ACCEPT_SURE) {
+    await touchSmsAcceptSignature(top.example.signature).catch(() => {});
+    return {
+      accepted: true,
+      via: "similar",
+      detail: `${Math.round(top.score * 100)}%${top.sameSender ? " same sender" : ""}`,
+    };
+  }
+  const id = await sameKindByLlm({
+    body: args.body,
+    candidates: ranked.map((r) => ({ id: r.example.id, text: r.example.text })),
+    purpose: "sms_accept_check",
+    kind: "accepted",
+  });
+  const hit = id != null ? ranked.find((r) => r.example.id === id) : null;
+  if (!hit) return { accepted: false, via: null };
+  await touchSmsAcceptSignature(hit.example.signature).catch(() => {});
+  return { accepted: true, via: "llm", detail: `${Math.round(hit.score * 100)}%` };
 }
 
 // LLM gate: decide whether the SMS is personal/transactional AND
@@ -484,8 +565,14 @@ export async function routeSmsForward(args: {
   // consult the operator's curated "don't bring me this kind again"
   // rules. A match drops the SMS entirely — silently, since the
   // operator already decided once that they don't want it.
+  // Dedup signature for "same SMS arrived again" → edit-in-place
+  // instead of posting a new copy.
+  const signature = otp
+    ? `otp:${otp}` // OTP body changes a lot but the code is the dedup key
+    : smsBodySignature(sms.body || sms.phone);
+
   if (!otp && sms.body) {
-    const blocked = await checkBlockedByOperator({ body: sms.body }).catch(
+    const blocked = await checkBlockedByOperator({ body: sms.body, sender: sms.phone }).catch(
       () => null,
     );
     if (blocked) {
@@ -503,6 +590,16 @@ export async function routeSmsForward(args: {
   // LLM gate: only forward personal / transactional SMS. Promotional
   // / mass blasts are filtered out so the inbox stays clean. Bypassed
   // when the pre-check found an OTP — see above.
+  // Operator's ✅ feedback, generalised: an accepted kind skips the
+  // gate entirely (they said this kind is fine) and is delivered
+  // without buttons.
+  const acceptedKind = otp
+    ? { accepted: false, via: null as null }
+    : await checkAcceptedKind({ body: sms.body, sender: sms.phone, signature }).catch(
+        () => ({ accepted: false, via: null as null }),
+      );
+  const accepted = acceptedKind.accepted;
+
   let decision: GateDecision;
   if (otp) {
     decision = {
@@ -513,6 +610,13 @@ export async function routeSmsForward(args: {
     console.log(
       `[sms] gate bypassed phone=${sms.phone} otp=${otp} — auto-forward`,
     );
+  } else if (accepted) {
+    decision = {
+      forward: true,
+      reason: `accepted kind (${acceptedKind.via}${"detail" in acceptedKind && acceptedKind.detail ? ` ${acceptedKind.detail}` : ""}) — bypassing gate`,
+      category: "accepted",
+    };
+    console.log(`[sms] gate bypassed phone=${sms.phone} — ${decision.reason}`);
   } else {
     decision = await classifySmsForForwarding({
       phone: sms.phone,
@@ -601,21 +705,6 @@ export async function routeSmsForward(args: {
     console.log(`[sms] silent publish sender="${sms.phone}"`);
   }
 
-  // Dedup signature for "same SMS arrived again" → edit-in-place
-  // instead of posting a new copy.
-  const signature = otp
-    ? `otp:${otp}` // OTP body changes a lot but the code is the dedup key
-    : smsBodySignature(sms.body || sms.phone);
-
-  // Was this kind of SMS already explicitly accepted by the
-  // operator? If yes, deliver clean — no inline buttons, no
-  // dedup ping. They told us they're fine with this pattern;
-  // they don't want to be asked again.
-  const accepted = await isSmsAcceptedSignature(signature).catch(() => false);
-  if (accepted) {
-    await touchSmsAcceptSignature(signature).catch(() => {});
-  }
-
   let delivered = 0;
   for (const inbox of inboxes) {
     const existing = await findSmsDedup(inbox.chatId, signature, 48).catch(
@@ -664,6 +753,7 @@ export async function routeSmsForward(args: {
           bodySignature: signature,
           bodyPreview: sms.body.slice(0, 200),
           telegramMessageId: existing.telegramMessageId,
+          sender: sms.phone,
         });
         delivered++;
         console.log(
@@ -695,6 +785,7 @@ export async function routeSmsForward(args: {
       bodySignature: signature,
       bodyPreview: sms.body.slice(0, 200),
       telegramMessageId: null,
+      sender: sms.phone,
     });
     try {
       const sent = await args.bot.api.sendMessage(inbox.chatId, outText, {
