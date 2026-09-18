@@ -25,6 +25,12 @@ describe("contiguous phrase matching", () => {
     expect(phrasePresent("امیر", "امیرحسین میرزائی پیام داد")).toBe(false);
     expect(phrasePresent("امیر بال", "امیرعبدالرحیمی")).toBe(false);
   });
+  it("does not fuzz short words or fuzzy-match inside compound tokens", () => {
+    expect(phrasePresent("بالزن", "اینا همه بالان الان")).toBe(false);
+    expect(phrasePresent("امیربال", "بیشترین شخصی امیرعبدالرحیمی 85mb")).toBe(false);
+    expect(phrasePresent("امیربال", "شهرزاد امیرشاه کرمی")).toBe(false);
+    expect(phrasePresent("امیربال", "امیربالافشان کنسرت داره")).toBe(true);
+  });
   it("tolerates a typo in a long token and ZWNJ compounds", () => {
     expect(phrasePresent("گرشاسبی", "گرشاسپی‌جون اومد")).toBe(true);
     expect(findPhrase("آرمان گرشاسبی", tokenize("آلبوم جدید آرمان گرشاسپی منتشر شد"))).toBe(2);

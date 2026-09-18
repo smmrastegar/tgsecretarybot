@@ -55,9 +55,12 @@ function levenshtein(a: string, b: string): number {
   return prev[n]!;
 }
 
+// Short Persian words are one letter apart from each other all the
+// time ("بالزن" / "بالان"), so no fuzz below 6 chars; one edit for
+// 6-8 ("گرشاسبی" ↔ "گرشاسپی"); two only for long Latin names.
 function maxFuzzy(token: string): number {
-  if (token.length >= 7) return 2;
-  if (token.length >= 4) return 1;
+  if (token.length >= 9) return 2;
+  if (token.length >= 6) return 1;
   return 0;
 }
 
@@ -68,15 +71,10 @@ function tokenEquals(hay: string, needle: string): boolean {
   if (Math.abs(hay.length - needle.length) <= budget && levenshtein(hay, needle) <= budget) {
     return true;
   }
-  // "گرشاسبی" inside "گرشاسپی‌جون": long needles may sit inside a
-  // longer compound token.
-  if (needle.length >= 5 && hay.length > needle.length + budget) {
-    for (let w = needle.length - budget; w <= needle.length + budget; w++) {
-      for (let s = 0; s + w <= hay.length; s++) {
-        if (levenshtein(hay.substring(s, s + w), needle) <= budget) return true;
-      }
-    }
-  }
+  // A long needle may sit inside a compound token ("امیربالافشان"),
+  // but only EXACTLY: a fuzzy window let "امیربال" match inside
+  // "امیرعبدالرحیمی" and "امیرشاه", which is most of the noise.
+  if (needle.length >= 6 && hay.length > needle.length && hay.includes(needle)) return true;
   return false;
 }
 
