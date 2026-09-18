@@ -258,8 +258,14 @@ export async function handleNoteWatchCallback(
         // Editing fails when the message was deleted or 48h+ old;
         // the markNoteWatchMatchWrong above is what matters.
       }
+      // Say what was learned: this quote now vetoes future matches
+      // for the concept (lib/watchlist-guards rejectedPhraseHit).
+      const learned = match.quote.trim().slice(0, 60);
       await ctx
-        .answerCallbackQuery({ text: "✅ گزارش شد." })
+        .answerCallbackQuery({
+          text: `🚩 ثبت شد. از این به بعد «${learned}» برای این مفهوم تطابق حساب نمی‌شود.`,
+          show_alert: false,
+        })
         .catch(() => {});
     } catch (err) {
       reportWarn("bot", "[nw_cb] mark-wrong failed:", err);

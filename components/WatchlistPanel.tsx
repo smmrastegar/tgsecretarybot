@@ -26,6 +26,8 @@ export type WatchlistItem = {
   forwardToInbox: boolean;
   cooldownOverrideMinutes: number | null;
   context: string | null;
+  /** learned from 🚩 / ✅ on past notices */
+  feedback?: { rejected: string[]; confirmed: string[] };
 };
 
 type Match = {
@@ -361,6 +363,26 @@ function ItemCard({
         <AdvancedItemSettings item={item} onUpdate={onUpdate} />
       )}
       {testing && <ConceptTester itemId={item.id} concept={item.concept} />}
+
+      {item.feedback && (item.feedback.rejected.length > 0 || item.feedback.confirmed.length > 0) && (
+        <div className="text-[11px] mb-2">
+          <div className="text-[var(--color-text-dim)] mb-1">
+            🧠 یادگرفته از گزارش‌های تو — این‌ها دیگر تطابق حساب نمی‌شوند مگر نام کامل بیاید:
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {item.feedback.rejected.slice(0, 12).map((q) => (
+              <span key={`r-${q}`} className="px-1.5 py-0.5 rounded bg-red-900/30 text-red-200 border border-red-900" title="🚩 رد شده">
+                🚩 {q.length > 40 ? `${q.slice(0, 40)}…` : q}
+              </span>
+            ))}
+            {item.feedback.confirmed.slice(0, 6).map((q) => (
+              <span key={`c-${q}`} className="px-1.5 py-0.5 rounded bg-emerald-900/30 text-emerald-200 border border-emerald-900" title="✅ تأیید شده">
+                ✅ {q.length > 40 ? `${q.slice(0, 40)}…` : q}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center justify-between text-[10px] text-[var(--color-text-dim)]">
         <button

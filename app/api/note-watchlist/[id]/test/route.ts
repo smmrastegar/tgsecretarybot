@@ -4,6 +4,7 @@ import {
   getNoteWatchItem,
   hasRecentNoteWatchMatch,
   listNoteWatchAliases,
+  listNoteWatchFeedback,
 } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { scanForWatchlistConceptsDebug } from "@/lib/classifier";
@@ -108,6 +109,19 @@ export async function POST(
   }
 
   const debug = await scanForWatchlistConceptsDebug({
+    feedback: await (async () => {
+      const fb = (await listNoteWatchFeedback([itemId]).catch(() => null))?.get(itemId);
+      return new Map([
+        [
+          itemId,
+          {
+            rejectedQuotes: fb?.rejected.map((r) => r.quote) ?? [],
+            confirmedQuotes: fb?.confirmed.map((c) => c.quote) ?? [],
+            bareAliasConfirmed: false,
+          },
+        ],
+      ]);
+    })(),
     text,
     items: [
       {

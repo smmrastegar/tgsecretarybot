@@ -12,9 +12,10 @@ import { defaultSecretary } from "../secretaries";
 import { redisEnabled, redisGet, redisSet } from "../redis";
 import { fireAlert } from "../alert";
 import { getSettings } from "../settings";
-import { markNoteWatchMatchForwarded, autoFillChatNames, endSecretarySession, findActiveSecretarySessionForSender, getChatRule, hasDb, lastOwnerMessageAt, logMessage, recentIncomingCount, recordMessageEdit, saveMediaDescription, saveTranscript, setFloodCooldown, sql, type ChatRule, recentConversation, saveExtractedItems, logMediaRouting, type ChatMode, isChatIgnored, listNoteWatchItemsWithAliases, hasRecentNoteWatchMatch, recordNoteWatchMatch, addChatNote, listChatsByFunction, shouldNotifyAiActivity } from "../db";
+import { markNoteWatchMatchForwarded, autoFillChatNames, endSecretarySession, findActiveSecretarySessionForSender, getChatRule, hasDb, lastOwnerMessageAt, logMessage, recentIncomingCount, recordMessageEdit, saveMediaDescription, saveTranscript, setFloodCooldown, sql, type ChatRule, recentConversation, saveExtractedItems, logMediaRouting, type ChatMode, isChatIgnored, listNoteWatchItemsWithAliases, listNoteWatchFeedback, hasRecentNoteWatchMatch, recordNoteWatchMatch, addChatNote, listChatsByFunction, shouldNotifyAiActivity } from "../db";
 import { isTransientDbError } from "../pg-driver";
 import { reportError, reportWarn } from "../report";
+import { isBareFirstNameAlias } from "../watchlist-guards";
 import { CHAT_MODE_FA, autoReplyCache, chatTitleOf, chunkText, describeMessage, extractInlineUrlButtons, extractMedia, faNum, harvestContactShare, humanTypingDelay, logOwnerSent, markBusinessRead, resolveOwner, safeDate, sleep } from "./core";
 import { maybeMirrorBusinessMessage } from "./mirror";
 import { maybeForwardToSecretary, maybeForwardViaRelays, maybeRelayDownloadLink, maybeRelayRecipientReplyBusiness, maybeReturnDownloadedMedia } from "./relay";
@@ -244,9 +245,29 @@ export async function maybeApplyNoteWatch(args: {
     );
     return;
   }
+  // What the operator taught us so far (🚩 / ✅ on past notices).
+  const feedbackRows = await listNoteWatchFeedback(items.map((it) => it.id)).catch(
+    () => new Map<number, { rejected: Array<{ quote: string }>; confirmed: Array<{ quote: string }>; bareAliasConfirmed: boolean }>(),
+  );
+  const conceptById = new Map(items.map((it) => [it.id, it.concept]));
+  const feedback = new Map(
+    [...feedbackRows.entries()].map(([id, fb]) => [
+      id,
+      {
+        rejectedQuotes: fb.rejected.map((r) => r.quote),
+        confirmedQuotes: fb.confirmed.map((c) => c.quote),
+        // The bare first name counts again only once the operator has
+        // confirmed a match that was anchored on it.
+        bareAliasConfirmed: fb.confirmed.some((c) =>
+          isBareFirstNameAlias(c.quote, conceptById.get(id) ?? ""),
+        ),
+      },
+    ]),
+  );
   let matches: Awaited<ReturnType<typeof scanForWatchlistConcepts>> = [];
   try {
     matches = await scanForWatchlistConcepts({
+      feedback,
       text: args.text,
       items: items.map((it) => ({
         id: it.id,

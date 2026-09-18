@@ -765,3 +765,54 @@ export async function deleteAskQuery(id: number): Promise<void> {
   if (!hasDb()) return;
   await sql()`DELETE FROM ask_queries WHERE id = ${id}`;
 }
+
+// Operator feedback per concept, read back by the scanner: quotes the
+// operator flagged as wrong veto repeats, confirmed quotes are shown to
+// the LLM as positive examples. Newest first, bounded.
+export type NoteWatchFeedback = {
+  rejected: Array<{ quote: string; senderName: string | null; reason: string | null }>;
+  confirmed: Array<{ quote: string; senderName: string | null }>;
+  /** Bare first-name alias confirmed at least once (so it may count). */
+  bareAliasConfirmed: boolean;
+};
+
+export async function listNoteWatchFeedback(
+  itemIds: number[],
+  opts?: { rejectedLimit?: number; confirmedLimit?: number },
+): Promise<Map<number, NoteWatchFeedback>> {
+  const out = new Map<number, NoteWatchFeedback>();
+  for (const id of itemIds) out.set(id, { rejected: [], confirmed: [], bareAliasConfirmed: false });
+  if (!hasDb() || itemIds.length === 0) return out;
+  await ensureSchema();
+  const rl = Math.min(100, Math.max(1, opts?.rejectedLimit ?? 40));
+  const cl = Math.min(50, Math.max(1, opts?.confirmedLimit ?? 12));
+  const rows = (await sql()`
+    SELECT item_id, quote, sender_name, reason,
+           (reported_wrong_at IS NOT NULL) AS wrong,
+           (confirmed_at IS NOT NULL) AS ok,
+           ROW_NUMBER() OVER (PARTITION BY item_id, (reported_wrong_at IS NOT NULL) ORDER BY id DESC) AS rn
+      FROM note_watch_matches
+     WHERE item_id = ANY(${itemIds}::bigint[])
+       AND (reported_wrong_at IS NOT NULL OR confirmed_at IS NOT NULL)
+     ORDER BY id DESC`) as Array<Record<string, unknown>>;
+  for (const r of rows) {
+    const fb = out.get(Number(r.item_id));
+    if (!fb) continue;
+    const quote = String(r.quote ?? "").trim();
+    if (!quote) continue;
+    const wrong = r.wrong === true || r.wrong === "t";
+    const rn = Number(r.rn);
+    if (wrong) {
+      if (rn <= rl && !fb.rejected.some((x) => x.quote === quote)) {
+        fb.rejected.push({
+          quote,
+          senderName: r.sender_name == null ? null : String(r.sender_name),
+          reason: r.reason == null ? null : String(r.reason),
+        });
+      }
+    } else if (rn <= cl && !fb.confirmed.some((x) => x.quote === quote)) {
+      fb.confirmed.push({ quote, senderName: r.sender_name == null ? null : String(r.sender_name) });
+    }
+  }
+  return out;
+}

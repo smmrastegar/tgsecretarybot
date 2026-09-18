@@ -7,6 +7,13 @@ import { assertOpenrouterBudget } from "./openrouter-budget";
 import { isTransientDbError } from "./pg-driver";
 
 import { reportError, reportWarn } from "./report";
+import {
+  anchorsPresent as guardAnchorsPresent,
+  isBareFirstNameAlias,
+  nameCollision,
+  rejectedPhraseHit,
+  selfNegatingReason,
+} from "./watchlist-guards";
 // Look up knowledge-base entries whose title or any alias appears in
 // the given text and return them in a payload-friendly shape ready to
 // splice into a user message. The DB call is cheap (small table, JS
@@ -1990,8 +1997,25 @@ The user payload contains:
                    way of pointing at the same concept.>],
       "context": <optional — the DOMAIN this concept lives in,
                    e.g. "music / singer / concert / album". When set,
-                   the match MUST also be in that domain>
+                   the match MUST also be in that domain>,
+      "operator_rejected": [<quotes from PAST matches the operator flagged
+                   as WRONG for this concept. Each one is a person or
+                   phrase that is NOT this concept — e.g. a different
+                   person sharing the first name. A message that contains
+                   one of these, or the same kind of collision, is NOT a
+                   match unless the FULL concept name is also present.>],
+      "operator_confirmed": [<quotes from past matches the operator
+                   confirmed as CORRECT — the shape of a real hit.>]
     }.
+
+OPERATOR FEEDBACK IS BINDING. The operator presses 🚩 on wrong matches and
+✅ on right ones; those lists are the ground truth for this concept. Never
+repeat a rejected match. A bare single first name (e.g. "آرمان" alone, even
+when listed as an alias) followed by ANY other surname is a different person
+— "آرمان مهدی‌زاده", "آرمان درویش" are NOT "آرمان گرشاسبی". A bare first
+name with no surname and no domain evidence is NOT a match. If your reason
+would say "refers to a different person" or "only the first name appears",
+then it is NOT a match: emit nothing.
 - "message": the incoming message text (already includes any voice transcript / media description).
 - "chat_title", "sender": optional context for whose message this is.
 
@@ -2096,6 +2120,13 @@ export type WatchlistMatchResult = {
   reason: string;
 };
 
+export type WatchlistItemFeedback = {
+  rejectedQuotes: string[];
+  confirmedQuotes: string[];
+  /** the bare first-name alias was confirmed by the operator at least once */
+  bareAliasConfirmed?: boolean;
+};
+
 // Lowercase + collapse ZWNJ to space + collapse repeating whitespace.
 // Used by both the alias word-boundary check and the cross-script
 // fold below.
@@ -2119,95 +2150,6 @@ function normalizeForWatchMatch(s: string): string {
     .trim();
 }
 
-// Levenshtein distance — small + iterative, no allocations beyond
-// two rolling rows. Used by the fuzzy token matcher to tolerate
-// common Persian typos: ب ↔ پ, س ↔ ص, ت ↔ ط, etc. — the LLM
-// already matches these, the validator just has to agree.
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  let prev: number[] = new Array(n + 1);
-  for (let j = 0; j <= n; j++) prev[j] = j;
-  for (let i = 1; i <= m; i++) {
-    const curr: number[] = new Array(n + 1);
-    curr[0] = i;
-    const ai = a.charAt(i - 1);
-    for (let j = 1; j <= n; j++) {
-      const cost = ai === b.charAt(j - 1) ? 0 : 1;
-      curr[j] = Math.min(
-        prev[j]! + 1, // deletion
-        curr[j - 1]! + 1, // insertion
-        prev[j - 1]! + cost, // substitution
-      );
-    }
-    prev = curr;
-  }
-  return prev[n]!;
-}
-
-// Max edit distance we tolerate per token: 0 for short tokens (1-3
-// chars; common false-positive cliff), 1 for medium (4-6), 2 for
-// long (7+). Tracks how the LLM thinks: it tolerates a single typo
-// in a name but doesn't confuse "Ali" with "Eli".
-function maxFuzzy(token: string): number {
-  if (token.length >= 7) return 2;
-  if (token.length >= 4) return 1;
-  return 0;
-}
-
-// True iff `needle` appears in `haystack` either as a whole-word
-// match OR as a near-match (Levenshtein within the per-length
-// budget) within a single token. Folds Persian variants first.
-function tokenAppearsFuzzy(needle: string, hayTokens: string[]): boolean {
-  const budget = maxFuzzy(needle);
-  for (const h of hayTokens) {
-    if (h === needle) return true;
-    if (budget > 0 && Math.abs(h.length - needle.length) <= budget) {
-      if (levenshtein(h, needle) <= budget) return true;
-    }
-    // Also allow a fuzzy SUBSTRING of a longer compound word for
-    // long needles — e.g. "گرشاسبی" inside "گرشاسپی‌جون" should
-    // still hit. We check every window of |needle|±budget chars.
-    if (budget > 0 && h.length > needle.length + budget) {
-      const minLen = needle.length - budget;
-      const maxLen = needle.length + budget;
-      for (let w = minLen; w <= Math.min(maxLen, h.length); w++) {
-        for (let s = 0; s + w <= h.length; s++) {
-          if (levenshtein(h.substring(s, s + w), needle) <= budget) {
-            return true;
-          }
-        }
-      }
-    }
-  }
-  return false;
-}
-
-// True iff every space-separated token of `needle` appears as a
-// whole word (or near-match) in `haystack`. Catches the "امیر
-// inside امیرحسین" false-positive at the parser level, but tolerates
-// a single typo in any token so "گرشاسبی" matches "گرشاسپی".
-function allTokensWholeWordPresent(
-  needle: string,
-  haystack: string,
-): boolean {
-  const a = normalizeForWatchMatch(needle);
-  const m = normalizeForWatchMatch(haystack);
-  if (!a || !m) return false;
-  const needleTokens = a.split(/\s+/).filter(Boolean);
-  if (needleTokens.length === 0) return false;
-  // Split haystack on whitespace AND Unicode punctuation/symbols so
-  // "گرشاسپی!" tokenises to "گرشاسپی" cleanly.
-  const hayTokens = m
-    .split(/[\s\p{P}\p{S}]+/u)
-    .map((t) => t.trim())
-    .filter(Boolean);
-  return needleTokens.every((tok) => tokenAppearsFuzzy(tok, hayTokens));
-}
-
 // Sanity-check the LLM verdict against the actual message text. Drops
 // hallucinated matches where neither the concept label nor any alias
 // actually appears as a whole word in the message — the most common
@@ -2218,11 +2160,12 @@ function validWatchlistMatch(args: {
   concept: string;
   aliases: string[];
 }): boolean {
-  if (allTokensWholeWordPresent(args.concept, args.message)) return true;
-  for (const a of args.aliases) {
-    if (allTokensWholeWordPresent(a, args.message)) return true;
-  }
-  return false;
+  // Contiguous phrase presence (lib/watchlist-guards). The previous
+  // check accepted the tokens of "امیر بال" scattered anywhere in a
+  // long message, which is how a daily report naming "امیرعبدالرحیمی"
+  // matched a singer for weeks.
+  const a = guardAnchorsPresent(args);
+  return a.concept || a.aliases.length > 0;
 }
 
 // When item.context is set, force the LLM's claim of "this is in the
@@ -2421,6 +2364,8 @@ export async function scanForWatchlistConceptsDebug(input: {
   senderName?: string | null;
   chatId?: number;
   businessConnectionId?: string;
+  /** per item id — operator feedback from past matches */
+  feedback?: Map<number, WatchlistItemFeedback>;
 }): Promise<WatchlistScanDebug> {
   const empty: WatchlistScanDebug = {
     llmRaw: [],
@@ -2439,6 +2384,8 @@ export async function scanForWatchlistConceptsDebug(input: {
           ? it.aliases.slice(0, 30)
           : undefined,
       context: it.context || undefined,
+      operator_rejected: input.feedback?.get(it.id)?.rejectedQuotes.slice(0, 25),
+      operator_confirmed: input.feedback?.get(it.id)?.confirmedQuotes.slice(0, 8),
     })),
     chat_title: input.chatTitle || undefined,
     sender: input.senderName || undefined,
@@ -2517,6 +2464,64 @@ export async function scanForWatchlistConceptsDebug(input: {
       });
       continue;
     }
+    // Deterministic guards (lib/watchlist-guards) — the part of the
+    // decision that does not drift with the model. Each one names the
+    // reason so the 🧪 test page shows exactly why a match was dropped.
+    const fb = input.feedback?.get(itemId);
+    const drop = (why: string) => {
+      console.log(`[watchlist] dropping LLM match for concept="${item.concept}" — ${why}`);
+      dropped.push({
+        itemId,
+        concept: item.concept,
+        matchedAlias,
+        quote: quote.slice(0, 200),
+        reason: `${reason} — DROPPED: ${why}`,
+      });
+    };
+    const rejectedHit = rejectedPhraseHit({
+      message: input.text,
+      concept: item.concept,
+      aliases: item.aliases ?? [],
+      rejectedQuotes: fb?.rejectedQuotes ?? [],
+    });
+    if (rejectedHit) {
+      drop(`قبلاً توسط اپراتور رد شده: «${rejectedHit}»`);
+      continue;
+    }
+    const collision = nameCollision({
+      message: input.text,
+      concept: item.concept,
+      aliases: item.aliases ?? [],
+    });
+    if (collision) {
+      drop(`نام شخص دیگری: «${collision}»`);
+      continue;
+    }
+    if (selfNegatingReason(reason)) {
+      drop("دلیل خود مدل می‌گوید تطابق نیست");
+      continue;
+    }
+    const anchors = guardAnchorsPresent({
+      message: input.text,
+      concept: item.concept,
+      aliases: item.aliases ?? [],
+    });
+    const onlyBareAlias =
+      !anchors.concept &&
+      anchors.aliases.length > 0 &&
+      anchors.aliases.every((a) => isBareFirstNameAlias(a, item.concept));
+    if (onlyBareAlias && !fb?.bareAliasConfirmed) {
+      // Rejected bare-alias quotes ("آرمان") are stored as feedback too;
+      // once the operator has rejected the bare name and never
+      // confirmed it, the bare name alone stops counting.
+      const bareRejected = (fb?.rejectedQuotes ?? []).some(
+        (q) => isBareFirstNameAlias(q, item.concept),
+      );
+      if (bareRejected) {
+        drop("فقط نام کوچک تنها آمده و اپراتور قبلاً همین را رد کرده");
+        continue;
+      }
+    }
     const gate = passesContextGate({
       message: input.text,
       concept: item.concept,
@@ -2565,6 +2570,7 @@ export async function scanForWatchlistConcepts(input: {
   senderName?: string | null;
   chatId?: number;
   businessConnectionId?: string;
+  feedback?: Map<number, WatchlistItemFeedback>;
 }): Promise<WatchlistMatchResult[]> {
   const debug = await scanForWatchlistConceptsDebug(input);
   return debug.finalMatches;

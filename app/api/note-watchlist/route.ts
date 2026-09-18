@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
 import {
   createNoteWatchItem,
+  listNoteWatchFeedback,
   listNoteWatchItemsWithAliases,
 } from "@/lib/db";
 
@@ -12,7 +13,18 @@ export async function GET(): Promise<NextResponse> {
   const guard = await requireSessionOr401();
   if (guard) return guard;
   const items = await listNoteWatchItemsWithAliases();
-  return NextResponse.json({ items });
+  // What the operator's 🚩/✅ presses taught each concept — shown on
+  // the card so the learning is visible, not just stored.
+  const fb = await listNoteWatchFeedback(items.map((it) => it.id)).catch(() => null);
+  return NextResponse.json({
+    items: items.map((it) => ({
+      ...it,
+      feedback: {
+        rejected: fb?.get(it.id)?.rejected.map((r) => r.quote) ?? [],
+        confirmed: fb?.get(it.id)?.confirmed.map((c) => c.quote) ?? [],
+      },
+    })),
+  });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
