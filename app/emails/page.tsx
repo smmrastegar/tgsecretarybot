@@ -189,6 +189,7 @@ function AccountsManager({ origin }: { origin: string }) {
                 )}
                 <InlineField label="🔗 دومین دکمه‌ها:" value={a.publicUrl} placeholder="rateklend.text.bz" onSave={(u) => patch(a.id, { publicUrl: u })} />
                 <InlineField label="📥 دومین‌های ورودی:" value={a.inboundDomains} placeholder="rateklend.ir, mail.rateklend.ir" onSave={(u) => patch(a.id, { inboundDomains: u })} />
+                <ResendCheck accountId={a.id} />
               </div>
               <button onClick={() => del(a.id)} className="text-[11px] px-2 py-1 rounded-md border border-rose-500/40 text-rose-200 shrink-0">🗑</button>
             </div>
@@ -353,6 +354,83 @@ function ComposeModal({ onClose, onSent }: { onClose: () => void; onSent: () => 
           <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">انصراف</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+// "🔧 بررسی Resend": asks the server to inspect this account's Resend
+// domain + webhook with the stored key, and offers to create the
+// email.received webhook when it is missing. Replaces the old manual
+// checklist ("go to the Resend dashboard, add a webhook…").
+type ResendReport = {
+  fromEmail: string | null;
+  inboundUrl: string;
+  apiKey: "account" | "global" | "missing";
+  domain: { wanted: string | null; found: boolean; status?: string; region?: string; unverified: number; records: Array<{ record: string; type: string; name: string; value: string; status?: string }> };
+  webhook: { listed: boolean; found: boolean; endpoint?: string; events?: string[]; created?: boolean; error?: string };
+  problems: string[];
+};
+
+function ResendCheck({ accountId }: { accountId: number }) {
+  const [busy, setBusy] = useState(false);
+  const [report, setReport] = useState<ResendReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  async function run(createWebhook: boolean) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/email-accounts/${accountId}/resend-check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ createWebhook }),
+      });
+      const j = (await r.json()) as { report?: ResendReport; error?: string };
+      if (!r.ok || !j.report) throw new Error(j.error ?? `HTTP ${r.status}`);
+      setReport(j.report);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const ok = report && report.problems.length === 0;
+  return (
+    <div className="mt-2 text-[11px]">
+      <div className="flex gap-2 flex-wrap items-center">
+        <button onClick={() => run(false)} disabled={busy} className="px-2 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-50">
+          {busy ? "در حال بررسی…" : "🔧 بررسی Resend"}
+        </button>
+        {report && !report.webhook.found && (
+          <button onClick={() => run(true)} disabled={busy} className="px-2 py-1 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50">
+            ساخت وب‌هوک email.received
+          </button>
+        )}
+        {report && (
+          <Badge tone={ok ? "success" : "warn"}>{ok ? "همه‌چیز درسته" : `${report.problems.length} مشکل`}</Badge>
+        )}
+      </div>
+      {err && <div className="text-rose-300 mt-1">{err}</div>}
+      {report && (
+        <div className="mt-2 space-y-1 text-[var(--color-text-dim)]">
+          <div>
+            دومین {report.domain.wanted ?? "—"}: {report.domain.found ? `${report.domain.status ?? "?"}${report.domain.region ? ` · ${report.domain.region}` : ""}` : "ثبت نشده"}
+            {report.domain.unverified > 0 && ` · ${report.domain.unverified} رکورد تأییدنشده`}
+          </div>
+          <div>
+            وب‌هوک: {report.webhook.found ? `✅ ${report.webhook.created ? "ساخته شد" : "موجود"} (${(report.webhook.events ?? []).join(", ")})` : report.webhook.listed ? "❌ نیست" : `؟ ${report.webhook.error ?? ""}`}
+          </div>
+          <div>from: {report.fromEmail ?? "—"} · کلید: {report.apiKey === "account" ? "اکانت" : report.apiKey === "global" ? "سراسری" : "ندارد"}</div>
+          {report.problems.map((p) => (
+            <div key={p} className="text-amber-300">⚠ {p}</div>
+          ))}
+          {report.domain.records.filter((r) => r.status && !/verified/i.test(r.status)).map((r) => (
+            <div key={`${r.type}-${r.name}`} dir="ltr" className="font-mono text-[10px] break-all">
+              {r.type} {r.name} → {r.value.slice(0, 60)}{r.value.length > 60 ? "…" : ""} ({r.status})
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

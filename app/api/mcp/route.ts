@@ -451,6 +451,20 @@ const TOOLS = [
     },
   },
   {
+    name: "email_account_resend_setup",
+    description:
+      "Check (and optionally fix) an email account's Resend plumbing using the account's stored API key: is the sending/receiving domain registered and verified, which DNS records are unverified, and is there an email.received webhook pointing at this account's inbound URL. Pass create_webhook=true to create the webhook when it is missing. Never returns the API key.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account_id: { type: "number", description: "email_accounts.id (see /emails)" },
+        create_webhook: { type: "boolean", description: "Create the email.received webhook if missing (default false)" },
+      },
+      required: ["account_id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "send_rich_message",
     description:
       "Send a Telegram RICH MESSAGE (Bot API 10.2+): real headings, bullet/numbered/checkbox lists, tables, block quotes, collapsible <details>, footers, code blocks, formulas — rendered natively by Telegram clients, up to 32768 chars. Prefer this over send_message for reports, summaries, tables and anything longer than a few lines. Give content as `markdown` (GitHub-flavoured: # headings, - lists, - [ ] tasks, | tables |, > quotes, ```code```, **bold**, ==mark==, ||spoiler||, <details><summary>…</summary>…</details>) OR as `html` (<h1>-<h6>, <p>, <ul>/<ol>/<li>, <table>, <blockquote expandable>, <details>, <footer>, <hr>, <b>/<i>/<u>/<s>/<code>/<mark>/<a>). Rendered right-to-left by default (Persian). Set receiver_user_id to make it a Telegram ephemeral message visible to one user only. If Telegram rejects the rich payload the tool falls back to a flattened classic-HTML message and reports fallback=true.",
@@ -1694,6 +1708,18 @@ async function callTool(
       });
       if (!item) throw new Error(`roadmap item ${id} not found`);
       return toolText({ ok: true, item });
+    }
+
+    case "email_account_resend_setup": {
+      const { getEmailAccount } = await import("@/lib/db");
+      const { checkAccountResend } = await import("@/lib/resend-admin");
+      const id = Number(args.account_id);
+      if (!Number.isFinite(id)) throw new Error("account_id required");
+      const account = await getEmailAccount(id);
+      if (!account) throw new Error(`email account ${id} not found`);
+      const report = await checkAccountResend(account, { createWebhook: args.create_webhook === true });
+      delete report.webhook.signingSecret;
+      return toolText(report);
     }
 
     case "send_rich_message": {
