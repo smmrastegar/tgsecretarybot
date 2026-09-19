@@ -126,14 +126,24 @@ export async function checkAccountResend(
     report.problems.push("کلید Resend برای این اکانت (و به‌صورت سراسری) تنظیم نشده");
     return report;
   }
-  if (!account.inboundToken) report.problems.push("inbound token ندارد — وب‌هوک قابل ساخت نیست");
-  if (!account.fromEmail) report.problems.push("from-email خالی است — پاسخ‌ها ارسال نمی‌شوند");
+  if (!account.inboundToken) {
+    report.problems.push("inbound token ندارد — از وب‌هوک سراسری استفاده می‌شود؛ برای وب‌هوک اختصاصی یکی بساز");
+  }
+  if (!account.fromEmail && !s?.resendFromEmail) {
+    report.problems.push("from-email خالی است — پاسخ‌ها ارسال نمی‌شوند");
+  }
   if (!account.tgChannelId) report.problems.push("چت تلگرام مقصد تنظیم نشده");
 
   // --- domain ---
   const domains = await call<{ data: DomainRow[] }>(apiKey, "GET", "/domains");
   if (!domains.ok) {
-    report.problems.push(`Resend /domains: ${domains.error}`);
+    if (/restricted to only send/i.test(domains.error ?? "")) {
+      report.problems.push(
+        "کلید Resend این اکانت فقط «Sending access» دارد: نه می‌شود وب‌هوک ساخت، نه متن ایمیل‌های دریافتی را خواند. در Resend یک کلید با Full access بساز و جایگزین کن",
+      );
+    } else {
+      report.problems.push(`Resend /domains: ${domains.error}`);
+    }
   } else if (report.domain.wanted) {
     const want = report.domain.wanted;
     const hit = (domains.data?.data ?? []).find(
@@ -179,13 +189,19 @@ export async function checkAccountResend(
   if (hooks.ok) {
     report.webhook.listed = true;
     const list = hooks.data?.data ?? [];
+    // An account without its own inbound token is served by the global
+    // webhook (?token=<resendInboundSecret>), so any hook that targets
+    // our inbound route counts for it.
     const hit =
       list.find((w) => w.endpoint === wantEndpoint) ??
       list.find(
         (w) =>
           account.inboundToken != null &&
           w.endpoint.includes(`token=${account.inboundToken}`),
-      );
+      ) ??
+      (account.inboundToken
+        ? undefined
+        : list.find((w) => w.endpoint.includes("/api/email-webhook")));
     if (hit) {
       report.webhook.found = true;
       report.webhook.id = hit.id;
