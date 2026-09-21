@@ -465,6 +465,20 @@ const TOOLS = [
     },
   },
   {
+    name: "get_message_media",
+    description:
+      "Fetch the media attached to a logged message (photo, screenshot, image document) and return it as an image the model can look at. Use with the message_id / has_media fields returned by chat_messages. Non-image media (voice, video, files) returns metadata only. Images larger than 8 MB are refused.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        chat_id: { type: "number", description: "Chat the message is in" },
+        message_id: { type: "number", description: "Telegram message_id from chat_messages" },
+      },
+      required: ["chat_id", "message_id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "send_rich_message",
     description:
       "Send a Telegram RICH MESSAGE (Bot API 10.2+): real headings, bullet/numbered/checkbox lists, tables, block quotes, collapsible <details>, footers, code blocks, formulas — rendered natively by Telegram clients, up to 32768 chars. Prefer this over send_message for reports, summaries, tables and anything longer than a few lines. Give content as `markdown` (GitHub-flavoured: # headings, - lists, - [ ] tasks, | tables |, > quotes, ```code```, **bold**, ==mark==, ||spoiler||, <details><summary>…</summary>…</details>) OR as `html` (<h1>-<h6>, <p>, <ul>/<ol>/<li>, <table>, <blockquote expandable>, <details>, <footer>, <hr>, <b>/<i>/<u>/<s>/<code>/<mark>/<a>). Rendered right-to-left by default (Persian). Set receiver_user_id to make it a Telegram ephemeral message visible to one user only. If Telegram rejects the rich payload the tool falls back to a flattened classic-HTML message and reports fallback=true.",
@@ -775,7 +789,7 @@ const TOOLS = [
   {
     name: "chat_messages",
     description:
-      "Recent messages for ANY chat (DM or group) by chat_id, newest first by default. Returns sender, from_owner flag, text (or transcript / media placeholder), time. Use for sentiment / summary / analysis of a person's chat.",
+      "Recent messages for ANY chat (DM or group) by chat_id, newest first by default. Returns sender, from_owner flag, text (or transcript / media placeholder), time. Use for sentiment / summary / analysis of a person's chat. Each row carries message_id, media_kind and has_media; pass message_id to get_message_media to actually see a photo/screenshot.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1722,6 +1736,50 @@ async function callTool(
       return toolText(report);
     }
 
+    case "get_message_media": {
+      const cid = Number(args.chat_id);
+      const mid = Number(args.message_id);
+      if (!Number.isFinite(cid) || !Number.isFinite(mid)) {
+        throw new Error("chat_id and message_id required");
+      }
+      const rows = (await runParams(
+        `SELECT media_file_id, media_kind, media_description, message_text, sender_name, created_at::text AS created_at
+           FROM messages_log
+          WHERE chat_id = $1 AND message_id = $2 AND media_file_id IS NOT NULL
+          ORDER BY id DESC LIMIT 1`,
+        [cid, mid],
+      )) as Array<Record<string, unknown>>;
+      const row = rows[0];
+      if (!row) throw new Error("no media logged for that message");
+      const fileId = String(row.media_file_id);
+      const kind = String(row.media_kind ?? "media");
+      const meta = {
+        chat_id: cid,
+        message_id: mid,
+        kind,
+        sender_name: row.sender_name,
+        created_at: row.created_at,
+        caption: row.message_text ?? null,
+        ai_description: row.media_description ?? null,
+      };
+      const { downloadTelegramFile } = await import("@/lib/stt");
+      const file = await downloadTelegramFile(config.telegramBotToken, fileId);
+      const mime = file.mime || "application/octet-stream";
+      const isImage = /^image\//i.test(mime) || kind === "photo";
+      if (!isImage) {
+        return toolText({ ...meta, mime, bytes: file.data.length, note: "not an image — metadata only" });
+      }
+      if (file.data.length > 8 * 1024 * 1024) {
+        throw new Error(`image is ${Math.round(file.data.length / 1024 / 1024)} MB — over the 8 MB limit`);
+      }
+      return {
+        content: [
+          { type: "image", data: Buffer.from(file.data).toString("base64"), mimeType: mime.startsWith("image/") ? mime : "image/jpeg" },
+          { type: "text", text: JSON.stringify(meta, null, 2) },
+        ],
+      };
+    }
+
     case "send_rich_message": {
       const chatId = Number(args.chat_id);
       if (!Number.isFinite(chatId)) throw new Error("chat_id required");
@@ -2219,9 +2277,12 @@ async function callTool(
       const limit = Math.min(Math.max(Number(args.limit ?? 30) || 30, 1), 300);
       const asc = String(args.order ?? "desc").toLowerCase() === "asc";
       const rows = await runParams(
-        `SELECT created_at, from_owner, sender_name,
+        `SELECT message_id, created_at, from_owner, sender_name,
                 COALESCE(NULLIF(message_text, ''), transcript,
-                  '[' || COALESCE(media_kind, 'media') || ']') AS text
+                  '[' || COALESCE(media_kind, 'media') || ']') AS text,
+                media_kind,
+                (media_file_id IS NOT NULL) AS has_media,
+                media_description
          FROM messages_log
          WHERE chat_id = $1
          ORDER BY created_at ${asc ? "ASC" : "DESC"}
@@ -2755,6 +2816,7 @@ const SCOPED_TOOLS = new Set([
   "group_members",
   "chat_messages",
   "chat_history",
+  "get_message_media",
   "send_message",
   "send_rich_message",
   "send_ephemeral_message",
