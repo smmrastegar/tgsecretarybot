@@ -15,6 +15,7 @@ type Item = {
   text: string;
   at: string;
   source: "sms" | "feed";
+  via: string | null;
 };
 
 const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
@@ -125,7 +126,7 @@ export default function OtpBoard() {
           if (typeof Notification !== "undefined" && Notification.permission === "granted") {
             try {
               const n = new Notification(top.code, {
-                body: `کد از ${cleanSender(top.sender) || "پیامک"} — کلیک = کپی`,
+                body: `${top.via ? `از ${top.via.replace(/^پیامک\s*/, "")} · ` : ""}${cleanSender(top.sender) || "پیامک"} — کلیک = کپی`,
                 tag: top.id,
                 requireInteraction: true,
                 silent: true,
@@ -238,6 +239,7 @@ export default function OtpBoard() {
             title="کلیک = کپی"
           >
             <div className="text-slate-400 text-sm mb-3">
+              {latest.via ? <span className="text-amber-200">از {latest.via.replace(/^پیامک\s*/, "")} · </span> : null}
               {cleanSender(latest.sender) || "پیامک"} · {ago(latest.at, now)}
             </div>
             <div
@@ -267,7 +269,7 @@ export default function OtpBoard() {
                   {it.code}
                 </div>
                 <div className="text-[11px] text-slate-400 mt-1 flex justify-between gap-2">
-                  <span className="truncate">{cleanSender(it.sender) || "پیامک"}</span>
+                  <span className="truncate">{it.via ? `${it.via.replace(/^پیامک\s*/, "")} · ` : ""}{cleanSender(it.sender) || "پیامک"}</span>
                   <span className="shrink-0">{ago(it.at, now)}</span>
                 </div>
               </button>

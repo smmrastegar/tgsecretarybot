@@ -754,6 +754,7 @@ export async function routeSmsForward(args: {
           bodyPreview: sms.body.slice(0, 200),
           telegramMessageId: existing.telegramMessageId,
           sender: sms.phone,
+          sourceLabel: fallbackLabel ?? owner?.name ?? null,
         });
         delivered++;
         console.log(
@@ -786,6 +787,7 @@ export async function routeSmsForward(args: {
       bodyPreview: sms.body.slice(0, 200),
       telegramMessageId: null,
       sender: sms.phone,
+      sourceLabel: fallbackLabel ?? owner?.name ?? null,
     });
     try {
       const sent = await args.bot.api.sendMessage(inbox.chatId, outText, {

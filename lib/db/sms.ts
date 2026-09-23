@@ -14,6 +14,7 @@ export type SmsDedupRow = {
   repeatCount: number;
   telegramMessageId: number | null;
   sender: string | null;
+  sourceLabel: string | null;
 };
 
 // Stable signature for dedup. Strips whitespace + lowercases + drops
@@ -59,6 +60,7 @@ export async function findSmsDedup(
     telegramMessageId:
       r.telegram_message_id != null ? Number(r.telegram_message_id) : null,
     sender: r.sender != null ? String(r.sender) : null,
+    sourceLabel: r.source_label != null ? String(r.source_label) : null,
   };
 }
 
@@ -68,20 +70,22 @@ export async function upsertSmsDedup(args: {
   bodyPreview: string;
   telegramMessageId: number | null;
   sender?: string | null;
+  sourceLabel?: string | null;
 }): Promise<SmsDedupRow> {
   await ensureSchema();
   const rows = await sql()`
-    INSERT INTO sms_dedup (inbox_chat_id, body_signature, body_preview, telegram_message_id, sender)
+    INSERT INTO sms_dedup (inbox_chat_id, body_signature, body_preview, telegram_message_id, sender, source_label)
     VALUES (${args.inboxChatId}, ${args.bodySignature},
-            ${args.bodyPreview.slice(0, 400)}, ${args.telegramMessageId}, ${args.sender ?? null})
+            ${args.bodyPreview.slice(0, 400)}, ${args.telegramMessageId}, ${args.sender ?? null}, ${args.sourceLabel ?? null})
     ON CONFLICT (inbox_chat_id, body_signature) DO UPDATE SET
       last_seen_at = NOW(),
       repeat_count = sms_dedup.repeat_count + 1,
       telegram_message_id = COALESCE(EXCLUDED.telegram_message_id,
                                      sms_dedup.telegram_message_id),
-      sender = COALESCE(EXCLUDED.sender, sms_dedup.sender)
+      sender = COALESCE(EXCLUDED.sender, sms_dedup.sender),
+      source_label = COALESCE(EXCLUDED.source_label, sms_dedup.source_label)
     RETURNING id, inbox_chat_id, body_signature, body_preview,
-              first_sent_at, last_seen_at, repeat_count, telegram_message_id, sender`;
+              first_sent_at, last_seen_at, repeat_count, telegram_message_id, sender, source_label`;
   const r = rows[0] as Record<string, unknown>;
   return {
     id: Number(r.id),
@@ -94,6 +98,7 @@ export async function upsertSmsDedup(args: {
     telegramMessageId:
       r.telegram_message_id != null ? Number(r.telegram_message_id) : null,
     sender: r.sender != null ? String(r.sender) : null,
+    sourceLabel: r.source_label != null ? String(r.source_label) : null,
   };
 }
 
@@ -154,7 +159,7 @@ export async function getSmsDedup(
   await ensureSchema();
   const rows = await sql()`
     SELECT id, inbox_chat_id, body_signature, body_preview,
-           first_sent_at, last_seen_at, repeat_count, telegram_message_id, sender
+           first_sent_at, last_seen_at, repeat_count, telegram_message_id, sender, source_label
     FROM sms_dedup WHERE id = ${dedupId} LIMIT 1`;
   const r = rows[0] as Record<string, unknown> | undefined;
   if (!r) return null;
@@ -169,6 +174,7 @@ export async function getSmsDedup(
     telegramMessageId:
       r.telegram_message_id != null ? Number(r.telegram_message_id) : null,
     sender: r.sender != null ? String(r.sender) : null,
+    sourceLabel: r.source_label != null ? String(r.source_label) : null,
   };
 }
 

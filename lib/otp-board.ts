@@ -17,6 +17,8 @@ export type OtpItem = {
   text: string;
   at: string;
   source: "sms" | "feed";
+  /** whose phone / which feed it came through, e.g. "پیامک مرضیه" */
+  via: string | null;
 };
 
 type Row = Record<string, unknown>;
@@ -30,7 +32,7 @@ export async function recentOtpItems(hours = 24, limit = 100): Promise<OtpItem[]
   if (inboxes.length > 0) {
     const ids = inboxes.map((c) => c.chatId);
     const rows = (await sql()`
-      SELECT id, sender, body_preview, to_char(last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at
+      SELECT id, sender, body_preview, source_label, to_char(last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at
         FROM sms_dedup
        WHERE inbox_chat_id = ANY(${ids}::bigint[])
          AND last_seen_at > NOW() - (${h} || ' hours')::INTERVAL
@@ -48,12 +50,15 @@ export async function recentOtpItems(hours = 24, limit = 100): Promise<OtpItem[]
         text,
         at: String(r.at),
         source: "sms",
+        via: r.source_label == null ? null : String(r.source_label),
       });
     }
   }
 
   const feeds = await listCodeFeeds().catch(() => []);
   const feedChats = [...new Set(feeds.filter((f) => f.enabled).map((f) => f.chatId))];
+  const feedLabel = new Map<number, string>();
+  for (const f of feeds) if (f.enabled && !feedLabel.has(f.chatId)) feedLabel.set(f.chatId, f.label);
   if (feedChats.length > 0) {
     const rows = (await sql()`
       SELECT id, chat_id, sender_name,
@@ -78,6 +83,7 @@ export async function recentOtpItems(hours = 24, limit = 100): Promise<OtpItem[]
         text,
         at: String(r.at),
         source: "feed",
+        via: feedLabel.get(Number(r.chat_id)) ?? (r.sender_name == null ? null : String(r.sender_name)),
       });
     }
   }

@@ -102,6 +102,14 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE sms_accept_signatures ADD COLUMN IF NOT EXISTS sender TEXT`;
     },
   },
+  {
+    // Whose phone an SMS came through (the webhook label, e.g. "پیامک
+    // مرضیه") so the OTP board can say "from Marzieh" next to a code.
+    id: "2026-09-23-001-sms-dedup-source-label",
+    up: async (q) => {
+      await q`ALTER TABLE sms_dedup ADD COLUMN IF NOT EXISTS source_label TEXT`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",
