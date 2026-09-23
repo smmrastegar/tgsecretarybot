@@ -1,0 +1,16 @@
+{
+  "name": "کدهای یک‌بارمصرف",
+  "short_name": "OTP",
+  "description": "کدهای تأیید پیامکی، درشت و با یک کلیک کپی",
+  "start_url": "/otp",
+  "scope": "/otp",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "fa",
+  "dir": "rtl",
+  "icons": [
+    { "src": "/icons/otp-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/otp-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

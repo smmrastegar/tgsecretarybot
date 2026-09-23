@@ -51,6 +51,8 @@ const PUBLIC_PREFIXES = [
   // forwarder). Nothing secret in there; a direct link is the reliable
   // way to get an APK onto the phone.
   "/downloads",
+  "/otp.webmanifest",
+  "/icons",
   "/_next",
   "/favicon",
 ];

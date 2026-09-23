@@ -143,6 +143,12 @@ const TILES: Array<{
     desc: "debug: چرا یه voice/video/photo توی کانال هدف کپی نشد",
   },
   {
+    href: "/otp",
+    emoji: "🔑",
+    label: "کدهای یک‌بارمصرف",
+    desc: "تابلوی کدهای پیامکی: درشت، یک کلیک کپی، اعلان روی مک. قابل نصب به‌عنوان اپ",
+  },
+  {
     href: "/roadmap",
     emoji: "📈",
     label: "نقشه‌ی راه و بهره‌وری",
