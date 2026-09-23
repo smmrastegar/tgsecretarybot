@@ -30,7 +30,7 @@ export async function recentOtpItems(hours = 24, limit = 100): Promise<OtpItem[]
   if (inboxes.length > 0) {
     const ids = inboxes.map((c) => c.chatId);
     const rows = (await sql()`
-      SELECT id, sender, body_preview, last_seen_at::text AS at
+      SELECT id, sender, body_preview, to_char(last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at
         FROM sms_dedup
        WHERE inbox_chat_id = ANY(${ids}::bigint[])
          AND last_seen_at > NOW() - (${h} || ' hours')::INTERVAL
@@ -58,7 +58,7 @@ export async function recentOtpItems(hours = 24, limit = 100): Promise<OtpItem[]
     const rows = (await sql()`
       SELECT id, chat_id, sender_name,
              COALESCE(NULLIF(message_text, ''), transcript, '') AS text,
-             created_at::text AS at
+             to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at
         FROM messages_log
        WHERE chat_id = ANY(${feedChats}::bigint[])
          AND created_at > NOW() - (${h} || ' hours')::INTERVAL
@@ -89,7 +89,7 @@ export async function recentOtpItems(hours = 24, limit = 100): Promise<OtpItem[]
   const seen = new Map<string, number>();
   const deduped: OtpItem[] = [];
   for (const it of out) {
-    const t = Date.parse(it.at.replace(" ", "T"));
+    const t = Date.parse(it.at);
     const prev = seen.get(it.code);
     if (prev != null && Math.abs(prev - t) < 10 * 60 * 1000) continue;
     seen.set(it.code, t);

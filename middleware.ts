@@ -51,6 +51,9 @@ const PUBLIC_PREFIXES = [
   // forwarder). Nothing secret in there; a direct link is the reliable
   // way to get an APK onto the phone.
   "/downloads",
+  // OTP board API — dashboard session OR a code-feed token, checked in
+  // the route itself (the Mac menu-bar app has no session cookie).
+  "/api/otp/recent",
   "/otp.webmanifest",
   "/icons",
   "/_next",

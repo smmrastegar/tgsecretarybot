@@ -6,6 +6,7 @@ import {
 } from "@/lib/db";
 import { extractCodes, renderFeed, type FeedFormat } from "@/lib/code-feed";
 import { background } from "@/lib/background";
+import { clientIp, ipAllowed } from "@/lib/ip-allow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,45 +16,6 @@ export const dynamic = "force-dynamic";
 // sets and overwrites on every proxied request. X-Forwarded-For is the
 // fallback for direct/origin access — its LAST entry is the one added by
 // our own reverse proxy, so we take the FIRST only when CF is absent.
-function clientIp(req: Request): string | null {
-  const cf = req.headers.get("cf-connecting-ip");
-  if (cf) return cf.trim();
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0]?.trim() ?? null;
-  return req.headers.get("x-real-ip");
-}
-
-// Supports plain IPs and CIDR (v4). An empty allowlist means "any".
-function ipAllowed(ip: string | null, allow: string[]): boolean {
-  if (allow.length === 0) return true;
-  if (!ip) return false;
-  const toInt = (s: string): number | null => {
-    const p = s.split(".");
-    if (p.length !== 4) return null;
-    let n = 0;
-    for (const part of p) {
-      const v = Number(part);
-      if (!Number.isInteger(v) || v < 0 || v > 255) return null;
-      n = (n << 8) | v;
-    }
-    return n >>> 0;
-  };
-  const ipInt = toInt(ip);
-  for (const entry of allow) {
-    if (entry === ip) return true;
-    const [net, bitsRaw] = entry.split("/");
-    if (!bitsRaw || ipInt == null) continue;
-    const netInt = toInt(net ?? "");
-    const bits = Number(bitsRaw);
-    if (netInt == null || !Number.isInteger(bits) || bits < 0 || bits > 32) {
-      continue;
-    }
-    const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
-    if ((ipInt & mask) === (netInt & mask)) return true;
-  }
-  return false;
-}
-
 export async function GET(
   req: Request,
   ctx: { params: Promise<{ token: string }> },
