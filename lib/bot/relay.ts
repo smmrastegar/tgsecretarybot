@@ -56,6 +56,24 @@ export async function maybeRelayDownloadLink(msg: Message, bot: Bot): Promise<vo
   }
 }
 
+function downloadCaption(msg: Message): string | undefined {
+  if (msg.audio) {
+    const title = (msg.audio.title ?? msg.audio.file_name ?? "").trim();
+    const artist = (msg.audio.performer ?? "").trim();
+    const line = [title, artist].filter(Boolean).join(" — ");
+    return line ? `🎵 ${line}`.slice(0, 1024) : undefined;
+  }
+  const raw = (msg.caption ?? "").trim();
+  if (!raw) return undefined;
+  // Drop @bot handles and "| info" style tails the downloaders append.
+  const cleaned = raw
+    .replace(/@\w+_?bot\b/gi, "")
+    .replace(/\|\s*info\s*/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return cleaned ? cleaned.slice(0, 1024) : undefined;
+}
+
 // Returns true when this message WAS a downloader reply we consumed.
 export async function maybeReturnDownloadedMedia(
   msg: Message,
@@ -100,7 +118,11 @@ export async function maybeReturnDownloadedMedia(
       businessConnectionId: bcId,
       kind: media.kind,
       file: media.fileId,
-      caption: msg.caption ?? undefined,
+      // The downloader's caption is its own advert ("@…_bot | info").
+      // For a track, show title — artist instead; the cover art rides
+      // along as the audio's own thumbnail, so the contact gets cover,
+      // title and player in one bubble.
+      caption: downloadCaption(msg),
       replyToMessageId: job.sourceMessageId ?? undefined,
     });
     await finishLinkJob(job.id, 1);
