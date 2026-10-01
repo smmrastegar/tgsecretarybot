@@ -1840,7 +1840,7 @@ export async function findPendingLinkJob(
   const rows = await sql()`
     SELECT * FROM link_download_jobs
      WHERE status = 'pending' AND relay_bot_id = ${relayBotId}
-       AND created_at > NOW() - INTERVAL '10 minutes'
+       AND created_at > NOW() - INTERVAL '30 minutes'
      ORDER BY created_at ASC LIMIT 1`;
   return rows[0] ? rowToLinkJob(rows[0]) : null;
 }

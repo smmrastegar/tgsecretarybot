@@ -9,6 +9,7 @@ import { getSettings } from "../settings";
 import { findActiveSecretarySessionForSender, findLinkWithSenderMessage, findOnlyActiveSessionForSecretary, findSecretaryLinkForSenderMessage, findSessionByLinkedMessage, getChatRule, getSenderStats, hasDb, openSecretarySession, recentConversation, recordSecretaryLink, touchSecretarySession, type SecretarySession, findEnabledRelaysForSource, findSecretaryRelayLinkByRecipientMessage, findLatestInboundLinkForRecipient, recordSecretaryRelayLink, recordOwnerReaction } from "../db";
 import type { MessageReactionUpdated, ReactionType } from "grammy/types";
 import { reportError, reportWarn } from "../report";
+import { isFinalDownloadMedia } from "../link-relay-kinds";
 import { MediaKind, OwnerCacheEntry, SendCommon, activeBusinessConnectionId, isFileIdProblem, markBusinessRead, mediaFileId, messageKind, relTime, resolveOwner } from "./core";
 
 // --- Media-link download relay -------------------------------------
@@ -72,6 +73,16 @@ export async function maybeReturnDownloadedMedia(
   );
   // Status chatter ("downloading…", menus) carries no media — leave it.
   if (!hasMedia) return false;
+  // Only the real result closes a job. The Spotify bot sends a cover
+  // card (photo) first and the audio later; forwarding the card and
+  // closing the job left the contact with a picture and no song.
+  const probe = mediaFileId(msg);
+  if (probe && !isFinalDownloadMedia(downloader.kind, probe.kind)) {
+    console.log(
+      `[link-relay] ${downloader.kind} sent ${probe.kind} — not a final result, waiting`,
+    );
+    return false;
+  }
   const replyTo = msg.reply_to_message?.message_id ?? null;
   const job = await findPendingLinkJob(downloader.botId, replyTo);
   if (!job) return false;
