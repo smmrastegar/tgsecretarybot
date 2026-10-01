@@ -70,14 +70,42 @@ export async function maybeRelayDownloadLink(msg: Message, bot: Bot): Promise<vo
   }
 }
 
-// First meaningful line of the downloader's card caption, minus its
-// own handles — becomes the "🎵 …" line under the cover.
-function cardTitle(caption: string): string {
-  const line = caption
-    .split("\n")
-    .map((l) => l.replace(/@\w+_?bot\b/gi, "").replace(/\|\s*info\s*/gi, "").trim())
-    .find((l) => l.length > 0);
-  return (line ?? "").slice(0, 200);
+function escapeHtml(t: string): string {
+  return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// The downloader's card caption ("🎧 Title : …", "🎤 Artist : …",
+// "💿 Album : …", "📅 Release Date: …", plus junk like ISRC / Is Local /
+// its own handles) → a clean HTML block for the cover we send:
+//   🎵 <b>title</b>
+//   🎤 artist · 💿 album · 📅 date
+//   🔗 Open in Spotify
+export function cardInfoHtml(caption: string, link: string): string {
+  const pick = (label: RegExp): string | null => {
+    for (const raw of caption.split("\n")) {
+      const m = label.exec(raw);
+      if (m) {
+        const v = raw.slice(m.index + m[0].length).trim().replace(/^[:：]\s*/, "").trim();
+        if (v && v !== "-" && v !== "—") return v;
+      }
+    }
+    return null;
+  };
+  const title = pick(/\btitle\b\s*/i);
+  const artist = pick(/\bartist\b\s*/i);
+  const album = pick(/\balbum\b\s*/i);
+  const date = pick(/release\s*date\s*/i);
+  if (!title && !artist) return "";
+  const lines: string[] = [];
+  lines.push(`🎵 <b>${escapeHtml(title ?? "")}</b>`);
+  const meta = [
+    artist ? `🎤 ${escapeHtml(artist)}` : null,
+    album && album !== title ? `💿 ${escapeHtml(album)}` : null,
+    date ? `📅 ${escapeHtml(date)}` : null,
+  ].filter(Boolean);
+  if (meta.length) lines.push(meta.join(" · "));
+  if (/^https?:\/\//.test(link)) lines.push(`🔗 <a href="${escapeHtml(link)}">Open in Spotify</a>`);
+  return lines.join("\n").slice(0, 900);
 }
 
 // The placeholder is our own business message: delete it (Bot API
@@ -160,7 +188,7 @@ export async function maybeReturnDownloadedMedia(
   const probe = mediaFileId(msg);
   if (probe && !isFinalDownloadMedia(downloader.kind, probe.kind)) {
     if (probe.kind === "photo" && job.coverMessageId == null) {
-      const title = cardTitle(msg.caption ?? "");
+      const info = cardInfoHtml(msg.caption ?? "", job.link);
       try {
         const coverId = await sendMediaAsOwner({
           bot,
@@ -168,10 +196,11 @@ export async function maybeReturnDownloadedMedia(
           businessConnectionId: bcId,
           kind: "photo",
           file: probe.fileId,
-          caption: `${title ? `🎵 ${title}\n` : ""}⏳ در حال دانلود…`,
+          caption: `${info ? `${info}\n\n` : ""}⏳ در حال دانلود…`,
+          parseMode: "HTML",
           replyToMessageId: job.sourceMessageId ?? undefined,
         });
-        await updateLinkJobProgress(job.id, { coverMessageId: coverId, title: title || null });
+        await updateLinkJobProgress(job.id, { coverMessageId: coverId, title: info || null });
         if (job.placeholderMessageId != null) {
           await removeOrEditPlaceholder(bot, bcId, job.sourceChatId, job.placeholderMessageId, null);
         }
@@ -208,11 +237,12 @@ export async function maybeReturnDownloadedMedia(
     // Finish the cover's caption ("⏳" → title) and drop the text
     // placeholder if the cover never came.
     if (job.coverMessageId != null) {
-      const finalCaption = caption ?? (job.title ? `🎵 ${job.title}` : "🎵");
+      const finalCaption = job.title ?? (caption ? escapeHtml(caption) : "🎵");
       await bot.api
         .editMessageCaption(job.sourceChatId, job.coverMessageId, {
           business_connection_id: bcId,
           caption: finalCaption,
+          parse_mode: "HTML",
         })
         .catch((err) => reportWarn("link-relay", "cover caption edit failed:", err));
     } else if (job.placeholderMessageId != null) {
@@ -639,6 +669,7 @@ export async function sendMediaAsOwner(args: {
   kind: MediaKind;
   file: string | InputFile;
   caption?: string;
+  parseMode?: "HTML";
   replyToMessageId?: number;
   messageThreadId?: number;
 }): Promise<number> {
@@ -646,6 +677,9 @@ export async function sendMediaAsOwner(args: {
   const base: Record<string, unknown> = {};
   if (businessConnectionId) {
     base.business_connection_id = businessConnectionId;
+  }
+  if (args.parseMode && args.caption) {
+    base.parse_mode = args.parseMode;
   }
   if (args.messageThreadId !== undefined) {
     base.message_thread_id = args.messageThreadId;
