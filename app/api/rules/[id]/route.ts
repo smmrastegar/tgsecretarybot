@@ -53,6 +53,7 @@ export async function PUT(
     requestTrigger?: string | null;
     requestWindowSeconds?: number | null;
     sourceChatIds?: string | null;
+    excludeSourceChatIds?: string | null;
     sourceThreadIds?: string | null;
     matchPattern?: string | null;
     matchAllFromSource?: boolean;
@@ -97,6 +98,18 @@ export async function PUT(
             .join(",")
         : "";
     patch.sourceChatIds = cleaned || null;
+  }
+  if (body.excludeSourceChatIds !== undefined) {
+    // Normalise: keep only valid numeric ids, comma-joined; empty → NULL.
+    const cleaned =
+      typeof body.excludeSourceChatIds === "string"
+        ? body.excludeSourceChatIds
+            .split(/[\s,]+/)
+            .map((s) => s.trim())
+            .filter((s) => s && Number.isFinite(Number(s)) && Number(s) !== 0)
+            .join(",")
+        : "";
+    patch.excludeSourceChatIds = cleaned || null;
   }
   if (body.sourceThreadIds !== undefined) {
     // Forum topic ids are positive small ints; same normalisation.

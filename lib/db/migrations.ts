@@ -110,6 +110,15 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE sms_dedup ADD COLUMN IF NOT EXISTS source_label TEXT`;
     },
   },
+  {
+    // A rule with no source allowlist ("any source") still needs a way
+    // to keep specific chats out — a bot that posts customer support
+    // tickets must not be swept up by the status-ticket rule.
+    id: "2026-10-01-001-rules-exclude-sources",
+    up: async (q) => {
+      await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS exclude_source_chat_ids TEXT`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",

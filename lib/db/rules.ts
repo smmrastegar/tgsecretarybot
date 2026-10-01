@@ -15,6 +15,8 @@ export type MessageRule = {
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
   sourceChatIds: number[] | null;
+  /** chats a rule must never match, even when sourceChatIds is open */
+  excludeSourceChatIds: number[] | null;
   sourceThreadIds: number[] | null;
   matchPattern: string | null;
   matchAllFromSource: boolean;
@@ -63,6 +65,7 @@ export function rowToRule(r: Row): MessageRule {
     requestTrigger: strOrNull(r, "request_trigger"),
     requestWindowSeconds: numOrNull(r, "request_window_seconds"),
     sourceChatIds: parseSourceChatIds(r.source_chat_ids),
+    excludeSourceChatIds: parseSourceChatIds(r.exclude_source_chat_ids),
     sourceThreadIds: parseSourceChatIds(r.source_thread_ids),
     matchPattern: strOrNull(r, "match_pattern"),
     matchAllFromSource: bool(r, "match_all_from_source"),
@@ -86,7 +89,7 @@ export async function listMessageRules(args?: {
   const tenantId = args?.tenantId ?? null;
   const rows = await sql()`
     SELECT id, tenant_id, name, description, forward_format, forward_header,
-           request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
+           request_trigger, request_window_seconds, source_chat_ids, exclude_source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
            show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
     FROM message_rules
@@ -101,7 +104,7 @@ export async function getMessageRule(id: number): Promise<MessageRule | null> {
   await ensureSchema();
   const rows = await sql()`
     SELECT id, tenant_id, name, description, forward_format, forward_header,
-           request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
+           request_trigger, request_window_seconds, source_chat_ids, exclude_source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
            show_rule_prefix, format_as_otp, enabled,
            created_by, created_at, updated_at
     FROM message_rules WHERE id = ${id} LIMIT 1`;
@@ -130,7 +133,7 @@ export async function createMessageRule(args: {
       ${args.createdBy ?? null}
     )
     RETURNING id, tenant_id, name, description, forward_format, forward_header,
-              request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
+              request_trigger, request_window_seconds, source_chat_ids, exclude_source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
               show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
   return rowToRule(rows[0] as Record<string, unknown>);
@@ -146,6 +149,7 @@ export async function updateMessageRule(
     requestTrigger: string | null;
     requestWindowSeconds: number | null;
     sourceChatIds: string | null;
+    excludeSourceChatIds: string | null;
     sourceThreadIds: string | null;
     matchPattern: string | null;
     matchAllFromSource: boolean;
@@ -168,6 +172,8 @@ export async function updateMessageRule(
   const rwValue = patch.requestWindowSeconds ?? null;
   const scMarker = patch.sourceChatIds === undefined ? 0 : 1;
   const scValue = patch.sourceChatIds ?? null;
+  const exMarker = patch.excludeSourceChatIds === undefined ? 0 : 1;
+  const exValue = patch.excludeSourceChatIds ?? null;
   const stMarker = patch.sourceThreadIds === undefined ? 0 : 1;
   const stValue = patch.sourceThreadIds ?? null;
   const mpMarker = patch.matchPattern === undefined ? 0 : 1;
@@ -181,6 +187,7 @@ export async function updateMessageRule(
       request_trigger = CASE WHEN ${rtMarker}::int = 1 THEN ${rtValue} ELSE request_trigger END,
       request_window_seconds = CASE WHEN ${rwMarker}::int = 1 THEN ${rwValue}::int ELSE request_window_seconds END,
       source_chat_ids = CASE WHEN ${scMarker}::int = 1 THEN ${scValue} ELSE source_chat_ids END,
+      exclude_source_chat_ids = CASE WHEN ${exMarker}::int = 1 THEN ${exValue} ELSE exclude_source_chat_ids END,
       source_thread_ids = CASE WHEN ${stMarker}::int = 1 THEN ${stValue} ELSE source_thread_ids END,
       match_pattern = CASE WHEN ${mpMarker}::int = 1 THEN ${mpValue} ELSE match_pattern END,
       match_all_from_source = COALESCE(${patch.matchAllFromSource ?? null}::boolean, match_all_from_source),
@@ -190,7 +197,7 @@ export async function updateMessageRule(
       updated_at = NOW()
     WHERE id = ${id}
     RETURNING id, tenant_id, name, description, forward_format, forward_header,
-              request_trigger, request_window_seconds, source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
+              request_trigger, request_window_seconds, source_chat_ids, exclude_source_chat_ids, source_thread_ids, match_pattern, match_all_from_source,
               show_rule_prefix, format_as_otp,
               enabled, created_by, created_at, updated_at`;
   const r = rows[0] as Record<string, unknown> | undefined;

@@ -16,6 +16,7 @@ type Rule = {
   requestTrigger: string | null;
   requestWindowSeconds: number | null;
   sourceChatIds: number[] | null;
+  excludeSourceChatIds: number[] | null;
   sourceThreadIds: number[] | null;
   matchPattern: string | null;
   matchAllFromSource: boolean;
@@ -98,6 +99,7 @@ export default function RuleDetailPage() {
   const [requestTrigger, setRequestTrigger] = useState("");
   const [requestWindow, setRequestWindow] = useState<number | null>(null);
   const [sourceChats, setSourceChats] = useState("");
+  const [excludeChats, setExcludeChats] = useState("");
   const [sourceThreads, setSourceThreads] = useState("");
   const [matchPattern, setMatchPattern] = useState("");
   const [matchAllFromSource, setMatchAllFromSource] = useState(false);
@@ -161,6 +163,7 @@ export default function RuleDetailPage() {
         setRequestTrigger(j.rule.requestTrigger ?? "");
         setRequestWindow(j.rule.requestWindowSeconds);
         setSourceChats((j.rule.sourceChatIds ?? []).join(", "));
+        setExcludeChats((j.rule.excludeSourceChatIds ?? []).join(", "));
         setSourceThreads((j.rule.sourceThreadIds ?? []).join(", "));
         setMatchPattern(j.rule.matchPattern ?? "");
         setMatchAllFromSource(!!j.rule.matchAllFromSource);
@@ -297,6 +300,7 @@ export default function RuleDetailPage() {
           requestTrigger: requestTrigger || null,
           requestWindowSeconds: requestWindow,
           sourceChatIds: sourceChats || null,
+          excludeSourceChatIds: excludeChats || null,
           sourceThreadIds: sourceThreads || null,
           matchPattern: matchPattern || null,
           matchAllFromSource,
@@ -992,6 +996,14 @@ export default function RuleDetailPage() {
               onChange={(e) => setSourceChats(e.target.value)}
               placeholder="فقط از این چت‌ها (chat_id با کاما) — خالی = همه چت‌ها"
               className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+            />
+            <input
+              type="text"
+              dir="ltr"
+              value={excludeChats}
+              onChange={(e) => setExcludeChats(e.target.value)}
+              placeholder="هرگز از این چت‌ها (chat_id با کاما) — برای قانون «همه مبدأها» که باید چند چت را به قانون دیگری واگذار کند"
+              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 mt-1"
             />
             <input
               type="text"

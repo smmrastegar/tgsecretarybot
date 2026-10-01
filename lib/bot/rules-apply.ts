@@ -103,6 +103,9 @@ export async function maybeApplyMessageRules(args: {
     // out of unrelated conversations.
     const scoped = allRules.filter((r) => {
       if (r.sourceChatIds && !r.sourceChatIds.includes(args.chatId)) return false;
+      // Exclusion list: an "any source" rule that must skip particular
+      // chats (another rule owns them).
+      if (r.excludeSourceChatIds && r.excludeSourceChatIds.includes(args.chatId)) return false;
       // Topic scope narrows an allowed chat to specific forum threads.
       // A group carries unrelated traffic in a dozen topics, so "this
       // chat" is usually too broad a unit to route on.
