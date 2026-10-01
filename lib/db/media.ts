@@ -1788,6 +1788,11 @@ export type LinkJob = {
   sourceChatId: number;
   sourceMessageId: number | null;
   link: string;
+  /** "⏳ در حال دانلود" sent to the contact right after the relay */
+  placeholderMessageId: number | null;
+  /** cover photo already sent to the contact (spotify card) */
+  coverMessageId: number | null;
+  title: string | null;
 };
 
 function rowToLinkJob(r: Record<string, unknown>): LinkJob {
@@ -1798,7 +1803,23 @@ function rowToLinkJob(r: Record<string, unknown>): LinkJob {
     sourceChatId: Number(r.source_chat_id),
     sourceMessageId: r.source_message_id == null ? null : Number(r.source_message_id),
     link: String(r.link ?? ""),
+    placeholderMessageId: r.placeholder_message_id == null ? null : Number(r.placeholder_message_id),
+    coverMessageId: r.cover_message_id == null ? null : Number(r.cover_message_id),
+    title: r.title == null ? null : String(r.title),
   };
+}
+
+export async function updateLinkJobProgress(
+  id: number,
+  patch: { placeholderMessageId?: number | null; coverMessageId?: number | null; title?: string | null },
+): Promise<void> {
+  if (!hasDb()) return;
+  await sql()`
+    UPDATE link_download_jobs SET
+      placeholder_message_id = COALESCE(${patch.placeholderMessageId ?? null}::bigint, placeholder_message_id),
+      cover_message_id = COALESCE(${patch.coverMessageId ?? null}::bigint, cover_message_id),
+      title = COALESCE(${patch.title ?? null}::text, title)
+    WHERE id = ${id}`;
 }
 
 export async function createLinkJob(args: {

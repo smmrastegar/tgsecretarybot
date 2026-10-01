@@ -40,7 +40,7 @@ export async function maybeRelayDownloadLink(msg: Message, bot: Bot): Promise<vo
     const sent = await bot.api.sendMessage(hit.botId, hit.url, {
       business_connection_id: bcId,
     });
-    await createLinkJob({
+    const jobId = await createLinkJob({
       kind: hit.kind,
       relayBotId: hit.botId,
       sourceChatId: msg.chat.id,
@@ -51,9 +51,65 @@ export async function maybeRelayDownloadLink(msg: Message, bot: Bot): Promise<vo
     console.log(
       `[link-relay] ${hit.kind} link from chat=${msg.chat.id} → bot=${hit.botId}`,
     );
+    // Tell the contact something is happening. Replaced by the cover
+    // card / the file when they arrive (maybeReturnDownloadedMedia).
+    if (jobId != null) {
+      try {
+        const ph = await bot.api.sendMessage(msg.chat.id, "⏳ در حال دانلود…", {
+          business_connection_id: bcId,
+          reply_parameters: { message_id: msg.message_id },
+        });
+        const { updateLinkJobProgress } = await import("../db");
+        await updateLinkJobProgress(jobId, { placeholderMessageId: ph.message_id });
+      } catch (err) {
+        reportWarn("link-relay", "placeholder send failed:", err);
+      }
+    }
   } catch (err) {
     reportWarn("link-relay", `send to ${hit.label} bot failed:`, err);
   }
+}
+
+// First meaningful line of the downloader's card caption, minus its
+// own handles — becomes the "🎵 …" line under the cover.
+function cardTitle(caption: string): string {
+  const line = caption
+    .split("\n")
+    .map((l) => l.replace(/@\w+_?bot\b/gi, "").replace(/\|\s*info\s*/gi, "").trim())
+    .find((l) => l.length > 0);
+  return (line ?? "").slice(0, 200);
+}
+
+// The placeholder is our own business message: delete it (Bot API
+// deleteBusinessMessages, needs the "delete sent messages" right); when
+// that is refused, edit it into something useful instead of leaving
+// "⏳ در حال دانلود…" forever.
+async function removeOrEditPlaceholder(
+  bot: Bot,
+  bcId: string,
+  chatId: number,
+  messageId: number,
+  fallbackText: string | null,
+): Promise<void> {
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${config.telegramBotToken}/deleteBusinessMessages`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ business_connection_id: bcId, message_ids: [messageId] }),
+      },
+    );
+    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string };
+    if (j.ok) return;
+    console.log(`[link-relay] placeholder delete refused: ${j.description ?? "?"}`);
+  } catch (err) {
+    reportWarn("link-relay", "placeholder delete failed:", err);
+  }
+  if (!fallbackText) return;
+  await bot.api
+    .editMessageText(chatId, messageId, fallbackText, { business_connection_id: bcId })
+    .catch((err) => reportWarn("link-relay", "placeholder edit failed:", err));
 }
 
 function downloadCaption(msg: Message): string | undefined {
@@ -91,27 +147,53 @@ export async function maybeReturnDownloadedMedia(
   );
   // Status chatter ("downloading…", menus) carries no media — leave it.
   if (!hasMedia) return false;
-  // Only the real result closes a job. The Spotify bot sends a cover
-  // card (photo) first and the audio later; forwarding the card and
-  // closing the job left the contact with a picture and no song.
-  const probe = mediaFileId(msg);
-  if (probe && !isFinalDownloadMedia(downloader.kind, probe.kind)) {
-    console.log(
-      `[link-relay] ${downloader.kind} sent ${probe.kind} — not a final result, waiting`,
-    );
-    return false;
-  }
   const replyTo = msg.reply_to_message?.message_id ?? null;
   const job = await findPendingLinkJob(downloader.botId, replyTo);
   if (!job) return false;
   const bcId = await activeBusinessConnectionId();
   if (!bcId) return false;
+  const { updateLinkJobProgress } = await import("../db");
+  // Only the real result closes a job. The Spotify bot sends a cover
+  // card (photo) first and the audio later. The card is forwarded as
+  // the cover — "🎵 title / ⏳ downloading" — and the job stays open;
+  // the placeholder text is removed once the cover is up.
+  const probe = mediaFileId(msg);
+  if (probe && !isFinalDownloadMedia(downloader.kind, probe.kind)) {
+    if (probe.kind === "photo" && job.coverMessageId == null) {
+      const title = cardTitle(msg.caption ?? "");
+      try {
+        const coverId = await sendMediaAsOwner({
+          bot,
+          toChatId: job.sourceChatId,
+          businessConnectionId: bcId,
+          kind: "photo",
+          file: probe.fileId,
+          caption: `${title ? `🎵 ${title}\n` : ""}⏳ در حال دانلود…`,
+          replyToMessageId: job.sourceMessageId ?? undefined,
+        });
+        await updateLinkJobProgress(job.id, { coverMessageId: coverId, title: title || null });
+        if (job.placeholderMessageId != null) {
+          await removeOrEditPlaceholder(bot, bcId, job.sourceChatId, job.placeholderMessageId, null);
+        }
+        console.log(`[link-relay] cover sent to chat=${job.sourceChatId} (job ${job.id})`);
+        return true;
+      } catch (err) {
+        reportWarn("link-relay", "cover send failed:", err);
+        return false;
+      }
+    }
+    console.log(
+      `[link-relay] ${downloader.kind} sent ${probe.kind} — not a final result, waiting`,
+    );
+    return false;
+  }
   // copyMessage cannot address a message that arrived over a business
   // connection ("message to copy not found"), so re-send the media by
   // its file_id instead.
   const media = mediaFileId(msg);
   if (!media) return false;
   try {
+    const caption = downloadCaption(msg);
     await sendMediaAsOwner({
       bot,
       toChatId: job.sourceChatId,
@@ -119,12 +201,23 @@ export async function maybeReturnDownloadedMedia(
       kind: media.kind,
       file: media.fileId,
       // The downloader's caption is its own advert ("@…_bot | info").
-      // For a track, show title — artist instead; the cover art rides
-      // along as the audio's own thumbnail, so the contact gets cover,
-      // title and player in one bubble.
-      caption: downloadCaption(msg),
-      replyToMessageId: job.sourceMessageId ?? undefined,
+      // For a track, show title — artist instead.
+      caption,
+      replyToMessageId: job.coverMessageId == null ? (job.sourceMessageId ?? undefined) : undefined,
     });
+    // Finish the cover's caption ("⏳" → title) and drop the text
+    // placeholder if the cover never came.
+    if (job.coverMessageId != null) {
+      const finalCaption = caption ?? (job.title ? `🎵 ${job.title}` : "🎵");
+      await bot.api
+        .editMessageCaption(job.sourceChatId, job.coverMessageId, {
+          business_connection_id: bcId,
+          caption: finalCaption,
+        })
+        .catch((err) => reportWarn("link-relay", "cover caption edit failed:", err));
+    } else if (job.placeholderMessageId != null) {
+      await removeOrEditPlaceholder(bot, bcId, job.sourceChatId, job.placeholderMessageId, caption ?? "✅ آماده شد");
+    }
     await finishLinkJob(job.id, 1);
     console.log(
       `[link-relay] returned ${downloader.kind} ${media.kind} to chat=${job.sourceChatId}`,

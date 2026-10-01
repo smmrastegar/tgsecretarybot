@@ -119,6 +119,17 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE message_rules ADD COLUMN IF NOT EXISTS exclude_source_chat_ids TEXT`;
     },
   },
+  {
+    // Link-download relay: the "⏳ downloading" placeholder and the cover
+    // card sent to the contact before the file arrives, so they can be
+    // replaced / captioned when it does.
+    id: "2026-10-01-002-link-jobs-progress",
+    up: async (q) => {
+      await q`ALTER TABLE link_download_jobs ADD COLUMN IF NOT EXISTS placeholder_message_id BIGINT`;
+      await q`ALTER TABLE link_download_jobs ADD COLUMN IF NOT EXISTS cover_message_id BIGINT`;
+      await q`ALTER TABLE link_download_jobs ADD COLUMN IF NOT EXISTS title TEXT`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",
