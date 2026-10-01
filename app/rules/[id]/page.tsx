@@ -320,6 +320,7 @@ export default function RuleDetailPage() {
     requestTrigger,
     requestWindow,
     sourceChats,
+    excludeChats,
     sourceThreads,
     matchPattern,
     matchAllFromSource,
