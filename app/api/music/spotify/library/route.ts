@@ -6,11 +6,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   const guard = await requireSessionOr401();
   if (guard) return guard;
   try {
-    return NextResponse.json(await listMyPlaylists());
+    return NextResponse.json(await listMyPlaylists(Number(new URL(request.url).searchParams.get("account"))));
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
   }

@@ -170,3 +170,37 @@ export async function setPlaylistTrack(playlistId: number, trackId: number, pres
     await q().query(`DELETE FROM music_playlist_tracks WHERE playlist_id = $1 AND track_id = $2`, [playlistId, trackId]);
   }
 }
+
+export type SpotifyAccount = { id: number; spotifyUserId: string; displayName: string | null };
+
+export async function listSpotifyAccounts(): Promise<SpotifyAccount[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = (await q().query(`SELECT id, spotify_user_id, display_name FROM spotify_accounts ORDER BY id`)) as Row[];
+  return rows.map((r) => ({ id: num(r, "id"), spotifyUserId: str(r, "spotify_user_id"), displayName: strOrNull(r, "display_name") }));
+}
+
+export async function upsertSpotifyAccount(spotifyUserId: string, name: string | null, refreshToken: string): Promise<number> {
+  await ensureSchema();
+  const rows = (await q().query(
+    `INSERT INTO spotify_accounts (spotify_user_id, display_name, refresh_token) VALUES ($1, $2, $3)
+       ON CONFLICT (spotify_user_id) DO UPDATE SET display_name = EXCLUDED.display_name, refresh_token = EXCLUDED.refresh_token
+       RETURNING id`,
+    [spotifyUserId, name, refreshToken],
+  )) as Row[];
+  return num(rows[0]!, "id");
+}
+
+export async function getSpotifyRefreshToken(id: number): Promise<string | null> {
+  await ensureSchema();
+  const rows = (await q().query(`SELECT refresh_token FROM spotify_accounts WHERE id = $1`, [id])) as Row[];
+  return rows[0] ? str(rows[0], "refresh_token") : null;
+}
+
+export async function setSpotifyRefreshToken(id: number, token: string): Promise<void> {
+  await q().query(`UPDATE spotify_accounts SET refresh_token = $1 WHERE id = $2`, [token, id]);
+}
+
+export async function deleteSpotifyAccount(id: number): Promise<void> {
+  await q().query(`DELETE FROM spotify_accounts WHERE id = $1`, [id]);
+}

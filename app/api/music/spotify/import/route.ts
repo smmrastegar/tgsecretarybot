@@ -13,10 +13,10 @@ export const maxDuration = 120;
 export async function POST(request: Request): Promise<NextResponse> {
   const guard = await requireSessionOr401();
   if (guard) return guard;
-  const b = (await request.json().catch(() => ({}))) as { id?: string; name?: string };
+  const b = (await request.json().catch(() => ({}))) as { id?: string; name?: string; accountId?: number };
   if (!b.id) return NextResponse.json({ error: "id required" }, { status: 400 });
   try {
-    const items = await fetchTrackIds(b.id);
+    const items = await fetchTrackIds(Number(b.accountId), b.id);
     const name = (b.name ?? (b.id === "liked" ? "لایک‌ها" : "Spotify")).slice(0, 100);
     const existing = (await listMusicPlaylists()).find((p) => p.name === name);
     const plId = existing?.id ?? (await createMusicPlaylist(name));

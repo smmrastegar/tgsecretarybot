@@ -171,6 +171,20 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE link_download_jobs ADD COLUMN IF NOT EXISTS music_track_id BIGINT`;
     },
   },
+  {
+    // Several Spotify accounts can stay linked to the music library.
+    id: "2026-10-05-002-spotify-accounts",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS spotify_accounts (
+          id               BIGSERIAL PRIMARY KEY,
+          spotify_user_id  TEXT NOT NULL UNIQUE,
+          display_name     TEXT,
+          refresh_token    TEXT NOT NULL,
+          created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",
