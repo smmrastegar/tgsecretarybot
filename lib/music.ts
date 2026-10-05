@@ -74,7 +74,7 @@ export async function saveMusicAudio(trackId: number, fileId: string, info: {
   title?: string | null; performer?: string | null; duration?: number | null; fileName?: string | null; size?: number | null;
 }): Promise<void> {
   if ((info.size ?? 0) > 20 * 1024 * 1024) {
-    throw new Error(`فایل ${Math.round((info.size ?? 0) / 1048576)}MB است؛ ربات تلگرام فقط تا ۲۰MB را می‌تواند دانلود کند`);
+    throw new Error(`فایل ${Math.round((info.size ?? 0) / 1048576)}MB است (کیفیت بات روی FLAC است). در چت بات دانلودر Menu ← Quality را روی MP3 بگذار و ↻ بزن`);
   }
   await ensureDir();
   const f = await downloadTelegramFile(config.telegramBotToken, fileId);
