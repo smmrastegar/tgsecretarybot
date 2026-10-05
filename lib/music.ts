@@ -92,6 +92,9 @@ export async function saveMusicAudio(trackId: number, fileId: string, info: {
     status: "ready",
     error: null,
   });
+  // Best effort, off the critical path: authoritative metadata + cover,
+  // and a check that the audio really is this track.
+  void verifyDownloadedTrack(trackId);
 }
 
 export async function failMusicTrack(trackId: number, error: string): Promise<void> {
@@ -149,5 +152,83 @@ export async function kickMusicQueue(): Promise<{ started: number | null }> {
   } catch (err) {
     await failMusicTrack(track.id, `ارسال به بات ناموفق: ${String(err).slice(0, 150)}`);
     return { started: null };
+  }
+}
+
+// ---- metadata from Spotify (authoritative) + wrong-audio detection ----
+
+/** Audio whose length differs this much from Spotify's belongs to another track. */
+const DURATION_TOLERANCE_S = 6;
+
+export function durationMismatch(audioS: number | null, spotifyS: number | null): boolean {
+  if (audioS == null || spotifyS == null || audioS <= 0 || spotifyS <= 0) return false;
+  return Math.abs(audioS - spotifyS) > DURATION_TOLERANCE_S;
+}
+
+async function saveCoverFromUrl(trackId: number, url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    await ensureDir();
+    const p = path.join(MUSIC_DIR, `${trackId}.cover.jpg`);
+    await fs.writeFile(p, new Uint8Array(await res.arrayBuffer()));
+    return p;
+  } catch {
+    return null;
+  }
+}
+
+export type RepairReport = { checked: number; metaUpdated: number; coversSaved: number; wrongAudio: number; requeued: number; notFound: number };
+
+/**
+ * For every track: take title / artist / album / date / cover from Spotify
+ * (the truth), then compare the stored audio length with Spotify's. A
+ * mismatch means the downloader's audio was attached to the wrong job:
+ * the file is dropped and the track goes back to the queue.
+ */
+export async function repairLibrary(opts?: { onlyIds?: number[] }): Promise<RepairReport> {
+  const { fetchTrackMeta } = await import("./spotify");
+  const { listTracksForMeta } = await import("./db");
+  let tracks = await listTracksForMeta();
+  if (opts?.onlyIds) tracks = tracks.filter((t) => opts.onlyIds!.includes(t.id));
+  const report: RepairReport = { checked: tracks.length, metaUpdated: 0, coversSaved: 0, wrongAudio: 0, requeued: 0, notFound: 0 };
+  const metas = new Map((await fetchTrackMeta(tracks.map((t) => t.spotifyId))).map((m) => [m.id, m]));
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < tracks.length) {
+      const t = tracks[cursor++]!;
+      const m = metas.get(t.spotifyId);
+      if (!m) { report.notFound++; continue; }
+      const patch: Parameters<typeof updateMusicTrack>[1] = { title: m.title, artist: m.artist, album: m.album, releaseDate: m.releaseDate, spotifyDurationS: m.durationS };
+      if (m.coverUrl) {
+        const cp = await saveCoverFromUrl(t.id, m.coverUrl);
+        if (cp) { patch.coverPath = cp; report.coversSaved++; }
+      }
+      if (t.status === "ready" && durationMismatch(t.durationS, m.durationS)) {
+        report.wrongAudio++;
+        await removeMusicFiles([t.filePath]);
+        patch.status = "queued"; patch.error = null; patch.filePath = null; patch.mime = null; patch.sizeBytes = null; patch.durationS = null;
+        report.requeued++;
+      }
+      await updateMusicTrack(t.id, patch);
+      report.metaUpdated++;
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  return report;
+}
+
+/** After a fresh download: fix metadata from Spotify and reject audio of the wrong length. */
+export async function verifyDownloadedTrack(trackId: number): Promise<void> {
+  try {
+    const t = await getMusicTrack(trackId);
+    if (!t?.spotifyId) return;
+    const r = await repairLibrary({ onlyIds: [trackId] });
+    if (r.requeued > 0) {
+      // Wrong audio twice would loop forever: park it as failed instead.
+      await updateMusicTrack(trackId, { status: "failed", error: "فایلِ بات با این آهنگ نمی‌خواند (مدت متفاوت). بات دانلودر آهنگ دیگری فرستاد؛ بعداً ↻ بزن" });
+    }
+  } catch (err) {
+    reportWarn("music", `verify track ${trackId} failed:`, err);
   }
 }

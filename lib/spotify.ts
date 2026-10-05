@@ -119,3 +119,32 @@ export async function disconnectSpotify(accountId: number): Promise<void> {
 }
 
 export { listSpotifyAccounts };
+
+/** Token for public catalogue data (no user): client-credentials grant. */
+export async function appToken(): Promise<string> {
+  const t = await tokenCall({ grant_type: "client_credentials" });
+  return t.access_token;
+}
+
+export type SpotifyTrackMeta = {
+  id: string; title: string; artist: string; album: string; releaseDate: string | null; durationS: number; coverUrl: string | null;
+};
+
+/** Up to 50 ids per call. Missing / unavailable tracks are simply absent. */
+export async function fetchTrackMeta(ids: string[]): Promise<SpotifyTrackMeta[]> {
+  const token = await appToken();
+  const out: SpotifyTrackMeta[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const res = await fetch(`https://api.spotify.com/v1/tracks?ids=${batch.join(",")}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status === 429) throw new Error("اسپاتیفای موقتاً محدود کرده (429)؛ کمی بعد دوباره امتحان کن");
+    if (!res.ok) throw new Error(`spotify tracks ${res.status}`);
+    const j = (await res.json()) as { tracks: Array<null | { id: string; name: string; duration_ms: number; artists: Array<{ name: string }>; album: { name: string; release_date?: string; images?: Array<{ url: string; width: number }> } }> };
+    for (const t of j.tracks) {
+      if (!t) continue;
+      const img = [...(t.album.images ?? [])].sort((a, b) => b.width - a.width).find((x) => x.width <= 700) ?? t.album.images?.[0];
+      out.push({ id: t.id, title: t.name, artist: t.artists.map((a) => a.name).join(", "), album: t.album.name, releaseDate: t.album.release_date ?? null, durationS: Math.round(t.duration_ms / 1000), coverUrl: img?.url ?? null });
+    }
+  }
+  return out;
+}

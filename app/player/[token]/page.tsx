@@ -4,6 +4,7 @@
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MusicStats from "@/components/music/Stats";
+import Spectrum from "@/components/music/Spectrum";
 import TrackDetail from "@/components/music/TrackDetail";
 import { useListenTracker } from "@/components/music/useListenTracker";
 
@@ -20,6 +21,16 @@ type Playlist = { id: number; name: string; trackIds: number[] };
 
 const fmt = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
 const DEFAULT_ACCENT = "29,185,84";
+
+// No cover: a tile tinted from the track id with the title's first letter.
+function Tile({ t, className = "" }: { t: { id: number; title: string | null }; className?: string }) {
+  const hue = (t.id * 47) % 360;
+  return (
+    <span className={`grid place-items-center w-full h-full font-bold ${className}`} style={{ background: `linear-gradient(135deg, hsl(${hue} 55% 38%), hsl(${(hue + 40) % 360} 60% 22%))`, color: "rgba(255,255,255,.85)" }}>
+      {(t.title ?? "♪").trim().charAt(0).toUpperCase() || "♪"}
+    </span>
+  );
+}
 
 function Eq({ on }: { on: boolean }) {
   return (
@@ -68,6 +79,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const history = useRef<number[]>([]);
   const tracker = useListenTracker(tq);
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
+  const byIdRef = useRef(byId);
+  byIdRef.current = byId;
 
   const load = useCallback(async () => {
     const r = await fetch(`/api/music?${tq}`, { cache: "no-store" });
@@ -132,7 +145,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const a = audio.current; if (!a || cur == null) return;
     tracker.begin(cur);
     a.src = `/api/music/stream/${cur}?${tq}`; void a.play().catch(() => {});
-    const t = byId.get(cur);
+    const t = byIdRef.current.get(cur);
     if ("mediaSession" in navigator && t) {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: t.title ?? "—", artist: t.artist ?? "", album: t.album ?? "",
@@ -163,7 +176,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       };
       img.src = `/api/music/cover/${t.id}?${tq}`;
     }
-  }, [cur, byId, tq, tracker]);
+  }, [cur, tq, tracker]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -181,7 +194,6 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, [cur, queue, byId]);
   const toggle = () => (playing ? audio.current?.pause() : void audio.current?.play());
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
-  const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
 
   if (denied) return <div dir="rtl" style={{ background: "#07070b", color: "#71717a", minHeight: "100dvh" }} className="grid place-items-center text-sm">این لینک معتبر نیست.</div>;
 
@@ -203,7 +215,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         <div className="absolute inset-0" style={{ background: "radial-gradient(900px 500px at 80% -10%, rgba(var(--ac),.28), transparent 60%), linear-gradient(180deg, color-mix(in srgb, var(--bg) 55%, transparent), var(--bg) 70%)" }} />
       </div>
 
-      <div className="relative max-w-3xl mx-auto px-4 pt-6 pb-40">
+      <div className="relative max-w-3xl mx-auto px-4 pt-6 pb-56">
         <header className="flex items-center justify-between mb-5">
           <h1 className="text-2xl font-extrabold tracking-tight" style={{ textShadow: "0 0 30px rgba(var(--ac),.5)" }}>🎧 موزیک من</h1>
           <div className="flex items-center gap-2">
@@ -239,7 +251,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
                 return (
                   <div key={t.id} className={`group flex items-center gap-3 p-2.5 rounded-2xl border transition ${t.rating < 0 ? "opacity-40" : ""} ${active ? "border-[rgba(var(--ac),.6)] bg-[rgba(var(--ac),.12)]" : "border-[var(--bd0)] bg-[var(--s0)] hover:bg-[var(--s2)]"}`}>
                     <button onClick={() => playTrack(t.id)} className="relative w-14 h-14 rounded-xl overflow-hidden bg-[var(--s2)] shrink-0 shadow-lg">
-                      {t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full text-2xl">🎵</span>}
+                      {t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" loading="lazy" /> : <Tile t={t} className="text-xl" />}
                       {active && <span className="absolute inset-0 grid place-items-center bg-black/45"><Eq on={playing} /></span>}
                     </button>
                     <button onClick={() => playTrack(t.id)} className="min-w-0 flex-1 text-right">
@@ -263,17 +275,22 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {/* mini player */}
       {now && !full && (
         <div className="fixed bottom-3 inset-x-3 z-30 max-w-3xl mx-auto glass rounded-3xl border border-[var(--bd)] shadow-2xl overflow-hidden" style={{ boxShadow: "0 20px 50px -15px rgba(var(--ac),.45)" }}>
-          <div className="h-[3px] bg-[var(--s2)]"><div className="h-full bg-[rgb(var(--ac))] transition-[width] duration-300" style={{ width: `${pct}%` }} /></div>
-          <div className="flex items-center gap-3 p-2.5">
+          <div className="flex items-center gap-3 p-2.5 pb-1">
             <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-right">
-              <span className="w-12 h-12 rounded-xl overflow-hidden bg-[var(--s2)] shrink-0" style={{ animation: playing ? undefined : undefined }}>
-                {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full text-xl">🎵</span>}
+              <span className="w-12 h-12 rounded-xl overflow-hidden bg-[var(--s2)] shrink-0">
+                {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <Tile t={now} />}
               </span>
               <span className="min-w-0"><span className="block text-sm font-semibold truncate">{now.title}</span><span className="block text-xs text-[var(--dim)] truncate">{now.artist}</span></span>
             </button>
             <button onClick={() => void rate(now, 1)} className={`text-xl px-1 ${now.rating > 0 ? "" : "opacity-30"}`}>❤️</button>
             <button onClick={toggle} className="w-12 h-12 rounded-full grid place-items-center text-xl text-black font-bold shrink-0" style={{ background: "rgb(var(--ac))" }}>{playing ? "⏸" : "▶"}</button>
             <button onClick={() => step(1)} className="text-xl px-1.5">⏭</button>
+          </div>
+          <Spectrum audio={audio} playing={playing} bars={36} height={28} className="px-3 opacity-90" />
+          <div className="flex items-center gap-2 px-3 pb-2" dir="ltr">
+            <span className="text-[11px] tabular-nums w-9 text-right text-[var(--dim)]">{fmt(pos)}</span>
+            <input type="range" min={0} max={dur || 1} step={1} value={Math.min(pos, dur || 1)} onChange={(e) => { if (audio.current) audio.current.currentTime = Number(e.target.value); }} className="flex-1 h-1.5" />
+            <span className="text-[11px] tabular-nums w-9 text-[var(--dim)]">{fmt(dur || now.durationS || 0)}</span>
           </div>
         </div>
       )}
@@ -292,10 +309,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
             <div className="mt-6 mx-auto w-full aspect-square max-w-[22rem] rounded-[2rem] overflow-hidden bg-[var(--s2)] transition-transform duration-500"
               style={{ transform: playing ? "scale(1)" : "scale(.93)", boxShadow: "0 40px 80px -20px rgba(var(--ac),.6), 0 0 0 1px rgba(255,255,255,.06)" }}>
-              {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full text-7xl">🎵</span>}
+              {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <Tile t={now} className="text-8xl" />}
             </div>
 
-            <div className="mt-7 flex items-center gap-3">
+            <Spectrum audio={audio} playing={playing} bars={44} height={64} className="mt-5" />
+
+            <div className="mt-4 flex items-center gap-3">
               <div className="min-w-0 flex-1">
                 <div className="text-2xl font-extrabold truncate">{now.title}</div>
                 <div className="text-base text-[var(--dim2)] truncate">{now.artist}</div>
@@ -306,8 +325,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             </div>
 
             <div className="mt-5" dir="ltr">
-              <input type="range" min={0} max={dur || 1} step={1} value={pos} onChange={(e) => { if (audio.current) audio.current.currentTime = Number(e.target.value); }} className="w-full h-2" />
-              <div className="flex justify-between text-xs text-[var(--dim)] mt-1"><span>{fmt(pos)}</span><span>{fmt(dur)}</span></div>
+              <input type="range" min={0} max={dur || 1} step={1} value={Math.min(pos, dur || 1)} onChange={(e) => { if (audio.current) audio.current.currentTime = Number(e.target.value); }} className="w-full h-2" />
+              <div className="flex justify-between text-sm tabular-nums text-[var(--dim2)] mt-1"><span>{fmt(pos)}</span><span>{fmt(dur || now.durationS || 0)}</span></div>
             </div>
 
             <div className="mt-4 flex items-center justify-between" dir="ltr">
@@ -329,7 +348,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
                 <div className="text-xs text-[var(--dim)] mb-2">بعدی در صف</div>
                 {upNext.map((t) => (
                   <button key={t.id} onClick={() => setCur(t.id)} className="w-full flex items-center gap-3 py-2 text-right border-b border-[var(--bd0)]">
-                    <span className="w-10 h-10 rounded-lg overflow-hidden bg-[var(--s2)] shrink-0">{t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full">🎵</span>}</span>
+                    <span className="w-10 h-10 rounded-lg overflow-hidden bg-[var(--s2)] shrink-0">{t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" /> : <Tile t={t} />}</span>
                     <span className="min-w-0 flex-1"><span className="block text-sm truncate">{t.title}</span><span className="block text-xs text-[var(--dim3)] truncate">{t.artist}</span></span>
                   </button>
                 ))}

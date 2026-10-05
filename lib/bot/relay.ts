@@ -196,6 +196,19 @@ export async function maybeReturnDownloadedMedia(
     const m = mediaFileId(msg);
     const { saveMusicCover, saveMusicAudio, failMusicTrack, kickMusicQueue } = await import("../music");
     if (m?.kind === "photo") {
+      // The card carries the Spotify link; if it names a DIFFERENT track
+      // than the job in flight, it is a late card of an earlier request
+      // and must not overwrite this track's cover and metadata.
+      const want = /track\/([A-Za-z0-9]{10,30})/.exec(job.link)?.[1];
+      const links = [
+        ...(msg.caption_entities ?? []).map((e) => ("url" in e && e.url ? e.url : "")),
+        msg.caption ?? "",
+      ].join(" ");
+      const got = /open\.spotify\.com\/(?:intl-[a-z]+\/)?track\/([A-Za-z0-9]{10,30})/.exec(links)?.[1];
+      if (want && got && want !== got) {
+        console.log(`[music] stray card for ${got} while ${want} is in flight — ignored`);
+        return true;
+      }
       await saveMusicCover(job.musicTrackId, m.fileId, msg.caption ?? "");
       return true;
     }

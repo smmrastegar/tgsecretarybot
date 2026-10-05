@@ -100,7 +100,7 @@ export async function addMusicTrack(spotifyId: string, url: string): Promise<{ t
 export async function updateMusicTrack(id: number, patch: {
   title?: string | null; artist?: string | null; album?: string | null; releaseDate?: string | null;
   durationS?: number | null; filePath?: string | null; coverPath?: string | null; mime?: string | null;
-  sizeBytes?: number | null; status?: string; error?: string | null;
+  sizeBytes?: number | null; status?: string; error?: string | null; spotifyDurationS?: number | null;
 }): Promise<void> {
   const sets: string[] = []; const params: unknown[] = [];
   const set = (c: string, v: unknown) => { params.push(v); sets.push(`${c} = $${params.length}`); };
@@ -114,6 +114,7 @@ export async function updateMusicTrack(id: number, patch: {
   if (patch.mime !== undefined) set("mime", patch.mime);
   if (patch.sizeBytes !== undefined) set("size_bytes", patch.sizeBytes);
   if (patch.error !== undefined) set("error", patch.error);
+  if (patch.spotifyDurationS !== undefined) set("spotify_duration_s", patch.spotifyDurationS);
   if (patch.status !== undefined) {
     set("status", patch.status);
     if (patch.status === "ready") sets.push("ready_at = NOW()");
@@ -351,4 +352,11 @@ export async function setPlaylistTracks(playlistId: number, trackIds: number[], 
     [playlistId, ids],
   );
   return ids.length;
+}
+
+/** Ready tracks with their audio duration vs Spotify's, for verification. */
+export async function listTracksForMeta(): Promise<Array<{ id: number; spotifyId: string; status: string; durationS: number | null; filePath: string | null; coverPath: string | null }>> {
+  await ensureSchema();
+  const rows = (await q().query(`SELECT id, spotify_id, status, duration_s, file_path, cover_path FROM music_tracks WHERE spotify_id IS NOT NULL ORDER BY id`)) as Row[];
+  return rows.map((r) => ({ id: num(r, "id"), spotifyId: str(r, "spotify_id"), status: str(r, "status"), durationS: numOrNull(r, "duration_s"), filePath: strOrNull(r, "file_path"), coverPath: strOrNull(r, "cover_path") }));
 }

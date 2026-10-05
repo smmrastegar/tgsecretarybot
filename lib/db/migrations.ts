@@ -212,6 +212,14 @@ export const MIGRATIONS: Migration[] = [
       await q`CREATE INDEX IF NOT EXISTS music_events_at_idx ON music_events (at)`;
     },
   },
+  {
+    // Authoritative duration from Spotify, used to catch audio attached
+    // to the wrong track (same file under several tracks).
+    id: "2026-10-06-003-music-spotify-duration",
+    up: async (q) => {
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS spotify_duration_s INT`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",
