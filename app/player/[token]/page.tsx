@@ -48,6 +48,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [iosHint, setIosHint] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
   const build = useRef<string | null>(null);
+  const [lyr, setLyr] = useState<{ id: number; found: boolean } | null>(null);
   const [offline, setOffline] = useState<Set<number>>(new Set());
   const blobUrl = useRef<string | null>(null);
 
@@ -93,6 +94,14 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   useEffect(() => { if (updateReady && !playing) window.location.reload(); }, [updateReady, playing]);
   const dismissInstall = () => { setInstallEvt(null); setIosHint(false); try { localStorage.setItem("player.installDismissed", "1"); } catch {} };
   const doInstall = async () => { await installEvt?.prompt(); setInstallEvt(null); };
+  // Only offer lyrics when the track has some (the server caches lookups).
+  useEffect(() => {
+    if (!full || cur == null) return;
+    let live = true;
+    fetch(`/api/music/${cur}/lyrics?${tq}`).then((r) => r.json()).then((j: { found?: boolean }) => { if (live) setLyr({ id: cur, found: !!j.found }); }).catch(() => {});
+    return () => { live = false; };
+  }, [full, cur, tq]);
+  const hasLyrics = lyr?.id === cur && lyr.found;
   const pickFade = (v: number) => { setFade(v); try { localStorage.setItem("player.fade", String(v)); } catch {} };
   const flipTheme = () => setTheme((t) => { const n = t === "dark" ? "light" : "dark"; try { localStorage.setItem("player.theme", n); } catch {} return n; });
   const accent = theme === "dark" ? "255,255,255" : "24,24,32";
@@ -410,11 +419,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <VolumeIcon size={18} className="text-[var(--dim)]" />
             </div>
 
-            <div className="mt-3 shrink-0 grid grid-cols-5 gap-1.5 text-[11px]">
+            <div className={`mt-3 shrink-0 grid ${hasLyrics ? "grid-cols-5" : "grid-cols-4"} gap-1.5 text-[11px]`}>
               <button onClick={() => setSheet("sleep")} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] ${sleepMin ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><TimerIcon size={20} />{sleepMin === -1 ? "End of track" : sleepMin > 0 ? `${sleepMin} min` : "Sleep"}</button>
               <button onClick={() => setSheet("speed")} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] ${speed !== 1 ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><span className="h-5 grid place-items-center text-[15px] font-bold">{speed}×</span>Speed</button>
               <button onClick={() => setSheet("fade")} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] ${fade ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><FadeIcon size={20} />{fade ? `Fade ${fade}s` : "Fade"}</button>
-              <button onClick={() => setSheet("lyrics")} className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><LyricsIcon size={20} />Lyrics</button>
+              {hasLyrics && <button onClick={() => setSheet("lyrics")} className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><LyricsIcon size={20} />Lyrics</button>}
               <button onClick={() => setSheet("queue")} className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><QueueIcon size={20} />Queue {upNextCount}</button>
             </div>
           </div>
