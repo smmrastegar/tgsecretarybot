@@ -4,7 +4,7 @@
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartIcon, ChevronDownIcon, FadeIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
-import MusicStats from "@/components/music/Stats";
+import StatsView from "@/components/music/app/StatsView";
 import Spectrum from "@/components/music/Spectrum";
 import TrackDetail from "@/components/music/TrackDetail";
 import { useListenTracker } from "@/components/music/useListenTracker";
@@ -283,7 +283,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           : tab === "home" ? <HomeView api={api} c={c} />
           : tab === "search" ? <SearchView api={api} c={c} />
           : tab === "library" ? <LibraryView api={api} c={c} />
-          : <MusicStats tq={tq} lang="en" />}
+          : <StatsView api={api} />}
       </div>
 
       <audio ref={audio} onTimeUpdate={(e) => { setPos(e.currentTarget.currentTime); tracker.tick(e.currentTarget.currentTime, e.currentTarget.duration); }}
