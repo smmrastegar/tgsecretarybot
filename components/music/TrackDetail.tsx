@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
 import { useEffect, useState } from "react";
-import { HeartIcon, ThumbDownIcon } from "./Icons";
+import { CloseIcon, HeartIcon, ThumbDownIcon } from "./Icons";
 
 export type DetailTrack = {
   id: number; spotifyUrl?: string; title: string | null; artist: string | null; album: string | null; releaseDate?: string | null;
@@ -64,8 +64,8 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
     return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
   };
   const T = en
-    ? { like: "Like", dislike: "Dislike", plays: "Plays", total: "Total listened", skips: "Early skips", ofPlays: "of plays", toEnd: "to the end", avg: "Average listened per play", ofTrack: "of the track", chart: "Minutes listened · last 14 days", last: "Recent listens", none: "Nothing recorded yet.", done: "Played to end", skipped: "Skipped", partial: "Partial", live: "Playing now", paused: "Paused", album: "Album", released: "Released", length: "Length", format: "Format", added: "Added", first: "First played", lastPlayed: "Last played", close: "Close", dir: "ltr" as const }
-    : { like: "لایک", dislike: "دیسلایک", plays: "تعداد پخش", total: "مجموع گوش‌دادن", skips: "ردشدن زودهنگام", ofPlays: "پخش‌ها", toEnd: "بار تا آخر", avg: "میانگین شنیدن هر بار", ofTrack: "از آهنگ", chart: "{T.chart}", last: "{T.last}", none: "{T.none}", done: "تا آخر", skipped: "ردشد", partial: "نیمه‌کاره", live: "همین الان در حال پخش", paused: "مکث شده", album: "آلبوم", released: "انتشار", length: "مدت", format: "فرمت", added: "اضافه شد", first: "اولین گوش‌دادن", lastPlayed: "آخرین پخش", close: "بستن", dir: "rtl" as const };
+    ? { like: "Like", dislike: "Dislike", plays: "Plays", total: "Total listened", skips: "Early skips", ofPlays: "of plays", toEnd: "completed", avg: "Average listened per play", ofTrack: "of the track", chart: "Minutes listened · last 14 days", last: "Recent listens", none: "Nothing recorded yet.", done: "Played to end", skipped: "Skipped", partial: "Partial", live: "Playing now", paused: "Paused", album: "Album", released: "Released", length: "Length", format: "Format", added: "Added", first: "First played", lastPlayed: "Last played", close: "Close", dir: "ltr" as const }
+    : { like: "لایک", dislike: "دیسلایک", plays: "تعداد پخش", total: "مجموع گوش‌دادن", skips: "ردشدن زودهنگام", ofPlays: "پخش‌ها", toEnd: "بار تا آخر", avg: "میانگین شنیدن هر بار", ofTrack: "از آهنگ", chart: "دقیقه‌ی گوش‌دادن به این آهنگ · ۱۴ روز اخیر", last: "آخرین دفعه‌های شنیدن", none: "هنوز ثبت نشده.", done: "تا آخر", skipped: "ردشد", partial: "نیمه‌کاره", live: "همین الان در حال پخش", paused: "مکث شده", album: "آلبوم", released: "انتشار", length: "مدت", format: "فرمت", added: "اضافه شد", first: "اولین گوش‌دادن", lastPlayed: "آخرین پخش", close: "بستن", dir: "rtl" as const };
   const [h, setH] = useState<History | null>(null);
   const q = tq ? `?${tq}` : "";
   useEffect(() => {
@@ -89,7 +89,7 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
     </div>
   );
   const info: Array<[string, string]> = [
-    [T.album, t.album ?? "—"], [T.released, t.releaseDate ?? "—"], [T.length, t.durationS ? fmtDur(t.durationS) : "—"],
+    [T.album, t.album ?? "—"], [T.released, t.releaseDate ?? "—"], [T.length, (t.durationS ?? live?.dur) ? fmtDur((t.durationS ?? live?.dur) as number) : "—"],
     [T.format, `${format(t.mime)}${t.sizeBytes ? ` · ${d((t.sizeBytes / 1048576).toFixed(1))} MB` : ""}${kbps ? ` · ~${d(kbps)} kbps` : ""}`],
     [T.added, whenL(t.createdAt)], [T.first, whenL(h?.firstPlayedAt)], [T.lastPlayed, whenL(t.lastPlayedAt)],
   ];
@@ -98,12 +98,12 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
       <div dir={T.dir} onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #0d0d13)", color: "var(--fg, #ececf1)", animation: "rise .25s ease-out" }}
         className="relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto rounded-t-[2rem] sm:rounded-[2rem] border border-[var(--bd)] shadow-2xl">
         <style>{`@keyframes rise{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}} @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
-        <div className="relative h-52 overflow-hidden rounded-t-[2rem]">
+        <div className="relative h-44 overflow-hidden rounded-t-[2rem]">
           {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="absolute inset-0 w-full h-full object-cover scale-125 blur-2xl opacity-60" /> : <div className="absolute inset-0 bg-[var(--s2)]" />}
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, transparent, var(--bg2, #0d0d13))" }} />
-          <button onClick={onClose} className="absolute top-3 left-3 w-9 h-9 rounded-full bg-black/40 grid place-items-center text-lg" aria-label={T.close}>✕</button>
+          <button onClick={onClose} className="absolute top-3 left-3 w-9 h-9 rounded-full bg-black/45 text-white grid place-items-center" aria-label={T.close}><CloseIcon size={18} /></button>
           <div className="absolute bottom-3 inset-x-4 flex items-end gap-3">
-            {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="w-24 h-24 rounded-2xl object-cover shadow-2xl ring-1 ring-white/10" /> : <div className="w-24 h-24 rounded-2xl bg-[var(--s2)] grid place-items-center text-4xl">🎵</div>}
+            {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="w-24 h-24 rounded-2xl object-cover shadow-2xl ring-1 ring-white/10" /> : <div className="w-24 h-24 rounded-2xl bg-[var(--s2)]" />}
             <div className="min-w-0 flex-1 pb-1">
               <div className="text-xl font-extrabold leading-snug">{t.title ?? "—"}</div>
               <div className="text-sm text-[var(--dim2)] truncate">{t.artist}</div>
@@ -113,20 +113,20 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
 
         <div className="p-4 space-y-4">
           {live && (
-            <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-3">
-              <div className="flex items-center gap-2 text-xs text-emerald-300 mb-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" style={{ animation: live.playing ? "pulse-dot 1.2s infinite" : undefined }} />
+            <div className="rounded-2xl border border-[var(--bd)] bg-[var(--s1)] p-3">
+              <div className="flex items-center gap-2 text-xs text-[var(--dim2)] mb-2">
+                <span className="w-2 h-2 rounded-full bg-[rgb(var(--ac,255,255,255))]" style={{ animation: live.playing ? "pulse-dot 1.2s infinite" : undefined }} />
                 {live.playing ? T.live : T.paused}
-                <span className="mr-auto text-[var(--dim2)]" dir="ltr">{fmtDur(live.pos)} / {fmtDur(live.dur || t.durationS || 0)}</span>
+                <span className="ms-auto text-[var(--dim2)] tabular-nums" dir="ltr">{fmtDur(live.pos)} / {fmtDur(live.dur || t.durationS || 0)}</span>
               </div>
-              <div className="h-1.5 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${live.dur > 0 ? Math.min(100, (live.pos / live.dur) * 100) : 0}%` }} /></div>
+              <div className="h-1.5 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full bg-[rgb(var(--ac,255,255,255))] transition-[width] duration-500" style={{ width: `${live.dur > 0 ? Math.min(100, (live.pos / live.dur) * 100) : 0}%` }} /></div>
             </div>
           )}
 
           {onRate && (
             <div className="flex gap-2">
               <button onClick={() => onRate(1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating > 0 ? "border-rose-400/60 bg-rose-500/20 text-rose-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><HeartIcon size={20} filled={t.rating > 0} /> {T.like}</span></button>
-              <button onClick={() => onRate(-1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating < 0 ? "border-amber-400/60 bg-amber-500/20 text-amber-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><ThumbDownIcon size={20} filled={t.rating < 0} /> {T.dislike}</span></button>
+              <button onClick={() => onRate(-1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating < 0 ? "border-[var(--bd)] bg-[var(--s2)]" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><ThumbDownIcon size={20} filled={t.rating < 0} /> {T.dislike}</span></button>
             </div>
           )}
 
@@ -138,16 +138,16 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
           {avgPct != null && (
             <div>
               <div className="flex justify-between text-xs text-[var(--dim)] mb-1"><span>{T.avg}</span><span>{d(avgPct)}% {T.ofTrack}</span></div>
-              <div className="h-2 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full rounded-full bg-gradient-to-l from-emerald-400 to-sky-400" style={{ width: `${avgPct}%` }} /></div>
+              <div className="h-1.5 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full rounded-full bg-[rgb(var(--ac,255,255,255))]" style={{ width: `${avgPct}%` }} /></div>
             </div>
           )}
 
           <div>
-            <div className="text-xs text-[var(--dim)] mb-2">دقیقه‌ی گوش‌دادن به این آهنگ · ۱۴ روز اخیر</div>
+            <div className="text-xs text-[var(--dim)] mb-2">{T.chart}</div>
             <div className="flex items-end gap-1 h-20" dir="ltr">
               {(h?.days ?? Array.from({ length: 14 }, (_, i) => ({ day: String(i), minutes: 0, plays: 0 }))).map((d) => (
-                <div key={d.day} className="flex-1 flex flex-col items-center justify-end h-full" title={`${d.day}: ${d.minutes} دقیقه`}>
-                  <div className="w-full rounded-t bg-gradient-to-t from-emerald-600 to-emerald-300 transition-[height] duration-500" style={{ height: `${Math.max(3, (d.minutes / max) * 100)}%`, opacity: d.minutes ? 1 : 0.25 }} />
+                <div key={d.day} className="flex-1 flex flex-col items-center justify-end h-full" title={`${d.day}: ${d.minutes} ${en ? "min" : "دقیقه"}`}>
+                  <div className="w-full rounded-t-md bg-[rgb(var(--ac,255,255,255))] transition-[height] duration-500" style={{ height: `${Math.max(3, (d.minutes / max) * 100)}%`, opacity: d.minutes ? 0.85 : 0.18 }} />
                   <div className="text-[9px] text-[var(--dim3)] mt-1">{d.day.slice(3)}</div>
                 </div>
               ))}
@@ -155,10 +155,10 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
           </div>
 
           <div>
-            <div className="text-xs text-[var(--dim)] mb-1">آخرین دفعه‌های شنیدن</div>
-            {!h || h.sessions.length === 0 ? <div className="text-xs text-[var(--dim3)] py-2">هنوز ثبت نشده.</div> : h.sessions.map((s, i) => (
+            <div className="text-xs text-[var(--dim)] mb-1">{T.last}</div>
+            {!h || h.sessions.length === 0 ? <div className="text-xs text-[var(--dim3)] py-2">{T.none}</div> : h.sessions.map((s, i) => (
               <div key={i} className="flex items-center gap-2 py-1.5 text-sm border-b border-[var(--bd0)]">
-                <span className={`w-2 h-2 rounded-full ${s.completed ? "bg-emerald-400" : s.skipped ? "bg-amber-400" : "bg-sky-400"}`} />
+                <span className={`w-2 h-2 rounded-full ${s.completed ? "bg-[rgb(var(--ac,255,255,255))]" : s.skipped ? "bg-[var(--dim3)]" : "bg-[var(--dim)]"}`} />
                 <span className="flex-1">{s.completed ? T.done : s.skipped ? T.skipped : T.partial} · {listen(s.seconds)}</span>
                 <span className="text-[11px] text-[var(--dim3)]">{agoL(s.at)}</span>
               </div>
@@ -168,7 +168,7 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm pt-1">
             {info.map(([k, v]) => (<div key={k} className="contents"><dt className="text-[var(--dim3)]">{k}</dt><dd>{v}</dd></div>))}
           </dl>
-          {t.spotifyUrl && <a href={t.spotifyUrl} target="_blank" rel="noopener noreferrer" className="inline-block text-xs text-emerald-400 underline">Open in Spotify</a>}
+          {t.spotifyUrl && <a href={t.spotifyUrl} target="_blank" rel="noopener noreferrer" className="inline-block text-xs text-[var(--dim2)] underline">Open in Spotify</a>}
         </div>
       </div>
     </div>

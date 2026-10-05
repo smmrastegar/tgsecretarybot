@@ -259,7 +259,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const upNextCount = cur != null ? Math.max(0, queue.length - queue.indexOf(cur) - 1) : 0;
 
   return (
-    <div dir="ltr" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', letterSpacing: "-0.01em" }} className="relative overflow-x-hidden">
+    <div dir="ltr" lang="en" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', letterSpacing: "-0.01em" }} className="relative overflow-x-hidden">
       <style>{`
         @keyframes eq { 0%,100% { height: 25% } 50% { height: 100% } }
         @keyframes rise { from { transform: translateY(100%) } to { transform: none } }
