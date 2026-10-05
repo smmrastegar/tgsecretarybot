@@ -14,6 +14,7 @@ type Track = {
   id: number; spotifyUrl: string; title: string | null; artist: string | null; album: string | null;
   durationS: number | null; hasCover: boolean; status: "queued" | "downloading" | "ready" | "failed";
   error: string | null; sizeBytes: number | null;
+  rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
 };
 type Playlist = { id: number; name: string; trackIds: number[] };
 
@@ -25,11 +26,12 @@ const fmt = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String
 export default function MusicPage() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [view, setView] = useState<"all" | number>("all");
+  const [view, setView] = useState<"all" | "liked" | number>("all");
   const [q, setQ] = useState("");
   const [paste, setPaste] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [playerUrl, setPlayerUrl] = useState<string | null>(null);
   const [queue, setQueue] = useState<number[]>([]);
   const [cur, setCur] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -39,6 +41,8 @@ export default function MusicPage() {
   const [repeat, setRepeat] = useState<"off" | "all" | "one">("off");
   const [vol, setVol] = useState(1);
   const audio = useRef<HTMLAudioElement>(null);
+  const history = useRef<number[]>([]);
+  const [mixOn, setMixOn] = useState(false);
   const [sp, setSp] = useState<SpCfg | null>(null);
   const [spLib, setSpLib] = useState<SpLib | null>(null);
   const [spErr, setSpErr] = useState<string | null>(null);
@@ -101,7 +105,8 @@ export default function MusicPage() {
 
   const visible = useMemo(() => {
     let list = tracks;
-    if (view !== "all") {
+    if (view === "liked") list = tracks.filter((t) => t.rating > 0);
+    else if (view !== "all") {
       const ids = playlists.find((p) => p.id === view)?.trackIds ?? [];
       list = ids.map((id) => byId.get(id)).filter((t): t is Track => !!t);
     }
@@ -113,8 +118,37 @@ export default function MusicPage() {
   const playTrack = useCallback((id: number, list?: number[]) => {
     const ids = list ?? readyVisible.map((t) => t.id);
     setQueue(shuffle ? [id, ...ids.filter((x) => x !== id).sort(() => Math.random() - 0.5)] : ids);
+    setMixOn(false);
+    history.current = [];
     setCur(id);
   }, [readyVisible, shuffle]);
+
+  // Smart mix: weighted random order. Likes are 3x as likely to come up
+  // early, dislikes never, tracks heard in the last day are damped, and
+  // frequently skipped tracks sink.
+  const smartMix = useCallback(() => {
+    const now = Date.now();
+    const pool = readyVisible.filter((t) => t.rating >= 0).map((t) => {
+      const heardRecently = t.lastPlayedAt && now - Date.parse(t.lastPlayedAt.replace(" ", "T")) < 86400000 ? 0.3 : 1;
+      const w = (t.rating > 0 ? 3 : 1) * heardRecently / (1 + t.skipCount * 0.4);
+      return { id: t.id, key: Math.pow(Math.random(), 1 / Math.max(w, 0.05)) };
+    });
+    pool.sort((a, b) => b.key - a.key);
+    const ids = pool.map((p) => p.id);
+    if (ids.length === 0) { setMsg("آهنگ آماده‌ی بدون دیسلایک نیست"); return; }
+    setQueue(ids); setMixOn(true); history.current = []; setCur(ids[0]!);
+  }, [readyVisible]);
+
+  const sendEvent = useCallback((id: number, event: "play" | "complete" | "skip") => {
+    void fetch(`/api/music/${id}/event`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event }) });
+  }, []);
+
+  async function rate(t: Track, r: number) {
+    const next = t.rating === r ? 0 : r;
+    setTracks((all) => all.map((x) => (x.id === t.id ? { ...x, rating: next } : x)));
+    await fetch(`/api/music/${t.id}/rate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rating: next }) });
+    if (next < 0 && cur === t.id) step(1);
+  }
 
   useEffect(() => {
     const a = audio.current; if (!a || cur == null) return;
@@ -130,12 +164,21 @@ export default function MusicPage() {
 
   const step = useCallback((dir: 1 | -1, auto = false) => {
     if (cur == null || queue.length === 0) return;
-    if (auto && repeat === "one") { const a = audio.current; if (a) { a.currentTime = 0; void a.play(); } return; }
+    const a = audio.current;
+    if (dir === -1 && !auto) {
+      // "Previous": restart the track if it is already underway, else go back.
+      if (a && a.currentTime > 3) { a.currentTime = 0; return; }
+      const back = history.current.pop();
+      if (back != null) { setCur(back); return; }
+    }
+    if (auto && repeat === "one") { if (a) { a.currentTime = 0; void a.play(); } return; }
+    if (!auto && dir === 1 && a && a.duration > 0 && a.currentTime / a.duration < 0.3) sendEvent(cur, "skip");
     const i = queue.indexOf(cur); let n = i + dir;
     if (n >= queue.length) { if (repeat === "all" || !auto) n = 0; else { setPlaying(false); return; } }
     if (n < 0) n = queue.length - 1;
+    if (dir === 1) history.current.push(cur);
     setCur(queue[n]!);
-  }, [cur, queue, repeat]);
+  }, [cur, queue, repeat, sendEvent]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -154,6 +197,11 @@ export default function MusicPage() {
   }
   async function del(t: Track) { if (confirm(`«${t.title ?? "آهنگ"}» حذف شود؟`)) { await fetch(`/api/music/${t.id}`, { method: "DELETE" }); if (cur === t.id) { audio.current?.pause(); setCur(null); } void load(); } }
   async function retry(t: Track) { await fetch(`/api/music/${t.id}`, { method: "POST" }); void load(); }
+  async function playerLink(rotate: boolean) {
+    if (rotate && !confirm("لینک قبلی فوراً از کار می‌افتد. لینک جدید ساخته شود؟")) return;
+    const r = await fetch("/api/music/player-link", { method: rotate ? "POST" : "GET" });
+    if (r.ok) setPlayerUrl(((await r.json()) as { url: string }).url);
+  }
   async function retryAll() {
     const r = await fetch("/api/music/retry-failed", { method: "POST" });
     const j = (await r.json()) as { requeued: number };
@@ -164,6 +212,11 @@ export default function MusicPage() {
   async function delPlaylist(pl: Playlist) { if (confirm(`پلی‌لیست «${pl.name}» حذف شود؟`)) { await fetch(`/api/music/playlists/${pl.id}`, { method: "DELETE" }); setView("all"); void load(); } }
 
   const now = cur != null ? byId.get(cur) : null;
+  const upNext = useMemo(() => {
+    if (cur == null) return [];
+    const i = queue.indexOf(cur);
+    return queue.slice(i + 1, i + 4).map((id) => byId.get(id)).filter((t): t is Track => !!t);
+  }, [cur, queue, byId]);
   const btn = "px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-lg";
 
   return (
@@ -215,9 +268,29 @@ export default function MusicPage() {
         </div>
       </Card>
 
+      <div className="flex gap-2 mb-3 flex-wrap">
+        <button onClick={() => readyVisible[0] && playTrack(readyVisible[0].id)} disabled={readyVisible.length === 0} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-sm disabled:opacity-50">▶ پخش همه ({readyVisible.length})</button>
+        <button onClick={smartMix} disabled={readyVisible.length === 0} className={`px-4 py-2 rounded-lg border text-sm disabled:opacity-50 ${mixOn ? "border-amber-400 text-amber-200" : "border-[var(--color-border)]"}`}>🎲 ترکیب هوشمند</button>
+        <span className="text-[11px] text-[var(--color-text-dim)] self-center">لایک = بیشتر پخش می‌شود · دیسلایک = هرگز · ردشدن زود = کمتر</span>
+      </div>
+      <Card className="mb-4">
+        <div className="text-sm font-medium mb-1">🔗 لینک خصوصی پلیر (بدون لاگین)</div>
+        <p className="text-xs text-[var(--color-text-dim)] mb-2">یک صفحه‌ی جدا برای پخش، لایک و دیسلایک؛ آدرسش یک کد ۲۵۶ بیتی است، قابل حدس نیست، ایندکس نمی‌شود و پیش‌نمایش ندارد. آن را برای هیچ‌کس و هیچ‌جا نفرست (بات و گروه هم نه).</p>
+        {playerUrl ? (
+          <div className="flex gap-2 items-center flex-wrap">
+            <input readOnly dir="ltr" value={playerUrl} onFocus={(e) => e.currentTarget.select()} className="flex-1 min-w-48 text-xs font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5" />
+            <button onClick={() => { void navigator.clipboard.writeText(playerUrl); setMsg("لینک پلیر کپی شد"); }} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">کپی</button>
+            <button onClick={() => window.open(playerUrl, "_blank", "noopener,noreferrer")} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">باز کردن</button>
+            <button onClick={() => void playerLink(true)} className="text-xs px-3 py-1.5 rounded-md border border-rose-500/40 text-rose-200">ساخت لینک جدید</button>
+          </div>
+        ) : (
+          <button onClick={() => void playerLink(false)} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">نمایش لینک</button>
+        )}
+      </Card>
       {loadErr && <Card className="mb-3"><p className="text-sm text-rose-300">{loadErr}</p></Card>}
       <div className="flex gap-2 flex-wrap items-center mb-3">
         <button onClick={() => setView("all")} className={`text-xs px-3 py-1.5 rounded-md border ${view === "all" ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>همه ({tracks.length})</button>
+        <button onClick={() => setView("liked")} className={`text-xs px-3 py-1.5 rounded-md border ${view === "liked" ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>❤️ لایک‌شده‌ها ({tracks.filter((t) => t.rating > 0).length})</button>
         {playlists.map((p) => (
           <button key={p.id} onClick={() => setView(p.id)} className={`text-xs px-3 py-1.5 rounded-md border ${view === p.id ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>{p.name} ({p.trackIds.length})</button>
         ))}
@@ -232,7 +305,7 @@ export default function MusicPage() {
       <div className="flex flex-col gap-1.5 pb-44">
         {visible.length === 0 && <Card><p className="text-sm text-[var(--color-text-dim)]">هنوز آهنگی نیست. یک لینک track اسپاتیفای بالا بچسبان.</p></Card>}
         {visible.map((t) => (
-          <div key={t.id} className={`flex items-center gap-3 p-2 rounded-xl border ${cur === t.id ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+          <div key={t.id} className={`flex items-center gap-3 p-2 rounded-xl border ${t.rating < 0 ? "opacity-50" : ""} ${cur === t.id ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
             <button disabled={t.status !== "ready"} onClick={() => playTrack(t.id)} className="w-12 h-12 rounded-lg overflow-hidden bg-[var(--color-surface-2)] shrink-0 grid place-items-center disabled:opacity-60">
               {t.hasCover ? <img src={`/api/music/cover/${t.id}`} alt="" className="w-full h-full object-cover" /> : <span>🎵</span>}
             </button>
@@ -251,6 +324,12 @@ export default function MusicPage() {
                 {playlists.map((p) => <option key={p.id} value={p.id}>{p.trackIds.includes(t.id) ? "✓ " : ""}{p.name}</option>)}
               </select>
             )}
+            {t.status === "ready" && (
+              <>
+                <button onClick={() => rate(t, 1)} title="لایک" className={`text-base px-1 ${t.rating > 0 ? "" : "opacity-30 hover:opacity-70"}`}>❤️</button>
+                <button onClick={() => rate(t, -1)} title="دیسلایک" className={`text-base px-1 ${t.rating < 0 ? "" : "opacity-30 hover:opacity-70"}`}>👎</button>
+              </>
+            )}
             {t.status === "failed" && <button onClick={() => retry(t)} className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)]">↻</button>}
             <button onClick={() => del(t)} className="text-xs px-2 py-1 rounded-md border border-rose-500/40 text-rose-200">🗑</button>
           </div>
@@ -258,17 +337,20 @@ export default function MusicPage() {
       </div>
 
       <audio ref={audio} onTimeUpdate={(e) => setPos(e.currentTarget.currentTime)} onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
-        onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => step(1, true)} />
+        onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { if (cur != null) sendEvent(cur, "complete"); step(1, true); }} />
       {now && (
         <div className="fixed bottom-16 md:bottom-0 inset-x-0 z-30 border-t border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur px-4 py-2">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-center gap-3">
               {now.hasCover ? <img src={`/api/music/cover/${now.id}`} alt="" className="w-11 h-11 rounded-md" /> : <span className="text-2xl">🎵</span>}
               <div className="min-w-0 flex-1"><div className="text-sm font-medium truncate">{now.title}</div><div className="text-[11px] text-[var(--color-text-dim)] truncate">{now.artist}</div></div>
+              <button className={`${btn} ${now.rating > 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, 1)} title="لایک">❤️</button>
+              <button className={`${btn} ${now.rating < 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, -1)} title="دیسلایک (بعدی)">👎</button>
               <button className={btn} onClick={() => step(-1)}>⏮</button>
               <button className={btn} onClick={() => (playing ? audio.current?.pause() : void audio.current?.play())}>{playing ? "⏸" : "▶️"}</button>
               <button className={btn} onClick={() => step(1)}>⏭</button>
             </div>
+            {upNext.length > 0 && <div className="text-[11px] text-[var(--color-text-dim)] truncate mt-0.5">بعدی: {upNext.map((t) => t.title ?? "—").join(" · ")}</div>}
             <div className="flex items-center gap-2 mt-1" dir="ltr">
               <span className="text-[11px] w-9 text-right">{fmt(pos)}</span>
               <input type="range" min={0} max={dur || 1} step={1} value={pos} onChange={(e) => { if (audio.current) audio.current.currentTime = Number(e.target.value); }} className="flex-1" />

@@ -54,6 +54,12 @@ const PUBLIC_PREFIXES = [
   // OTP board API — dashboard session OR a code-feed token, checked in
   // the route itself (the Mac menu-bar app has no session cookie).
   "/api/otp/recent",
+  // Personal music player: /player/<256-bit token> and the music API.
+  // Every /api/music route authenticates itself (dashboard session or
+  // the private player token), so the cookie gate would only get in the
+  // way of the tokenised player.
+  "/player",
+  "/api/music",
   "/otp.webmanifest",
   "/icons",
   "/_next",

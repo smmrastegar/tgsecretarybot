@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
+import { authorizeMusic, notFound } from "@/lib/music-token";
 import { addMusicTrack, listMusicPlaylists, listMusicTracks, parseSpotifyTrackUrl } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
 import { reportError } from "@/lib/report";
@@ -7,9 +8,8 @@ import { reportError } from "@/lib/report";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
-  if (guard) return guard;
+export async function GET(request: Request): Promise<Response> {
+  if (!(await authorizeMusic(request))) return notFound();
   try {
     const [tracks, playlists] = await Promise.all([listMusicTracks(), listMusicPlaylists()]);
     return NextResponse.json({ tracks, playlists });

@@ -185,6 +185,16 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // Like / dislike and play stats for the smart mix in /music.
+    id: "2026-10-06-001-music-ratings",
+    up: async (q) => {
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS rating INT NOT NULL DEFAULT 0`;
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS play_count INT NOT NULL DEFAULT 0`;
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS skip_count INT NOT NULL DEFAULT 0`;
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS last_played_at TIMESTAMPTZ`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",

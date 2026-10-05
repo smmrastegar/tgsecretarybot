@@ -17,10 +17,16 @@ export type MusicTrack = {
   error: string | null;
   sizeBytes: number | null;
   createdAt: string;
+  /** -1 dislike, 0 neutral, 1 like */
+  rating: number;
+  playCount: number;
+  skipCount: number;
+  lastPlayedAt: string | null;
 };
 
 const COLS = `id, spotify_id, spotify_url, title, artist, album, release_date, duration_s,
-  (cover_path IS NOT NULL) AS has_cover, status, error, size_bytes, created_at::text AS created_at`;
+  (cover_path IS NOT NULL) AS has_cover, status, error, size_bytes, created_at::text AS created_at,
+  rating, play_count, skip_count, last_played_at::text AS last_played_at`;
 
 function map(r: Row): MusicTrack {
   const status = str(r, "status");
@@ -38,6 +44,10 @@ function map(r: Row): MusicTrack {
     error: strOrNull(r, "error"),
     sizeBytes: numOrNull(r, "size_bytes"),
     createdAt: str(r, "created_at"),
+    rating: num(r, "rating"),
+    playCount: num(r, "play_count"),
+    skipCount: num(r, "skip_count"),
+    lastPlayedAt: strOrNull(r, "last_played_at"),
   };
 }
 
@@ -212,4 +222,18 @@ export async function requeueFailedTracks(): Promise<number> {
     `UPDATE music_tracks SET status = 'queued', error = NULL WHERE status = 'failed' RETURNING id`,
   )) as Row[];
   return rows.length;
+}
+
+export async function rateMusicTrack(id: number, rating: number): Promise<void> {
+  const r = rating > 0 ? 1 : rating < 0 ? -1 : 0;
+  await q().query(`UPDATE music_tracks SET rating = $1 WHERE id = $2`, [r, id]);
+}
+
+/** event: "play" (started), "complete" (heard most of it) or "skip". */
+export async function recordMusicEvent(id: number, event: string): Promise<void> {
+  if (event === "skip") {
+    await q().query(`UPDATE music_tracks SET skip_count = skip_count + 1 WHERE id = $1`, [id]);
+  } else if (event === "complete" || event === "play") {
+    await q().query(`UPDATE music_tracks SET play_count = play_count + 1, last_played_at = NOW() WHERE id = $1`, [id]);
+  }
 }

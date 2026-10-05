@@ -1,13 +1,12 @@
 import { promises as fs } from "node:fs";
-import { requireSessionOr401 } from "@/lib/auth";
+import { authorizeMusic, notFound } from "@/lib/music-token";
 import { getMusicTrack } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(_r: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
-  const guard = await requireSessionOr401();
-  if (guard) return guard;
+export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
+  if (!(await authorizeMusic(request))) return notFound();
   const t = await getMusicTrack(Number((await ctx.params).id));
   if (!t?.coverPath) return new Response("none", { status: 404 });
   const buf = await fs.readFile(t.coverPath).catch(() => null);
