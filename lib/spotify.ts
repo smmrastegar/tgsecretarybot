@@ -130,21 +130,61 @@ export type SpotifyTrackMeta = {
   id: string; title: string; artist: string; album: string; releaseDate: string | null; durationS: number; coverUrl: string | null;
 };
 
-/** Up to 50 ids per call. Missing / unavailable tracks are simply absent. */
+type RawTrack = { id: string; name: string; duration_ms: number; artists: Array<{ name: string }>; album: { name: string; release_date?: string; images?: Array<{ url: string; width: number }> } };
+
+function toMeta(t: RawTrack): SpotifyTrackMeta {
+  const img = [...(t.album.images ?? [])].sort((a, b) => b.width - a.width).find((x) => x.width <= 700) ?? t.album.images?.[0];
+  return { id: t.id, title: t.name, artist: t.artists.map((a) => a.name).join(", "), album: t.album.name, releaseDate: t.album.release_date ?? null, durationS: Math.round(t.duration_ms / 1000), coverUrl: img?.url ?? null };
+}
+
+async function spGet(token: string, url: string): Promise<{ status: number; json: unknown; message: string }> {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const text = await res.text();
+  let json: unknown = null;
+  try { json = JSON.parse(text); } catch { /* not json */ }
+  const message = (json as { error?: { message?: string } } | null)?.error?.message ?? text.slice(0, 160);
+  return { status: res.status, json, message };
+}
+
+/**
+ * Track metadata for any number of ids. Spotify has been tightening what
+ * app tokens may read, so this walks down a ladder: batch with the app
+ * token → one by one with the app token → one by one with a linked
+ * user account. Ids that none of them can read are simply absent.
+ */
 export async function fetchTrackMeta(ids: string[]): Promise<SpotifyTrackMeta[]> {
-  const token = await appToken();
-  const out: SpotifyTrackMeta[] = [];
-  for (let i = 0; i < ids.length; i += 50) {
+  const out = new Map<string, SpotifyTrackMeta>();
+  const appTok = await appToken();
+  let batchOk = true;
+  for (let i = 0; i < ids.length && batchOk; i += 50) {
     const batch = ids.slice(i, i + 50);
-    const res = await fetch(`https://api.spotify.com/v1/tracks?ids=${batch.join(",")}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.status === 429) throw new Error("اسپاتیفای موقتاً محدود کرده (429)؛ کمی بعد دوباره امتحان کن");
-    if (!res.ok) throw new Error(`spotify tracks ${res.status}`);
-    const j = (await res.json()) as { tracks: Array<null | { id: string; name: string; duration_ms: number; artists: Array<{ name: string }>; album: { name: string; release_date?: string; images?: Array<{ url: string; width: number }> } }> };
-    for (const t of j.tracks) {
-      if (!t) continue;
-      const img = [...(t.album.images ?? [])].sort((a, b) => b.width - a.width).find((x) => x.width <= 700) ?? t.album.images?.[0];
-      out.push({ id: t.id, title: t.name, artist: t.artists.map((a) => a.name).join(", "), album: t.album.name, releaseDate: t.album.release_date ?? null, durationS: Math.round(t.duration_ms / 1000), coverUrl: img?.url ?? null });
+    const r = await spGet(appTok, `https://api.spotify.com/v1/tracks?ids=${batch.join(",")}`);
+    if (r.status === 429) throw new Error("اسپاتیفای موقتاً محدود کرده (429)؛ کمی بعد دوباره امتحان کن");
+    if (r.status === 200) {
+      for (const t of ((r.json as { tracks?: Array<RawTrack | null> })?.tracks ?? [])) if (t) out.set(t.id, toMeta(t));
+    } else {
+      console.log(`[music] batch /tracks ${r.status}: ${r.message}`);
+      batchOk = false;
     }
   }
-  return out;
+  const missing = () => ids.filter((id) => !out.has(id));
+  if (missing().length > 0) {
+    let userTok: string | null = null;
+    let lastMsg = "";
+    for (const id of missing()) {
+      let r = await spGet(appTok, `https://api.spotify.com/v1/tracks/${id}`);
+      if (r.status === 403 || r.status === 401) {
+        if (userTok == null) {
+          const accounts = await listSpotifyAccounts();
+          userTok = accounts[0] ? await accessToken(accounts[0].id).catch(() => "") : "";
+        }
+        if (userTok) r = await spGet(userTok, `https://api.spotify.com/v1/tracks/${id}`);
+      }
+      if (r.status === 429) throw new Error("اسپاتیفای موقتاً محدود کرده (429)؛ کمی بعد دوباره امتحان کن");
+      if (r.status === 200) out.set(id, toMeta(r.json as RawTrack));
+      else lastMsg = `${r.status}: ${r.message}`;
+    }
+    if (out.size === 0 && lastMsg) throw new Error(`spotify tracks ${lastMsg}`);
+  }
+  return [...out.values()];
 }
