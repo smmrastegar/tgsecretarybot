@@ -1793,6 +1793,8 @@ export type LinkJob = {
   /** cover photo already sent to the contact (spotify card) */
   coverMessageId: number | null;
   title: string | null;
+  /** set for jobs started from the /music library (not a chat request) */
+  musicTrackId: number | null;
 };
 
 function rowToLinkJob(r: Record<string, unknown>): LinkJob {
@@ -1806,6 +1808,7 @@ function rowToLinkJob(r: Record<string, unknown>): LinkJob {
     placeholderMessageId: r.placeholder_message_id == null ? null : Number(r.placeholder_message_id),
     coverMessageId: r.cover_message_id == null ? null : Number(r.cover_message_id),
     title: r.title == null ? null : String(r.title),
+    musicTrackId: r.music_track_id == null ? null : Number(r.music_track_id),
   };
 }
 

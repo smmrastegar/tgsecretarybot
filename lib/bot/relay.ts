@@ -169,6 +169,18 @@ export async function maybeReturnDownloadedMedia(
     (d) => d.botId === msg.chat.id,
   );
   if (!downloader) return false;
+  // "Track not found" and friends carry no media but END a library job.
+  if (msg.text && /track not found|not found|couldn'?t find|error/i.test(msg.text)) {
+    const { findPendingLinkJob: findJob, finishLinkJob: finishJob } = await import("../db");
+    const j = await findJob(downloader.botId, msg.reply_to_message?.message_id ?? null);
+    if (j?.musicTrackId != null) {
+      const { failMusicTrack, kickMusicQueue } = await import("../music");
+      await failMusicTrack(j.musicTrackId, msg.text.replace(/[⚠️\n]+/g, " ").trim().slice(0, 200));
+      await finishJob(j.id, 0);
+      await kickMusicQueue().catch(() => {});
+      return true;
+    }
+  }
   const hasMedia = !!(
     msg.photo || msg.video || msg.audio || msg.document ||
     msg.animation || msg.voice
@@ -178,6 +190,32 @@ export async function maybeReturnDownloadedMedia(
   const replyTo = msg.reply_to_message?.message_id ?? null;
   const job = await findPendingLinkJob(downloader.botId, replyTo);
   if (!job) return false;
+  // Library jobs (/music) are stored on this server, never sent to a chat.
+  if (job.musicTrackId != null) {
+    const m = mediaFileId(msg);
+    const { saveMusicCover, saveMusicAudio, failMusicTrack, kickMusicQueue } = await import("../music");
+    if (m?.kind === "photo") {
+      await saveMusicCover(job.musicTrackId, m.fileId, msg.caption ?? "");
+      return true;
+    }
+    if (m && isFinalDownloadMedia(downloader.kind, m.kind)) {
+      try {
+        await saveMusicAudio(job.musicTrackId, m.fileId, {
+          title: msg.audio?.title ?? null,
+          performer: msg.audio?.performer ?? null,
+          duration: msg.audio?.duration ?? null,
+          fileName: msg.audio?.file_name ?? msg.document?.file_name ?? null,
+          size: msg.audio?.file_size ?? msg.document?.file_size ?? null,
+        });
+      } catch (err) {
+        await failMusicTrack(job.musicTrackId, err instanceof Error ? err.message : String(err));
+      }
+      await finishLinkJob(job.id, 1);
+      await kickMusicQueue().catch(() => {});
+      return true;
+    }
+    return true;
+  }
   const bcId = await activeBusinessConnectionId();
   if (!bcId) return false;
   const { updateLinkJobProgress } = await import("../db");

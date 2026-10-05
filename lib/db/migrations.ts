@@ -130,6 +130,47 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE link_download_jobs ADD COLUMN IF NOT EXISTS title TEXT`;
     },
   },
+  {
+    // Personal music library (/music): tracks fetched through the paid
+    // Spotify downloader bot and stored on this server for the owner.
+    id: "2026-10-05-001-music-library",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_tracks (
+          id            BIGSERIAL PRIMARY KEY,
+          spotify_id    TEXT UNIQUE,
+          spotify_url   TEXT NOT NULL,
+          title         TEXT,
+          artist        TEXT,
+          album         TEXT,
+          release_date  TEXT,
+          duration_s    INT,
+          file_path     TEXT,
+          cover_path    TEXT,
+          mime          TEXT,
+          size_bytes    BIGINT,
+          status        TEXT NOT NULL DEFAULT 'queued',
+          error         TEXT,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          ready_at      TIMESTAMPTZ
+        )`;
+      await q`CREATE INDEX IF NOT EXISTS music_tracks_status_idx ON music_tracks (status, created_at)`;
+      await q`
+        CREATE TABLE IF NOT EXISTS music_playlists (
+          id         BIGSERIAL PRIMARY KEY,
+          name       TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+      await q`
+        CREATE TABLE IF NOT EXISTS music_playlist_tracks (
+          playlist_id BIGINT NOT NULL REFERENCES music_playlists(id) ON DELETE CASCADE,
+          track_id    BIGINT NOT NULL REFERENCES music_tracks(id) ON DELETE CASCADE,
+          position    INT NOT NULL DEFAULT 0,
+          PRIMARY KEY (playlist_id, track_id)
+        )`;
+      await q`ALTER TABLE link_download_jobs ADD COLUMN IF NOT EXISTS music_track_id BIGINT`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",

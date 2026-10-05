@@ -16,3 +16,4 @@
 15 4 * * *  root  curl -fsS "http://127.0.0.1:3000/api/cron/retention?secret=__CRON_SECRET__" >/dev/null 2>&1
 * * * * *   root  curl -fsS "http://127.0.0.1:3000/api/cron/ephemeral?secret=__CRON_SECRET__" >/dev/null 2>&1
 50 20 * * *  root  curl -fsS "http://127.0.0.1:3000/api/cron/metrics-daily?secret=__CRON_SECRET__" >/dev/null 2>&1
+* * * * *   root  curl -fsS "http://127.0.0.1:3000/api/cron/music?secret=__CRON_SECRET__" >/dev/null 2>&1
