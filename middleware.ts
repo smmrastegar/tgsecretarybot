@@ -59,6 +59,7 @@ const PUBLIC_PREFIXES = [
   // the private player token), so the cookie gate would only get in the
   // way of the tokenised player.
   "/player",
+  "/player-sw.js",
   "/robots.txt",
   "/api/music",
   "/otp.webmanifest",

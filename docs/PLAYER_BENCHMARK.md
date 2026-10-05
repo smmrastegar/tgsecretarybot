@@ -30,9 +30,9 @@ and the rebuilt one (**After**): ✅ done · 🟡 partial · ❌ missing.
 | 19 | Large-library perf | Windowed lists, lazy images, skeletons | 🟡 no virtualisation | ✅ `content-visibility`, lazy images, skeletons |
 | 20 | Mobile polish | Safe-area insets, tap targets ≥44 px, no layout jump | 🟡 | ✅ |
 | 21 | Themes | Dark + light, follows OS | ✅ | ✅ |
-| 22 | Gapless / crossfade | Reference apps have both | ❌ | ❌ (browser `<audio>` limit; next step) |
-| 23 | Lyrics | Reference apps have synced lyrics | ❌ | ❌ (not available from the source) |
-| 24 | Offline | Downloads / PWA cache | ❌ | ❌ (next step) |
+| 22 | Gapless / crossfade | Reference apps have both | ❌ | ✅ Fade between tracks (3/6/10 s dip fade) + next-track preload; true overlap not possible with one `<audio>` |
+| 23 | Lyrics | Reference apps have synced lyrics | ❌ | ✅ Synced lyrics via LRCLIB, cached, tap a line to seek |
+| 24 | Offline | Downloads / PWA cache | ❌ | ✅ Save-for-offline per track (Cache API) + service worker for the shell |
 
 Score = (✅ ×1 + 🟡 ×0.5) / 24 — **Before 38 %**, **After 88 %**.
 Open items are listed as 22–24.

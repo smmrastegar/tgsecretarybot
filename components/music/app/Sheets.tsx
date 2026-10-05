@@ -1,7 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { ArrowDownIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon } from "../Icons";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowDownIcon, DownloadIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon } from "../Icons";
 import { Cover, type Track } from "./shared";
 
 export function Sheet({ onClose, title, children }: { onClose: () => void; title?: string; children: ReactNode }) {
@@ -25,7 +25,8 @@ const Item = ({ icon, label, onClick, active }: { icon: ReactNode; label: string
   </button>
 );
 
-export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails }: {
+export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails, offline, onOffline }: {
+  offline: boolean; onOffline: () => void;
   t: Track; tq: string; onClose: () => void; onNext: () => void; onAdd: () => void; onRate: (r: number) => void;
   onArtist: () => void; onAlbum: () => void; onDetails: () => void;
 }) {
@@ -42,6 +43,7 @@ export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onA
       <Item icon={<ThumbDownIcon size={22} filled={t.rating < 0} />} label={t.rating < 0 ? "Remove dislike" : "Dislike (skip in mixes)"} onClick={go(() => onRate(-1))} />
       <Item icon={<ChevronRightIcon size={22} />} label="Go to artist" onClick={go(onArtist)} />
       {t.album && <Item icon={<ChevronRightIcon size={22} />} label="Go to album" onClick={go(onAlbum)} />}
+      <Item icon={<DownloadIcon size={22} />} label={offline ? "Remove offline copy" : "Save for offline"} onClick={go(onOffline)} />
       <Item icon={<InfoIcon size={22} />} label="Details & stats" onClick={go(onDetails)} />
     </Sheet>
   );
@@ -86,6 +88,44 @@ export function OptionSheet<T extends string | number>({ title, options, value, 
           {o.label}{value === o.v && <span className="text-xs text-[var(--dim)]">Selected</span>}
         </button>
       ))}
+    </Sheet>
+  );
+}
+
+type Line = { t: number; text: string };
+const parseLrc = (lrc: string): Line[] => {
+  const out: Line[] = [];
+  for (const raw of lrc.split("\n")) {
+    const stamps = [...raw.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    const text = raw.replace(/\[[^\]]*\]/g, "").trim();
+    for (const m of stamps) out.push({ t: Number(m[1]) * 60 + Number(m[2]), text });
+  }
+  return out.sort((a, b) => a.t - b.t);
+};
+
+export function LyricsSheet({ t, tq, pos, onSeek, onClose }: { t: Track; tq: string; pos: number; onSeek: (s: number) => void; onClose: () => void }) {
+  const [data, setData] = useState<{ synced: string | null; plain: string | null; found: boolean } | null>(null);
+  useEffect(() => {
+    let live = true;
+    setData(null);
+    fetch(`/api/music/${t.id}/lyrics?${tq}`).then((r) => r.json()).then((j) => { if (live) setData(j); }).catch(() => { if (live) setData({ synced: null, plain: null, found: false }); });
+    return () => { live = false; };
+  }, [t.id, tq]);
+  const lines = useMemo(() => (data?.synced ? parseLrc(data.synced) : []), [data]);
+  let active = -1;
+  for (let i = 0; i < lines.length; i++) { if (lines[i]!.t <= pos + 0.25) active = i; else break; }
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => { box.current?.querySelector<HTMLElement>("[data-active='1']")?.scrollIntoView({ block: "center", behavior: "smooth" }); }, [active]);
+  return (
+    <Sheet onClose={onClose} title={`${t.title ?? ""} — Lyrics`}>
+      <div ref={box} className="px-6 py-4 min-h-[50dvh] text-center">
+        {data === null && <div className="py-16 text-sm text-[var(--dim)]">Loading…</div>}
+        {data && !data.found && <div className="py-16 text-sm text-[var(--dim)]">No lyrics found for this track.</div>}
+        {lines.length > 0 && lines.map((l, i) => (
+          <button key={i} data-active={i === active ? "1" : "0"} onClick={() => onSeek(l.t)} className={`block w-full py-1.5 text-[20px] font-bold leading-snug transition-colors ${i === active ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`}>{l.text || "♪"}</button>
+        ))}
+        {data?.found && lines.length === 0 && <pre className="whitespace-pre-wrap font-[inherit] text-[17px] leading-relaxed text-[var(--dim2)]">{data.plain}</pre>}
+      </div>
     </Sheet>
   );
 }

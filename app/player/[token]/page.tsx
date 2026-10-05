@@ -3,18 +3,19 @@
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartIcon, ChevronDownIcon, HeartIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
+import { ChartIcon, ChevronDownIcon, FadeIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
 import MusicStats from "@/components/music/Stats";
 import Spectrum from "@/components/music/Spectrum";
 import TrackDetail from "@/components/music/TrackDetail";
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, fmt, type Playlist, type Track } from "@/components/music/app/shared";
 import { artistsOf, DetailView, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
-import { OptionSheet, QueueSheet, TrackMenu } from "@/components/music/app/Sheets";
+import { LyricsSheet, OptionSheet, QueueSheet, TrackMenu } from "@/components/music/app/Sheets";
 
 // Private personal player. The URL's 256-bit token is the credential.
 type Tab = "home" | "search" | "library" | "stats";
 const SLEEP = [{ v: 0, label: "Off" }, { v: 5, label: "5 minutes" }, { v: 15, label: "15 minutes" }, { v: 30, label: "30 minutes" }, { v: 60, label: "1 hour" }, { v: -1, label: "End of track" }];
+const FADES = [{ v: 0, label: "Off" }, { v: 3, label: "3 seconds" }, { v: 6, label: "6 seconds" }, { v: 10, label: "10 seconds" }];
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2].map((v) => ({ v, label: v === 1 ? "Normal (1×)" : `${v}×` }));
 
 export default function PlayerPage({ params }: { params: Promise<{ token: string }> }) {
@@ -37,11 +38,14 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [speed, setSpeed] = useState(1);
   const [sleepMin, setSleepMin] = useState(0);
   const [full, setFull] = useState(false);
-  const [sheet, setSheet] = useState<null | "queue" | "sleep" | "speed">(null);
+  const [sheet, setSheet] = useState<null | "queue" | "sleep" | "speed" | "fade" | "lyrics">(null);
   const [menuT, setMenuT] = useState<Track | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [toast, setToast] = useState("");
+  const [fade, setFade] = useState(0);
+  const [offline, setOffline] = useState<Set<number>>(new Set());
+  const blobUrl = useRef<string | null>(null);
 
   useEffect(() => {
     try {
@@ -50,6 +54,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       else if (window.matchMedia("(prefers-color-scheme: light)").matches) setTheme("light");
     } catch { /* storage blocked: stay dark */ }
   }, []);
+  useEffect(() => {
+    try { const f = Number(localStorage.getItem("player.fade")); if ([3, 6, 10].includes(f)) setFade(f); } catch {}
+    if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/player-sw.js", { scope: "/player/" }).catch(() => {});
+    if ("caches" in window) void caches.open("player-audio").then((c) => c.keys()).then((ks) => setOffline(new Set(ks.map((k) => Number(new URL(k.url).pathname.split("/").pop())).filter(Number.isFinite)))).catch(() => {});
+  }, []);
+  const pickFade = (v: number) => { setFade(v); try { localStorage.setItem("player.fade", String(v)); } catch {} };
   const flipTheme = () => setTheme((t) => { const n = t === "dark" ? "light" : "dark"; try { localStorage.setItem("player.theme", n); } catch {} return n; });
   const accent = theme === "dark" ? "255,255,255" : "24,24,32";
   const vars: Record<string, string> = theme === "dark"
@@ -123,17 +133,63 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const addQueue = (id: number) => { setQueue((q) => (q.includes(id) ? q : [...q, id])); flash("Added to queue"); if (cur == null) { setQueue([id]); setCur(id); setPlaying(true); } };
   const moveQ = (id: number, d: -1 | 1) => setQueue((q) => { const i = q.indexOf(id), j = i + d; if (i < 0 || j < 0 || j >= q.length || q[j] === cur) return q; const n = [...q]; [n[i], n[j]] = [n[j]!, n[i]!]; return n; });
 
-  // Load the audio element only when the current track changes.
+  // Load the audio element only when the current track changes. A saved
+  // offline copy wins over the network.
   useEffect(() => {
     const a = audio.current; if (!a || cur == null) return;
+    let dead = false;
     tracker.begin(cur);
-    a.src = `/api/music/stream/${cur}?${tq}`; a.playbackRate = speed; void a.play().catch(() => {});
+    const start = (src: string) => { if (dead) return; a.src = src; a.playbackRate = speed; void a.play().catch(() => {}); };
+    const net = `/api/music/stream/${cur}?${tq}`;
+    if (blobUrl.current) { URL.revokeObjectURL(blobUrl.current); blobUrl.current = null; }
+    if ("caches" in window) {
+      void caches.open("player-audio").then((c) => c.match(`/api/music/stream/${cur}`)).then(async (hit) => {
+        if (!hit) return start(net);
+        const u = URL.createObjectURL(await hit.blob()); blobUrl.current = u; start(u);
+      }).catch(() => start(net));
+    } else start(net);
     const t = byIdRef.current.get(cur);
     if ("mediaSession" in navigator && t) {
       navigator.mediaSession.metadata = new MediaMetadata({ title: t.title ?? "—", artist: t.artist ?? "", album: t.album ?? "", artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}?${tq}`, sizes: "640x640", type: "image/jpeg" }] : [] });
     }
+    return () => { dead = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- speed is applied by its own effect
   }, [cur, tq, tracker]);
+
+  // Warm the HTTP cache with the next track so the hand-over is instant.
+  const preload = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => {
+    if (cur == null || offline.size && offline.has(cur)) return;
+    const i = queue.indexOf(cur); const nid = queue[i + 1];
+    if (nid == null || offline.has(nid)) return;
+    const p = preload.current ?? (preload.current = new Audio());
+    p.preload = "auto"; p.src = `/api/music/stream/${nid}?${tq}`;
+  }, [cur, queue, tq, offline]);
+
+  // Fade out the tail and fade in the head of tracks (volume dip crossfade).
+  useEffect(() => {
+    const a = audio.current; if (!a) return;
+    if (fade <= 0 || !playing) { a.volume = vol; return; }
+    const i = setInterval(() => {
+      const d = a.duration; if (!Number.isFinite(d) || d < fade * 3) { a.volume = vol; return; }
+      const k = Math.min(1, a.currentTime / fade, (d - a.currentTime) / fade);
+      a.volume = vol * Math.max(0.02, k);
+    }, 100);
+    return () => clearInterval(i);
+  }, [fade, playing, vol]);
+
+  const toggleOffline = async (t: Track) => {
+    const key = `/api/music/stream/${t.id}`;
+    const c = await caches.open("player-audio");
+    if (offline.has(t.id)) { await c.delete(key); setOffline((s) => { const n = new Set(s); n.delete(t.id); return n; }); flash("Offline copy removed"); return; }
+    flash("Saving for offline…");
+    try {
+      const r = await fetch(`${key}?${tq}`);
+      if (!r.ok || r.status !== 200) throw new Error("bad");
+      await c.put(key, r);
+      setOffline((s) => new Set(s).add(t.id)); flash("Saved for offline");
+    } catch { flash("Could not save"); }
+  };
   useEffect(() => { if (audio.current) audio.current.playbackRate = speed; }, [speed]);
 
   useEffect(() => {
@@ -305,10 +361,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <VolumeIcon size={18} className="text-[var(--dim)]" />
             </div>
 
-            <div className="mt-auto pt-5 grid grid-cols-3 gap-2 text-xs">
+            <div className="mt-auto pt-5 grid grid-cols-5 gap-1.5 text-[11px]">
               <button onClick={() => setSheet("sleep")} className={`flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] ${sleepMin ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><TimerIcon size={20} />{sleepMin === -1 ? "End of track" : sleepMin > 0 ? `${sleepMin} min` : "Sleep"}</button>
               <button onClick={() => setSheet("speed")} className={`flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] ${speed !== 1 ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><span className="h-5 grid place-items-center text-[15px] font-bold">{speed}×</span>Speed</button>
-              <button onClick={() => setSheet("queue")} className="flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><QueueIcon size={20} />Queue · {upNextCount}</button>
+              <button onClick={() => setSheet("fade")} className={`flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] ${fade ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><FadeIcon size={20} />{fade ? `Fade ${fade}s` : "Fade"}</button>
+              <button onClick={() => setSheet("lyrics")} className="flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><LyricsIcon size={20} />Lyrics</button>
+              <button onClick={() => setSheet("queue")} className="flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><QueueIcon size={20} />Queue {upNextCount}</button>
             </div>
           </div>
         </div>
@@ -317,7 +375,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {sheet === "queue" && <QueueSheet ids={queue} byId={byId} cur={cur} tq={tq} onClose={() => setSheet(null)} onPlay={(id) => { history.current.push(cur ?? id); setCur(id); }} onRemove={(id) => setQueue((q) => q.filter((x) => x !== id))} onMove={moveQ} onClear={() => setQueue((q) => (cur != null ? [cur] : q.slice(0, 0)))} />}
       {sheet === "sleep" && <OptionSheet title="Sleep timer" options={SLEEP} value={sleepMin} onPick={(v) => { setSleepMin(v); if (v === 0) sleepEnd.current = 0; }} onClose={() => setSheet(null)} />}
       {sheet === "speed" && <OptionSheet title="Playback speed" options={SPEEDS} value={speed} onPick={setSpeed} onClose={() => setSheet(null)} />}
-      {menuT && <TrackMenu t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
+      {sheet === "fade" && <OptionSheet title="Fade between tracks" options={FADES} value={fade} onPick={pickFade} onClose={() => setSheet(null)} />}
+      {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
+      {menuT && <TrackMenu offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
         onArtist={() => { const a = artistsOf(menuT)[0]!; setFull(false); setTab("library"); setStack([{ kind: "artist", key: a, title: a }]); }}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}
