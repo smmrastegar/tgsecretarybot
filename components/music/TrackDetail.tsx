@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
 import { useEffect, useState } from "react";
+import { HeartIcon, ThumbDownIcon } from "./Icons";
 
 export type DetailTrack = {
   id: number; spotifyUrl?: string; title: string | null; artist: string | null; album: string | null; releaseDate?: string | null;
@@ -107,8 +108,8 @@ export default function TrackDetail({ t, tq, onClose, onRate, live }: {
 
           {onRate && (
             <div className="flex gap-2">
-              <button onClick={() => onRate(1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating > 0 ? "border-rose-400/60 bg-rose-500/20" : "border-[var(--bd)] bg-[var(--s1)]"}`}>❤️ لایک</button>
-              <button onClick={() => onRate(-1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating < 0 ? "border-amber-400/60 bg-amber-500/20" : "border-[var(--bd)] bg-[var(--s1)]"}`}>👎 دیسلایک</button>
+              <button onClick={() => onRate(1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating > 0 ? "border-rose-400/60 bg-rose-500/20 text-rose-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><HeartIcon size={20} filled={t.rating > 0} /> لایک</span></button>
+              <button onClick={() => onRate(-1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating < 0 ? "border-amber-400/60 bg-amber-500/20 text-amber-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><ThumbDownIcon size={20} filled={t.rating < 0} /> دیسلایک</span></button>
             </div>
           )}
 
