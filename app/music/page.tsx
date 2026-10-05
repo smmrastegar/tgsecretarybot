@@ -29,6 +29,7 @@ export default function MusicPage() {
   const [q, setQ] = useState("");
   const [paste, setPaste] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [queue, setQueue] = useState<number[]>([]);
   const [cur, setCur] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -48,10 +49,18 @@ export default function MusicPage() {
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
 
   const load = useCallback(async () => {
-    const r = await fetch("/api/music", { cache: "no-store" });
-    if (!r.ok) return;
-    const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[] };
-    setTracks(j.tracks); setPlaylists(j.playlists);
+    try {
+      const r = await fetch("/api/music", { cache: "no-store" });
+      if (!r.ok) {
+        const e = (await r.json().catch(() => ({}))) as { error?: string };
+        setLoadErr(`بارگذاری فهرست ناموفق (${r.status}) ${e.error ?? ""}`);
+        return;
+      }
+      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[] };
+      setTracks(j.tracks); setPlaylists(j.playlists); setLoadErr(null);
+    } catch (e) {
+      setLoadErr(`بارگذاری فهرست ناموفق: ${String(e)}`);
+    }
   }, []);
   useEffect(() => { void load(); }, [load]);
   const loadSp = useCallback(async () => {
@@ -201,6 +210,7 @@ export default function MusicPage() {
         </div>
       </Card>
 
+      {loadErr && <Card className="mb-3"><p className="text-sm text-rose-300">{loadErr}</p></Card>}
       <div className="flex gap-2 flex-wrap items-center mb-3">
         <button onClick={() => setView("all")} className={`text-xs px-3 py-1.5 rounded-md border ${view === "all" ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>همه ({tracks.length})</button>
         {playlists.map((p) => (

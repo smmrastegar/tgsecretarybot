@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
 import { addMusicTrack, listMusicPlaylists, listMusicTracks, parseSpotifyTrackUrl } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
+import { reportError } from "@/lib/report";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,8 +10,13 @@ export const dynamic = "force-dynamic";
 export async function GET(): Promise<NextResponse> {
   const guard = await requireSessionOr401();
   if (guard) return guard;
-  const [tracks, playlists] = await Promise.all([listMusicTracks(), listMusicPlaylists()]);
-  return NextResponse.json({ tracks, playlists });
+  try {
+    const [tracks, playlists] = await Promise.all([listMusicTracks(), listMusicPlaylists()]);
+    return NextResponse.json({ tracks, playlists });
+  } catch (err) {
+    reportError("music", "list failed:", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
 }
 
 // POST { text }: any text containing Spotify track links (one or many).
