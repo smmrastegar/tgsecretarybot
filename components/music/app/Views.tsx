@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, SearchIcon, ShuffleIcon, SparkIcon } from "../Icons";
-import { Card, Cover, Eq, fmt, Mosaic, PlayAllButton, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
+import { ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, SearchIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
+import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, PlayAllButton, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
 
 // Everything the views need from the player engine.
 export type Api = {
@@ -246,6 +246,7 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
         <div className="flex items-center gap-3 mt-5">
           <PlayAllButton onClick={() => list[0] && api.play(ids, ids[0])} />
           <button onClick={() => api.play(ids, undefined, true)} className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[var(--s2)] font-semibold text-[15px] active:scale-95 transition"><ShuffleIcon size={18} /> Shuffle</button>
+          <button onClick={() => void shareText(page.title, [`${page.title} — ${list.length} songs`, "", ...list.slice(0, 50).flatMap((t) => [...trackShareLines(t), ""])])} className="w-11 h-11 grid place-items-center rounded-full bg-[var(--s2)] active:scale-95 transition" aria-label="Share"><ShareIcon size={18} /></button>
         </div>
       </div>
       <div className="mt-6"><TrackList list={list} api={api} numbered={page.kind === "album"} /></div>

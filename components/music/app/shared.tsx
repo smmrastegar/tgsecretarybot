@@ -6,7 +6,7 @@ import { PlayIcon } from "../Icons";
 
 export type Track = {
   id: number; title: string | null; artist: string | null; album: string | null; durationS: number | null;
-  hasCover: boolean; status: string; rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
+  spotifyUrl?: string; hasCover: boolean; status: string; rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
   releaseDate: string | null; mime: string | null; readyAt: string | null; createdAt: string; listenSeconds: number; sizeBytes: number | null;
 };
 export type Playlist = { id: number; name: string; trackIds: number[] };
@@ -90,3 +90,17 @@ export function PlayAllButton({ onClick, label = "Play" }: { onClick: () => void
     </button>
   );
 }
+
+/**
+ * Share what a track IS (title, artist, public Spotify link), never the
+ * audio file or this private player's URL. Uses the native share sheet and
+ * falls back to the clipboard. Returns a short status for a toast.
+ */
+export async function shareText(title: string, lines: string[]): Promise<string> {
+  const text = lines.join("\n");
+  try {
+    if (navigator.share) { await navigator.share({ title, text }); return ""; }
+  } catch (e) { if ((e as Error).name === "AbortError") return ""; }
+  try { await navigator.clipboard.writeText(text); return "Copied to clipboard"; } catch { return "Could not share"; }
+}
+export const trackShareLines = (t: Pick<Track, "title" | "artist" | "spotifyUrl">) => [`${t.title ?? "—"} — ${t.artist ?? ""}`.trim(), ...(t.spotifyUrl ? [t.spotifyUrl] : [])];

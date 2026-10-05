@@ -3,12 +3,12 @@
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartIcon, ChevronDownIcon, FadeIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
+import { ChartIcon, ChevronDownIcon, FadeIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
 import StatsView from "@/components/music/app/StatsView";
 import Spectrum from "@/components/music/Spectrum";
 import TrackDetail from "@/components/music/TrackDetail";
 import { useListenTracker } from "@/components/music/useListenTracker";
-import { Cover, fmt, type Playlist, type Track } from "@/components/music/app/shared";
+import { Cover, fmt, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { artistsOf, DetailView, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
 import { LyricsSheet, OptionSheet, QueueSheet, TrackMenu } from "@/components/music/app/Sheets";
 
@@ -178,6 +178,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     return () => clearInterval(i);
   }, [fade, playing, vol]);
 
+  const share = async (t: Track) => { const m = await shareText(t.title ?? "Song", trackShareLines(t)); if (m) flash(m); };
   const toggleOffline = async (t: Track) => {
     const key = `/api/music/stream/${t.id}`;
     const c = await caches.open("player-audio");
@@ -323,7 +324,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             <div className="flex items-center justify-between h-11 shrink-0">
               <button onClick={() => setFull(false)} className="p-2 -ml-2" aria-label="Minimise"><ChevronDownIcon size={28} /></button>
               <span className="text-xs uppercase tracking-widest text-[var(--dim)]">Now playing</span>
-              <button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button>
+              <span className="flex items-center"><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button></span>
             </div>
 
             <div className="relative flex-1 min-h-0 my-2">
@@ -379,7 +380,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {sheet === "speed" && <OptionSheet title="Playback speed" options={SPEEDS} value={speed} onPick={setSpeed} onClose={() => setSheet(null)} />}
       {sheet === "fade" && <OptionSheet title="Fade between tracks" options={FADES} value={fade} onPick={pickFade} onClose={() => setSheet(null)} />}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
-      {menuT && <TrackMenu offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
+      {menuT && <TrackMenu onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
         onArtist={() => { const a = artistsOf(menuT)[0]!; setFull(false); setTab("library"); setStack([{ kind: "artist", key: a, title: a }]); }}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}

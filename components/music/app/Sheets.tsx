@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDownIcon, DownloadIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon } from "../Icons";
+import { ArrowDownIcon, DownloadIcon, ShareIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon } from "../Icons";
 import { Cover, type Track } from "./shared";
 
 export function Sheet({ onClose, title, children }: { onClose: () => void; title?: string; children: ReactNode }) {
@@ -25,7 +25,8 @@ const Item = ({ icon, label, onClick, active }: { icon: ReactNode; label: string
   </button>
 );
 
-export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails, offline, onOffline }: {
+export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails, offline, onOffline, onShare }: {
+  onShare: () => void;
   offline: boolean; onOffline: () => void;
   t: Track; tq: string; onClose: () => void; onNext: () => void; onAdd: () => void; onRate: (r: number) => void;
   onArtist: () => void; onAlbum: () => void; onDetails: () => void;
@@ -43,6 +44,7 @@ export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onA
       <Item icon={<ThumbDownIcon size={22} filled={t.rating < 0} />} label={t.rating < 0 ? "Remove dislike" : "Dislike (skip in mixes)"} onClick={go(() => onRate(-1))} />
       <Item icon={<ChevronRightIcon size={22} />} label="Go to artist" onClick={go(onArtist)} />
       {t.album && <Item icon={<ChevronRightIcon size={22} />} label="Go to album" onClick={go(onAlbum)} />}
+      <Item icon={<ShareIcon size={22} />} label="Share" onClick={go(onShare)} />
       <Item icon={<DownloadIcon size={22} />} label={offline ? "Remove offline copy" : "Save for offline"} onClick={go(onOffline)} />
       <Item icon={<InfoIcon size={22} />} label="Details & stats" onClick={go(onDetails)} />
     </Sheet>
