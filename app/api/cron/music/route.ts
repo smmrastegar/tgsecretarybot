@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { getAllSettings, setSetting } from "@/lib/db";
-import { kickMusicQueue, repairLibrary } from "@/lib/music";
+import { fillMissingMeta, kickMusicQueue, repairLibrary, verifyLibraryLocal } from "@/lib/music";
 import { reportInfo, reportWarn } from "@/lib/report";
 
 export const runtime = "nodejs";
@@ -41,5 +41,28 @@ export async function GET(request: Request): Promise<NextResponse> {
       await setSetting("musicRepairLock", "0");
     }
   }
-  return NextResponse.json({ ok: true, ...(await kickMusicQueue()), repair });
+  // One-off (v2): the first repair skipped files whose reported duration
+  // was 0; check every stored file against Spotify's length by size.
+  let verify: unknown = undefined;
+  if (s.musicVerifyV2 !== "done") {
+    try {
+      verify = await verifyLibraryLocal();
+      await setSetting("musicVerifyV2", "done");
+      reportInfo("music", `local verify: ${JSON.stringify(verify)}`);
+    } catch (err) {
+      reportWarn("music", "local verify failed (will retry):", err);
+    }
+  }
+  // Ongoing: tracks added since get their Spotify length filled in.
+  let fill: unknown = undefined;
+  if (s.musicRepairV1 === "done" && Date.now() > pausedUntil) {
+    try {
+      const r = await fillMissingMeta(10);
+      if (r?.rateLimitedFor) await setSetting("musicRepairPauseUntil", String(Date.now() + (r.rateLimitedFor + 5) * 1000));
+      fill = r ?? undefined;
+    } catch (err) {
+      reportWarn("music", "meta fill failed:", err);
+    }
+  }
+  return NextResponse.json({ ok: true, ...(await kickMusicQueue()), repair, verify, fill });
 }

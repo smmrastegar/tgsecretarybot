@@ -213,6 +213,15 @@ export async function maybeReturnDownloadedMedia(
       return true;
     }
     if (m && isFinalDownloadMedia(downloader.kind, m.kind)) {
+      const { getMusicTrack } = await import("../db");
+      const { durationMismatch } = await import("../music");
+      const expected = await getMusicTrack(job.musicTrackId);
+      if (expected && durationMismatch(msg.audio?.duration ?? null, expected.spotifyDurationS, msg.audio?.file_size ?? msg.document?.file_size ?? null)) {
+        // A late file of an earlier request: not this track's audio. Leave
+        // the job open for the right one.
+        console.log(`[music] audio of the wrong length for track ${job.musicTrackId} — ignored`);
+        return true;
+      }
       try {
         await saveMusicAudio(job.musicTrackId, m.fileId, {
           title: msg.audio?.title ?? null,

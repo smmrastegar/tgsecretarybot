@@ -133,6 +133,11 @@ export async function kickMusicQueue(): Promise<{ started: number | null }> {
     reportWarn("music", "no active business connection; track stays queued");
     return { started: null };
   }
+  // Expected length first, so the audio that comes back can be matched
+  // to THIS track and a stray one rejected (best effort: rate limits).
+  if (track.spotifyDurationS == null && track.spotifyId) {
+    await repairLibrary({ onlyIds: [track.id] }).catch(() => {});
+  }
   try {
     const sent = await getBot().api.sendMessage(downloader.botId, track.spotifyUrl, {
       business_connection_id: bcId,
@@ -157,12 +162,21 @@ export async function kickMusicQueue(): Promise<{ started: number | null }> {
 
 // ---- metadata from Spotify (authoritative) + wrong-audio detection ----
 
-/** Audio whose length differs this much from Spotify's belongs to another track. */
-const DURATION_TOLERANCE_S = 6;
-
-export function durationMismatch(audioS: number | null, spotifyS: number | null): boolean {
-  if (audioS == null || spotifyS == null || audioS <= 0 || spotifyS <= 0) return false;
-  return Math.abs(audioS - spotifyS) > DURATION_TOLERANCE_S;
+/**
+ * Is this audio file the wrong length for the track? The downloader's
+ * reported duration is often 0, so when it is missing the length is
+ * estimated from the file size: the downloader serves 320 kbps MP3, so
+ * seconds ≈ bytes × 8 / 320 000. A file whose implied bitrate for
+ * Spotify's length falls outside 300–345 kbps belongs to another track.
+ */
+export function durationMismatch(audioS: number | null, spotifyS: number | null, sizeBytes?: number | null): boolean {
+  if (spotifyS == null || spotifyS <= 0) return false;
+  if (audioS != null && audioS > 0) return Math.abs(audioS - spotifyS) > 6;
+  if (sizeBytes != null && sizeBytes > 0) {
+    const kbps = (sizeBytes * 8) / spotifyS / 1000;
+    return kbps < 300 || kbps > 345;
+  }
+  return false;
 }
 
 async function saveCoverFromUrl(trackId: number, url: string): Promise<string | null> {
@@ -218,7 +232,7 @@ export async function repairLibrary(opts?: { onlyIds?: number[]; afterId?: numbe
       const cp = await saveCoverFromUrl(t.id, m.coverUrl);
       if (cp) { patch.coverPath = cp; report.coversSaved++; }
     }
-    if (t.status === "ready" && durationMismatch(t.durationS, m.durationS)) {
+    if (t.status === "ready" && durationMismatch(t.durationS, m.durationS, t.sizeBytes)) {
       report.wrongAudio++;
       await removeMusicFiles([t.filePath]);
       patch.status = "queued"; patch.error = null; patch.filePath = null; patch.mime = null; patch.sizeBytes = null; patch.durationS = null;
@@ -232,15 +246,46 @@ export async function repairLibrary(opts?: { onlyIds?: number[]; afterId?: numbe
   return report;
 }
 
+/**
+ * No Spotify calls: check every stored file against the Spotify length
+ * already on record, drop the ones that are the wrong length and put
+ * them back in the queue.
+ */
+export async function verifyLibraryLocal(): Promise<{ checked: number; requeued: number }> {
+  const { listTracksForMeta } = await import("./db");
+  const tracks = (await listTracksForMeta()).filter((t) => t.status === "ready");
+  let requeued = 0;
+  for (const t of tracks) {
+    if (!durationMismatch(t.durationS, t.spotifyDurationS, t.sizeBytes)) continue;
+    await removeMusicFiles([t.filePath]);
+    await updateMusicTrack(t.id, { status: "queued", error: null, filePath: null, mime: null, sizeBytes: null, durationS: null });
+    requeued++;
+  }
+  return { checked: tracks.length, requeued };
+}
+
+/** Fill in Spotify metadata for tracks that have none yet (small, rate-limit aware). */
+export async function fillMissingMeta(limit = 15): Promise<RepairReport | null> {
+  const { listTracksForMeta } = await import("./db");
+  const ids = (await listTracksForMeta()).filter((t) => t.spotifyDurationS == null).slice(0, limit).map((t) => t.id);
+  if (ids.length === 0) return null;
+  return repairLibrary({ onlyIds: ids });
+}
+
 /** After a fresh download: fix metadata from Spotify and reject audio of the wrong length. */
 export async function verifyDownloadedTrack(trackId: number): Promise<void> {
   try {
-    const t = await getMusicTrack(trackId);
+    let t = await getMusicTrack(trackId);
     if (!t?.spotifyId) return;
-    const r = await repairLibrary({ onlyIds: [trackId] });
-    if (r.requeued > 0) {
-      // Wrong audio twice would loop forever: park it as failed instead.
-      await updateMusicTrack(trackId, { status: "failed", error: "فایلِ بات با این آهنگ نمی‌خواند (مدت متفاوت). بات دانلودر آهنگ دیگری فرستاد؛ بعداً ↻ بزن" });
+    if (t.spotifyDurationS == null) {
+      // repairLibrary may requeue a mismatch itself; park it instead.
+      await repairLibrary({ onlyIds: [trackId] });
+      t = await getMusicTrack(trackId);
+    }
+    if (!t) return;
+    if (t.status === "queued" || durationMismatch(t.durationS, t.spotifyDurationS, t.sizeBytes)) {
+      await removeMusicFiles([t.filePath]);
+      await updateMusicTrack(trackId, { status: "failed", error: "فایلِ بات با این آهنگ نمی‌خواند (طول متفاوت). بعداً ↻ بزن", filePath: null, mime: null, sizeBytes: null, durationS: null });
     }
   } catch (err) {
     reportWarn("music", `verify track ${trackId} failed:`, err);

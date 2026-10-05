@@ -26,11 +26,13 @@ export type MusicTrack = {
   readyAt: string | null;
   /** total seconds actually listened (music_events) */
   listenSeconds: number;
+  /** Spotify's own length of the track, when known */
+  spotifyDurationS: number | null;
 };
 
 const COLS = `id, spotify_id, spotify_url, title, artist, album, release_date, duration_s,
   (cover_path IS NOT NULL) AS has_cover, status, error, size_bytes, created_at::text AS created_at,
-  rating, play_count, skip_count, last_played_at::text AS last_played_at, mime, ready_at::text AS ready_at,
+  rating, play_count, skip_count, last_played_at::text AS last_played_at, mime, ready_at::text AS ready_at, spotify_duration_s,
   (SELECT COALESCE(SUM(seconds), 0)::int FROM music_events e WHERE e.track_id = music_tracks.id) AS listen_s`;
 
 function map(r: Row): MusicTrack {
@@ -56,6 +58,7 @@ function map(r: Row): MusicTrack {
     mime: strOrNull(r, "mime"),
     readyAt: strOrNull(r, "ready_at"),
     listenSeconds: num(r, "listen_s"),
+    spotifyDurationS: numOrNull(r, "spotify_duration_s"),
   };
 }
 
@@ -354,9 +357,11 @@ export async function setPlaylistTracks(playlistId: number, trackIds: number[], 
   return ids.length;
 }
 
-/** Ready tracks with their audio duration vs Spotify's, for verification. */
-export async function listTracksForMeta(): Promise<Array<{ id: number; spotifyId: string; status: string; durationS: number | null; filePath: string | null; coverPath: string | null }>> {
+/** Everything the verifier needs about a track. */
+export type MetaRow = { id: number; spotifyId: string; status: string; durationS: number | null; spotifyDurationS: number | null; sizeBytes: number | null; filePath: string | null; coverPath: string | null };
+
+export async function listTracksForMeta(): Promise<MetaRow[]> {
   await ensureSchema();
-  const rows = (await q().query(`SELECT id, spotify_id, status, duration_s, file_path, cover_path FROM music_tracks WHERE spotify_id IS NOT NULL ORDER BY id`)) as Row[];
-  return rows.map((r) => ({ id: num(r, "id"), spotifyId: str(r, "spotify_id"), status: str(r, "status"), durationS: numOrNull(r, "duration_s"), filePath: strOrNull(r, "file_path"), coverPath: strOrNull(r, "cover_path") }));
+  const rows = (await q().query(`SELECT id, spotify_id, status, duration_s, spotify_duration_s, size_bytes, file_path, cover_path FROM music_tracks WHERE spotify_id IS NOT NULL ORDER BY id`)) as Row[];
+  return rows.map((r) => ({ id: num(r, "id"), spotifyId: str(r, "spotify_id"), status: str(r, "status"), durationS: numOrNull(r, "duration_s"), spotifyDurationS: numOrNull(r, "spotify_duration_s"), sizeBytes: numOrNull(r, "size_bytes"), filePath: strOrNull(r, "file_path"), coverPath: strOrNull(r, "cover_path") }));
 }

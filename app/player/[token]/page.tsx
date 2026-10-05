@@ -21,7 +21,6 @@ type Track = {
 type Playlist = { id: number; name: string; trackIds: number[] };
 
 const fmt = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
-const DEFAULT_ACCENT = "29,185,84";
 
 // No cover: a tile tinted from the track id with the title's first letter.
 function Tile({ t, className = "" }: { t: { id: number; title: string | null }; className?: string }) {
@@ -63,7 +62,6 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [tab, setTab] = useState<"songs" | "stats">("songs");
   const [detailId, setDetailId] = useState<number | null>(null);
   const [full, setFull] = useState(false);
-  const [accent, setAccent] = useState(DEFAULT_ACCENT);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   useEffect(() => {
     try {
@@ -73,9 +71,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     } catch { /* storage blocked: stay dark */ }
   }, []);
   const flipTheme = () => setTheme((t) => { const n = t === "dark" ? "light" : "dark"; try { localStorage.setItem("player.theme", n); } catch {} return n; });
+  const accent = theme === "dark" ? "255,255,255" : "24,24,32";
   const vars: Record<string, string> = theme === "dark"
-    ? { "--bg": "#07070b", "--bg2": "#0d0d13", "--fg": "#ececf1", "--s0": "rgba(255,255,255,.03)", "--s1": "rgba(255,255,255,.05)", "--s2": "rgba(255,255,255,.10)", "--bd": "rgba(255,255,255,.10)", "--bd0": "rgba(255,255,255,.05)", "--dim": "#a1a1aa", "--dim2": "#d4d4d8", "--dim3": "#71717a", "--glass": "rgba(18,18,24,.72)", "--amb": ".30" }
-    : { "--bg": "#f5f5f8", "--bg2": "#ffffff", "--fg": "#16161d", "--s0": "rgba(0,0,0,.025)", "--s1": "rgba(0,0,0,.05)", "--s2": "rgba(0,0,0,.09)", "--bd": "rgba(0,0,0,.12)", "--bd0": "rgba(0,0,0,.06)", "--dim": "#52525b", "--dim2": "#3f3f46", "--dim3": "#71717a", "--glass": "rgba(255,255,255,.78)", "--amb": ".16" };
+    ? { "--acfg": "#0b0b10", "--bg": "#07070b", "--bg2": "#0d0d13", "--fg": "#ececf1", "--s0": "rgba(255,255,255,.03)", "--s1": "rgba(255,255,255,.05)", "--s2": "rgba(255,255,255,.10)", "--bd": "rgba(255,255,255,.10)", "--bd0": "rgba(255,255,255,.05)", "--dim": "#a1a1aa", "--dim2": "#d4d4d8", "--dim3": "#71717a", "--glass": "rgba(18,18,24,.72)", "--amb": ".30" }
+    : { "--acfg": "#ffffff", "--bg": "#f5f5f8", "--bg2": "#ffffff", "--fg": "#16161d", "--s0": "rgba(0,0,0,.025)", "--s1": "rgba(0,0,0,.05)", "--s2": "rgba(0,0,0,.09)", "--bd": "rgba(0,0,0,.12)", "--bd0": "rgba(0,0,0,.06)", "--dim": "#52525b", "--dim2": "#3f3f46", "--dim3": "#71717a", "--glass": "rgba(255,255,255,.78)", "--amb": ".16" };
   const audio = useRef<HTMLAudioElement>(null);
   const history = useRef<number[]>([]);
   const tracker = useListenTracker(tq);
@@ -153,30 +152,6 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}?${tq}`, sizes: "640x640", type: "image/jpeg" }] : [],
       });
     }
-    setAccent(DEFAULT_ACCENT);
-    if (t?.hasCover) {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const c = document.createElement("canvas"); c.width = c.height = 8;
-          const x = c.getContext("2d"); if (!x) return;
-          x.drawImage(img, 0, 0, 8, 8);
-          const d = x.getImageData(0, 0, 8, 8).data;
-          let best = [29, 185, 84], score = -1;
-          for (let i = 0; i < d.length; i += 4) {
-            const r = d[i]!, g = d[i + 1]!, b = d[i + 2]!;
-            const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-            const sat = mx === 0 ? 0 : (mx - mn) / mx, val = mx / 255;
-            const sc = sat * (0.4 + val) * (val > 0.25 ? 1 : 0.3);
-            if (sc > score) { score = sc; best = [r, g, b]; }
-          }
-          // keep it bright enough to read on a dark background
-          const k = Math.max(1, 150 / Math.max(...best));
-          setAccent(best.map((v) => Math.min(255, Math.round(v * k))).join(","));
-        } catch { /* cross-origin or canvas blocked: keep default */ }
-      };
-      img.src = `/api/music/cover/${t.id}?${tq}`;
-    }
   }, [cur, tq, tracker]);
 
   useEffect(() => {
@@ -198,7 +173,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
   if (denied) return <div dir="ltr" style={{ background: "#07070b", color: "#71717a", minHeight: "100dvh" }} className="grid place-items-center text-sm">This link is not valid.</div>;
 
-  const pill = (on: boolean) => `text-[13px] px-4 py-2 rounded-full whitespace-nowrap transition ${on ? "bg-[rgb(var(--ac))] text-black font-semibold shadow-[0_0_24px_-4px_rgb(var(--ac))]" : "bg-[var(--s1)] text-[var(--dim2)] hover:bg-[var(--s2)]"}`;
+  const pill = (on: boolean) => `text-[13px] px-4 py-2 rounded-full whitespace-nowrap transition ${on ? "bg-[rgb(var(--ac))] text-[var(--acfg)] font-semibold shadow-[0_6px_18px_-8px_rgba(0,0,0,.5)]" : "bg-[var(--s1)] text-[var(--dim2)] hover:bg-[var(--s2)]"}`;
 
   return (
     <div dir="ltr" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', letterSpacing: "-0.01em" }} className="relative overflow-x-hidden">
@@ -213,12 +188,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {/* ambient background from the playing cover */}
       <div className="fixed inset-0 pointer-events-none -z-0">
         {now?.hasCover && <img src={cover(now)} alt="" className="absolute inset-0 w-full h-full object-cover opacity-[var(--amb)] blur-3xl scale-125 transition-opacity duration-700" />}
-        <div className="absolute inset-0" style={{ background: "radial-gradient(900px 500px at 80% -10%, rgba(var(--ac),.28), transparent 60%), linear-gradient(180deg, color-mix(in srgb, var(--bg) 55%, transparent), var(--bg) 70%)" }} />
+        <div className="absolute inset-0" style={{ background: "radial-gradient(900px 500px at 80% -10%, rgba(var(--ac),.10), transparent 60%), linear-gradient(180deg, color-mix(in srgb, var(--bg) 55%, transparent), var(--bg) 70%)" }} />
       </div>
 
       <div className="relative max-w-3xl mx-auto px-4 pt-6 pb-56">
         <header className="flex items-center justify-between mb-5">
-          <h1 className="text-2xl font-extrabold tracking-tight" style={{ textShadow: "0 0 30px rgba(var(--ac),.5)" }}>My Music</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight" style={{ textShadow: "none" }}>My Music</h1>
           <div className="flex items-center gap-2">
           <button onClick={flipTheme} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center text-lg" aria-label="Toggle theme">{theme === "dark" ? <SunIcon size={20} /> : <MoonIcon size={20} />}</button>
           <div className="flex gap-1 p-1 rounded-full bg-[var(--s1)]">
@@ -231,7 +206,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         {tab === "stats" ? <MusicStats tq={tq} lang="en" /> : (
           <>
             <div className="flex gap-3 mb-5">
-              <button onClick={() => visible[0] && playTrack(visible[0].id)} disabled={!visible.length} className="flex-1 py-3.5 rounded-2xl font-bold text-black disabled:opacity-40 active:scale-[.98] transition" style={{ background: "linear-gradient(135deg, rgb(var(--ac)), rgba(var(--ac),.65))", boxShadow: "0 10px 30px -10px rgb(var(--ac))" }}><span className="inline-flex items-center justify-center gap-2"><PlayIcon size={18} /> Play all</span></button>
+              <button onClick={() => visible[0] && playTrack(visible[0].id)} disabled={!visible.length} className="flex-1 py-3.5 rounded-2xl font-bold text-[var(--acfg)] disabled:opacity-40 active:scale-[.98] transition" style={{ background: "linear-gradient(135deg, rgb(var(--ac)), rgba(var(--ac),.65))", boxShadow: "0 10px 28px -12px rgba(0,0,0,.5)" }}><span className="inline-flex items-center justify-center gap-2"><PlayIcon size={18} /> Play all</span></button>
               <button onClick={smartMix} disabled={!visible.length} className={`flex-1 py-3.5 rounded-2xl font-bold border active:scale-[.98] transition disabled:opacity-40 ${mixOn ? "border-[rgb(var(--ac))] text-[rgb(var(--ac))] bg-[rgba(var(--ac),.1)]" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><SparkIcon size={18} /> Smart mix</span></button>
             </div>
 
@@ -275,7 +250,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
       {/* mini player */}
       {now && !full && (
-        <div className="fixed bottom-3 inset-x-3 z-30 max-w-3xl mx-auto glass rounded-3xl border border-[var(--bd)] shadow-2xl overflow-hidden" style={{ boxShadow: "0 20px 50px -15px rgba(var(--ac),.45)" }}>
+        <div className="fixed bottom-3 inset-x-3 z-30 max-w-3xl mx-auto glass rounded-3xl border border-[var(--bd)] shadow-2xl overflow-hidden" style={{ boxShadow: "0 20px 50px -15px rgba(0,0,0,.45)" }}>
           <div className="flex items-center gap-3 p-2.5 pb-1">
             <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-left">
               <span className="w-12 h-12 rounded-xl overflow-hidden bg-[var(--s2)] shrink-0">
@@ -284,7 +259,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <span className="min-w-0"><span className="block text-sm font-semibold truncate">{now.title}</span><span className="block text-xs text-[var(--dim)] truncate">{now.artist}</span></span>
             </button>
             <button onClick={() => void rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim3)]"}`} aria-label="Like"><HeartIcon size={22} filled={now.rating > 0} /></button>
-            <button onClick={toggle} className="w-12 h-12 rounded-full grid place-items-center text-black shrink-0 active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={22} /> : <PlayIcon size={22} className="translate-x-[1px]" />}</button>
+            <button onClick={toggle} className="w-12 h-12 rounded-full grid place-items-center text-[var(--acfg)] shrink-0 active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={22} /> : <PlayIcon size={22} className="translate-x-[1px]" />}</button>
             <button onClick={() => step(1)} className="p-2" aria-label="Next"><NextIcon size={24} /></button>
           </div>
           <Spectrum audio={audio} playing={playing} bars={40} height={26} rgb={theme === "dark" ? "255,255,255" : "24,24,32"} className="px-3" />
@@ -300,7 +275,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {now && full && (
         <div className="fixed inset-0 z-40 overflow-y-auto" style={{ animation: "rise .28s ease-out", background: "var(--bg)" }}>
           {now.hasCover && <img src={cover(now)} alt="" className="fixed inset-0 w-full h-full object-cover opacity-[var(--amb)] blur-3xl scale-125" />}
-          <div className="fixed inset-0" style={{ background: "radial-gradient(800px 500px at 50% 0%, rgba(var(--ac),.35), transparent 60%), linear-gradient(180deg, color-mix(in srgb, var(--bg) 30%, transparent), var(--bg) 85%)" }} />
+          <div className="fixed inset-0" style={{ background: "radial-gradient(800px 500px at 50% 0%, rgba(var(--ac),.12), transparent 60%), linear-gradient(180deg, color-mix(in srgb, var(--bg) 30%, transparent), var(--bg) 85%)" }} />
           <div className="relative max-w-md mx-auto px-6 pt-4 pb-10 min-h-full flex flex-col">
             <div className="flex items-center justify-between">
               <button onClick={() => setFull(false)} className="p-2" aria-label="Close"><ChevronDownIcon size={28} /></button>
@@ -309,7 +284,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             </div>
 
             <div className="relative mt-6 mx-auto w-full aspect-square max-w-[22rem] rounded-[2rem] overflow-hidden bg-[var(--s2)] transition-transform duration-500"
-              style={{ transform: playing ? "scale(1)" : "scale(.93)", boxShadow: "0 40px 80px -20px rgba(var(--ac),.6), 0 0 0 1px rgba(255,255,255,.06)" }}>
+              style={{ transform: playing ? "scale(1)" : "scale(.93)", boxShadow: "0 40px 80px -20px rgba(0,0,0,.55), 0 0 0 1px rgba(128,128,128,.12)" }}>
               {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <Tile t={now} className="text-8xl" />}
               {/* neutral, translucent spectrum laid over the artwork's lower edge */}
               <div className="absolute inset-x-0 bottom-0 h-24 pointer-events-none" style={{ background: "linear-gradient(0deg, rgba(0,0,0,.45), transparent)" }}>
@@ -335,7 +310,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             <div className="mt-4 flex items-center justify-between" dir="ltr">
               <button onClick={() => setShuffle((s) => !s)} className={`p-2 ${shuffle ? "text-[rgb(var(--ac))]" : "text-[var(--dim3)]"}`} aria-label="Shuffle"><ShuffleIcon size={26} /></button>
               <button onClick={() => step(-1)} className="p-2" aria-label="Previous"><PrevIcon size={36} /></button>
-              <button onClick={toggle} className="w-20 h-20 rounded-full grid place-items-center text-black active:scale-95 transition" style={{ background: "rgb(var(--ac))", boxShadow: "0 12px 40px -8px rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={38} /> : <PlayIcon size={38} className="translate-x-[2px]" />}</button>
+              <button onClick={toggle} className="w-20 h-20 rounded-full grid place-items-center text-[var(--acfg)] active:scale-95 transition" style={{ background: "rgb(var(--ac))", boxShadow: "0 12px 36px -10px rgba(0,0,0,.5)" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={38} /> : <PlayIcon size={38} className="translate-x-[2px]" />}</button>
               <button onClick={() => step(1)} className="p-2" aria-label="Next"><NextIcon size={36} /></button>
               <button onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} className={`p-2 ${repeat !== "off" ? "text-[rgb(var(--ac))]" : "text-[var(--dim3)]"}`} aria-label="Repeat"><RepeatIcon size={26} one={repeat === "one"} /></button>
             </div>
