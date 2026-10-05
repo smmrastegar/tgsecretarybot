@@ -28,10 +28,10 @@ export default function MusicStats({ tq }: { tq: string }) {
       .catch((e) => setErr(String(e)));
   }, [tq]);
   if (err) return <div className="text-sm text-rose-300">{err}</div>;
-  if (!s) return <div className="text-sm text-zinc-400">در حال بارگذاری…</div>;
+  if (!s) return <div className="text-sm text-[var(--dim)]">در حال بارگذاری…</div>;
   const max = Math.max(1, ...s.days.map((d) => d.minutes));
   const tile = (label: string, value: string) => (
-    <div className="rounded-xl border border-zinc-700/50 bg-zinc-800/40 p-3 text-center"><div className="text-lg font-bold">{value}</div><div className="text-[11px] text-zinc-400 mt-0.5">{label}</div></div>
+    <div className="rounded-xl border border-[var(--bd)] bg-[var(--s1)] p-3 text-center"><div className="text-lg font-bold">{value}</div><div className="text-[11px] text-[var(--dim)] mt-0.5">{label}</div></div>
   );
   return (
     <div dir="rtl" className="space-y-4">
@@ -44,47 +44,47 @@ export default function MusicStats({ tq }: { tq: string }) {
         {tile("ردشدن زودهنگام", fa(s.totals.skips))}
       </div>
       <div>
-        <div className="text-xs text-zinc-400 mb-1">دقیقه‌ی گوش‌دادن در ۱۴ روز اخیر</div>
+        <div className="text-xs text-[var(--dim)] mb-1">دقیقه‌ی گوش‌دادن در ۱۴ روز اخیر</div>
         <div className="flex items-end gap-1 h-24" dir="ltr">
           {s.days.map((d) => (
             <div key={d.day} className="flex-1 flex flex-col items-center justify-end h-full" title={`${d.day}: ${d.minutes} دقیقه، ${d.plays} پخش`}>
               <div className="w-full rounded-t bg-emerald-500/80" style={{ height: `${Math.max(2, (d.minutes / max) * 100)}%` }} />
-              <div className="text-[9px] text-zinc-500 mt-1">{d.day.slice(3)}</div>
+              <div className="text-[9px] text-[var(--dim3)] mt-1">{d.day.slice(3)}</div>
             </div>
           ))}
         </div>
       </div>
       <div className="grid md:grid-cols-2 gap-4">
         <div>
-          <div className="text-xs text-zinc-400 mb-1">پرشنیده‌ترین آهنگ‌ها</div>
-          {s.topTracks.length === 0 ? <div className="text-xs text-zinc-500">هنوز داده‌ای نیست.</div> : s.topTracks.map((t, i) => (
-            <div key={t.id} className="flex items-center gap-2 py-1 text-sm border-b border-zinc-800/60">
-              <span className="w-5 text-zinc-500 text-xs">{fa(i + 1)}</span>
-              <span className="min-w-0 flex-1 truncate">{t.title ?? "—"}<span className="text-zinc-500 text-xs"> · {t.artist}</span></span>
+          <div className="text-xs text-[var(--dim)] mb-1">پرشنیده‌ترین آهنگ‌ها</div>
+          {s.topTracks.length === 0 ? <div className="text-xs text-[var(--dim3)]">هنوز داده‌ای نیست.</div> : s.topTracks.map((t, i) => (
+            <div key={t.id} className="flex items-center gap-2 py-1 text-sm border-b border-[var(--bd0)]">
+              <span className="w-5 text-[var(--dim3)] text-xs">{fa(i + 1)}</span>
+              <span className="min-w-0 flex-1 truncate">{t.title ?? "—"}<span className="text-[var(--dim3)] text-xs"> · {t.artist}</span></span>
               <span className="text-xs text-emerald-400 shrink-0">{fa(t.plays)}×</span>
               {t.skips > 0 && <span className="text-xs text-amber-400 shrink-0">⏭{fa(t.skips)}</span>}
             </div>
           ))}
         </div>
         <div>
-          <div className="text-xs text-zinc-400 mb-1">پرشنیده‌ترین خواننده‌ها</div>
-          {s.topArtists.length === 0 ? <div className="text-xs text-zinc-500">هنوز داده‌ای نیست.</div> : s.topArtists.map((a, i) => (
-            <div key={a.artist} className="flex items-center gap-2 py-1 text-sm border-b border-zinc-800/60">
-              <span className="w-5 text-zinc-500 text-xs">{fa(i + 1)}</span>
+          <div className="text-xs text-[var(--dim)] mb-1">پرشنیده‌ترین خواننده‌ها</div>
+          {s.topArtists.length === 0 ? <div className="text-xs text-[var(--dim3)]">هنوز داده‌ای نیست.</div> : s.topArtists.map((a, i) => (
+            <div key={a.artist} className="flex items-center gap-2 py-1 text-sm border-b border-[var(--bd0)]">
+              <span className="w-5 text-[var(--dim3)] text-xs">{fa(i + 1)}</span>
               <span className="min-w-0 flex-1 truncate">{a.artist}</span>
-              <span className="text-xs text-zinc-400 shrink-0">{fmtListen(a.listenSeconds)}</span>
+              <span className="text-xs text-[var(--dim)] shrink-0">{fmtListen(a.listenSeconds)}</span>
               <span className="text-xs text-emerald-400 shrink-0">{fa(a.plays)}×</span>
             </div>
           ))}
         </div>
       </div>
       <div>
-        <div className="text-xs text-zinc-400 mb-1">آخرین شنیده‌ها</div>
+        <div className="text-xs text-[var(--dim)] mb-1">آخرین شنیده‌ها</div>
         {s.recent.map((r, i) => (
-          <div key={`${r.id}-${i}`} className="flex items-center gap-2 py-1 text-sm border-b border-zinc-800/60">
-            <span className="min-w-0 flex-1 truncate">{r.title ?? "—"}<span className="text-zinc-500 text-xs"> · {r.artist}</span></span>
-            <span className="text-xs text-zinc-400 shrink-0">{r.completed ? "کامل" : fmtListen(r.seconds)}</span>
-            <span className="text-[11px] text-zinc-500 shrink-0">{ago(r.at)}</span>
+          <div key={`${r.id}-${i}`} className="flex items-center gap-2 py-1 text-sm border-b border-[var(--bd0)]">
+            <span className="min-w-0 flex-1 truncate">{r.title ?? "—"}<span className="text-[var(--dim3)] text-xs"> · {r.artist}</span></span>
+            <span className="text-xs text-[var(--dim)] shrink-0">{r.completed ? "کامل" : fmtListen(r.seconds)}</span>
+            <span className="text-[11px] text-[var(--dim3)] shrink-0">{ago(r.at)}</span>
           </div>
         ))}
       </div>

@@ -38,6 +38,8 @@ export default function MusicPage() {
   const [playerUrl, setPlayerUrl] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [showStats, setShowStats] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const [sel, setSel] = useState<Set<number>>(new Set());
   const tracker = useListenTracker("");
   const [queue, setQueue] = useState<number[]>([]);
   const [cur, setCur] = useState<number | null>(null);
@@ -210,6 +212,24 @@ export default function MusicPage() {
     const j = (await r.json()) as { requeued: number };
     setMsg(`${j.requeued} آهنگ ناموفق دوباره به صف رفت`); void load();
   }
+  // Playlists are managed here and show up in the private player.
+  async function createPlaylistWith(ids: number[], suggested: string) {
+    const name = prompt("اسم پلی‌لیست جدید:", suggested);
+    if (!name?.trim()) return;
+    const r = await fetch("/api/music/playlists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    const { id } = (await r.json()) as { id: number };
+    if (ids.length) await fetch(`/api/music/playlists/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackIds: ids, present: true }) });
+    setMsg(`پلی‌لیست «${name}» با ${ids.length} آهنگ ساخته شد`); setSelecting(false); setSel(new Set()); await load(); setView(id);
+  }
+  async function addSelectedTo(plId: number) {
+    const ids = [...sel];
+    await fetch(`/api/music/playlists/${plId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackIds: ids, present: true }) });
+    setMsg(`${ids.length} آهنگ اضافه شد`); setSelecting(false); setSel(new Set()); void load();
+  }
+  async function renamePlaylist(pl: Playlist) {
+    const name = prompt("اسم جدید:", pl.name);
+    if (name?.trim()) { await fetch(`/api/music/playlists/${pl.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }); void load(); }
+  }
   async function newPlaylist() { const name = prompt("اسم پلی‌لیست:"); if (name) { await fetch("/api/music/playlists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }); void load(); } }
   async function toggleIn(pl: Playlist, t: Track) { await fetch(`/api/music/playlists/${pl.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackId: t.id, present: !pl.trackIds.includes(t.id) }) }); void load(); }
   async function delPlaylist(pl: Playlist) { if (confirm(`پلی‌لیست «${pl.name}» حذف شود؟`)) { await fetch(`/api/music/playlists/${pl.id}`, { method: "DELETE" }); setView("all"); void load(); } }
@@ -301,18 +321,36 @@ export default function MusicPage() {
         {playlists.map((p) => (
           <button key={p.id} onClick={() => setView(p.id)} className={`text-xs px-3 py-1.5 rounded-md border ${view === p.id ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>{p.name} ({p.trackIds.length})</button>
         ))}
-        <button onClick={newPlaylist} className="text-xs px-3 py-1.5 rounded-md border border-dashed border-[var(--color-border)]">+ پلی‌لیست</button>
+        <button onClick={newPlaylist} className="text-xs px-3 py-1.5 rounded-md border border-dashed border-[var(--color-border)]">+ پلی‌لیست خالی</button>
+        <button onClick={() => void createPlaylistWith(readyVisible.map((t) => t.id), view === "all" ? "همه" : view === "liked" ? "لایک‌های من" : playlists.find((p) => p.id === view)?.name ?? "")} disabled={readyVisible.length === 0} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-40">+ پلی‌لیست از همین نما ({readyVisible.length})</button>
+        <button onClick={() => { setSelecting((v) => !v); setSel(new Set()); }} className={`text-xs px-3 py-1.5 rounded-md border ${selecting ? "border-amber-400 text-amber-200" : "border-[var(--color-border)]"}`}>☑ انتخاب چندتایی</button>
         {tracks.some((t) => t.status === "failed") && (
           <button onClick={retryAll} className="text-xs px-3 py-1.5 rounded-md border border-amber-500/50 text-amber-200">↻ همه‌ی ناموفق‌ها ({tracks.filter((t) => t.status === "failed").length})</button>
         )}
-        {view !== "all" && <button onClick={() => { const p = playlists.find((x) => x.id === view); if (p) void delPlaylist(p); }} className="text-xs text-rose-300">حذف این پلی‌لیست</button>}
+        {typeof view === "number" && <button onClick={() => { const p = playlists.find((x) => x.id === view); if (p) void renamePlaylist(p); }} className="text-xs">✎ تغییر نام</button>}
+        {typeof view === "number" && <button onClick={() => { const p = playlists.find((x) => x.id === view); if (p) void delPlaylist(p); }} className="text-xs text-rose-300">حذف این پلی‌لیست</button>}
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجو…" className="mr-auto text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5" />
       </div>
 
+      {selecting && (
+        <Card className="mb-3 sticky top-0 z-20 !p-3">
+          <div className="flex gap-2 items-center flex-wrap text-xs">
+            <span>{sel.size} انتخاب‌شده</span>
+            <button onClick={() => setSel(new Set(readyVisible.map((t) => t.id)))} className="px-2 py-1 rounded-md border border-[var(--color-border)]">همه‌ی این نما</button>
+            <button onClick={() => setSel(new Set())} className="px-2 py-1 rounded-md border border-[var(--color-border)]">هیچ‌کدام</button>
+            <select value="" disabled={sel.size === 0} onChange={(e) => { const v = e.target.value; if (v === "new") void createPlaylistWith([...sel], ""); else if (v) void addSelectedTo(Number(v)); }} className="px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-40">
+              <option value="">افزودن به پلی‌لیست…</option>
+              {playlists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              <option value="new">+ پلی‌لیست جدید</option>
+            </select>
+          </div>
+        </Card>
+      )}
       <div className="flex flex-col gap-1.5 pb-44">
         {visible.length === 0 && <Card><p className="text-sm text-[var(--color-text-dim)]">هنوز آهنگی نیست. یک لینک track اسپاتیفای بالا بچسبان.</p></Card>}
         {visible.map((t) => (
           <div key={t.id} className={`flex items-center gap-3 p-2 rounded-xl border ${t.rating < 0 ? "opacity-50" : ""} ${cur === t.id ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+            {selecting && t.status === "ready" && <input type="checkbox" checked={sel.has(t.id)} onChange={() => setSel((cur0) => { const n = new Set(cur0); if (n.has(t.id)) n.delete(t.id); else n.add(t.id); return n; })} className="w-5 h-5 shrink-0" />}
             <button disabled={t.status !== "ready"} onClick={() => playTrack(t.id)} className="w-12 h-12 rounded-lg overflow-hidden bg-[var(--color-surface-2)] shrink-0 grid place-items-center disabled:opacity-60">
               {t.hasCover ? <img src={`/api/music/cover/${t.id}`} alt="" className="w-full h-full object-cover" /> : <span>🎵</span>}
             </button>

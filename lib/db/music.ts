@@ -329,3 +329,26 @@ export async function getTrackHistory(id: number): Promise<TrackHistory> {
     completions: num(agg, "done"),
   };
 }
+
+export async function renameMusicPlaylist(id: number, name: string): Promise<void> {
+  await q().query(`UPDATE music_playlists SET name = $1 WHERE id = $2`, [name.slice(0, 100), id]);
+}
+
+/** Add (or remove) many tracks at once, keeping the existing order. */
+export async function setPlaylistTracks(playlistId: number, trackIds: number[], present: boolean): Promise<number> {
+  const ids = [...new Set(trackIds.filter((n) => Number.isFinite(n)))].slice(0, 5000);
+  if (ids.length === 0) return 0;
+  if (!present) {
+    await q().query(`DELETE FROM music_playlist_tracks WHERE playlist_id = $1 AND track_id = ANY($2::bigint[])`, [playlistId, ids]);
+    return ids.length;
+  }
+  await q().query(
+    `INSERT INTO music_playlist_tracks (playlist_id, track_id, position)
+       SELECT $1, t.id, COALESCE((SELECT MAX(position) FROM music_playlist_tracks WHERE playlist_id = $1), -1) + row_number() OVER (ORDER BY ord)
+         FROM unnest($2::bigint[]) WITH ORDINALITY AS u(id, ord)
+         JOIN music_tracks t ON t.id = u.id
+       ON CONFLICT DO NOTHING`,
+    [playlistId, ids],
+  );
+  return ids.length;
+}

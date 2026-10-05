@@ -52,6 +52,18 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [detailId, setDetailId] = useState<number | null>(null);
   const [full, setFull] = useState(false);
   const [accent, setAccent] = useState(DEFAULT_ACCENT);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("player.theme");
+      if (saved === "light" || saved === "dark") setTheme(saved);
+      else if (window.matchMedia("(prefers-color-scheme: light)").matches) setTheme("light");
+    } catch { /* storage blocked: stay dark */ }
+  }, []);
+  const flipTheme = () => setTheme((t) => { const n = t === "dark" ? "light" : "dark"; try { localStorage.setItem("player.theme", n); } catch {} return n; });
+  const vars: Record<string, string> = theme === "dark"
+    ? { "--bg": "#07070b", "--bg2": "#0d0d13", "--fg": "#ececf1", "--s0": "rgba(255,255,255,.03)", "--s1": "rgba(255,255,255,.05)", "--s2": "rgba(255,255,255,.10)", "--bd": "rgba(255,255,255,.10)", "--bd0": "rgba(255,255,255,.05)", "--dim": "#a1a1aa", "--dim2": "#d4d4d8", "--dim3": "#71717a", "--glass": "rgba(18,18,24,.72)", "--amb": ".30" }
+    : { "--bg": "#f5f5f8", "--bg2": "#ffffff", "--fg": "#16161d", "--s0": "rgba(0,0,0,.025)", "--s1": "rgba(0,0,0,.05)", "--s2": "rgba(0,0,0,.09)", "--bd": "rgba(0,0,0,.12)", "--bd0": "rgba(0,0,0,.06)", "--dim": "#52525b", "--dim2": "#3f3f46", "--dim3": "#71717a", "--glass": "rgba(255,255,255,.78)", "--amb": ".16" };
   const audio = useRef<HTMLAudioElement>(null);
   const history = useRef<number[]>([]);
   const tracker = useListenTracker(tq);
@@ -173,30 +185,33 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
   if (denied) return <div dir="rtl" style={{ background: "#07070b", color: "#71717a", minHeight: "100dvh" }} className="grid place-items-center text-sm">این لینک معتبر نیست.</div>;
 
-  const pill = (on: boolean) => `text-[13px] px-4 py-2 rounded-full whitespace-nowrap transition ${on ? "bg-[rgb(var(--ac))] text-black font-semibold shadow-[0_0_24px_-4px_rgb(var(--ac))]" : "bg-white/5 text-zinc-300 hover:bg-white/10"}`;
+  const pill = (on: boolean) => `text-[13px] px-4 py-2 rounded-full whitespace-nowrap transition ${on ? "bg-[rgb(var(--ac))] text-black font-semibold shadow-[0_0_24px_-4px_rgb(var(--ac))]" : "bg-[var(--s1)] text-[var(--dim2)] hover:bg-[var(--s2)]"}`;
 
   return (
-    <div dir="rtl" style={{ ["--ac" as string]: accent, background: "#07070b", color: "#ececf1", minHeight: "100dvh", fontFamily: "Vazirmatn, -apple-system, system-ui, sans-serif" }} className="relative overflow-x-hidden">
+    <div dir="rtl" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: "Vazirmatn, -apple-system, system-ui, sans-serif" }} className="relative overflow-x-hidden">
       <style>{`
         @keyframes eq { 0%,100% { height: 25% } 50% { height: 100% } }
         @keyframes spin-slow { to { transform: rotate(360deg) } }
         @keyframes rise { from { transform: translateY(100%) } to { transform: none } }
         input[type=range] { accent-color: rgb(var(--ac)); }
-        .glass { background: rgba(18,18,24,.72); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4); }
+        .glass { background: var(--glass); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4); }
       `}</style>
 
       {/* ambient background from the playing cover */}
       <div className="fixed inset-0 pointer-events-none -z-0">
-        {now?.hasCover && <img src={cover(now)} alt="" className="absolute inset-0 w-full h-full object-cover opacity-30 blur-3xl scale-125 transition-opacity duration-700" />}
-        <div className="absolute inset-0" style={{ background: "radial-gradient(900px 500px at 80% -10%, rgba(var(--ac),.28), transparent 60%), linear-gradient(180deg, rgba(7,7,11,.55), #07070b 70%)" }} />
+        {now?.hasCover && <img src={cover(now)} alt="" className="absolute inset-0 w-full h-full object-cover opacity-[var(--amb)] blur-3xl scale-125 transition-opacity duration-700" />}
+        <div className="absolute inset-0" style={{ background: "radial-gradient(900px 500px at 80% -10%, rgba(var(--ac),.28), transparent 60%), linear-gradient(180deg, color-mix(in srgb, var(--bg) 55%, transparent), var(--bg) 70%)" }} />
       </div>
 
       <div className="relative max-w-3xl mx-auto px-4 pt-6 pb-40">
         <header className="flex items-center justify-between mb-5">
           <h1 className="text-2xl font-extrabold tracking-tight" style={{ textShadow: "0 0 30px rgba(var(--ac),.5)" }}>🎧 موزیک من</h1>
-          <div className="flex gap-1 p-1 rounded-full bg-white/5">
+          <div className="flex items-center gap-2">
+          <button onClick={flipTheme} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center text-lg" aria-label="تغییر تم">{theme === "dark" ? "☀️" : "🌙"}</button>
+          <div className="flex gap-1 p-1 rounded-full bg-[var(--s1)]">
             <button onClick={() => setTab("songs")} className={pill(tab === "songs")}>آهنگ‌ها</button>
             <button onClick={() => setTab("stats")} className={pill(tab === "stats")}>آمار</button>
+          </div>
           </div>
         </header>
 
@@ -204,7 +219,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           <>
             <div className="flex gap-3 mb-5">
               <button onClick={() => visible[0] && playTrack(visible[0].id)} disabled={!visible.length} className="flex-1 py-3.5 rounded-2xl font-bold text-black disabled:opacity-40 active:scale-[.98] transition" style={{ background: "linear-gradient(135deg, rgb(var(--ac)), rgba(var(--ac),.65))", boxShadow: "0 10px 30px -10px rgb(var(--ac))" }}>▶ پخش همه</button>
-              <button onClick={smartMix} disabled={!visible.length} className={`flex-1 py-3.5 rounded-2xl font-bold border active:scale-[.98] transition disabled:opacity-40 ${mixOn ? "border-[rgb(var(--ac))] text-[rgb(var(--ac))] bg-[rgba(var(--ac),.1)]" : "border-white/15 bg-white/5"}`}>🎲 ترکیب هوشمند</button>
+              <button onClick={smartMix} disabled={!visible.length} className={`flex-1 py-3.5 rounded-2xl font-bold border active:scale-[.98] transition disabled:opacity-40 ${mixOn ? "border-[rgb(var(--ac))] text-[rgb(var(--ac))] bg-[rgba(var(--ac),.1)]" : "border-[var(--bd)] bg-[var(--s1)]"}`}>🎲 ترکیب هوشمند</button>
             </div>
 
             <div className="flex gap-2 overflow-x-auto pb-2 mb-3 -mx-4 px-4 [scrollbar-width:none]">
@@ -214,25 +229,25 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             </div>
 
             <div className="relative mb-4">
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجوی آهنگ، خواننده، آلبوم…" className="w-full rounded-2xl bg-white/5 border border-white/10 px-4 py-3 text-sm outline-none focus:border-[rgb(var(--ac))] transition" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجوی آهنگ، خواننده، آلبوم…" className="w-full rounded-2xl bg-[var(--s1)] border border-[var(--bd)] px-4 py-3 text-sm outline-none focus:border-[rgb(var(--ac))] transition" />
             </div>
 
             <div className="flex flex-col gap-2">
-              {visible.length === 0 && <div className="text-sm text-zinc-500 py-16 text-center">آهنگی نیست.</div>}
+              {visible.length === 0 && <div className="text-sm text-[var(--dim3)] py-16 text-center">آهنگی نیست.</div>}
               {visible.map((t) => {
                 const active = cur === t.id;
                 return (
-                  <div key={t.id} className={`group flex items-center gap-3 p-2.5 rounded-2xl border transition ${t.rating < 0 ? "opacity-40" : ""} ${active ? "border-[rgba(var(--ac),.6)] bg-[rgba(var(--ac),.12)]" : "border-white/5 bg-white/[.03] hover:bg-white/[.07]"}`}>
-                    <button onClick={() => playTrack(t.id)} className="relative w-14 h-14 rounded-xl overflow-hidden bg-zinc-800 shrink-0 shadow-lg">
+                  <div key={t.id} className={`group flex items-center gap-3 p-2.5 rounded-2xl border transition ${t.rating < 0 ? "opacity-40" : ""} ${active ? "border-[rgba(var(--ac),.6)] bg-[rgba(var(--ac),.12)]" : "border-[var(--bd0)] bg-[var(--s0)] hover:bg-[var(--s2)]"}`}>
+                    <button onClick={() => playTrack(t.id)} className="relative w-14 h-14 rounded-xl overflow-hidden bg-[var(--s2)] shrink-0 shadow-lg">
                       {t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full text-2xl">🎵</span>}
                       {active && <span className="absolute inset-0 grid place-items-center bg-black/45"><Eq on={playing} /></span>}
                     </button>
                     <button onClick={() => playTrack(t.id)} className="min-w-0 flex-1 text-right">
                       <div className={`text-[15px] font-semibold truncate ${active ? "text-[rgb(var(--ac))]" : ""}`}>{t.title ?? "—"}</div>
-                      <div className="text-xs text-zinc-400 truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</div>
+                      <div className="text-xs text-[var(--dim)] truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</div>
                     </button>
                     <button onClick={() => void rate(t, 1)} className={`text-xl px-1.5 transition ${t.rating > 0 ? "scale-110" : "opacity-25 hover:opacity-70"}`} aria-label="لایک">❤️</button>
-                    <button onClick={() => setDetailId(t.id)} className="text-lg px-1.5 text-zinc-400 hover:text-white" aria-label="جزئیات">⋯</button>
+                    <button onClick={() => setDetailId(t.id)} className="text-lg px-1.5 text-[var(--dim)] hover:text-[var(--fg)]" aria-label="جزئیات">⋯</button>
                   </div>
                 );
               })}
@@ -247,14 +262,14 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
       {/* mini player */}
       {now && !full && (
-        <div className="fixed bottom-3 inset-x-3 z-30 max-w-3xl mx-auto glass rounded-3xl border border-white/10 shadow-2xl overflow-hidden" style={{ boxShadow: "0 20px 50px -15px rgba(var(--ac),.45)" }}>
-          <div className="h-[3px] bg-white/10"><div className="h-full bg-[rgb(var(--ac))] transition-[width] duration-300" style={{ width: `${pct}%` }} /></div>
+        <div className="fixed bottom-3 inset-x-3 z-30 max-w-3xl mx-auto glass rounded-3xl border border-[var(--bd)] shadow-2xl overflow-hidden" style={{ boxShadow: "0 20px 50px -15px rgba(var(--ac),.45)" }}>
+          <div className="h-[3px] bg-[var(--s2)]"><div className="h-full bg-[rgb(var(--ac))] transition-[width] duration-300" style={{ width: `${pct}%` }} /></div>
           <div className="flex items-center gap-3 p-2.5">
             <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-right">
-              <span className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-800 shrink-0" style={{ animation: playing ? undefined : undefined }}>
+              <span className="w-12 h-12 rounded-xl overflow-hidden bg-[var(--s2)] shrink-0" style={{ animation: playing ? undefined : undefined }}>
                 {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full text-xl">🎵</span>}
               </span>
-              <span className="min-w-0"><span className="block text-sm font-semibold truncate">{now.title}</span><span className="block text-xs text-zinc-400 truncate">{now.artist}</span></span>
+              <span className="min-w-0"><span className="block text-sm font-semibold truncate">{now.title}</span><span className="block text-xs text-[var(--dim)] truncate">{now.artist}</span></span>
             </button>
             <button onClick={() => void rate(now, 1)} className={`text-xl px-1 ${now.rating > 0 ? "" : "opacity-30"}`}>❤️</button>
             <button onClick={toggle} className="w-12 h-12 rounded-full grid place-items-center text-xl text-black font-bold shrink-0" style={{ background: "rgb(var(--ac))" }}>{playing ? "⏸" : "▶"}</button>
@@ -265,17 +280,17 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
       {/* full now-playing */}
       {now && full && (
-        <div className="fixed inset-0 z-40 overflow-y-auto" style={{ animation: "rise .28s ease-out", background: "#07070b" }}>
-          {now.hasCover && <img src={cover(now)} alt="" className="fixed inset-0 w-full h-full object-cover opacity-35 blur-3xl scale-125" />}
-          <div className="fixed inset-0" style={{ background: "radial-gradient(800px 500px at 50% 0%, rgba(var(--ac),.35), transparent 60%), linear-gradient(180deg, rgba(7,7,11,.3), #07070b 85%)" }} />
+        <div className="fixed inset-0 z-40 overflow-y-auto" style={{ animation: "rise .28s ease-out", background: "var(--bg)" }}>
+          {now.hasCover && <img src={cover(now)} alt="" className="fixed inset-0 w-full h-full object-cover opacity-[var(--amb)] blur-3xl scale-125" />}
+          <div className="fixed inset-0" style={{ background: "radial-gradient(800px 500px at 50% 0%, rgba(var(--ac),.35), transparent 60%), linear-gradient(180deg, color-mix(in srgb, var(--bg) 30%, transparent), var(--bg) 85%)" }} />
           <div className="relative max-w-md mx-auto px-6 pt-4 pb-10 min-h-full flex flex-col">
             <div className="flex items-center justify-between">
               <button onClick={() => setFull(false)} className="text-2xl px-2 py-1" aria-label="بستن">⌄</button>
-              <div className="text-xs tracking-widest text-zinc-400">{mixOn ? "ترکیب هوشمند" : "در حال پخش"}</div>
+              <div className="text-xs tracking-widest text-[var(--dim)]">{mixOn ? "ترکیب هوشمند" : "در حال پخش"}</div>
               <button onClick={() => setDetailId(now.id)} className="text-2xl px-2 py-1" aria-label="جزئیات">ⓘ</button>
             </div>
 
-            <div className="mt-6 mx-auto w-full aspect-square max-w-[22rem] rounded-[2rem] overflow-hidden bg-zinc-800 transition-transform duration-500"
+            <div className="mt-6 mx-auto w-full aspect-square max-w-[22rem] rounded-[2rem] overflow-hidden bg-[var(--s2)] transition-transform duration-500"
               style={{ transform: playing ? "scale(1)" : "scale(.93)", boxShadow: "0 40px 80px -20px rgba(var(--ac),.6), 0 0 0 1px rgba(255,255,255,.06)" }}>
               {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full text-7xl">🎵</span>}
             </div>
@@ -283,8 +298,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             <div className="mt-7 flex items-center gap-3">
               <div className="min-w-0 flex-1">
                 <div className="text-2xl font-extrabold truncate">{now.title}</div>
-                <div className="text-base text-zinc-300 truncate">{now.artist}</div>
-                {now.album && <div className="text-xs text-zinc-500 truncate mt-0.5">{now.album}</div>}
+                <div className="text-base text-[var(--dim2)] truncate">{now.artist}</div>
+                {now.album && <div className="text-xs text-[var(--dim3)] truncate mt-0.5">{now.album}</div>}
               </div>
               <button onClick={() => void rate(now, 1)} className={`text-3xl transition ${now.rating > 0 ? "scale-110" : "opacity-30"}`} aria-label="لایک">❤️</button>
               <button onClick={() => void rate(now, -1)} className={`text-3xl transition ${now.rating < 0 ? "scale-110" : "opacity-30"}`} aria-label="دیسلایک">👎</button>
@@ -292,15 +307,15 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
             <div className="mt-5" dir="ltr">
               <input type="range" min={0} max={dur || 1} step={1} value={pos} onChange={(e) => { if (audio.current) audio.current.currentTime = Number(e.target.value); }} className="w-full h-2" />
-              <div className="flex justify-between text-xs text-zinc-400 mt-1"><span>{fmt(pos)}</span><span>{fmt(dur)}</span></div>
+              <div className="flex justify-between text-xs text-[var(--dim)] mt-1"><span>{fmt(pos)}</span><span>{fmt(dur)}</span></div>
             </div>
 
             <div className="mt-4 flex items-center justify-between" dir="ltr">
-              <button onClick={() => setShuffle((s) => !s)} className={`text-2xl ${shuffle ? "text-[rgb(var(--ac))]" : "text-zinc-500"}`}>🔀</button>
+              <button onClick={() => setShuffle((s) => !s)} className={`text-2xl ${shuffle ? "text-[rgb(var(--ac))]" : "text-[var(--dim3)]"}`}>🔀</button>
               <button onClick={() => step(-1)} className="text-4xl">⏮</button>
               <button onClick={toggle} className="w-20 h-20 rounded-full grid place-items-center text-4xl text-black active:scale-95 transition" style={{ background: "rgb(var(--ac))", boxShadow: "0 12px 40px -8px rgb(var(--ac))" }}>{playing ? "⏸" : "▶"}</button>
               <button onClick={() => step(1)} className="text-4xl">⏭</button>
-              <button onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} className={`text-2xl ${repeat !== "off" ? "text-[rgb(var(--ac))]" : "text-zinc-500"}`}>{repeat === "one" ? "🔂" : "🔁"}</button>
+              <button onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} className={`text-2xl ${repeat !== "off" ? "text-[rgb(var(--ac))]" : "text-[var(--dim3)]"}`}>{repeat === "one" ? "🔂" : "🔁"}</button>
             </div>
 
             <div className="mt-5 flex items-center gap-3" dir="ltr">
@@ -311,11 +326,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
             {upNext.length > 0 && (
               <div className="mt-6">
-                <div className="text-xs text-zinc-400 mb-2">بعدی در صف</div>
+                <div className="text-xs text-[var(--dim)] mb-2">بعدی در صف</div>
                 {upNext.map((t) => (
-                  <button key={t.id} onClick={() => setCur(t.id)} className="w-full flex items-center gap-3 py-2 text-right border-b border-white/5">
-                    <span className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-800 shrink-0">{t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full">🎵</span>}</span>
-                    <span className="min-w-0 flex-1"><span className="block text-sm truncate">{t.title}</span><span className="block text-xs text-zinc-500 truncate">{t.artist}</span></span>
+                  <button key={t.id} onClick={() => setCur(t.id)} className="w-full flex items-center gap-3 py-2 text-right border-b border-[var(--bd0)]">
+                    <span className="w-10 h-10 rounded-lg overflow-hidden bg-[var(--s2)] shrink-0">{t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full">🎵</span>}</span>
+                    <span className="min-w-0 flex-1"><span className="block text-sm truncate">{t.title}</span><span className="block text-xs text-[var(--dim3)] truncate">{t.artist}</span></span>
                   </button>
                 ))}
               </div>
