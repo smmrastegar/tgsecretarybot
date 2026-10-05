@@ -319,54 +319,56 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {now && full && (
         <div className="fixed inset-0 z-50 overflow-y-auto" style={{ background: "var(--bg)", animation: "rise .25s ease-out" }} onTouchStart={(e) => { touch.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }; }} onTouchEnd={(e) => onTouchEnd(e, "sheet")}>
           {now.hasCover && <img src={cover(now)} alt="" className="fixed inset-0 w-full h-full object-cover blur-3xl scale-125 pointer-events-none" style={{ opacity: "var(--amb)" }} />}
-          <div className="relative max-w-md mx-auto px-6 pt-[max(14px,env(safe-area-inset-top))] pb-[max(24px,env(safe-area-inset-bottom))] min-h-full flex flex-col">
-            <div className="flex items-center justify-between h-12">
+          <div className="relative max-w-md mx-auto px-6 pt-[max(14px,env(safe-area-inset-top))] pb-[max(16px,env(safe-area-inset-bottom))] h-full min-h-[520px] flex flex-col">
+            <div className="flex items-center justify-between h-11 shrink-0">
               <button onClick={() => setFull(false)} className="p-2 -ml-2" aria-label="Minimise"><ChevronDownIcon size={28} /></button>
               <span className="text-xs uppercase tracking-widest text-[var(--dim)]">Now playing</span>
               <button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button>
             </div>
 
-            <div className="mt-3 relative aspect-square w-full rounded-2xl overflow-hidden shadow-2xl bg-[var(--s2)]" onTouchStart={(e) => { e.stopPropagation(); touch.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }; }} onTouchEnd={(e) => { e.stopPropagation(); onTouchEnd(e, "art"); }}>
+            <div className="relative flex-1 min-h-0 my-2">
+              <div data-art className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-full max-h-full max-w-full aspect-square rounded-2xl overflow-hidden shadow-2xl bg-[var(--s2)]" onTouchStart={(e) => { e.stopPropagation(); touch.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }; }} onTouchEnd={(e) => { e.stopPropagation(); onTouchEnd(e, "art"); }}>
               <Cover t={now} tq={tq} size="100%" radius={0} />
-              <div className="absolute inset-x-0 bottom-0 px-3 pb-2 pt-10 pointer-events-none" style={{ background: "linear-gradient(transparent, rgba(0,0,0,.45))" }}>
-                <Spectrum audio={audio} playing={playing} height={44} rgb="255,255,255" />
+              <div className="absolute inset-x-0 bottom-0 px-3 pb-2 pt-10 pointer-events-none" style={{ background: "linear-gradient(transparent, rgba(0,0,0,.6))" }}>
+                <Spectrum audio={audio} playing={playing} height={36} rgb="255,255,255" />
+              </div>
               </div>
             </div>
 
-            <div className="mt-6 flex items-center gap-3">
+            <div className="mt-2 flex items-center gap-3 shrink-0">
               <div className="min-w-0 flex-1">
-                <div className="text-[22px] font-bold leading-tight truncate">{now.title}</div>
-                <button onClick={() => { setFull(false); setStack((s) => [...s, { kind: "artist", key: artistsOf(now)[0]!, title: artistsOf(now)[0]! }]); setTab("library"); }} className="block text-[16px] text-[var(--dim)] truncate max-w-full text-left">{now.artist}</button>
+                <div className="text-[20px] font-bold leading-tight truncate">{now.title}</div>
+                <button onClick={() => { setFull(false); setStack((s) => [...s, { kind: "artist", key: artistsOf(now)[0]!, title: artistsOf(now)[0]! }]); setTab("library"); }} className="block text-[15px] text-[var(--dim)] truncate max-w-full text-left">{now.artist}</button>
               </div>
               <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={28} filled={now.rating > 0} /></button>
               <button onClick={() => rate(now, -1)} className={`p-2 ${now.rating < 0 ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={24} filled={now.rating < 0} /></button>
             </div>
 
-            <div className="mt-4">
+            <div className="mt-2 shrink-0">
               <input type="range" min={0} max={dur || 0} step={0.1} value={Math.min(pos, dur || 0)} onChange={(e) => seek(Number(e.target.value))} className="w-full" aria-label="Seek" />
               <div className="flex justify-between text-xs text-[var(--dim)] tabular-nums"><span>{fmt(pos)}</span><span>-{fmt(Math.max(0, dur - pos))}</span></div>
             </div>
 
-            <div className="mt-3 flex items-center justify-between">
+            <div className="mt-1 flex items-center justify-between shrink-0">
               <button onClick={() => setShuffle((s) => !s)} className={`p-3 ${shuffle ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Shuffle" aria-pressed={shuffle}><ShuffleIcon size={24} /></button>
               <button onClick={() => step(-1)} className="p-3" aria-label="Previous"><PrevIcon size={34} /></button>
-              <button onClick={toggle} className="w-[72px] h-[72px] rounded-full grid place-items-center text-[var(--acfg)] active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={34} /> : <PlayIcon size={34} className="translate-x-[2px]" />}</button>
+              <button onClick={toggle} className="w-16 h-16 rounded-full grid place-items-center text-[var(--acfg)] active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={34} /> : <PlayIcon size={34} className="translate-x-[2px]" />}</button>
               <button onClick={() => step(1)} className="p-3" aria-label="Next"><NextIcon size={34} /></button>
               <button onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} className={`p-3 ${repeat !== "off" ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label={`Repeat ${repeat}`}><RepeatIcon size={24} one={repeat === "one"} /></button>
             </div>
 
-            <div className="mt-4 flex items-center gap-3">
+            <div className="mt-2 flex items-center gap-3 shrink-0 [@media(pointer:coarse)]:hidden">
               <VolumeIcon size={18} low className="text-[var(--dim)]" />
               <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => { const v = Number(e.target.value); setVol(v); if (audio.current) audio.current.volume = v; }} className="flex-1" aria-label="Volume" />
               <VolumeIcon size={18} className="text-[var(--dim)]" />
             </div>
 
-            <div className="mt-auto pt-5 grid grid-cols-5 gap-1.5 text-[11px]">
-              <button onClick={() => setSheet("sleep")} className={`flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] ${sleepMin ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><TimerIcon size={20} />{sleepMin === -1 ? "End of track" : sleepMin > 0 ? `${sleepMin} min` : "Sleep"}</button>
-              <button onClick={() => setSheet("speed")} className={`flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] ${speed !== 1 ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><span className="h-5 grid place-items-center text-[15px] font-bold">{speed}×</span>Speed</button>
-              <button onClick={() => setSheet("fade")} className={`flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] ${fade ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><FadeIcon size={20} />{fade ? `Fade ${fade}s` : "Fade"}</button>
-              <button onClick={() => setSheet("lyrics")} className="flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><LyricsIcon size={20} />Lyrics</button>
-              <button onClick={() => setSheet("queue")} className="flex flex-col items-center gap-1 py-3 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><QueueIcon size={20} />Queue {upNextCount}</button>
+            <div className="mt-3 shrink-0 grid grid-cols-5 gap-1.5 text-[11px]">
+              <button onClick={() => setSheet("sleep")} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] ${sleepMin ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><TimerIcon size={20} />{sleepMin === -1 ? "End of track" : sleepMin > 0 ? `${sleepMin} min` : "Sleep"}</button>
+              <button onClick={() => setSheet("speed")} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] ${speed !== 1 ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><span className="h-5 grid place-items-center text-[15px] font-bold">{speed}×</span>Speed</button>
+              <button onClick={() => setSheet("fade")} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] ${fade ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><FadeIcon size={20} />{fade ? `Fade ${fade}s` : "Fade"}</button>
+              <button onClick={() => setSheet("lyrics")} className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><LyricsIcon size={20} />Lyrics</button>
+              <button onClick={() => setSheet("queue")} className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><QueueIcon size={20} />Queue {upNextCount}</button>
             </div>
           </div>
         </div>

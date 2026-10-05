@@ -36,3 +36,28 @@ and the rebuilt one (**After**): ✅ done · 🟡 partial · ❌ missing.
 
 Score = (✅ ×1 + 🟡 ×0.5) / 24 — **Before 38 %**, **After 88 %**.
 Open items are listed as 22–24.
+
+## Now Playing screen — measured benchmark
+
+Reference: Spotify, Apple Music and YouTube Music mobile now-playing screens.
+Rule shared by all three: **every primary control is visible without scrolling** on any phone, the artwork is the flexible element and shrinks to make room, and the OS owns volume.
+
+Measured with Playwright (touch + mobile emulation, the page's real DOM): art height / play-button bottom / lowest action-button bottom, all in CSS px.
+
+| Viewport | Before | Fits | After | Fits |
+|---|---|---|---|---|
+| 412 × 745 (Android Chrome, the reported screenshot) | 364 / 690 / 830 | ❌ 85 px off-screen | 374 / 657 / 729 | ✅ |
+| 390 × 664 (iPhone Safari with bars) | 342 / 668 / 808 | ❌ play button off-screen | 293 / 576 / 648 | ✅ |
+| 360 × 600 (small Android) | 312 / 638 / 778 | ❌ play button off-screen | 229 / 512 / 584 | ✅ |
+| 375 × 520 (tiny) | — | ❌ | 149 / 432 / 504 | ✅ |
+
+| # | Criterion (reference behaviour) | Before | After |
+|---|---|---|---|
+| 1 | All primary controls above the fold | ❌ | ✅ artwork flexes to the free height |
+| 2 | Artwork ≤ ~50 % of viewport height | ⚠️ fixed 49–52 % | ✅ 29–50 %, adaptive |
+| 3 | Volume slider hidden on touch devices | ❌ | ✅ (`pointer: coarse`), kept on desktop |
+| 4 | Spectrum legible on light covers | ❌ white on cream | ✅ stronger scrim behind the bars |
+| 5 | Title/artist hierarchy | ⚠️ 22/16 px | ✅ 20/15 px |
+| 6 | Play button size | ⚠️ 72 px | ✅ 64 px |
+| 7 | Secondary actions in one row | ✅ | ✅ more compact |
+| 8 | Safe-area padding | ✅ | ✅ |
