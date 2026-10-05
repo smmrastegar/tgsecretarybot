@@ -154,6 +154,11 @@ export default function MusicPage() {
   }
   async function del(t: Track) { if (confirm(`«${t.title ?? "آهنگ"}» حذف شود؟`)) { await fetch(`/api/music/${t.id}`, { method: "DELETE" }); if (cur === t.id) { audio.current?.pause(); setCur(null); } void load(); } }
   async function retry(t: Track) { await fetch(`/api/music/${t.id}`, { method: "POST" }); void load(); }
+  async function retryAll() {
+    const r = await fetch("/api/music/retry-failed", { method: "POST" });
+    const j = (await r.json()) as { requeued: number };
+    setMsg(`${j.requeued} آهنگ ناموفق دوباره به صف رفت`); void load();
+  }
   async function newPlaylist() { const name = prompt("اسم پلی‌لیست:"); if (name) { await fetch("/api/music/playlists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }); void load(); } }
   async function toggleIn(pl: Playlist, t: Track) { await fetch(`/api/music/playlists/${pl.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackId: t.id, present: !pl.trackIds.includes(t.id) }) }); void load(); }
   async function delPlaylist(pl: Playlist) { if (confirm(`پلی‌لیست «${pl.name}» حذف شود؟`)) { await fetch(`/api/music/playlists/${pl.id}`, { method: "DELETE" }); setView("all"); void load(); } }
@@ -217,6 +222,9 @@ export default function MusicPage() {
           <button key={p.id} onClick={() => setView(p.id)} className={`text-xs px-3 py-1.5 rounded-md border ${view === p.id ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>{p.name} ({p.trackIds.length})</button>
         ))}
         <button onClick={newPlaylist} className="text-xs px-3 py-1.5 rounded-md border border-dashed border-[var(--color-border)]">+ پلی‌لیست</button>
+        {tracks.some((t) => t.status === "failed") && (
+          <button onClick={retryAll} className="text-xs px-3 py-1.5 rounded-md border border-amber-500/50 text-amber-200">↻ همه‌ی ناموفق‌ها ({tracks.filter((t) => t.status === "failed").length})</button>
+        )}
         {view !== "all" && <button onClick={() => { const p = playlists.find((x) => x.id === view); if (p) void delPlaylist(p); }} className="text-xs text-rose-300">حذف این پلی‌لیست</button>}
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجو…" className="mr-auto text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5" />
       </div>

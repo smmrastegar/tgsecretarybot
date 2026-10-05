@@ -204,3 +204,12 @@ export async function setSpotifyRefreshToken(id: number, token: string): Promise
 export async function deleteSpotifyAccount(id: number): Promise<void> {
   await q().query(`DELETE FROM spotify_accounts WHERE id = $1`, [id]);
 }
+
+/** Put every failed track back in the queue; returns how many. */
+export async function requeueFailedTracks(): Promise<number> {
+  await ensureSchema();
+  const rows = (await q().query(
+    `UPDATE music_tracks SET status = 'queued', error = NULL WHERE status = 'failed' RETURNING id`,
+  )) as Row[];
+  return rows.length;
+}
