@@ -137,54 +137,42 @@ function toMeta(t: RawTrack): SpotifyTrackMeta {
   return { id: t.id, title: t.name, artist: t.artists.map((a) => a.name).join(", "), album: t.album.name, releaseDate: t.album.release_date ?? null, durationS: Math.round(t.duration_ms / 1000), coverUrl: img?.url ?? null };
 }
 
-async function spGet(token: string, url: string): Promise<{ status: number; json: unknown; message: string }> {
+async function spGet(token: string, url: string): Promise<{ status: number; json: unknown; message: string; retryAfter: number }> {
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   const text = await res.text();
   let json: unknown = null;
   try { json = JSON.parse(text); } catch { /* not json */ }
   const message = (json as { error?: { message?: string } } | null)?.error?.message ?? text.slice(0, 160);
-  return { status: res.status, json, message };
+  return { status: res.status, json, message, retryAfter: Number(res.headers.get("retry-after") ?? 0) || 0 };
+}
+
+export class SpotifyRateLimited extends Error {
+  constructor(public retryAfterSeconds: number) {
+    super(`spotify 429, retry after ${retryAfterSeconds}s`);
+  }
 }
 
 /**
- * Track metadata for any number of ids. Spotify has been tightening what
- * app tokens may read, so this walks down a ladder: batch with the app
- * token → one by one with the app token → one by one with a linked
- * user account. Ids that none of them can read are simply absent.
+ * One-track metadata reader. Spotify disabled the batch endpoint for
+ * app tokens (403), so tracks are read one by one: app token first,
+ * then a linked user account. Throws SpotifyRateLimited on 429 so the
+ * caller can pause instead of hammering the API.
  */
-export async function fetchTrackMeta(ids: string[]): Promise<SpotifyTrackMeta[]> {
-  const out = new Map<string, SpotifyTrackMeta>();
+export async function makeMetaFetcher(): Promise<(id: string) => Promise<SpotifyTrackMeta | null>> {
   const appTok = await appToken();
-  let batchOk = true;
-  for (let i = 0; i < ids.length && batchOk; i += 50) {
-    const batch = ids.slice(i, i + 50);
-    const r = await spGet(appTok, `https://api.spotify.com/v1/tracks?ids=${batch.join(",")}`);
-    if (r.status === 429) throw new Error("اسپاتیفای موقتاً محدود کرده (429)؛ کمی بعد دوباره امتحان کن");
-    if (r.status === 200) {
-      for (const t of ((r.json as { tracks?: Array<RawTrack | null> })?.tracks ?? [])) if (t) out.set(t.id, toMeta(t));
-    } else {
-      console.log(`[music] batch /tracks ${r.status}: ${r.message}`);
-      batchOk = false;
-    }
-  }
-  const missing = () => ids.filter((id) => !out.has(id));
-  if (missing().length > 0) {
-    let userTok: string | null = null;
-    let lastMsg = "";
-    for (const id of missing()) {
-      let r = await spGet(appTok, `https://api.spotify.com/v1/tracks/${id}`);
-      if (r.status === 403 || r.status === 401) {
-        if (userTok == null) {
-          const accounts = await listSpotifyAccounts();
-          userTok = accounts[0] ? await accessToken(accounts[0].id).catch(() => "") : "";
-        }
-        if (userTok) r = await spGet(userTok, `https://api.spotify.com/v1/tracks/${id}`);
+  let userTok: string | null = null;
+  return async (id: string) => {
+    let r = await spGet(appTok, `https://api.spotify.com/v1/tracks/${id}`);
+    if (r.status === 403 || r.status === 401) {
+      if (userTok == null) {
+        const accounts = await listSpotifyAccounts();
+        userTok = accounts[0] ? await accessToken(accounts[0].id).catch(() => "") : "";
       }
-      if (r.status === 429) throw new Error("اسپاتیفای موقتاً محدود کرده (429)؛ کمی بعد دوباره امتحان کن");
-      if (r.status === 200) out.set(id, toMeta(r.json as RawTrack));
-      else lastMsg = `${r.status}: ${r.message}`;
+      if (userTok) r = await spGet(userTok, `https://api.spotify.com/v1/tracks/${id}`);
     }
-    if (out.size === 0 && lastMsg) throw new Error(`spotify tracks ${lastMsg}`);
-  }
-  return [...out.values()];
+    if (r.status === 429) throw new SpotifyRateLimited(r.retryAfter || 30);
+    if (r.status === 200) return toMeta(r.json as RawTrack);
+    console.log(`[music] track ${id}: ${r.status} ${r.message}`);
+    return null;
+  };
 }

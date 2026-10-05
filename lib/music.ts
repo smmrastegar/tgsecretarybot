@@ -178,43 +178,57 @@ async function saveCoverFromUrl(trackId: number, url: string): Promise<string | 
   }
 }
 
-export type RepairReport = { checked: number; metaUpdated: number; coversSaved: number; wrongAudio: number; requeued: number; notFound: number };
+export type RepairReport = { checked: number; metaUpdated: number; coversSaved: number; wrongAudio: number; requeued: number; notFound: number; lastId: number; done: boolean; rateLimitedFor: number };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * For every track: take title / artist / album / date / cover from Spotify
- * (the truth), then compare the stored audio length with Spotify's. A
- * mismatch means the downloader's audio was attached to the wrong job:
- * the file is dropped and the track goes back to the queue.
+ * For tracks with id > afterId (in id order, at most `limit` per call):
+ * take title / artist / album / date / cover from Spotify (the truth),
+ * then compare the stored audio length with Spotify's. A mismatch
+ * means the downloader's audio was attached to the wrong job: the file
+ * is dropped and the track goes back to the queue. Tracks are read one
+ * at a time with a pause between them; on a Spotify 429 the call stops
+ * and reports how long to wait, so a long library repair is a series
+ * of small, resumable steps.
  */
-export async function repairLibrary(opts?: { onlyIds?: number[] }): Promise<RepairReport> {
-  const { fetchTrackMeta } = await import("./spotify");
+export async function repairLibrary(opts?: { onlyIds?: number[]; afterId?: number; limit?: number }): Promise<RepairReport> {
+  const { makeMetaFetcher, SpotifyRateLimited } = await import("./spotify");
   const { listTracksForMeta } = await import("./db");
   let tracks = await listTracksForMeta();
   if (opts?.onlyIds) tracks = tracks.filter((t) => opts.onlyIds!.includes(t.id));
-  const report: RepairReport = { checked: tracks.length, metaUpdated: 0, coversSaved: 0, wrongAudio: 0, requeued: 0, notFound: 0 };
-  const metas = new Map((await fetchTrackMeta(tracks.map((t) => t.spotifyId))).map((m) => [m.id, m]));
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < tracks.length) {
-      const t = tracks[cursor++]!;
-      const m = metas.get(t.spotifyId);
-      if (!m) { report.notFound++; continue; }
-      const patch: Parameters<typeof updateMusicTrack>[1] = { title: m.title, artist: m.artist, album: m.album, releaseDate: m.releaseDate, spotifyDurationS: m.durationS };
-      if (m.coverUrl) {
-        const cp = await saveCoverFromUrl(t.id, m.coverUrl);
-        if (cp) { patch.coverPath = cp; report.coversSaved++; }
-      }
-      if (t.status === "ready" && durationMismatch(t.durationS, m.durationS)) {
-        report.wrongAudio++;
-        await removeMusicFiles([t.filePath]);
-        patch.status = "queued"; patch.error = null; patch.filePath = null; patch.mime = null; patch.sizeBytes = null; patch.durationS = null;
-        report.requeued++;
-      }
-      await updateMusicTrack(t.id, patch);
-      report.metaUpdated++;
+  if (opts?.afterId != null) tracks = tracks.filter((t) => t.id > opts.afterId!);
+  const total = tracks.length;
+  if (opts?.limit) tracks = tracks.slice(0, opts.limit);
+  const report: RepairReport = { checked: 0, metaUpdated: 0, coversSaved: 0, wrongAudio: 0, requeued: 0, notFound: 0, lastId: opts?.afterId ?? 0, done: false, rateLimitedFor: 0 };
+  const fetchMeta = await makeMetaFetcher();
+  for (const t of tracks) {
+    let m;
+    try {
+      m = await fetchMeta(t.spotifyId);
+    } catch (err) {
+      if (err instanceof SpotifyRateLimited) { report.rateLimitedFor = err.retryAfterSeconds; return report; }
+      throw err;
     }
-  };
-  await Promise.all(Array.from({ length: 6 }, worker));
+    report.checked++;
+    report.lastId = t.id;
+    if (!m) { report.notFound++; await sleep(250); continue; }
+    const patch: Parameters<typeof updateMusicTrack>[1] = { title: m.title, artist: m.artist, album: m.album, releaseDate: m.releaseDate, spotifyDurationS: m.durationS };
+    if (m.coverUrl) {
+      const cp = await saveCoverFromUrl(t.id, m.coverUrl);
+      if (cp) { patch.coverPath = cp; report.coversSaved++; }
+    }
+    if (t.status === "ready" && durationMismatch(t.durationS, m.durationS)) {
+      report.wrongAudio++;
+      await removeMusicFiles([t.filePath]);
+      patch.status = "queued"; patch.error = null; patch.filePath = null; patch.mime = null; patch.sizeBytes = null; patch.durationS = null;
+      report.requeued++;
+    }
+    await updateMusicTrack(t.id, patch);
+    report.metaUpdated++;
+    await sleep(300);
+  }
+  report.done = tracks.length >= total;
   return report;
 }
 
