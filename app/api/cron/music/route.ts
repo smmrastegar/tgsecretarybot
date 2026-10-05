@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { getAllSettings, setSetting } from "@/lib/db";
 import { fillMissingMeta, kickMusicQueue, repairLibrary, verifyLibraryLocal } from "@/lib/music";
+import { runSync, SYNC_EVERY_MS } from "@/lib/music-sync";
 import { reportInfo, reportWarn } from "@/lib/report";
 
 export const runtime = "nodejs";
@@ -64,5 +65,18 @@ export async function GET(request: Request): Promise<NextResponse> {
       reportWarn("music", "meta fill failed:", err);
     }
   }
-  return NextResponse.json({ ok: true, ...(await kickMusicQueue()), repair, verify, fill });
+  // Hourly: pull new songs from the imported Spotify lists.
+  let sync: unknown = undefined;
+  if (Date.now() - Number(s.musicSyncLast || 0) > SYNC_EVERY_MS) {
+    await setSetting("musicSyncLast", String(Date.now())); // claim first: a failure must not retry every minute
+    try {
+      const r = await runSync();
+      if (r.added > 0) reportInfo("music", `auto-sync: ${r.added} new song(s) from ${r.sources} Spotify list(s)`);
+      if (r.errors.length) reportWarn("music", `auto-sync errors: ${r.errors.join("; ")}`);
+      sync = r;
+    } catch (err) {
+      reportWarn("music", "auto-sync failed:", err);
+    }
+  }
+  return NextResponse.json({ ok: true, ...(await kickMusicQueue()), repair, verify, fill, sync });
 }

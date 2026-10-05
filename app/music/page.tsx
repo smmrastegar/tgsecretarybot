@@ -97,6 +97,16 @@ export default function MusicPage() {
     setCsec(""); void loadSp();
   }
   async function disconnectSp(id: number) { if (!confirm("این حساب قطع شود؟ آهنگ‌های دانلودشده می‌مانند.")) return; await fetch("/api/music/spotify/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ disconnect: true, accountId: id }) }); void loadSp(); }
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+  async function syncNow() {
+    setSyncBusy(true); setSyncMsg("");
+    const r = await fetch("/api/music/spotify/sync", { method: "POST" });
+    const j = (await r.json()) as { sources?: number; added?: number; errors?: string[]; error?: string };
+    setSyncBusy(false);
+    setSyncMsg(r.ok ? `${j.sources} لیست بررسی شد — ${j.added} آهنگ جدید${j.errors?.length ? `، خطا: ${j.errors[0]}` : ""}` : `خطا: ${j.error}`);
+    void load();
+  }
   async function importSp(id: string, name: string) {
     setSpBusy(id); setMsg(null);
     const r = await fetch("/api/music/spotify/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name, accountId: acct }) });
@@ -276,6 +286,10 @@ export default function MusicPage() {
                 </span>
               ))}
               <button onClick={() => { window.location.href = "/api/music/spotify/login"; }} className="px-3 py-1 rounded-full bg-[#1db954] text-black font-medium">{sp.accounts.length ? "+ حساب دیگر" : "ورود با اسپاتیفای"}</button>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button disabled={syncBusy} onClick={syncNow} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-50">{syncBusy ? "…" : "↻ همگام‌سازی همین حالا"}</button>
+              <span className="text-[var(--color-text-dim)]">لیست‌های وارد‌شده هر ساعت خودکار بررسی می‌شوند و آهنگ جدید دانلود می‌شود.{syncMsg ? ` ${syncMsg}` : ""}</span>
             </div>
             {spErr && <div className="text-rose-300">{spErr}</div>}
             {spLib && <div className="text-[var(--color-text-dim)]">روی هر لیست بزن تا آهنگ‌هایش وارد صف دانلود شود (حساب فعلی: «{spLib.me}»):</div>}

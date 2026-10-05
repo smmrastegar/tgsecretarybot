@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartIcon, ChevronDownIcon, FadeIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
+import { ChartIcon, CloseIcon, ChevronDownIcon, FadeIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
 import StatsView from "@/components/music/app/StatsView";
 import Spectrum from "@/components/music/Spectrum";
 import TrackDetail from "@/components/music/TrackDetail";
@@ -44,6 +44,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [toast, setToast] = useState("");
   const [fade, setFade] = useState(0);
+  const [installEvt, setInstallEvt] = useState<{ prompt: () => Promise<void> } | null>(null);
+  const [iosHint, setIosHint] = useState(false);
+  const [updateReady, setUpdateReady] = useState(false);
+  const build = useRef<string | null>(null);
   const [offline, setOffline] = useState<Set<number>>(new Set());
   const blobUrl = useRef<string | null>(null);
 
@@ -56,9 +60,39 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, []);
   useEffect(() => {
     try { const f = Number(localStorage.getItem("player.fade")); if ([3, 6, 10].includes(f)) setFade(f); } catch {}
-    if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/player-sw.js", { scope: "/player/" }).catch(() => {});
+    if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/player-sw.js", { scope: "/player/", updateViaCache: "none" }).catch(() => {});
     if ("caches" in window) void caches.open("player-audio").then((c) => c.keys()).then((ks) => setOffline(new Set(ks.map((k) => Number(new URL(k.url).pathname.split("/").pop())).filter(Number.isFinite)))).catch(() => {});
   }, []);
+  // Install (Android prompt / iOS hint) and self-update.
+  useEffect(() => {
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as unknown as { standalone?: boolean }).standalone === true;
+    const dismissed = (() => { try { return localStorage.getItem("player.installDismissed") === "1"; } catch { return false; } })();
+    if (!standalone && !dismissed && /iphone|ipad|ipod/i.test(navigator.userAgent)) setIosHint(true);
+    const onPrompt = (e: Event) => { e.preventDefault(); if (!standalone && !dismissed) setInstallEvt(e as unknown as { prompt: () => Promise<void> }); };
+    const onInstalled = () => setInstallEvt(null);
+    window.addEventListener("beforeinstallprompt", onPrompt); window.addEventListener("appinstalled", onInstalled);
+    return () => { window.removeEventListener("beforeinstallprompt", onPrompt); window.removeEventListener("appinstalled", onInstalled); };
+  }, []);
+  const checkUpdate = useCallback(async () => {
+    try {
+      if ("serviceWorker" in navigator) void navigator.serviceWorker.getRegistration("/player/").then((r) => r?.update()).catch(() => {});
+      const r = await fetch(`/api/music/version?${tq}`, { cache: "no-store" });
+      if (!r.ok) return;
+      const { build: b } = (await r.json()) as { build: string };
+      if (build.current == null) build.current = b; else if (b !== build.current) setUpdateReady(true);
+    } catch { /* offline: try again later */ }
+  }, [tq]);
+  useEffect(() => {
+    void checkUpdate();
+    const i = setInterval(() => void checkUpdate(), 5 * 60 * 1000);
+    const vis = () => { if (document.visibilityState === "visible") void checkUpdate(); };
+    document.addEventListener("visibilitychange", vis); window.addEventListener("online", vis);
+    return () => { clearInterval(i); document.removeEventListener("visibilitychange", vis); window.removeEventListener("online", vis); };
+  }, [checkUpdate]);
+  // Reload into the new version as soon as nothing is playing.
+  useEffect(() => { if (updateReady && !playing) window.location.reload(); }, [updateReady, playing]);
+  const dismissInstall = () => { setInstallEvt(null); setIosHint(false); try { localStorage.setItem("player.installDismissed", "1"); } catch {} };
+  const doInstall = async () => { await installEvt?.prompt(); setInstallEvt(null); };
   const pickFade = (v: number) => { setFade(v); try { localStorage.setItem("player.fade", String(v)); } catch {} };
   const flipTheme = () => setTheme((t) => { const n = t === "dark" ? "light" : "dark"; try { localStorage.setItem("player.theme", n); } catch {} return n; });
   const accent = theme === "dark" ? "255,255,255" : "24,24,32";
@@ -271,6 +305,18 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       `}</style>
 
       <div className="relative max-w-2xl mx-auto px-4 pt-[max(14px,env(safe-area-inset-top))]" style={{ paddingBottom: now ? 168 : 96 }}>
+        {(installEvt || iosHint) && !page && tab === "home" && (
+          <div className="mb-3 flex items-center gap-3 rounded-2xl bg-[var(--s1)] border border-[var(--bd)] p-3">
+            <img src="/icons/player-192.png" alt="" className="w-11 h-11 rounded-xl shrink-0" />
+            <div className="min-w-0 flex-1 text-[13px] leading-snug">
+              <div className="font-semibold text-[14px]">Install My Music</div>
+              {installEvt ? <div className="text-[var(--dim)]">Open it like a normal app, full screen.</div> : <div className="text-[var(--dim)]">Tap Share, then &ldquo;Add to Home Screen&rdquo;.</div>}
+            </div>
+            {installEvt && <button onClick={() => void doInstall()} className="px-4 py-2 rounded-full bg-[rgb(var(--ac))] text-[var(--acfg)] text-[13px] font-semibold">Install</button>}
+            <button onClick={dismissInstall} className="p-1.5 text-[var(--dim)]" aria-label="Dismiss"><CloseIcon size={16} /></button>
+          </div>
+        )}
+        {updateReady && playing && <button onClick={() => window.location.reload()} className="mb-3 w-full rounded-2xl bg-[var(--s2)] py-2.5 text-[13px] font-semibold">New version ready — tap to reload</button>}
         <header className="flex items-center justify-between h-12 mb-2">
           {page ? (
             <button onClick={() => setStack((s) => s.slice(0, -1))} className="flex items-center gap-1 -ml-2 px-2 py-2 text-[15px]"><ChevronDownIcon size={22} className="rotate-90" />Back</button>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
 import { addMusicTrack, createMusicPlaylist, listMusicPlaylists, setPlaylistTrack } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
+import { registerSyncSource } from "@/lib/music-sync";
 import { fetchTrackIds } from "@/lib/spotify";
 
 export const runtime = "nodejs";
@@ -26,6 +27,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (r.created) added++; else already++;
       await setPlaylistTrack(plId, r.track.id, true);
     }
+    await registerSyncSource({ accountId: Number(b.accountId), id: b.id, name }).catch(() => {});
     if (added > 0) await kickMusicQueue().catch(() => {});
     return NextResponse.json({ total: items.length, added, already, playlistId: plId });
   } catch (e) {
