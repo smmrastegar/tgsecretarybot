@@ -17,6 +17,9 @@ type Track = {
 };
 type Playlist = { id: number; name: string; trackIds: number[] };
 
+type SpCfg = { hasCredentials: boolean; clientId: string; connected: boolean; redirectUri: string };
+type SpLib = { playlists: Array<{ id: string; name: string; tracks: number; owner: string }>; likedCount: number; me: string };
+
 const fmt = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
 
 export default function MusicPage() {
@@ -35,6 +38,12 @@ export default function MusicPage() {
   const [repeat, setRepeat] = useState<"off" | "all" | "one">("off");
   const [vol, setVol] = useState(1);
   const audio = useRef<HTMLAudioElement>(null);
+  const [sp, setSp] = useState<SpCfg | null>(null);
+  const [spLib, setSpLib] = useState<SpLib | null>(null);
+  const [spErr, setSpErr] = useState<string | null>(null);
+  const [spBusy, setSpBusy] = useState<string | null>(null);
+  const [cid, setCid] = useState("");
+  const [csec, setCsec] = useState("");
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
 
   const load = useCallback(async () => {
@@ -44,6 +53,31 @@ export default function MusicPage() {
     setTracks(j.tracks); setPlaylists(j.playlists);
   }, []);
   useEffect(() => { void load(); }, [load]);
+  const loadSp = useCallback(async () => {
+    const r = await fetch("/api/music/spotify/config", { cache: "no-store" });
+    if (!r.ok) return;
+    const c = (await r.json()) as SpCfg;
+    setSp(c); setCid(c.clientId);
+    if (c.connected) {
+      const l = await fetch("/api/music/spotify/library", { cache: "no-store" });
+      const j = (await l.json()) as SpLib & { error?: string };
+      if (l.ok) { setSpLib(j); setSpErr(null); } else setSpErr(j.error ?? "خطا");
+    }
+  }, []);
+  useEffect(() => { void loadSp(); }, [loadSp]);
+  async function saveCreds() {
+    await fetch("/api/music/spotify/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientId: cid, clientSecret: csec }) });
+    setCsec(""); void loadSp();
+  }
+  async function disconnectSp() { await fetch("/api/music/spotify/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ disconnect: true }) }); setSpLib(null); void loadSp(); }
+  async function importSp(id: string, name: string) {
+    setSpBusy(id); setMsg(null);
+    const r = await fetch("/api/music/spotify/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name }) });
+    const j = (await r.json()) as { total?: number; added?: number; already?: number; error?: string };
+    setSpBusy(null);
+    setMsg(r.ok ? `«${name}»: ${j.total} آهنگ — ${j.added} جدید به صف دانلود، ${j.already} قبلاً بود` : `خطا: ${j.error}`);
+    void load();
+  }
   // Poll while anything is still downloading.
   useEffect(() => {
     if (!tracks.some((t) => t.status === "queued" || t.status === "downloading")) return;
@@ -116,6 +150,35 @@ export default function MusicPage() {
   return (
     <Shell>
       <PageTitle title="🎧 پلیر موسیقی" subtitle="کتابخانه‌ی شخصی روی سرور خودت. لینک آهنگ اسپاتیفای بده؛ از بات دانلودر گرفته و ذخیره می‌شود." />
+      <Card className="mb-4">
+        <div className="text-sm font-medium mb-2">🟢 اتصال به اسپاتیفای (لایک‌ها و پلی‌لیست‌ها)</div>
+        {sp && !sp.connected && (
+          <div className="text-xs text-[var(--color-text-dim)] space-y-2">
+            <p>یک‌بار: در developer.spotify.com/dashboard یک App بساز، این آدرس را به‌عنوان Redirect URI ثبت کن، و Client ID / Secret را اینجا بده.</p>
+            <div dir="ltr" className="font-mono bg-[var(--color-surface-2)] rounded px-2 py-1 select-all break-all">{sp.redirectUri}</div>
+            <div className="flex gap-2 flex-wrap" dir="ltr">
+              <input value={cid} onChange={(e) => setCid(e.target.value)} placeholder="Client ID" className="flex-1 min-w-40 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5" />
+              <input value={csec} onChange={(e) => setCsec(e.target.value)} type="password" placeholder={sp.hasCredentials ? "Client Secret (ذخیره شده)" : "Client Secret"} className="flex-1 min-w-40 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5" />
+              <button onClick={saveCreds} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] text-sm">ذخیره</button>
+            </div>
+            {sp.hasCredentials && <button onClick={() => { window.location.href = "/api/music/spotify/login"; }} className="inline-block px-4 py-2 rounded-lg bg-[#1db954] text-black font-medium text-sm">ورود با اسپاتیفای</button>}
+          </div>
+        )}
+        {sp?.connected && (
+          <div className="text-xs space-y-2">
+            {spErr && <div className="text-rose-300">{spErr}</div>}
+            {spLib && <div className="text-[var(--color-text-dim)]">وصل به «{spLib.me}» — برای ورود به صف دانلود روی هر لیست بزن:</div>}
+            <div className="flex flex-wrap gap-2">
+              {spLib && <button disabled={!!spBusy} onClick={() => importSp("liked", "لایک‌ها")} className="px-3 py-1.5 rounded-md border border-[#1db954] text-[#1db954] disabled:opacity-50">{spBusy === "liked" ? "…" : `♥ لایک‌ها (${spLib.likedCount})`}</button>}
+              {spLib?.playlists.map((p) => (
+                <button key={p.id} disabled={!!spBusy} onClick={() => importSp(p.id, p.name)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-50">{spBusy === p.id ? "…" : `${p.name} (${p.tracks})`}</button>
+              ))}
+            </div>
+            <button onClick={disconnectSp} className="text-rose-300 underline">قطع اتصال</button>
+          </div>
+        )}
+      </Card>
+
       <Card className="mb-4">
         <textarea value={paste} onChange={(e) => setPaste(e.target.value)} dir="ltr" rows={2}
           placeholder="https://open.spotify.com/track/…  (چند لینک، هر کدام در یک خط)"

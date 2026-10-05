@@ -1059,6 +1059,8 @@ function toolText(value: unknown): {
 //     token, API keys, DB URL) → that substring masked.
 const SENSITIVE_SETTING_KEYS = new Set([
   "resendApiKey",
+  "spotifyClientSecret",
+  "spotifyRefreshToken",
   "resendInboundSecret",
   "smsWebhookSecret",
   "hikerApiKeyOverride",
