@@ -45,10 +45,27 @@ const format = (mime: string | null | undefined) => (/flac/i.test(mime ?? "") ? 
  * history every 5 s, and when the track is the one currently playing it
  * shows the running session (position, time heard now).
  */
-export default function TrackDetail({ t, tq, onClose, onRate, live }: {
-  t: DetailTrack; tq: string; onClose: () => void; dark?: boolean; onRate?: (r: number) => void;
+export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" }: {
+  t: DetailTrack; tq: string; onClose: () => void; dark?: boolean; onRate?: (r: number) => void; lang?: "fa" | "en";
   live?: { pos: number; dur: number; playing: boolean } | null;
 }) {
+  const en = lang === "en";
+  const d = (v: number | string) => (en ? String(v) : fa(v));
+  const listen = (sec: number) => (en ? (sec < 60 ? `${Math.round(sec)} s` : sec < 3600 ? `${Math.round(sec / 60)} min` : `${Math.floor(sec / 3600)} h ${Math.round((sec % 3600) / 60)} min`) : fmtListen(sec));
+  const whenL = (iso: string | null | undefined) => {
+    if (!iso) return "—";
+    const dt = toDate(iso);
+    if (Number.isNaN(dt.getTime())) return "—";
+    return en ? dt.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : when(iso);
+  };
+  const agoL = (iso: string) => {
+    if (!en) return ago(iso);
+    const s = Math.max(0, Math.round((Date.now() - toDate(iso).getTime()) / 1000));
+    return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+  };
+  const T = en
+    ? { like: "Like", dislike: "Dislike", plays: "Plays", total: "Total listened", skips: "Early skips", ofPlays: "of plays", toEnd: "to the end", avg: "Average listened per play", ofTrack: "of the track", chart: "Minutes listened · last 14 days", last: "Recent listens", none: "Nothing recorded yet.", done: "Played to end", skipped: "Skipped", partial: "Partial", live: "Playing now", paused: "Paused", album: "Album", released: "Released", length: "Length", format: "Format", added: "Added", first: "First played", lastPlayed: "Last played", close: "Close", dir: "ltr" as const }
+    : { like: "لایک", dislike: "دیسلایک", plays: "تعداد پخش", total: "مجموع گوش‌دادن", skips: "ردشدن زودهنگام", ofPlays: "پخش‌ها", toEnd: "بار تا آخر", avg: "میانگین شنیدن هر بار", ofTrack: "از آهنگ", chart: "{T.chart}", last: "{T.last}", none: "{T.none}", done: "تا آخر", skipped: "ردشد", partial: "نیمه‌کاره", live: "همین الان در حال پخش", paused: "مکث شده", album: "آلبوم", released: "انتشار", length: "مدت", format: "فرمت", added: "اضافه شد", first: "اولین گوش‌دادن", lastPlayed: "آخرین پخش", close: "بستن", dir: "rtl" as const };
   const [h, setH] = useState<History | null>(null);
   const q = tq ? `?${tq}` : "";
   useEffect(() => {
@@ -72,19 +89,19 @@ export default function TrackDetail({ t, tq, onClose, onRate, live }: {
     </div>
   );
   const info: Array<[string, string]> = [
-    ["آلبوم", t.album ?? "—"], ["انتشار", t.releaseDate ?? "—"], ["مدت", t.durationS ? fmtDur(t.durationS) : "—"],
-    ["فرمت", `${format(t.mime)}${t.sizeBytes ? ` · ${fa((t.sizeBytes / 1048576).toFixed(1))} MB` : ""}${kbps ? ` · ~${fa(kbps)} kbps` : ""}`],
-    ["اضافه شد", when(t.createdAt)], ["اولین گوش‌دادن", when(h?.firstPlayedAt)], ["آخرین پخش", when(t.lastPlayedAt)],
+    [T.album, t.album ?? "—"], [T.released, t.releaseDate ?? "—"], [T.length, t.durationS ? fmtDur(t.durationS) : "—"],
+    [T.format, `${format(t.mime)}${t.sizeBytes ? ` · ${d((t.sizeBytes / 1048576).toFixed(1))} MB` : ""}${kbps ? ` · ~${d(kbps)} kbps` : ""}`],
+    [T.added, whenL(t.createdAt)], [T.first, whenL(h?.firstPlayedAt)], [T.lastPlayed, whenL(t.lastPlayedAt)],
   ];
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/65 backdrop-blur-sm" onClick={onClose}>
-      <div dir="rtl" onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #0d0d13)", color: "var(--fg, #ececf1)", animation: "rise .25s ease-out" }}
+      <div dir={T.dir} onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #0d0d13)", color: "var(--fg, #ececf1)", animation: "rise .25s ease-out" }}
         className="relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto rounded-t-[2rem] sm:rounded-[2rem] border border-[var(--bd)] shadow-2xl">
         <style>{`@keyframes rise{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}} @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
         <div className="relative h-52 overflow-hidden rounded-t-[2rem]">
           {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="absolute inset-0 w-full h-full object-cover scale-125 blur-2xl opacity-60" /> : <div className="absolute inset-0 bg-[var(--s2)]" />}
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, transparent, var(--bg2, #0d0d13))" }} />
-          <button onClick={onClose} className="absolute top-3 left-3 w-9 h-9 rounded-full bg-black/40 grid place-items-center text-lg" aria-label="بستن">✕</button>
+          <button onClick={onClose} className="absolute top-3 left-3 w-9 h-9 rounded-full bg-black/40 grid place-items-center text-lg" aria-label={T.close}>✕</button>
           <div className="absolute bottom-3 inset-x-4 flex items-end gap-3">
             {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="w-24 h-24 rounded-2xl object-cover shadow-2xl ring-1 ring-white/10" /> : <div className="w-24 h-24 rounded-2xl bg-[var(--s2)] grid place-items-center text-4xl">🎵</div>}
             <div className="min-w-0 flex-1 pb-1">
@@ -99,7 +116,7 @@ export default function TrackDetail({ t, tq, onClose, onRate, live }: {
             <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-3">
               <div className="flex items-center gap-2 text-xs text-emerald-300 mb-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-400" style={{ animation: live.playing ? "pulse-dot 1.2s infinite" : undefined }} />
-                {live.playing ? "همین الان در حال پخش" : "مکث شده"}
+                {live.playing ? T.live : T.paused}
                 <span className="mr-auto text-[var(--dim2)]" dir="ltr">{fmtDur(live.pos)} / {fmtDur(live.dur || t.durationS || 0)}</span>
               </div>
               <div className="h-1.5 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${live.dur > 0 ? Math.min(100, (live.pos / live.dur) * 100) : 0}%` }} /></div>
@@ -108,19 +125,19 @@ export default function TrackDetail({ t, tq, onClose, onRate, live }: {
 
           {onRate && (
             <div className="flex gap-2">
-              <button onClick={() => onRate(1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating > 0 ? "border-rose-400/60 bg-rose-500/20 text-rose-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><HeartIcon size={20} filled={t.rating > 0} /> لایک</span></button>
-              <button onClick={() => onRate(-1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating < 0 ? "border-amber-400/60 bg-amber-500/20 text-amber-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><ThumbDownIcon size={20} filled={t.rating < 0} /> دیسلایک</span></button>
+              <button onClick={() => onRate(1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating > 0 ? "border-rose-400/60 bg-rose-500/20 text-rose-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><HeartIcon size={20} filled={t.rating > 0} /> {T.like}</span></button>
+              <button onClick={() => onRate(-1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating < 0 ? "border-amber-400/60 bg-amber-500/20 text-amber-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><ThumbDownIcon size={20} filled={t.rating < 0} /> {T.dislike}</span></button>
             </div>
           )}
 
           <div className="grid grid-cols-3 gap-2">
-            {tile("تعداد پخش", fa(t.playCount), h ? `${fa(h.completions)} بار تا آخر` : undefined)}
-            {tile("مجموع گوش‌دادن", fmtListen(t.listenSeconds))}
-            {tile("ردشدن زودهنگام", fa(t.skipCount), skipRate == null ? undefined : `${fa(skipRate)}٪ پخش‌ها`)}
+            {tile(T.plays, d(t.playCount), h ? `${d(h.completions)} ${en ? T.toEnd : T.toEnd}` : undefined)}
+            {tile(T.total, listen(t.listenSeconds))}
+            {tile(T.skips, d(t.skipCount), skipRate == null ? undefined : `${d(skipRate)}% ${T.ofPlays}`)}
           </div>
           {avgPct != null && (
             <div>
-              <div className="flex justify-between text-xs text-[var(--dim)] mb-1"><span>میانگین شنیدن هر بار</span><span>{fa(avgPct)}٪ از آهنگ</span></div>
+              <div className="flex justify-between text-xs text-[var(--dim)] mb-1"><span>{T.avg}</span><span>{d(avgPct)}% {T.ofTrack}</span></div>
               <div className="h-2 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full rounded-full bg-gradient-to-l from-emerald-400 to-sky-400" style={{ width: `${avgPct}%` }} /></div>
             </div>
           )}
@@ -142,8 +159,8 @@ export default function TrackDetail({ t, tq, onClose, onRate, live }: {
             {!h || h.sessions.length === 0 ? <div className="text-xs text-[var(--dim3)] py-2">هنوز ثبت نشده.</div> : h.sessions.map((s, i) => (
               <div key={i} className="flex items-center gap-2 py-1.5 text-sm border-b border-[var(--bd0)]">
                 <span className={`w-2 h-2 rounded-full ${s.completed ? "bg-emerald-400" : s.skipped ? "bg-amber-400" : "bg-sky-400"}`} />
-                <span className="flex-1">{s.completed ? "تا آخر" : s.skipped ? "ردشد" : "نیمه‌کاره"} · {fmtListen(s.seconds)}</span>
-                <span className="text-[11px] text-[var(--dim3)]">{ago(s.at)}</span>
+                <span className="flex-1">{s.completed ? T.done : s.skipped ? T.skipped : T.partial} · {listen(s.seconds)}</span>
+                <span className="text-[11px] text-[var(--dim3)]">{agoL(s.at)}</span>
               </div>
             ))}
           </div>

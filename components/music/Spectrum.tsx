@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from "react";
 
-// Real audio spectrum (Web Audio AnalyserNode) drawn on a canvas, in the
-// player's accent colour (--ac). The audio element is routed through the
+// Real audio spectrum (Web Audio AnalyserNode) drawn on a canvas in a
+// neutral translucent colour. The audio element is routed through the
 // analyser once (createMediaElementSource may only be called once per
 // element). If anything about Web Audio fails, it falls back to a soft
 // animated bar field so the player never looks dead.
@@ -33,8 +33,8 @@ function chainFor(el: HTMLAudioElement): Chain | null {
   }
 }
 
-export default function Spectrum({ audio, playing, bars = 32, height = 56, className = "" }: {
-  audio: React.RefObject<HTMLAudioElement | null>; playing: boolean; bars?: number; height?: number; className?: string;
+export default function Spectrum({ audio, playing, bars = 32, height = 56, className = "", rgb = "255,255,255" }: {
+  audio: React.RefObject<HTMLAudioElement | null>; playing: boolean; bars?: number; height?: number; className?: string; rgb?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const raf = useRef(0);
@@ -51,7 +51,6 @@ export default function Spectrum({ audio, playing, bars = 32, height = 56, class
       const el = audio.current;
       const ch = playing && el ? chainFor(el) : null;
       if (ch && ch.ctx.state === "suspended") void ch.ctx.resume();
-      const accent = getComputedStyle(cv).getPropertyValue("--ac").trim() || "29,185,84";
       g.clearRect(0, 0, cv.width, cv.height);
       let real = false;
       if (ch) {
@@ -74,8 +73,11 @@ export default function Spectrum({ audio, playing, bars = 32, height = 56, class
         const h = Math.max(3 * dpr, level.current[i]! * cv.height);
         const x = i * bw + bw * 0.18, w = bw * 0.64;
         const grad = g.createLinearGradient(0, cv.height - h, 0, cv.height);
-        grad.addColorStop(0, `rgba(${accent},1)`);
-        grad.addColorStop(1, `rgba(${accent},.35)`);
+        // Neutral and translucent: fades out toward the top so it sits on
+        // any artwork without a coloured slab.
+        grad.addColorStop(0, `rgba(${rgb},0)`);
+        grad.addColorStop(0.5, `rgba(${rgb},.35)`);
+        grad.addColorStop(1, `rgba(${rgb},.75)`);
         g.fillStyle = grad;
         g.beginPath();
         g.roundRect(x, cv.height - h, w, h, Math.min(w / 2, 6 * dpr));
@@ -86,7 +88,7 @@ export default function Spectrum({ audio, playing, bars = 32, height = 56, class
     raf.current = requestAnimationFrame(draw);
     window.addEventListener("resize", resize);
     return () => { cancelAnimationFrame(raf.current); window.removeEventListener("resize", resize); };
-  }, [audio, playing, bars, height]);
+  }, [audio, playing, bars, height, rgb]);
 
   return <canvas ref={ref} className={`w-full ${className}`} style={{ height }} aria-hidden />;
 }

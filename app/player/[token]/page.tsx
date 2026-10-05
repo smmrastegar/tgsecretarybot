@@ -196,12 +196,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const toggle = () => (playing ? audio.current?.pause() : void audio.current?.play());
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
 
-  if (denied) return <div dir="rtl" style={{ background: "#07070b", color: "#71717a", minHeight: "100dvh" }} className="grid place-items-center text-sm">این لینک معتبر نیست.</div>;
+  if (denied) return <div dir="ltr" style={{ background: "#07070b", color: "#71717a", minHeight: "100dvh" }} className="grid place-items-center text-sm">This link is not valid.</div>;
 
   const pill = (on: boolean) => `text-[13px] px-4 py-2 rounded-full whitespace-nowrap transition ${on ? "bg-[rgb(var(--ac))] text-black font-semibold shadow-[0_0_24px_-4px_rgb(var(--ac))]" : "bg-[var(--s1)] text-[var(--dim2)] hover:bg-[var(--s2)]"}`;
 
   return (
-    <div dir="rtl" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: "Vazirmatn, -apple-system, system-ui, sans-serif" }} className="relative overflow-x-hidden">
+    <div dir="ltr" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', letterSpacing: "-0.01em" }} className="relative overflow-x-hidden">
       <style>{`
         @keyframes eq { 0%,100% { height: 25% } 50% { height: 100% } }
         @keyframes spin-slow { to { transform: rotate(360deg) } }
@@ -218,35 +218,35 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
       <div className="relative max-w-3xl mx-auto px-4 pt-6 pb-56">
         <header className="flex items-center justify-between mb-5">
-          <h1 className="text-2xl font-extrabold tracking-tight" style={{ textShadow: "0 0 30px rgba(var(--ac),.5)" }}>🎧 موزیک من</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight" style={{ textShadow: "0 0 30px rgba(var(--ac),.5)" }}>My Music</h1>
           <div className="flex items-center gap-2">
-          <button onClick={flipTheme} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center text-lg" aria-label="تغییر تم">{theme === "dark" ? <SunIcon size={20} /> : <MoonIcon size={20} />}</button>
+          <button onClick={flipTheme} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center text-lg" aria-label="Toggle theme">{theme === "dark" ? <SunIcon size={20} /> : <MoonIcon size={20} />}</button>
           <div className="flex gap-1 p-1 rounded-full bg-[var(--s1)]">
-            <button onClick={() => setTab("songs")} className={pill(tab === "songs")}>آهنگ‌ها</button>
-            <button onClick={() => setTab("stats")} className={pill(tab === "stats")}>آمار</button>
+            <button onClick={() => setTab("songs")} className={pill(tab === "songs")}>Songs</button>
+            <button onClick={() => setTab("stats")} className={pill(tab === "stats")}>Stats</button>
           </div>
           </div>
         </header>
 
-        {tab === "stats" ? <MusicStats tq={tq} /> : (
+        {tab === "stats" ? <MusicStats tq={tq} lang="en" /> : (
           <>
             <div className="flex gap-3 mb-5">
-              <button onClick={() => visible[0] && playTrack(visible[0].id)} disabled={!visible.length} className="flex-1 py-3.5 rounded-2xl font-bold text-black disabled:opacity-40 active:scale-[.98] transition" style={{ background: "linear-gradient(135deg, rgb(var(--ac)), rgba(var(--ac),.65))", boxShadow: "0 10px 30px -10px rgb(var(--ac))" }}><span className="inline-flex items-center justify-center gap-2"><PlayIcon size={18} /> پخش همه</span></button>
-              <button onClick={smartMix} disabled={!visible.length} className={`flex-1 py-3.5 rounded-2xl font-bold border active:scale-[.98] transition disabled:opacity-40 ${mixOn ? "border-[rgb(var(--ac))] text-[rgb(var(--ac))] bg-[rgba(var(--ac),.1)]" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><SparkIcon size={18} /> ترکیب هوشمند</span></button>
+              <button onClick={() => visible[0] && playTrack(visible[0].id)} disabled={!visible.length} className="flex-1 py-3.5 rounded-2xl font-bold text-black disabled:opacity-40 active:scale-[.98] transition" style={{ background: "linear-gradient(135deg, rgb(var(--ac)), rgba(var(--ac),.65))", boxShadow: "0 10px 30px -10px rgb(var(--ac))" }}><span className="inline-flex items-center justify-center gap-2"><PlayIcon size={18} /> Play all</span></button>
+              <button onClick={smartMix} disabled={!visible.length} className={`flex-1 py-3.5 rounded-2xl font-bold border active:scale-[.98] transition disabled:opacity-40 ${mixOn ? "border-[rgb(var(--ac))] text-[rgb(var(--ac))] bg-[rgba(var(--ac),.1)]" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><SparkIcon size={18} /> Smart mix</span></button>
             </div>
 
             <div className="flex gap-2 overflow-x-auto pb-2 mb-3 -mx-4 px-4 [scrollbar-width:none]">
-              <button onClick={() => setView("all")} className={pill(view === "all")}>همه · {tracks.length}</button>
-              <button onClick={() => setView("liked")} className={pill(view === "liked")}><span className="inline-flex items-center gap-1.5"><HeartIcon size={14} filled /> لایک‌ها · {tracks.filter((t) => t.rating > 0).length}</span></button>
+              <button onClick={() => setView("all")} className={pill(view === "all")}>All · {tracks.length}</button>
+              <button onClick={() => setView("liked")} className={pill(view === "liked")}><span className="inline-flex items-center gap-1.5"><HeartIcon size={14} filled /> Liked · {tracks.filter((t) => t.rating > 0).length}</span></button>
               {playlists.map((p) => <button key={p.id} onClick={() => setView(p.id)} className={pill(view === p.id)}>{p.name}</button>)}
             </div>
 
             <div className="relative mb-4">
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجوی آهنگ، خواننده، آلبوم…" className="w-full rounded-2xl bg-[var(--s1)] border border-[var(--bd)] px-4 py-3 text-sm outline-none focus:border-[rgb(var(--ac))] transition" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search songs, artists, albums…" className="w-full rounded-2xl bg-[var(--s1)] border border-[var(--bd)] px-4 py-3 text-sm outline-none focus:border-[rgb(var(--ac))] transition" />
             </div>
 
             <div className="flex flex-col gap-2">
-              {visible.length === 0 && <div className="text-sm text-[var(--dim3)] py-16 text-center">آهنگی نیست.</div>}
+              {visible.length === 0 && <div className="text-sm text-[var(--dim3)] py-16 text-center">No songs.</div>}
               {visible.map((t) => {
                 const active = cur === t.id;
                 return (
@@ -255,12 +255,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
                       {t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" loading="lazy" /> : <Tile t={t} className="text-xl" />}
                       {active && <span className="absolute inset-0 grid place-items-center bg-black/45"><Eq on={playing} /></span>}
                     </button>
-                    <button onClick={() => playTrack(t.id)} className="min-w-0 flex-1 text-right">
+                    <button onClick={() => playTrack(t.id)} className="min-w-0 flex-1 text-left">
                       <div className={`text-[15px] font-semibold truncate ${active ? "text-[rgb(var(--ac))]" : ""}`}>{t.title ?? "—"}</div>
                       <div className="text-xs text-[var(--dim)] truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</div>
                     </button>
-                    <button onClick={() => void rate(t, 1)} className={`p-2 transition ${t.rating > 0 ? "text-rose-500 scale-110" : "text-[var(--dim3)] hover:text-[var(--fg)]"}`} aria-label="لایک"><HeartIcon size={22} filled={t.rating > 0} /></button>
-                    <button onClick={() => setDetailId(t.id)} className="p-2 text-[var(--dim)] hover:text-[var(--fg)]" aria-label="جزئیات"><MoreIcon size={22} /></button>
+                    <button onClick={() => void rate(t, 1)} className={`p-2 transition ${t.rating > 0 ? "text-rose-500 scale-110" : "text-[var(--dim3)] hover:text-[var(--fg)]"}`} aria-label="Like"><HeartIcon size={22} filled={t.rating > 0} /></button>
+                    <button onClick={() => setDetailId(t.id)} className="p-2 text-[var(--dim)] hover:text-[var(--fg)]" aria-label="Details"><MoreIcon size={22} /></button>
                   </div>
                 );
               })}
@@ -277,17 +277,17 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {now && !full && (
         <div className="fixed bottom-3 inset-x-3 z-30 max-w-3xl mx-auto glass rounded-3xl border border-[var(--bd)] shadow-2xl overflow-hidden" style={{ boxShadow: "0 20px 50px -15px rgba(var(--ac),.45)" }}>
           <div className="flex items-center gap-3 p-2.5 pb-1">
-            <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-right">
+            <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-left">
               <span className="w-12 h-12 rounded-xl overflow-hidden bg-[var(--s2)] shrink-0">
                 {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <Tile t={now} />}
               </span>
               <span className="min-w-0"><span className="block text-sm font-semibold truncate">{now.title}</span><span className="block text-xs text-[var(--dim)] truncate">{now.artist}</span></span>
             </button>
-            <button onClick={() => void rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim3)]"}`} aria-label="لایک"><HeartIcon size={22} filled={now.rating > 0} /></button>
-            <button onClick={toggle} className="w-12 h-12 rounded-full grid place-items-center text-black shrink-0 active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "مکث" : "پخش"}>{playing ? <PauseIcon size={22} /> : <PlayIcon size={22} className="translate-x-[1px]" />}</button>
-            <button onClick={() => step(1)} className="p-2" aria-label="بعدی"><NextIcon size={24} /></button>
+            <button onClick={() => void rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim3)]"}`} aria-label="Like"><HeartIcon size={22} filled={now.rating > 0} /></button>
+            <button onClick={toggle} className="w-12 h-12 rounded-full grid place-items-center text-black shrink-0 active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={22} /> : <PlayIcon size={22} className="translate-x-[1px]" />}</button>
+            <button onClick={() => step(1)} className="p-2" aria-label="Next"><NextIcon size={24} /></button>
           </div>
-          <Spectrum audio={audio} playing={playing} bars={36} height={28} className="px-3 opacity-90" />
+          <Spectrum audio={audio} playing={playing} bars={40} height={26} rgb={theme === "dark" ? "255,255,255" : "24,24,32"} className="px-3" />
           <div className="flex items-center gap-2 px-3 pb-2" dir="ltr">
             <span className="text-[11px] tabular-nums w-9 text-right text-[var(--dim)]">{fmt(pos)}</span>
             <input type="range" min={0} max={dur || 1} step={1} value={Math.min(pos, dur || 1)} onChange={(e) => { if (audio.current) audio.current.currentTime = Number(e.target.value); }} className="flex-1 h-1.5" />
@@ -303,17 +303,19 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           <div className="fixed inset-0" style={{ background: "radial-gradient(800px 500px at 50% 0%, rgba(var(--ac),.35), transparent 60%), linear-gradient(180deg, color-mix(in srgb, var(--bg) 30%, transparent), var(--bg) 85%)" }} />
           <div className="relative max-w-md mx-auto px-6 pt-4 pb-10 min-h-full flex flex-col">
             <div className="flex items-center justify-between">
-              <button onClick={() => setFull(false)} className="p-2" aria-label="بستن"><ChevronDownIcon size={28} /></button>
-              <div className="text-xs tracking-widest text-[var(--dim)]">{mixOn ? "ترکیب هوشمند" : "در حال پخش"}</div>
-              <button onClick={() => setDetailId(now.id)} className="p-2" aria-label="جزئیات"><InfoIcon size={26} /></button>
+              <button onClick={() => setFull(false)} className="p-2" aria-label="Close"><ChevronDownIcon size={28} /></button>
+              <div className="text-xs tracking-widest text-[var(--dim)]">{mixOn ? "SMART MIX" : "NOW PLAYING"}</div>
+              <button onClick={() => setDetailId(now.id)} className="p-2" aria-label="Details"><InfoIcon size={26} /></button>
             </div>
 
-            <div className="mt-6 mx-auto w-full aspect-square max-w-[22rem] rounded-[2rem] overflow-hidden bg-[var(--s2)] transition-transform duration-500"
+            <div className="relative mt-6 mx-auto w-full aspect-square max-w-[22rem] rounded-[2rem] overflow-hidden bg-[var(--s2)] transition-transform duration-500"
               style={{ transform: playing ? "scale(1)" : "scale(.93)", boxShadow: "0 40px 80px -20px rgba(var(--ac),.6), 0 0 0 1px rgba(255,255,255,.06)" }}>
               {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <Tile t={now} className="text-8xl" />}
+              {/* neutral, translucent spectrum laid over the artwork's lower edge */}
+              <div className="absolute inset-x-0 bottom-0 h-24 pointer-events-none" style={{ background: "linear-gradient(0deg, rgba(0,0,0,.45), transparent)" }}>
+                <Spectrum audio={audio} playing={playing} bars={36} height={88} rgb="255,255,255" className="px-3" />
+              </div>
             </div>
-
-            <Spectrum audio={audio} playing={playing} bars={44} height={64} className="mt-5" />
 
             <div className="mt-4 flex items-center gap-3">
               <div className="min-w-0 flex-1">
@@ -321,8 +323,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
                 <div className="text-base text-[var(--dim2)] truncate">{now.artist}</div>
                 {now.album && <div className="text-xs text-[var(--dim3)] truncate mt-0.5">{now.album}</div>}
               </div>
-              <button onClick={() => void rate(now, 1)} className={`p-2 transition ${now.rating > 0 ? "text-rose-500 scale-110" : "text-[var(--dim3)]"}`} aria-label="لایک"><HeartIcon size={30} filled={now.rating > 0} /></button>
-              <button onClick={() => void rate(now, -1)} className={`p-2 transition ${now.rating < 0 ? "text-amber-400 scale-110" : "text-[var(--dim3)]"}`} aria-label="دیسلایک"><ThumbDownIcon size={28} filled={now.rating < 0} /></button>
+              <button onClick={() => void rate(now, 1)} className={`p-2 transition ${now.rating > 0 ? "text-rose-500 scale-110" : "text-[var(--dim3)]"}`} aria-label="Like"><HeartIcon size={30} filled={now.rating > 0} /></button>
+              <button onClick={() => void rate(now, -1)} className={`p-2 transition ${now.rating < 0 ? "text-amber-400 scale-110" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={28} filled={now.rating < 0} /></button>
             </div>
 
             <div className="mt-5" dir="ltr">
@@ -331,11 +333,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             </div>
 
             <div className="mt-4 flex items-center justify-between" dir="ltr">
-              <button onClick={() => setShuffle((s) => !s)} className={`p-2 ${shuffle ? "text-[rgb(var(--ac))]" : "text-[var(--dim3)]"}`} aria-label="شافل"><ShuffleIcon size={26} /></button>
-              <button onClick={() => step(-1)} className="p-2" aria-label="قبلی"><PrevIcon size={36} /></button>
-              <button onClick={toggle} className="w-20 h-20 rounded-full grid place-items-center text-black active:scale-95 transition" style={{ background: "rgb(var(--ac))", boxShadow: "0 12px 40px -8px rgb(var(--ac))" }} aria-label={playing ? "مکث" : "پخش"}>{playing ? <PauseIcon size={38} /> : <PlayIcon size={38} className="translate-x-[2px]" />}</button>
-              <button onClick={() => step(1)} className="p-2" aria-label="بعدی"><NextIcon size={36} /></button>
-              <button onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} className={`p-2 ${repeat !== "off" ? "text-[rgb(var(--ac))]" : "text-[var(--dim3)]"}`} aria-label="تکرار"><RepeatIcon size={26} one={repeat === "one"} /></button>
+              <button onClick={() => setShuffle((s) => !s)} className={`p-2 ${shuffle ? "text-[rgb(var(--ac))]" : "text-[var(--dim3)]"}`} aria-label="Shuffle"><ShuffleIcon size={26} /></button>
+              <button onClick={() => step(-1)} className="p-2" aria-label="Previous"><PrevIcon size={36} /></button>
+              <button onClick={toggle} className="w-20 h-20 rounded-full grid place-items-center text-black active:scale-95 transition" style={{ background: "rgb(var(--ac))", boxShadow: "0 12px 40px -8px rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={38} /> : <PlayIcon size={38} className="translate-x-[2px]" />}</button>
+              <button onClick={() => step(1)} className="p-2" aria-label="Next"><NextIcon size={36} /></button>
+              <button onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} className={`p-2 ${repeat !== "off" ? "text-[rgb(var(--ac))]" : "text-[var(--dim3)]"}`} aria-label="Repeat"><RepeatIcon size={26} one={repeat === "one"} /></button>
             </div>
 
             <div className="mt-5 flex items-center gap-3" dir="ltr">
@@ -346,9 +348,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
             {upNext.length > 0 && (
               <div className="mt-6">
-                <div className="text-xs text-[var(--dim)] mb-2">بعدی در صف</div>
+                <div className="text-xs text-[var(--dim)] mb-2">Up next</div>
                 {upNext.map((t) => (
-                  <button key={t.id} onClick={() => setCur(t.id)} className="w-full flex items-center gap-3 py-2 text-right border-b border-[var(--bd0)]">
+                  <button key={t.id} onClick={() => setCur(t.id)} className="w-full flex items-center gap-3 py-2 text-left border-b border-[var(--bd0)]">
                     <span className="w-10 h-10 rounded-lg overflow-hidden bg-[var(--s2)] shrink-0">{t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" /> : <Tile t={t} />}</span>
                     <span className="min-w-0 flex-1"><span className="block text-sm truncate">{t.title}</span><span className="block text-xs text-[var(--dim3)] truncate">{t.artist}</span></span>
                   </button>
@@ -358,7 +360,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           </div>
         </div>
       )}
-      {detailId != null && byId.get(detailId) && <TrackDetail dark t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => void rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
+      {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => void rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
     </div>
   );
 }
