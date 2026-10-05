@@ -170,7 +170,8 @@ export async function maybeReturnDownloadedMedia(
   );
   if (!downloader) return false;
   // "Track not found" and friends carry no media but END a library job.
-  if (msg.text && /track not found|not found|couldn'?t find|error/i.test(msg.text)) {
+  // "💾 File not found in storage. Downloading fast!" is progress chatter, NOT a failure.
+  if (msg.text && /track not found|couldn'?t find the track|no results found/i.test(msg.text)) {
     const { findPendingLinkJob: findJob, finishLinkJob: finishJob } = await import("../db");
     const j = await findJob(downloader.botId, msg.reply_to_message?.message_id ?? null);
     if (j?.musicTrackId != null) {
