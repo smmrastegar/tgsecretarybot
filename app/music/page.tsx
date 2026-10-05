@@ -5,6 +5,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
+import MusicStats from "@/components/music/Stats";
+import TrackDetail from "@/components/music/TrackDetail";
+import { useListenTracker } from "@/components/music/useListenTracker";
 
 // Personal player: the owner's library on this server. One page — add
 // Spotify links, watch downloads progress, play with queue / shuffle /
@@ -15,6 +18,7 @@ type Track = {
   durationS: number | null; hasCover: boolean; status: "queued" | "downloading" | "ready" | "failed";
   error: string | null; sizeBytes: number | null;
   rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
+  releaseDate: string | null; mime: string | null; readyAt: string | null; createdAt: string; listenSeconds: number;
 };
 type Playlist = { id: number; name: string; trackIds: number[] };
 
@@ -32,6 +36,9 @@ export default function MusicPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [playerUrl, setPlayerUrl] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const [showStats, setShowStats] = useState(false);
+  const tracker = useListenTracker("");
   const [queue, setQueue] = useState<number[]>([]);
   const [cur, setCur] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -139,10 +146,6 @@ export default function MusicPage() {
     setQueue(ids); setMixOn(true); history.current = []; setCur(ids[0]!);
   }, [readyVisible]);
 
-  const sendEvent = useCallback((id: number, event: "play" | "complete" | "skip") => {
-    void fetch(`/api/music/${id}/event`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event }) });
-  }, []);
-
   async function rate(t: Track, r: number) {
     const next = t.rating === r ? 0 : r;
     setTracks((all) => all.map((x) => (x.id === t.id ? { ...x, rating: next } : x)));
@@ -152,6 +155,7 @@ export default function MusicPage() {
 
   useEffect(() => {
     const a = audio.current; if (!a || cur == null) return;
+    tracker.begin(cur);
     a.src = `/api/music/stream/${cur}`; void a.play().catch(() => {});
     const t = byId.get(cur);
     if ("mediaSession" in navigator && t) {
@@ -160,7 +164,7 @@ export default function MusicPage() {
         artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}`, sizes: "640x640", type: "image/jpeg" }] : [],
       });
     }
-  }, [cur, byId]);
+  }, [cur, byId, tracker]);
 
   const step = useCallback((dir: 1 | -1, auto = false) => {
     if (cur == null || queue.length === 0) return;
@@ -172,13 +176,12 @@ export default function MusicPage() {
       if (back != null) { setCur(back); return; }
     }
     if (auto && repeat === "one") { if (a) { a.currentTime = 0; void a.play(); } return; }
-    if (!auto && dir === 1 && a && a.duration > 0 && a.currentTime / a.duration < 0.3) sendEvent(cur, "skip");
     const i = queue.indexOf(cur); let n = i + dir;
     if (n >= queue.length) { if (repeat === "all" || !auto) n = 0; else { setPlaying(false); return; } }
     if (n < 0) n = queue.length - 1;
     if (dir === 1) history.current.push(cur);
     setCur(queue[n]!);
-  }, [cur, queue, repeat, sendEvent]);
+  }, [cur, queue, repeat]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -287,6 +290,10 @@ export default function MusicPage() {
           <button onClick={() => void playerLink(false)} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">نمایش لینک</button>
         )}
       </Card>
+      <Card className="mb-4">
+        <button onClick={() => setShowStats((v) => !v)} className="text-sm font-medium w-full text-right">📊 آمار شنیدن {showStats ? "▴" : "▾"}</button>
+        {showStats && <div className="mt-3"><MusicStats tq="" /></div>}
+      </Card>
       {loadErr && <Card className="mb-3"><p className="text-sm text-rose-300">{loadErr}</p></Card>}
       <div className="flex gap-2 flex-wrap items-center mb-3">
         <button onClick={() => setView("all")} className={`text-xs px-3 py-1.5 rounded-md border ${view === "all" ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>همه ({tracks.length})</button>
@@ -312,7 +319,7 @@ export default function MusicPage() {
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium truncate">{t.title ?? t.spotifyUrl.split("/").pop()}</div>
               <div className="text-[11px] text-[var(--color-text-dim)] truncate">
-                {t.status === "ready" && `${t.artist ?? ""}${t.album ? ` · ${t.album}` : ""}${t.durationS ? ` · ${fmt(t.durationS)}` : ""}`}
+                {t.status === "ready" && `${t.artist ?? ""}${t.album ? ` · ${t.album}` : ""}${t.durationS ? ` · ${fmt(t.durationS)}` : ""}${t.playCount ? ` · ▶ ${t.playCount}` : ""}${t.skipCount ? ` · ⏭ ${t.skipCount}` : ""}`}
                 {t.status === "queued" && "⏳ در صف دانلود"}
                 {t.status === "downloading" && "⬇️ در حال دانلود از بات…"}
                 {t.status === "failed" && <span className="text-rose-300">❌ {t.error ?? "ناموفق"}</span>}
@@ -324,6 +331,7 @@ export default function MusicPage() {
                 {playlists.map((p) => <option key={p.id} value={p.id}>{p.trackIds.includes(t.id) ? "✓ " : ""}{p.name}</option>)}
               </select>
             )}
+            <button onClick={() => setDetailId(t.id)} title="جزئیات" className="text-sm px-1 opacity-60 hover:opacity-100">ℹ️</button>
             {t.status === "ready" && (
               <>
                 <button onClick={() => rate(t, 1)} title="لایک" className={`text-base px-1 ${t.rating > 0 ? "" : "opacity-30 hover:opacity-70"}`}>❤️</button>
@@ -336,14 +344,15 @@ export default function MusicPage() {
         ))}
       </div>
 
-      <audio ref={audio} onTimeUpdate={(e) => setPos(e.currentTarget.currentTime)} onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
-        onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { if (cur != null) sendEvent(cur, "complete"); step(1, true); }} />
+      <audio ref={audio} onTimeUpdate={(e) => { setPos(e.currentTarget.currentTime); tracker.tick(e.currentTarget.currentTime, e.currentTarget.duration); }} onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
+        onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { tracker.flush(true); step(1, true); }} />
       {now && (
         <div className="fixed bottom-16 md:bottom-0 inset-x-0 z-30 border-t border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur px-4 py-2">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-center gap-3">
               {now.hasCover ? <img src={`/api/music/cover/${now.id}`} alt="" className="w-11 h-11 rounded-md" /> : <span className="text-2xl">🎵</span>}
               <div className="min-w-0 flex-1"><div className="text-sm font-medium truncate">{now.title}</div><div className="text-[11px] text-[var(--color-text-dim)] truncate">{now.artist}</div></div>
+              <button className={btn} onClick={() => setDetailId(now.id)} title="جزئیات">ℹ️</button>
               <button className={`${btn} ${now.rating > 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, 1)} title="لایک">❤️</button>
               <button className={`${btn} ${now.rating < 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, -1)} title="دیسلایک (بعدی)">👎</button>
               <button className={btn} onClick={() => step(-1)}>⏮</button>
@@ -362,6 +371,7 @@ export default function MusicPage() {
           </div>
         </div>
       )}
+      {detailId != null && byId.get(detailId) && <TrackDetail t={byId.get(detailId)!} tq="" onClose={() => setDetailId(null)} />}
     </Shell>
   );
 }

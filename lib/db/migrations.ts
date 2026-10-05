@@ -195,6 +195,23 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS last_played_at TIMESTAMPTZ`;
     },
   },
+  {
+    // Listening log for the music analytics (seconds actually heard).
+    id: "2026-10-06-002-music-events",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_events (
+          id        BIGSERIAL PRIMARY KEY,
+          track_id  BIGINT NOT NULL REFERENCES music_tracks(id) ON DELETE CASCADE,
+          seconds   INT NOT NULL DEFAULT 0,
+          completed BOOLEAN NOT NULL DEFAULT FALSE,
+          skipped   BOOLEAN NOT NULL DEFAULT FALSE,
+          at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+      await q`CREATE INDEX IF NOT EXISTS music_events_track_idx ON music_events (track_id, at)`;
+      await q`CREATE INDEX IF NOT EXISTS music_events_at_idx ON music_events (at)`;
+    },
+  },
   // Example of the shape — the table it creates is the runner's own.
   {
     id: "2026-09-02-000-schema-migrations-bootstrap",

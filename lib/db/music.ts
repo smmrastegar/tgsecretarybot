@@ -22,11 +22,16 @@ export type MusicTrack = {
   playCount: number;
   skipCount: number;
   lastPlayedAt: string | null;
+  mime: string | null;
+  readyAt: string | null;
+  /** total seconds actually listened (music_events) */
+  listenSeconds: number;
 };
 
 const COLS = `id, spotify_id, spotify_url, title, artist, album, release_date, duration_s,
   (cover_path IS NOT NULL) AS has_cover, status, error, size_bytes, created_at::text AS created_at,
-  rating, play_count, skip_count, last_played_at::text AS last_played_at`;
+  rating, play_count, skip_count, last_played_at::text AS last_played_at, mime, ready_at::text AS ready_at,
+  (SELECT COALESCE(SUM(seconds), 0)::int FROM music_events e WHERE e.track_id = music_tracks.id) AS listen_s`;
 
 function map(r: Row): MusicTrack {
   const status = str(r, "status");
@@ -48,6 +53,9 @@ function map(r: Row): MusicTrack {
     playCount: num(r, "play_count"),
     skipCount: num(r, "skip_count"),
     lastPlayedAt: strOrNull(r, "last_played_at"),
+    mime: strOrNull(r, "mime"),
+    readyAt: strOrNull(r, "ready_at"),
+    listenSeconds: num(r, "listen_s"),
   };
 }
 
@@ -229,11 +237,62 @@ export async function rateMusicTrack(id: number, rating: number): Promise<void> 
   await q().query(`UPDATE music_tracks SET rating = $1 WHERE id = $2`, [r, id]);
 }
 
-/** event: "play" (started), "complete" (heard most of it) or "skip". */
-export async function recordMusicEvent(id: number, event: string): Promise<void> {
-  if (event === "skip") {
-    await q().query(`UPDATE music_tracks SET skip_count = skip_count + 1 WHERE id = $1`, [id]);
-  } else if (event === "complete" || event === "play") {
-    await q().query(`UPDATE music_tracks SET play_count = play_count + 1, last_played_at = NOW() WHERE id = $1`, [id]);
-  }
+
+/**
+ * One listening session of a track. A "play" is counted when at least
+ * 30 s were heard or the track completed; a "skip" when it was left
+ * before 30% without completing. Seconds are logged either way.
+ */
+export async function recordListen(id: number, seconds: number, durationS: number, completed: boolean): Promise<void> {
+  const sec = Math.max(0, Math.min(Math.round(seconds), 6 * 3600));
+  if (sec === 0 && !completed) return;
+  const skipped = !completed && durationS > 0 && sec / durationS < 0.3;
+  const counted = completed || sec >= 30;
+  await q().query(`INSERT INTO music_events (track_id, seconds, completed, skipped) VALUES ($1, $2, $3, $4)`, [id, sec, completed, skipped]);
+  if (counted) await q().query(`UPDATE music_tracks SET play_count = play_count + 1, last_played_at = NOW() WHERE id = $1`, [id]);
+  if (skipped) await q().query(`UPDATE music_tracks SET skip_count = skip_count + 1 WHERE id = $1`, [id]);
+}
+
+export type MusicStats = {
+  totals: { tracks: number; plays: number; listenSeconds: number; likes: number; dislikes: number; skips: number };
+  topTracks: Array<{ id: number; title: string | null; artist: string | null; plays: number; skips: number; listenSeconds: number; hasCover: boolean }>;
+  topArtists: Array<{ artist: string; plays: number; listenSeconds: number; tracks: number }>;
+  days: Array<{ day: string; minutes: number; plays: number }>;
+  recent: Array<{ id: number; title: string | null; artist: string | null; at: string; seconds: number; completed: boolean }>;
+};
+
+export async function getMusicStats(): Promise<MusicStats> {
+  await ensureSchema();
+  const one = async (sqlText: string): Promise<Row> => ((await q().query(sqlText)) as Row[])[0] ?? {};
+  const t = await one(`SELECT COUNT(*) FILTER (WHERE status='ready')::int AS tracks,
+      COALESCE(SUM(play_count),0)::int AS plays, COALESCE(SUM(skip_count),0)::int AS skips,
+      COUNT(*) FILTER (WHERE rating > 0)::int AS likes, COUNT(*) FILTER (WHERE rating < 0)::int AS dislikes
+    FROM music_tracks`);
+  const l = await one(`SELECT COALESCE(SUM(seconds),0)::int AS s FROM music_events`);
+  const top = (await q().query(`
+    SELECT t.id, t.title, t.artist, t.play_count, t.skip_count, (t.cover_path IS NOT NULL) AS has_cover,
+           COALESCE((SELECT SUM(seconds) FROM music_events e WHERE e.track_id = t.id), 0)::int AS listen_s
+      FROM music_tracks t WHERE t.play_count > 0 OR t.skip_count > 0
+     ORDER BY t.play_count DESC, listen_s DESC LIMIT 15`)) as Row[];
+  const artists = (await q().query(`
+    SELECT t.artist, SUM(t.play_count)::int AS plays, COUNT(*)::int AS tracks,
+           COALESCE(SUM((SELECT SUM(seconds) FROM music_events e WHERE e.track_id = t.id)), 0)::int AS listen_s
+      FROM music_tracks t WHERE t.artist IS NOT NULL AND t.play_count > 0
+     GROUP BY t.artist ORDER BY plays DESC, listen_s DESC LIMIT 10`)) as Row[];
+  const days = (await q().query(`
+    SELECT to_char(d::date, 'MM-DD') AS day,
+           COALESCE(SUM(e.seconds), 0)::int AS sec, COUNT(e.id) FILTER (WHERE e.completed OR e.seconds >= 30)::int AS plays
+      FROM generate_series((NOW() AT TIME ZONE 'Asia/Tehran')::date - 13, (NOW() AT TIME ZONE 'Asia/Tehran')::date, '1 day') d
+      LEFT JOIN music_events e ON (e.at AT TIME ZONE 'Asia/Tehran')::date = d::date
+     GROUP BY d ORDER BY d`)) as Row[];
+  const recent = (await q().query(`
+    SELECT t.id, t.title, t.artist, to_char(e.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at, e.seconds, e.completed
+      FROM music_events e JOIN music_tracks t ON t.id = e.track_id ORDER BY e.id DESC LIMIT 15`)) as Row[];
+  return {
+    totals: { tracks: num(t, "tracks"), plays: num(t, "plays"), listenSeconds: num(l, "s"), likes: num(t, "likes"), dislikes: num(t, "dislikes"), skips: num(t, "skips") },
+    topTracks: top.map((r) => ({ id: num(r, "id"), title: strOrNull(r, "title"), artist: strOrNull(r, "artist"), plays: num(r, "play_count"), skips: num(r, "skip_count"), listenSeconds: num(r, "listen_s"), hasCover: r.has_cover === true || r.has_cover === "t" })),
+    topArtists: artists.map((r) => ({ artist: str(r, "artist"), plays: num(r, "plays"), listenSeconds: num(r, "listen_s"), tracks: num(r, "tracks") })),
+    days: days.map((r) => ({ day: str(r, "day"), minutes: Math.round(num(r, "sec") / 60), plays: num(r, "plays") })),
+    recent: recent.map((r) => ({ id: num(r, "id"), title: strOrNull(r, "title"), artist: strOrNull(r, "artist"), at: str(r, "at"), seconds: num(r, "seconds"), completed: r.completed === true || r.completed === "t" })),
+  };
 }

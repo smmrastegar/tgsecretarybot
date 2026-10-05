@@ -2,6 +2,9 @@
 
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
+import MusicStats from "@/components/music/Stats";
+import TrackDetail from "@/components/music/TrackDetail";
+import { useListenTracker } from "@/components/music/useListenTracker";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // Private personal player. No dashboard, no login: the URL's 256-bit
@@ -11,6 +14,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 type Track = {
   id: number; title: string | null; artist: string | null; album: string | null; durationS: number | null;
   hasCover: boolean; status: string; rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
+  releaseDate: string | null; mime: string | null; readyAt: string | null; createdAt: string; listenSeconds: number; sizeBytes: number | null;
 };
 type Playlist = { id: number; name: string; trackIds: number[] };
 
@@ -33,6 +37,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [repeat, setRepeat] = useState<"off" | "all" | "one">("off");
   const [vol, setVol] = useState(1);
   const [mixOn, setMixOn] = useState(false);
+  const [tab, setTab] = useState<"songs" | "stats">("songs");
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const tracker = useListenTracker(tq);
   const audio = useRef<HTMLAudioElement>(null);
   const history = useRef<number[]>([]);
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
@@ -53,10 +60,6 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const s = q.trim().toLowerCase();
     return s ? list.filter((t) => `${t.title ?? ""} ${t.artist ?? ""} ${t.album ?? ""}`.toLowerCase().includes(s)) : list;
   }, [tracks, playlists, view, q, byId]);
-
-  const event = useCallback((id: number, e: "play" | "complete" | "skip") => {
-    void fetch(`/api/music/${id}/event?${tq}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: e }) });
-  }, [tq]);
 
   const playTrack = useCallback((id: number) => {
     const ids = visible.map((t) => t.id);
@@ -85,13 +88,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       if (back != null) { setCur(back); return; }
     }
     if (auto && repeat === "one") { if (a) { a.currentTime = 0; void a.play(); } return; }
-    if (!auto && dir === 1 && a && a.duration > 0 && a.currentTime / a.duration < 0.3) event(cur, "skip");
     const i = queue.indexOf(cur); let n = i + dir;
     if (n >= queue.length) { if (repeat === "all" || !auto) n = 0; else { setPlaying(false); return; } }
     if (n < 0) n = queue.length - 1;
     if (dir === 1) history.current.push(cur);
     setCur(queue[n]!);
-  }, [cur, queue, repeat, event]);
+  }, [cur, queue, repeat]);
 
   async function rate(t: Track, r: number) {
     const next = t.rating === r ? 0 : r;
@@ -102,6 +104,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
   useEffect(() => {
     const a = audio.current; if (!a || cur == null) return;
+    tracker.begin(cur);
     a.src = `/api/music/stream/${cur}?${tq}`; void a.play().catch(() => {});
     const t = byId.get(cur);
     if ("mediaSession" in navigator && t) {
@@ -110,7 +113,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}?${tq}`, sizes: "640x640", type: "image/jpeg" }] : [],
       });
     }
-  }, [cur, byId, tq]);
+  }, [cur, byId, tq, tracker]);
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.setActionHandler("nexttrack", () => step(1));
@@ -133,6 +136,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   return (
     <div dir="rtl" style={{ background: "#0b0b0f", color: "#e4e4e7", minHeight: "100dvh", fontFamily: "Vazirmatn, -apple-system, system-ui, sans-serif" }}>
       <div className="max-w-3xl mx-auto px-4 pt-5 pb-48">
+        <div className="flex gap-2 mb-3">
+          <button onClick={() => setTab("songs")} className={chip(tab === "songs")}>🎧 آهنگ‌ها</button>
+          <button onClick={() => setTab("stats")} className={chip(tab === "stats")}>📊 آمار</button>
+        </div>
+        {tab === "stats" ? <MusicStats tq={tq} /> : (<>
         <div className="flex items-center gap-2 mb-3 overflow-x-auto pb-1">
           <button onClick={() => setView("all")} className={chip(view === "all")}>همه ({tracks.length})</button>
           <button onClick={() => setView("liked")} className={chip(view === "liked")}>❤️ لایک‌ها ({tracks.filter((t) => t.rating > 0).length})</button>
@@ -152,24 +160,27 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               </button>
               <button onClick={() => playTrack(t.id)} className="min-w-0 flex-1 text-right">
                 <div className="text-sm font-medium truncate">{t.title ?? "—"}</div>
-                <div className="text-[11px] text-zinc-400 truncate">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</div>
+                <div className="text-[11px] text-zinc-400 truncate">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}{t.playCount ? ` · ▶ ${t.playCount}` : ""}{t.skipCount ? ` · ⏭ ${t.skipCount}` : ""}</div>
               </button>
+              <button onClick={() => setDetailId(t.id)} className="text-sm px-1 opacity-60 hover:opacity-100">ℹ️</button>
               <button onClick={() => void rate(t, 1)} className={`text-base px-1 ${t.rating > 0 ? "" : "opacity-30 hover:opacity-70"}`}>❤️</button>
               <button onClick={() => void rate(t, -1)} className={`text-base px-1 ${t.rating < 0 ? "" : "opacity-30 hover:opacity-70"}`}>👎</button>
             </div>
           ))}
         </div>
+        </>)}
       </div>
 
-      <audio ref={audio} onTimeUpdate={(e) => setPos(e.currentTarget.currentTime)} onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
+      <audio ref={audio} onTimeUpdate={(e) => { setPos(e.currentTarget.currentTime); tracker.tick(e.currentTarget.currentTime, e.currentTarget.duration); }} onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
         onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
-        onEnded={() => { if (cur != null) event(cur, "complete"); step(1, true); }} />
+        onEnded={() => { tracker.flush(true); step(1, true); }} />
       {now && (
         <div className="fixed bottom-0 inset-x-0 z-30 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur px-4 py-2">
           <div className="max-w-3xl mx-auto">
             <div className="flex items-center gap-3">
               {now.hasCover ? <img src={`/api/music/cover/${now.id}?${tq}`} alt="" className="w-11 h-11 rounded-lg" /> : <span className="text-2xl">🎵</span>}
               <div className="min-w-0 flex-1"><div className="text-sm font-medium truncate">{now.title}</div><div className="text-[11px] text-zinc-400 truncate">{now.artist}</div></div>
+              <button className={btn} onClick={() => setDetailId(now.id)}>ℹ️</button>
               <button className={`${btn} ${now.rating > 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, 1)}>❤️</button>
               <button className={`${btn} ${now.rating < 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, -1)}>👎</button>
               <button className={btn} onClick={() => step(-1)}>⏮</button>
@@ -188,6 +199,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           </div>
         </div>
       )}
+      {detailId != null && byId.get(detailId) && <TrackDetail dark t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} />}
     </div>
   );
 }
