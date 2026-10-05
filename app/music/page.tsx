@@ -207,6 +207,14 @@ export default function MusicPage() {
     const r = await fetch("/api/music/player-link", { method: rotate ? "POST" : "GET" });
     if (r.ok) setPlayerUrl(((await r.json()) as { url: string }).url);
   }
+  async function repair() {
+    if (!confirm("همه‌ی آهنگ‌ها از اسپاتیفای اصلاح می‌شوند (نام، خواننده، کاور) و فایل‌هایی که مال آهنگ دیگری هستند دوباره دانلود می‌شوند. ادامه؟")) return;
+    setMsg("در حال اصلاح کتابخانه… (ممکن است چند دقیقه طول بکشد)");
+    const r = await fetch("/api/music/repair", { method: "POST" });
+    const j = (await r.json()) as { checked?: number; coversSaved?: number; wrongAudio?: number; requeued?: number; error?: string };
+    setMsg(r.ok ? `${j.checked} آهنگ بررسی شد · ${j.coversSaved} کاور · ${j.wrongAudio} فایل اشتباه به صف دانلود برگشت` : `خطا: ${j.error}`);
+    void load();
+  }
   async function retryAll() {
     const r = await fetch("/api/music/retry-failed", { method: "POST" });
     const j = (await r.json()) as { requeued: number };
@@ -324,6 +332,7 @@ export default function MusicPage() {
         <button onClick={newPlaylist} className="text-xs px-3 py-1.5 rounded-md border border-dashed border-[var(--color-border)]">+ پلی‌لیست خالی</button>
         <button onClick={() => void createPlaylistWith(readyVisible.map((t) => t.id), view === "all" ? "همه" : view === "liked" ? "لایک‌های من" : playlists.find((p) => p.id === view)?.name ?? "")} disabled={readyVisible.length === 0} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-40">+ پلی‌لیست از همین نما ({readyVisible.length})</button>
         <button onClick={() => { setSelecting((v) => !v); setSel(new Set()); }} className={`text-xs px-3 py-1.5 rounded-md border ${selecting ? "border-amber-400 text-amber-200" : "border-[var(--color-border)]"}`}>☑ انتخاب چندتایی</button>
+        <button onClick={repair} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">🛠 تعمیر کتابخانه</button>
         {tracks.some((t) => t.status === "failed") && (
           <button onClick={retryAll} className="text-xs px-3 py-1.5 rounded-md border border-amber-500/50 text-amber-200">↻ همه‌ی ناموفق‌ها ({tracks.filter((t) => t.status === "failed").length})</button>
         )}
