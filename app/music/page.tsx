@@ -371,7 +371,7 @@ export default function MusicPage() {
           </div>
         </div>
       )}
-      {detailId != null && byId.get(detailId) && <TrackDetail t={byId.get(detailId)!} tq="" onClose={() => setDetailId(null)} />}
+      {detailId != null && byId.get(detailId) && <TrackDetail t={byId.get(detailId)!} tq="" onClose={() => setDetailId(null)} onRate={(r) => void rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
     </Shell>
   );
 }

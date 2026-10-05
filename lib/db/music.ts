@@ -137,15 +137,19 @@ export async function nextQueuedTrack(): Promise<MusicTrack | null> {
   return rows[0] ? map(rows[0]) : null;
 }
 
-export async function activeMusicJob(): Promise<{ jobId: number; trackId: number; createdAt: string } | null> {
+export async function activeMusicJob(): Promise<{ jobId: number; trackId: number; ageSeconds: number } | null> {
   if (!hasDb()) return null;
   await ensureSchema();
+  // Age is computed in SQL: parsing the driver's "…+00" timestamp text in
+  // JS gave NaN, which made every in-flight download look stale and was
+  // killing the queue's jobs within a minute.
   const rows = (await q().query(
-    `SELECT id, music_track_id, created_at::text AS created_at FROM link_download_jobs
+    `SELECT id, music_track_id, EXTRACT(EPOCH FROM (NOW() - created_at))::int AS age_s
+       FROM link_download_jobs
       WHERE music_track_id IS NOT NULL AND status = 'pending' ORDER BY id ASC LIMIT 1`,
   )) as Row[];
   const r = rows[0];
-  return r ? { jobId: num(r, "id"), trackId: num(r, "music_track_id"), createdAt: str(r, "created_at") } : null;
+  return r ? { jobId: num(r, "id"), trackId: num(r, "music_track_id"), ageSeconds: num(r, "age_s") } : null;
 }
 
 export async function attachMusicJob(jobId: number, trackId: number): Promise<void> {
@@ -294,5 +298,34 @@ export async function getMusicStats(): Promise<MusicStats> {
     topArtists: artists.map((r) => ({ artist: str(r, "artist"), plays: num(r, "plays"), listenSeconds: num(r, "listen_s"), tracks: num(r, "tracks") })),
     days: days.map((r) => ({ day: str(r, "day"), minutes: Math.round(num(r, "sec") / 60), plays: num(r, "plays") })),
     recent: recent.map((r) => ({ id: num(r, "id"), title: strOrNull(r, "title"), artist: strOrNull(r, "artist"), at: str(r, "at"), seconds: num(r, "seconds"), completed: r.completed === true || r.completed === "t" })),
+  };
+}
+
+export type TrackHistory = {
+  days: Array<{ day: string; minutes: number; plays: number }>;
+  sessions: Array<{ at: string; seconds: number; completed: boolean; skipped: boolean }>;
+  firstPlayedAt: string | null;
+  completions: number;
+};
+
+export async function getTrackHistory(id: number): Promise<TrackHistory> {
+  await ensureSchema();
+  const days = (await q().query(
+    `SELECT to_char(d::date, 'MM-DD') AS day, COALESCE(SUM(e.seconds), 0)::int AS sec,
+            COUNT(e.id) FILTER (WHERE e.completed OR e.seconds >= 30)::int AS plays
+       FROM generate_series((NOW() AT TIME ZONE 'Asia/Tehran')::date - 13, (NOW() AT TIME ZONE 'Asia/Tehran')::date, '1 day') d
+       LEFT JOIN music_events e ON e.track_id = $1 AND (e.at AT TIME ZONE 'Asia/Tehran')::date = d::date
+      GROUP BY d ORDER BY d`, [id])) as Row[];
+  const sessions = (await q().query(
+    `SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at, seconds, completed, skipped
+       FROM music_events WHERE track_id = $1 ORDER BY id DESC LIMIT 12`, [id])) as Row[];
+  const agg = ((await q().query(
+    `SELECT to_char(MIN(at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS first, COUNT(*) FILTER (WHERE completed)::int AS done
+       FROM music_events WHERE track_id = $1`, [id])) as Row[])[0] ?? {};
+  return {
+    days: days.map((r) => ({ day: str(r, "day"), minutes: Math.round(num(r, "sec") / 60 * 10) / 10, plays: num(r, "plays") })),
+    sessions: sessions.map((r) => ({ at: str(r, "at"), seconds: num(r, "seconds"), completed: r.completed === true || r.completed === "t", skipped: r.skipped === true || r.skipped === "t" })),
+    firstPlayedAt: strOrNull(agg, "first"),
+    completions: num(agg, "done"),
   };
 }

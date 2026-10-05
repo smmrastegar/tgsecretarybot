@@ -2,14 +2,14 @@
 
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MusicStats from "@/components/music/Stats";
 import TrackDetail from "@/components/music/TrackDetail";
 import { useListenTracker } from "@/components/music/useListenTracker";
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-// Private personal player. No dashboard, no login: the URL's 256-bit
-// token is the credential. Play, queue, smart mix, like / dislike,
-// previous / next, seek, shuffle, repeat, volume, lock-screen controls.
+// Private personal player. The URL's 256-bit token is the credential.
+// Mobile-first: a glass mini player that expands into a full "now
+// playing" screen with big artwork tinted by the cover's own colour.
 
 type Track = {
   id: number; title: string | null; artist: string | null; album: string | null; durationS: number | null;
@@ -19,6 +19,17 @@ type Track = {
 type Playlist = { id: number; name: string; trackIds: number[] };
 
 const fmt = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
+const DEFAULT_ACCENT = "29,185,84";
+
+function Eq({ on }: { on: boolean }) {
+  return (
+    <span className="inline-flex items-end gap-[2px] h-4 w-4" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <span key={i} className="w-[3px] rounded-sm bg-[rgb(var(--ac))]" style={{ height: on ? undefined : "30%", animation: on ? `eq 0.9s ${i * 0.18}s ease-in-out infinite` : undefined }} />
+      ))}
+    </span>
+  );
+}
 
 export default function PlayerPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
@@ -39,9 +50,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [mixOn, setMixOn] = useState(false);
   const [tab, setTab] = useState<"songs" | "stats">("songs");
   const [detailId, setDetailId] = useState<number | null>(null);
-  const tracker = useListenTracker(tq);
+  const [full, setFull] = useState(false);
+  const [accent, setAccent] = useState(DEFAULT_ACCENT);
   const audio = useRef<HTMLAudioElement>(null);
   const history = useRef<number[]>([]);
+  const tracker = useListenTracker(tq);
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
 
   const load = useCallback(async () => {
@@ -102,6 +115,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     if (next < 0 && cur === t.id) step(1);
   }
 
+  // Load + media session + accent colour from the cover.
   useEffect(() => {
     const a = audio.current; if (!a || cur == null) return;
     tracker.begin(cur);
@@ -113,7 +127,32 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}?${tq}`, sizes: "640x640", type: "image/jpeg" }] : [],
       });
     }
+    setAccent(DEFAULT_ACCENT);
+    if (t?.hasCover) {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const c = document.createElement("canvas"); c.width = c.height = 8;
+          const x = c.getContext("2d"); if (!x) return;
+          x.drawImage(img, 0, 0, 8, 8);
+          const d = x.getImageData(0, 0, 8, 8).data;
+          let best = [29, 185, 84], score = -1;
+          for (let i = 0; i < d.length; i += 4) {
+            const r = d[i]!, g = d[i + 1]!, b = d[i + 2]!;
+            const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+            const sat = mx === 0 ? 0 : (mx - mn) / mx, val = mx / 255;
+            const sc = sat * (0.4 + val) * (val > 0.25 ? 1 : 0.3);
+            if (sc > score) { score = sc; best = [r, g, b]; }
+          }
+          // keep it bright enough to read on a dark background
+          const k = Math.max(1, 150 / Math.max(...best));
+          setAccent(best.map((v) => Math.min(255, Math.round(v * k))).join(","));
+        } catch { /* cross-origin or canvas blocked: keep default */ }
+      };
+      img.src = `/api/music/cover/${t.id}?${tq}`;
+    }
   }, [cur, byId, tq, tracker]);
+
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.setActionHandler("nexttrack", () => step(1));
@@ -126,80 +165,165 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const upNext = useMemo(() => {
     if (cur == null) return [];
     const i = queue.indexOf(cur);
-    return queue.slice(i + 1, i + 4).map((id) => byId.get(id)).filter((t): t is Track => !!t);
+    return queue.slice(i + 1, i + 6).map((id) => byId.get(id)).filter((t): t is Track => !!t);
   }, [cur, queue, byId]);
-  const chip = (on: boolean) => `text-xs px-3 py-1.5 rounded-full border whitespace-nowrap ${on ? "border-emerald-400 text-emerald-300 bg-emerald-400/10" : "border-zinc-700 text-zinc-300"}`;
-  const btn = "px-3 py-2 rounded-xl border border-zinc-700 hover:bg-zinc-800 text-lg";
+  const toggle = () => (playing ? audio.current?.pause() : void audio.current?.play());
+  const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
+  const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
 
-  if (denied) return <div dir="rtl" style={{ background: "#0b0b0f", color: "#71717a", minHeight: "100dvh" }} className="grid place-items-center text-sm">این لینک معتبر نیست.</div>;
+  if (denied) return <div dir="rtl" style={{ background: "#07070b", color: "#71717a", minHeight: "100dvh" }} className="grid place-items-center text-sm">این لینک معتبر نیست.</div>;
+
+  const pill = (on: boolean) => `text-[13px] px-4 py-2 rounded-full whitespace-nowrap transition ${on ? "bg-[rgb(var(--ac))] text-black font-semibold shadow-[0_0_24px_-4px_rgb(var(--ac))]" : "bg-white/5 text-zinc-300 hover:bg-white/10"}`;
 
   return (
-    <div dir="rtl" style={{ background: "#0b0b0f", color: "#e4e4e7", minHeight: "100dvh", fontFamily: "Vazirmatn, -apple-system, system-ui, sans-serif" }}>
-      <div className="max-w-3xl mx-auto px-4 pt-5 pb-48">
-        <div className="flex gap-2 mb-3">
-          <button onClick={() => setTab("songs")} className={chip(tab === "songs")}>🎧 آهنگ‌ها</button>
-          <button onClick={() => setTab("stats")} className={chip(tab === "stats")}>📊 آمار</button>
-        </div>
-        {tab === "stats" ? <MusicStats tq={tq} /> : (<>
-        <div className="flex items-center gap-2 mb-3 overflow-x-auto pb-1">
-          <button onClick={() => setView("all")} className={chip(view === "all")}>همه ({tracks.length})</button>
-          <button onClick={() => setView("liked")} className={chip(view === "liked")}>❤️ لایک‌ها ({tracks.filter((t) => t.rating > 0).length})</button>
-          {playlists.map((p) => <button key={p.id} onClick={() => setView(p.id)} className={chip(view === p.id)}>{p.name}</button>)}
-        </div>
-        <div className="flex gap-2 mb-3 flex-wrap">
-          <button onClick={() => visible[0] && playTrack(visible[0].id)} disabled={!visible.length} className="px-4 py-2 rounded-xl bg-emerald-500 text-black font-medium text-sm disabled:opacity-40">▶ پخش همه</button>
-          <button onClick={smartMix} disabled={!visible.length} className={`px-4 py-2 rounded-xl border text-sm disabled:opacity-40 ${mixOn ? "border-amber-400 text-amber-200" : "border-zinc-700"}`}>🎲 ترکیب هوشمند</button>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجو…" className="mr-auto text-sm bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 w-40" />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          {visible.length === 0 && <div className="text-sm text-zinc-500 py-10 text-center">آهنگی نیست.</div>}
-          {visible.map((t) => (
-            <div key={t.id} className={`flex items-center gap-3 p-2 rounded-2xl border ${t.rating < 0 ? "opacity-40" : ""} ${cur === t.id ? "border-emerald-400 bg-emerald-400/10" : "border-zinc-800 bg-zinc-900/60"}`}>
-              <button onClick={() => playTrack(t.id)} className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-800 shrink-0 grid place-items-center">
-                {t.hasCover ? <img src={`/api/music/cover/${t.id}?${tq}`} alt="" className="w-full h-full object-cover" /> : <span>🎵</span>}
-              </button>
-              <button onClick={() => playTrack(t.id)} className="min-w-0 flex-1 text-right">
-                <div className="text-sm font-medium truncate">{t.title ?? "—"}</div>
-                <div className="text-[11px] text-zinc-400 truncate">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}{t.playCount ? ` · ▶ ${t.playCount}` : ""}{t.skipCount ? ` · ⏭ ${t.skipCount}` : ""}</div>
-              </button>
-              <button onClick={() => setDetailId(t.id)} className="text-sm px-1 opacity-60 hover:opacity-100">ℹ️</button>
-              <button onClick={() => void rate(t, 1)} className={`text-base px-1 ${t.rating > 0 ? "" : "opacity-30 hover:opacity-70"}`}>❤️</button>
-              <button onClick={() => void rate(t, -1)} className={`text-base px-1 ${t.rating < 0 ? "" : "opacity-30 hover:opacity-70"}`}>👎</button>
-            </div>
-          ))}
-        </div>
-        </>)}
+    <div dir="rtl" style={{ ["--ac" as string]: accent, background: "#07070b", color: "#ececf1", minHeight: "100dvh", fontFamily: "Vazirmatn, -apple-system, system-ui, sans-serif" }} className="relative overflow-x-hidden">
+      <style>{`
+        @keyframes eq { 0%,100% { height: 25% } 50% { height: 100% } }
+        @keyframes spin-slow { to { transform: rotate(360deg) } }
+        @keyframes rise { from { transform: translateY(100%) } to { transform: none } }
+        input[type=range] { accent-color: rgb(var(--ac)); }
+        .glass { background: rgba(18,18,24,.72); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4); }
+      `}</style>
+
+      {/* ambient background from the playing cover */}
+      <div className="fixed inset-0 pointer-events-none -z-0">
+        {now?.hasCover && <img src={cover(now)} alt="" className="absolute inset-0 w-full h-full object-cover opacity-30 blur-3xl scale-125 transition-opacity duration-700" />}
+        <div className="absolute inset-0" style={{ background: "radial-gradient(900px 500px at 80% -10%, rgba(var(--ac),.28), transparent 60%), linear-gradient(180deg, rgba(7,7,11,.55), #07070b 70%)" }} />
       </div>
 
-      <audio ref={audio} onTimeUpdate={(e) => { setPos(e.currentTarget.currentTime); tracker.tick(e.currentTarget.currentTime, e.currentTarget.duration); }} onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
-        onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+      <div className="relative max-w-3xl mx-auto px-4 pt-6 pb-40">
+        <header className="flex items-center justify-between mb-5">
+          <h1 className="text-2xl font-extrabold tracking-tight" style={{ textShadow: "0 0 30px rgba(var(--ac),.5)" }}>🎧 موزیک من</h1>
+          <div className="flex gap-1 p-1 rounded-full bg-white/5">
+            <button onClick={() => setTab("songs")} className={pill(tab === "songs")}>آهنگ‌ها</button>
+            <button onClick={() => setTab("stats")} className={pill(tab === "stats")}>آمار</button>
+          </div>
+        </header>
+
+        {tab === "stats" ? <MusicStats tq={tq} /> : (
+          <>
+            <div className="flex gap-3 mb-5">
+              <button onClick={() => visible[0] && playTrack(visible[0].id)} disabled={!visible.length} className="flex-1 py-3.5 rounded-2xl font-bold text-black disabled:opacity-40 active:scale-[.98] transition" style={{ background: "linear-gradient(135deg, rgb(var(--ac)), rgba(var(--ac),.65))", boxShadow: "0 10px 30px -10px rgb(var(--ac))" }}>▶ پخش همه</button>
+              <button onClick={smartMix} disabled={!visible.length} className={`flex-1 py-3.5 rounded-2xl font-bold border active:scale-[.98] transition disabled:opacity-40 ${mixOn ? "border-[rgb(var(--ac))] text-[rgb(var(--ac))] bg-[rgba(var(--ac),.1)]" : "border-white/15 bg-white/5"}`}>🎲 ترکیب هوشمند</button>
+            </div>
+
+            <div className="flex gap-2 overflow-x-auto pb-2 mb-3 -mx-4 px-4 [scrollbar-width:none]">
+              <button onClick={() => setView("all")} className={pill(view === "all")}>همه · {tracks.length}</button>
+              <button onClick={() => setView("liked")} className={pill(view === "liked")}>❤️ لایک‌ها · {tracks.filter((t) => t.rating > 0).length}</button>
+              {playlists.map((p) => <button key={p.id} onClick={() => setView(p.id)} className={pill(view === p.id)}>{p.name}</button>)}
+            </div>
+
+            <div className="relative mb-4">
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجوی آهنگ، خواننده، آلبوم…" className="w-full rounded-2xl bg-white/5 border border-white/10 px-4 py-3 text-sm outline-none focus:border-[rgb(var(--ac))] transition" />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {visible.length === 0 && <div className="text-sm text-zinc-500 py-16 text-center">آهنگی نیست.</div>}
+              {visible.map((t) => {
+                const active = cur === t.id;
+                return (
+                  <div key={t.id} className={`group flex items-center gap-3 p-2.5 rounded-2xl border transition ${t.rating < 0 ? "opacity-40" : ""} ${active ? "border-[rgba(var(--ac),.6)] bg-[rgba(var(--ac),.12)]" : "border-white/5 bg-white/[.03] hover:bg-white/[.07]"}`}>
+                    <button onClick={() => playTrack(t.id)} className="relative w-14 h-14 rounded-xl overflow-hidden bg-zinc-800 shrink-0 shadow-lg">
+                      {t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full text-2xl">🎵</span>}
+                      {active && <span className="absolute inset-0 grid place-items-center bg-black/45"><Eq on={playing} /></span>}
+                    </button>
+                    <button onClick={() => playTrack(t.id)} className="min-w-0 flex-1 text-right">
+                      <div className={`text-[15px] font-semibold truncate ${active ? "text-[rgb(var(--ac))]" : ""}`}>{t.title ?? "—"}</div>
+                      <div className="text-xs text-zinc-400 truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</div>
+                    </button>
+                    <button onClick={() => void rate(t, 1)} className={`text-xl px-1.5 transition ${t.rating > 0 ? "scale-110" : "opacity-25 hover:opacity-70"}`} aria-label="لایک">❤️</button>
+                    <button onClick={() => setDetailId(t.id)} className="text-lg px-1.5 text-zinc-400 hover:text-white" aria-label="جزئیات">⋯</button>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+
+      <audio ref={audio} onTimeUpdate={(e) => { setPos(e.currentTarget.currentTime); tracker.tick(e.currentTarget.currentTime, e.currentTarget.duration); }}
+        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
         onEnded={() => { tracker.flush(true); step(1, true); }} />
-      {now && (
-        <div className="fixed bottom-0 inset-x-0 z-30 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur px-4 py-2">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center gap-3">
-              {now.hasCover ? <img src={`/api/music/cover/${now.id}?${tq}`} alt="" className="w-11 h-11 rounded-lg" /> : <span className="text-2xl">🎵</span>}
-              <div className="min-w-0 flex-1"><div className="text-sm font-medium truncate">{now.title}</div><div className="text-[11px] text-zinc-400 truncate">{now.artist}</div></div>
-              <button className={btn} onClick={() => setDetailId(now.id)}>ℹ️</button>
-              <button className={`${btn} ${now.rating > 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, 1)}>❤️</button>
-              <button className={`${btn} ${now.rating < 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, -1)}>👎</button>
-              <button className={btn} onClick={() => step(-1)}>⏮</button>
-              <button className={btn} onClick={() => (playing ? audio.current?.pause() : void audio.current?.play())}>{playing ? "⏸" : "▶️"}</button>
-              <button className={btn} onClick={() => step(1)}>⏭</button>
-            </div>
-            {upNext.length > 0 && <div className="text-[11px] text-zinc-500 truncate mt-0.5">بعدی: {upNext.map((t) => t.title ?? "—").join(" · ")}</div>}
-            <div className="flex items-center gap-2 mt-1" dir="ltr">
-              <span className="text-[11px] w-9 text-right">{fmt(pos)}</span>
-              <input type="range" min={0} max={dur || 1} step={1} value={pos} onChange={(e) => { if (audio.current) audio.current.currentTime = Number(e.target.value); }} className="flex-1" />
-              <span className="text-[11px] w-9">{fmt(dur)}</span>
-              <button className={`text-sm ${shuffle ? "text-amber-300" : "text-zinc-500"}`} onClick={() => setShuffle((s) => !s)}>🔀</button>
-              <button className={`text-sm ${repeat !== "off" ? "text-amber-300" : "text-zinc-500"}`} onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))}>{repeat === "one" ? "🔂" : "🔁"}</button>
-              <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => { const v = Number(e.target.value); setVol(v); if (audio.current) audio.current.volume = v; }} className="w-20" />
-            </div>
+
+      {/* mini player */}
+      {now && !full && (
+        <div className="fixed bottom-3 inset-x-3 z-30 max-w-3xl mx-auto glass rounded-3xl border border-white/10 shadow-2xl overflow-hidden" style={{ boxShadow: "0 20px 50px -15px rgba(var(--ac),.45)" }}>
+          <div className="h-[3px] bg-white/10"><div className="h-full bg-[rgb(var(--ac))] transition-[width] duration-300" style={{ width: `${pct}%` }} /></div>
+          <div className="flex items-center gap-3 p-2.5">
+            <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-right">
+              <span className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-800 shrink-0" style={{ animation: playing ? undefined : undefined }}>
+                {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full text-xl">🎵</span>}
+              </span>
+              <span className="min-w-0"><span className="block text-sm font-semibold truncate">{now.title}</span><span className="block text-xs text-zinc-400 truncate">{now.artist}</span></span>
+            </button>
+            <button onClick={() => void rate(now, 1)} className={`text-xl px-1 ${now.rating > 0 ? "" : "opacity-30"}`}>❤️</button>
+            <button onClick={toggle} className="w-12 h-12 rounded-full grid place-items-center text-xl text-black font-bold shrink-0" style={{ background: "rgb(var(--ac))" }}>{playing ? "⏸" : "▶"}</button>
+            <button onClick={() => step(1)} className="text-xl px-1.5">⏭</button>
           </div>
         </div>
       )}
-      {detailId != null && byId.get(detailId) && <TrackDetail dark t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} />}
+
+      {/* full now-playing */}
+      {now && full && (
+        <div className="fixed inset-0 z-40 overflow-y-auto" style={{ animation: "rise .28s ease-out", background: "#07070b" }}>
+          {now.hasCover && <img src={cover(now)} alt="" className="fixed inset-0 w-full h-full object-cover opacity-35 blur-3xl scale-125" />}
+          <div className="fixed inset-0" style={{ background: "radial-gradient(800px 500px at 50% 0%, rgba(var(--ac),.35), transparent 60%), linear-gradient(180deg, rgba(7,7,11,.3), #07070b 85%)" }} />
+          <div className="relative max-w-md mx-auto px-6 pt-4 pb-10 min-h-full flex flex-col">
+            <div className="flex items-center justify-between">
+              <button onClick={() => setFull(false)} className="text-2xl px-2 py-1" aria-label="بستن">⌄</button>
+              <div className="text-xs tracking-widest text-zinc-400">{mixOn ? "ترکیب هوشمند" : "در حال پخش"}</div>
+              <button onClick={() => setDetailId(now.id)} className="text-2xl px-2 py-1" aria-label="جزئیات">ⓘ</button>
+            </div>
+
+            <div className="mt-6 mx-auto w-full aspect-square max-w-[22rem] rounded-[2rem] overflow-hidden bg-zinc-800 transition-transform duration-500"
+              style={{ transform: playing ? "scale(1)" : "scale(.93)", boxShadow: "0 40px 80px -20px rgba(var(--ac),.6), 0 0 0 1px rgba(255,255,255,.06)" }}>
+              {now.hasCover ? <img src={cover(now)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full text-7xl">🎵</span>}
+            </div>
+
+            <div className="mt-7 flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-2xl font-extrabold truncate">{now.title}</div>
+                <div className="text-base text-zinc-300 truncate">{now.artist}</div>
+                {now.album && <div className="text-xs text-zinc-500 truncate mt-0.5">{now.album}</div>}
+              </div>
+              <button onClick={() => void rate(now, 1)} className={`text-3xl transition ${now.rating > 0 ? "scale-110" : "opacity-30"}`} aria-label="لایک">❤️</button>
+              <button onClick={() => void rate(now, -1)} className={`text-3xl transition ${now.rating < 0 ? "scale-110" : "opacity-30"}`} aria-label="دیسلایک">👎</button>
+            </div>
+
+            <div className="mt-5" dir="ltr">
+              <input type="range" min={0} max={dur || 1} step={1} value={pos} onChange={(e) => { if (audio.current) audio.current.currentTime = Number(e.target.value); }} className="w-full h-2" />
+              <div className="flex justify-between text-xs text-zinc-400 mt-1"><span>{fmt(pos)}</span><span>{fmt(dur)}</span></div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between" dir="ltr">
+              <button onClick={() => setShuffle((s) => !s)} className={`text-2xl ${shuffle ? "text-[rgb(var(--ac))]" : "text-zinc-500"}`}>🔀</button>
+              <button onClick={() => step(-1)} className="text-4xl">⏮</button>
+              <button onClick={toggle} className="w-20 h-20 rounded-full grid place-items-center text-4xl text-black active:scale-95 transition" style={{ background: "rgb(var(--ac))", boxShadow: "0 12px 40px -8px rgb(var(--ac))" }}>{playing ? "⏸" : "▶"}</button>
+              <button onClick={() => step(1)} className="text-4xl">⏭</button>
+              <button onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} className={`text-2xl ${repeat !== "off" ? "text-[rgb(var(--ac))]" : "text-zinc-500"}`}>{repeat === "one" ? "🔂" : "🔁"}</button>
+            </div>
+
+            <div className="mt-5 flex items-center gap-3" dir="ltr">
+              <span className="text-lg">🔈</span>
+              <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => { const v = Number(e.target.value); setVol(v); if (audio.current) audio.current.volume = v; }} className="flex-1" />
+              <span className="text-lg">🔊</span>
+            </div>
+
+            {upNext.length > 0 && (
+              <div className="mt-6">
+                <div className="text-xs text-zinc-400 mb-2">بعدی در صف</div>
+                {upNext.map((t) => (
+                  <button key={t.id} onClick={() => setCur(t.id)} className="w-full flex items-center gap-3 py-2 text-right border-b border-white/5">
+                    <span className="w-10 h-10 rounded-lg overflow-hidden bg-zinc-800 shrink-0">{t.hasCover ? <img src={cover(t)} alt="" className="w-full h-full object-cover" /> : <span className="grid place-items-center w-full h-full">🎵</span>}</span>
+                    <span className="min-w-0 flex-1"><span className="block text-sm truncate">{t.title}</span><span className="block text-xs text-zinc-500 truncate">{t.artist}</span></span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {detailId != null && byId.get(detailId) && <TrackDetail dark t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => void rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
     </div>
   );
 }

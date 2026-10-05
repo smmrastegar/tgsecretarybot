@@ -111,8 +111,7 @@ export async function removeMusicFiles(paths: Array<string | null>): Promise<voi
 export async function kickMusicQueue(): Promise<{ started: number | null }> {
   const active = await activeMusicJob();
   if (active) {
-    const age = Date.now() - Date.parse(active.createdAt.replace(" ", "T"));
-    if (age < STALE_MS) return { started: null };
+    if (active.ageSeconds * 1000 < STALE_MS) return { started: null };
     // Give up on a stuck job so the queue moves on.
     const { finishLinkJob } = await import("./db");
     await finishLinkJob(active.jobId, 0);

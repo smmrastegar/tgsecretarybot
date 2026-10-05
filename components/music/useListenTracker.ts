@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 // Measures how long a track is actually heard (forward playback only,
 // seeks and pauses don't count) and reports one session per track to
@@ -35,5 +35,8 @@ export function useListenTracker(tq: string) {
     window.addEventListener("pagehide", h);
     return () => window.removeEventListener("pagehide", h);
   }, [flush]);
-  return { begin, tick, flush };
+  // Stable identity: consumers list the tracker in effect dependencies,
+  // and a fresh object each render re-ran those effects (restarting the
+  // audio every timeupdate).
+  return useMemo(() => ({ begin, tick, flush }), [begin, tick, flush]);
 }
