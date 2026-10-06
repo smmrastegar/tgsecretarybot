@@ -154,6 +154,16 @@ cron_selfheal() {
 }
 cron_selfheal >>"$LOG" 2>&1 || true
 
+# Self-heal the spotDL fallback downloader (installed in the background
+# so a slow pip never delays a deploy; lock fd 9 is closed for the child).
+spotdl_selfheal() {
+  local st=/var/lib/tgsb-tools/spotdl.status
+  grep -q " OK" "$st" 2>/dev/null && return 0
+  [[ -f "$st" && $(( $(date +%s) - $(stat -c %Y "$st") )) -lt 3600 ]] && return 0
+  nohup flock -n /run/tgsb-spotdl.lock bash -c "bash '$APP_DIR/deploy/spotdl-setup.sh' >>'$LOG' 2>&1; touch /var/lib/tgsb-tools/spotdl.status 2>/dev/null; true" >/dev/null 2>&1 9>&- &
+}
+spotdl_selfheal || true
+
 cd "$APP_DIR"
 git fetch --quiet origin "$BRANCH"
 LOCAL=$(git rev-parse HEAD)

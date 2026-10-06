@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { getAllSettings, setSetting } from "@/lib/db";
 import { fillMissingMeta, kickMusicQueue, repairLibrary, verifyLibraryLocal } from "@/lib/music";
+import { spotdlFallbackStep } from "@/lib/music-spotdl";
 import { runSync, SYNC_EVERY_MS } from "@/lib/music-sync";
 import { reportInfo, reportWarn } from "@/lib/report";
 
@@ -78,5 +79,8 @@ export async function GET(request: Request): Promise<NextResponse> {
       reportWarn("music", "auto-sync failed:", err);
     }
   }
+  // Fallback: one "Track not found" track per tick via spotDL (runs in the
+  // background; guarded by its own lock).
+  void spotdlFallbackStep().catch((err) => reportWarn("music", "spotDL fallback failed:", err));
   return NextResponse.json({ ok: true, ...(await kickMusicQueue()), repair, verify, fill, sync });
 }

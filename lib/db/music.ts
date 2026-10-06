@@ -365,3 +365,10 @@ export async function listTracksForMeta(): Promise<MetaRow[]> {
   const rows = (await q().query(`SELECT id, spotify_id, status, duration_s, spotify_duration_s, size_bytes, file_path, cover_path FROM music_tracks WHERE spotify_id IS NOT NULL ORDER BY id`)) as Row[];
   return rows.map((r) => ({ id: num(r, "id"), spotifyId: str(r, "spotify_id"), status: str(r, "status"), durationS: numOrNull(r, "duration_s"), spotifyDurationS: numOrNull(r, "spotify_duration_s"), sizeBytes: numOrNull(r, "size_bytes"), filePath: strOrNull(r, "file_path"), coverPath: strOrNull(r, "cover_path") }));
 }
+
+/** A failed "Track not found" track that spotDL has not been tried on yet. */
+export async function nextSpotdlCandidate(): Promise<number | null> {
+  await ensureSchema();
+  const r = (await q().query(`SELECT id FROM music_tracks WHERE status = 'failed' AND error LIKE 'Track not found%' AND error NOT LIKE '%spotDL%' ORDER BY id LIMIT 1`)) as Row[];
+  return r[0] ? num(r[0], "id") : null;
+}
