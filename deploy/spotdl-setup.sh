@@ -33,4 +33,13 @@ if ! grep -q "^.* OK" "$STATUS" 2>/dev/null; then
   fi
   rm -rf "$T"
 fi
+
+report() {
+  local tok msg lvl=warn
+  tok=$(grep -E '^WEBHOOK_SECRET_TOKEN=' /opt/tgsecretarybot/.env 2>/dev/null | cut -d= -f2- || true)
+  msg=$(tr -d '"\\' <"$STATUS" 2>/dev/null | tr '\n' ' ' | cut -c1-300)
+  case "$msg" in *" OK"*) lvl=info ;; esac
+  [[ -n "${tok:-}" ]] && curl -fsS -m 10 -X POST "http://127.0.0.1:3000/api/deploy-status" -H "Content-Type: application/json" -H "x-deploy-token: ${tok}" --data-raw "{\"source\":\"spotdl\",\"level\":\"$lvl\",\"message\":\"${msg:-no status}\"}" >/dev/null 2>&1 || true
+}
+report
 exit 0

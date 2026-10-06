@@ -160,7 +160,10 @@ spotdl_selfheal() {
   local st=/var/lib/tgsb-tools/spotdl.status
   grep -q " OK" "$st" 2>/dev/null && return 0
   [[ -f "$st" && $(( $(date +%s) - $(stat -c %Y "$st") )) -lt 3600 ]] && return 0
-  nohup flock -n /run/tgsb-spotdl.lock bash -c "bash '$APP_DIR/deploy/spotdl-setup.sh' >>'$LOG' 2>&1; touch /var/lib/tgsb-tools/spotdl.status 2>/dev/null; true" >/dev/null 2>&1 9>&- &
+  # systemd-run: a plain background child would be killed when this
+  # oneshot unit finishes. Fails harmlessly if the unit is still running.
+  systemd-run --quiet --collect --unit=tgsb-spotdl-setup -p RuntimeMaxSec=1500 \
+    bash "$APP_DIR/deploy/spotdl-setup.sh" >>"$LOG" 2>&1 || true
 }
 spotdl_selfheal || true
 
