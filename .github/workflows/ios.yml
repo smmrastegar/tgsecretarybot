@@ -12,9 +12,13 @@ on:
         type: boolean
         default: false
 
+defaults:
+  run:
+    shell: bash   # adds pipefail, so a failing xcodebuild is not hidden by `| tail`
+
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Generate the Xcode project
@@ -30,7 +34,7 @@ jobs:
   testflight:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.testflight }}
     needs: build
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       TEAM: ${{ secrets.APPLE_TEAM_ID }}
       KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
