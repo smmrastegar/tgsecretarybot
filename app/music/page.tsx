@@ -428,6 +428,19 @@ export default function MusicPage() {
               </>
             )}
             {t.status === "failed" && <button onClick={() => retry(t)} className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)]">↻</button>}
+            {t.status === "failed" && (
+              <label className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] cursor-pointer" title="فایل صوتی این آهنگ را خودت بده (mp3, m4a, flac…)">
+                ⬆ فایل
+                <input type="file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.flac,.wav" className="hidden" onChange={async (e) => {
+                  const f = e.target.files?.[0]; e.target.value = ""; if (!f) return;
+                  setMsg(`در حال آپلود «${f.name}»…`);
+                  const fd = new FormData(); fd.append("file", f);
+                  const r = await fetch(`/api/music/${t.id}/upload`, { method: "POST", body: fd });
+                  const j = (await r.json().catch(() => ({}))) as { error?: string };
+                  setMsg(r.ok ? `«${t.title ?? "آهنگ"}» آماده شد` : `آپلود ناموفق: ${j.error ?? r.status}`); void load();
+                }} />
+              </label>
+            )}
             <button onClick={() => del(t)} className="text-xs px-2 py-1 rounded-md border border-rose-500/40 text-rose-200">🗑</button>
           </div>
         ))}
