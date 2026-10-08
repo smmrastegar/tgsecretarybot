@@ -1,0 +1,30 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'bz.text.music'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'bz.text.music'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+    signingConfigs {
+        release {
+            // Personal sideload key (see android/README.md). Keep it: a different key means uninstall/reinstall to update.
+            storeFile file('../music-release.jks')
+            storePassword 'mymusic-sideload'
+            keyAlias 'mymusic'
+            keyPassword 'mymusic-sideload'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    lint { abortOnError false; checkReleaseBuilds false }
+}

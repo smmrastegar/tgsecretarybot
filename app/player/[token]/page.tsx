@@ -55,7 +55,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [toast, setToast] = useState("");
   const [fade, setFade] = useState(0);
   const [buf, setBuf] = useState(0);
-  const [vibeData, setVibeData] = useState<{ vibes: Vibe[]; tracks: Record<number, Desc>; progress: { analyzed: number; ready: number }; canCreate: boolean }>({ vibes: [], tracks: {}, progress: { analyzed: 0, ready: 0 }, canCreate: false });
+  const [vibeData, setVibeData] = useState<{ vibes: Vibe[]; tracks: Record<number, Desc>; progress: { analyzed: number; ready: number }; canCreate: boolean }>({ vibes: [], tracks: {}, progress: { analyzed: 0, ready: 0 }, canCreate: true });
   const [smartT, setSmartT] = useState<Track | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dlPlan, setDlPlan] = useState<{ ids: number[]; label: string; bytes: number } | null>(null);
@@ -91,6 +91,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   useEffect(() => {
     const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as unknown as { standalone?: boolean }).standalone === true;
     const dismissed = (() => { try { return localStorage.getItem("player.installDismissed") === "1"; } catch { return false; } })();
+    const native = !!(window as unknown as { AndroidMusic?: unknown }).AndroidMusic;
+    if (native) { setBannerOn(false); return; }
     if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) setIsIosBrowser(true);
     if (dismissed) setBannerOn(false);
     if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) setIosHint(true);
@@ -158,7 +160,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, [tq]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    const go = () => void fetch(`/api/music/vibes?${tq}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j && Array.isArray(j.vibes)) setVibeData({ vibes: j.vibes, tracks: j.tracks ?? {}, progress: { analyzed: j.progress?.analyzed ?? 0, ready: j.progress?.ready ?? 0 }, canCreate: j.canCreate === true }); }).catch(() => {});
+    let tries = 0;
+    const go = () => void fetch(`/api/music/vibes?${tq}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => {
+      // A failed first load (cold analysis cache, flaky network) is retried soon, not after 10 minutes.
+      if (!(j && Array.isArray(j.vibes)) && tries++ < 4) setTimeout(go, 8000 * tries);
+      if (j && Array.isArray(j.vibes)) setVibeData({ vibes: j.vibes, tracks: j.tracks ?? {}, progress: { analyzed: j.progress?.analyzed ?? 0, ready: j.progress?.ready ?? 0 }, canCreate: j.canCreate === true }); }).catch(() => {});
     go();
     const i = setInterval(go, 10 * 60 * 1000);
     return () => clearInterval(i);
@@ -349,6 +355,22 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     ms.setActionHandler("seekforward", () => { if (audio.current) audio.current.currentTime += 10; });
   }, [step]);
 
+  // Native Android app: mirror the playback state into the app's notification / lock-screen
+  // controls, and let those buttons drive the player (window.AndroidMusic is injected by the app).
+  useEffect(() => {
+    const n = (window as unknown as { AndroidMusic?: { state: (p: boolean, t: string, a: string, c: string) => void } }).AndroidMusic;
+    if (!n) return;
+    const t = cur != null ? byIdRef.current.get(cur) : null;
+    n.state(playing, t?.title ?? "", t?.artist ?? "", t?.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}&w=320` : "");
+  }, [playing, cur, tq]);
+  useEffect(() => {
+    (window as unknown as { __nativeCmd?: (c: string) => void }).__nativeCmd = (c: string) => {
+      if (c === "next") step(1); else if (c === "prev") step(-1);
+      else if (c === "play") void audio.current?.play(); else if (c === "pause") audio.current?.pause();
+      else if (c === "toggle") { const a = audio.current; if (a) { if (a.paused) void a.play(); else a.pause(); } }
+    };
+  }, [step]);
+
   // Sleep timer
   const sleepEnd = useRef(0);
   useEffect(() => {
@@ -508,7 +530,6 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           <div className="relative max-w-md mx-auto px-6 pt-[max(14px,env(safe-area-inset-top))] pb-[max(16px,env(safe-area-inset-bottom))] h-full min-h-[520px] flex flex-col">
             <div className="flex items-center justify-between h-11 shrink-0">
               <button onClick={() => setFull(false)} className="p-2 -ml-2" aria-label="Minimise"><ChevronDownIcon size={28} /></button>
-              <span className="text-xs uppercase tracking-widest text-[var(--dim)]">Now playing</span>
               <span className="flex items-center">{vibeData.canCreate && <button onClick={() => setSmartT(now)} className="p-2" aria-label="Smart playlist from this song"><SparkIcon size={20} /></button>}<button onClick={() => setReportT(now)} className="p-2 text-[var(--dim3)]" aria-label="Report a problem"><FlagIcon size={19} /></button><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button></span>
             </div>
 

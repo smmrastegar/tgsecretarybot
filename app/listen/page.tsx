@@ -28,6 +28,7 @@ function Launcher() {
   const [installEvt, setInstallEvt] = useState<{ prompt: () => Promise<void> } | null>(null);
   const [ios, setIos] = useState(false);
   const [standalone, setStandalone] = useState(false);
+  const [native, setNative] = useState(false);
 
   const go = useCallback(async (raw: string) => {
     const tok = tokenFrom(raw);
@@ -45,6 +46,7 @@ function Launcher() {
   useEffect(() => {
     setStandalone(window.matchMedia("(display-mode: standalone)").matches || (navigator as unknown as { standalone?: boolean }).standalone === true);
     setIos(/iphone|ipad|ipod/i.test(navigator.userAgent));
+    setNative(!!(window as unknown as { AndroidMusic?: unknown }).AndroidMusic);
     if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/player-sw.js", { scope: "/", updateViaCache: "none" }).catch(() => {});
     const onPrompt = (e: Event) => { e.preventDefault(); setInstallEvt(e as unknown as { prompt: () => Promise<void> }); };
     window.addEventListener("beforeinstallprompt", onPrompt);
@@ -60,7 +62,7 @@ function Launcher() {
   }, []);
 
   async function paste() {
-    try { const t = await navigator.clipboard.readText(); setValue(t); if (tokenFrom(t)) void go(t); } catch { setErr("Couldn't read the clipboard — paste the link into the box instead."); }
+    try { const nat = (window as unknown as { AndroidMusic?: { clipboard?: () => string } }).AndroidMusic; const t = nat?.clipboard ? nat.clipboard() : await navigator.clipboard.readText(); setValue(t); if (tokenFrom(t)) void go(t); } catch { setErr("Couldn't read the clipboard — paste the link into the box instead."); }
   }
 
   const S = { bg: "#0b0b0f", fg: "#ececf1", dim: "#a1a1aa", card: "rgba(255,255,255,.06)", bd: "rgba(255,255,255,.12)" };
@@ -86,7 +88,13 @@ function Launcher() {
         )}
         {state === "check" && <p style={{ textAlign: "center", color: S.dim }}>Checking link…</p>}
 
-        {!standalone && state === "ask" && (
+        {state === "ask" && !native && !ios && (
+          <a href="/downloads/MyMusic.apk" style={{ display: "block", marginTop: 22, textAlign: "center", padding: "14px 16px", borderRadius: 16, border: `1px solid ${S.bd}`, color: S.fg, textDecoration: "none", fontSize: 15, fontWeight: 600 }}>
+            Android app (APK) <span style={{ color: S.dim, fontWeight: 400 }}>· plays with the screen off, lock-screen controls</span>
+          </a>
+        )}
+
+        {!standalone && !native && state === "ask" && (
           <div style={{ marginTop: 26, padding: 16, borderRadius: 16, background: S.card, border: `1px solid ${S.bd}`, fontSize: 14, lineHeight: 1.6 }}>
             <b style={{ display: "block", marginBottom: 4 }}>Install it as an app</b>
             {installEvt
