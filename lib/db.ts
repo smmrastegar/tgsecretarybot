@@ -20,3 +20,4 @@ export * from "./db/access";
 export * from "./db/ephemeral";
 export * from "./db/roadmap";
 export * from "./db/music";
+export * from "./db/music-analysis";

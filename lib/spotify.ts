@@ -176,3 +176,24 @@ export async function makeMetaFetcher(): Promise<(id: string) => Promise<Spotify
     return null;
   };
 }
+
+// ---- artist genres (public catalogue data, app token) ----
+
+let genreTok: { v: string; until: number } | null = null;
+
+/** Genres of a track's (first two) artists, e.g. ["persian pop","iranian pop"]. Often empty for small artists. */
+export async function fetchTrackArtistGenres(spotifyTrackId: string): Promise<{ genres: string[]; artists: string[] }> {
+  if (!genreTok || genreTok.until < Date.now()) genreTok = { v: await appToken(), until: Date.now() + 50 * 60 * 1000 };
+  const tok = genreTok.v;
+  const t = await spGet(tok, `https://api.spotify.com/v1/tracks/${spotifyTrackId}`);
+  if (t.status === 429) throw new SpotifyRateLimited(t.retryAfter || 30);
+  if (t.status !== 200) return { genres: [], artists: [] };
+  const arts = ((t.json as { artists?: Array<{ id?: string; name?: string }> }).artists ?? []).filter((a) => a.id).slice(0, 2);
+  const genres = new Set<string>();
+  for (const a of arts) {
+    const r = await spGet(tok, `https://api.spotify.com/v1/artists/${a.id}`);
+    if (r.status === 429) throw new SpotifyRateLimited(r.retryAfter || 30);
+    if (r.status === 200) for (const g of (r.json as { genres?: string[] }).genres ?? []) genres.add(g.toLowerCase());
+  }
+  return { genres: [...genres], artists: arts.map((a) => a.name ?? "") };
+}

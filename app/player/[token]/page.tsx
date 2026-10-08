@@ -12,7 +12,7 @@ import Spectrum from "@/components/music/Spectrum";
 
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
-import { artistsOf, DetailView, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
+import { artistsOf, DetailView, type Desc, type Vibe, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
 import { LyricsSheet, OptionSheet, QueueSheet, ReportSheet, TrackMenu } from "@/components/music/app/Sheets";
 
 // Private personal player. The URL's 256-bit token is the credential.
@@ -55,6 +55,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [toast, setToast] = useState("");
   const [fade, setFade] = useState(0);
   const [buf, setBuf] = useState(0);
+  const [vibeData, setVibeData] = useState<{ vibes: Vibe[]; tracks: Record<number, Desc>; progress: { analyzed: number; ready: number } }>({ vibes: [], tracks: {}, progress: { analyzed: 0, ready: 0 } });
   const [viz, setViz] = useState(true);
   const [installEvt, setInstallEvt] = useState<{ prompt: () => Promise<void> } | null>(null);
   const [iosHint, setIosHint] = useState(false);
@@ -144,6 +145,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     } finally { setLoading(false); }
   }, [tq]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const go = () => void fetch(`/api/music/vibes?${tq}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setVibeData(j); }).catch(() => {});
+    go();
+    const i = setInterval(go, 10 * 60 * 1000);
+    return () => clearInterval(i);
+  }, [tq]);
 
   const play = useCallback((ids: number[], startId?: number, sh = false) => {
     if (ids.length === 0) return;
@@ -250,6 +257,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       ua: navigator.userAgent.slice(0, 160), viewport: `${innerWidth}x${innerHeight}`, theme,
     };
   };
+  const chipsFor = (id: number): string[] => {
+    const d = vibeData.tracks[id]; if (!d) return [];
+    const vibe = vibeData.vibes.find((v) => v.key === d.vibe)?.name;
+    return [`${d.bpm} BPM`, `${d.key} ${d.mode}`, d.energy < 0.35 ? "Low energy" : d.energy > 0.6 ? "High energy" : "Medium energy", d.brightness > 0.4 ? "Bright" : d.brightness < 0.2 ? "Warm" : "Balanced", ...(vibe ? [vibe] : []), ...d.genres.slice(0, 3)];
+  };
   const toggleOffline = async (t: Track) => {
     const key = `/api/music/stream/${t.id}`;
     const c = await caches.open("player-audio");
@@ -306,16 +318,27 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const now = cur != null ? byId.get(cur) ?? null : null;
   // Stable function identities (via a ref) + a memoised api object: the
   // progress tick (4×/s) re-renders only the player chrome, not the lists.
-  const fns = useRef({ play, smartMix, rate });
-  fns.current = { play, smartMix, rate };
+  const startRadio = async (t: Track) => {
+    flash("Finding songs that sound like this…");
+    try {
+      const r = await fetch(`/api/music/similar/${t.id}?mode=radio&n=40&${tq}`, { cache: "no-store" });
+      const j = (await r.json()) as { ids?: number[]; analysed?: boolean };
+      if (!r.ok || !j.ids?.length || !j.analysed) { flash("This song hasn't been analysed yet"); return; }
+      play(j.ids, t.id);
+      flash(`Radio: ${j.ids.length} songs in the same lane`);
+    } catch { flash("Couldn't start radio"); }
+  };
+  const fns = useRef({ play, smartMix, rate, radio: startRadio });
+  fns.current = { play, smartMix, rate, radio: startRadio };
   const stable = useMemo(() => ({
     play: (ids: number[], startId?: number, sh?: boolean) => fns.current.play(ids, startId, sh),
     smartMix: (ids: number[]) => fns.current.smartMix(ids),
     rate: (t: Track, r: number) => fns.current.rate(t, r),
     menu: setMenuT,
     open: (p: Page) => setStack((s) => [...s, p]),
+    radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, tracks, playlists, byId, cur, playing, loading, ...stable }), [tq, tracks, playlists, byId, cur, playing, loading, stable]);
+  const api: Api = useMemo(() => ({ tq, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, ...stable }), [tq, tracks, playlists, byId, cur, playing, loading, vibeData, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -483,11 +506,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {reportT && <ReportSheet t={reportT} tq={tq} context={reportContext} onClose={() => setReportT(null)} onDone={flash} />}
       {sheet === "fade" && <OptionSheet title="Fade between tracks" options={FADES} value={fade} onPick={pickFade} onClose={() => setSheet(null)} />}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
-      {menuT && <TrackMenu onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
+      {menuT && <TrackMenu onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
         onArtist={() => { const a = artistsOf(menuT)[0]!; setFull(false); setTab("library"); setStack([{ kind: "artist", key: a, title: a }]); }}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}
-      {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
+      {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark chips={chipsFor(detailId)} t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
       {toast && <div className="fixed left-1/2 -translate-x-1/2 z-[80] px-4 py-2 rounded-full text-sm bg-[rgb(var(--ac))] text-[var(--acfg)] shadow-lg" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))", animation: "fade .15s" }} role="status">{toast}</div>}
     </div>
   );

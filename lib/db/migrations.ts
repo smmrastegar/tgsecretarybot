@@ -247,6 +247,34 @@ export const MIGRATIONS: Migration[] = [
       await q`CREATE INDEX IF NOT EXISTS music_reports_status_idx ON music_reports (status, id DESC)`;
     },
   },
+  {
+    // Audio analysis (tempo, key, timbre vector, …) and Spotify artist genres
+    // per library track — drives "similar songs", radio and vibe groups.
+    id: "2026-10-08-002-music-analysis",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_features (
+          track_id     BIGINT PRIMARY KEY,
+          features     JSONB,
+          bpm          REAL,
+          key_name     TEXT,
+          mode         TEXT,
+          energy       REAL,
+          brightness   REAL,
+          beat         REAL,
+          error        TEXT,
+          version      INT NOT NULL DEFAULT 1,
+          analyzed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+      await q`
+        CREATE TABLE IF NOT EXISTS music_track_genres (
+          track_id    BIGINT PRIMARY KEY,
+          genres      TEXT[] NOT NULL DEFAULT '{}',
+          artists     TEXT[] NOT NULL DEFAULT '{}',
+          fetched_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

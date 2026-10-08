@@ -18,8 +18,14 @@ export type Api = {
   menu: (t: Track) => void;
   rate: (t: Track, r: number) => void;
   open: (page: Page) => void;
+  vibes: Vibe[];
+  desc: Record<number, Desc>;
+  radio: (t: Track) => void;
+  analysis: { analyzed: number; ready: number };
 };
-export type Page = { kind: "artist" | "album" | "playlist" | "liked" | "recent" | "top"; key: string; title: string };
+export type Desc = { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[] };
+export type Vibe = { key: string; name: string; trackIds: number[]; bpm: number; energy: number; brightness: number; minorShare: number; genres: string[] };
+export type Page = { kind: "artist" | "album" | "playlist" | "liked" | "recent" | "top" | "vibe"; key: string; title: string };
 
 export const artistsOf = (t: Track): string[] => (t.artist ?? "Unknown").split(/,\s*/).filter(Boolean);
 const albumKey = (t: Track) => `${t.album ?? "Single"}|${artistsOf(t)[0] ?? ""}`;
@@ -122,6 +128,16 @@ export function HomeView({ api, c }: { api: Api; c: Collections }) {
       {c.recent.length > 0 && (<><SectionTitle>Jump back in</SectionTitle><Shelf>{c.recent.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} subtitle={t.artist ?? ""} onClick={() => api.play(c.recent.map((x) => x.id), t.id)} />)}</Shelf></>)}
       {c.top.length > 0 && (<><SectionTitle action={<button onClick={() => api.open({ kind: "top", key: "top", title: "Most played" })} className="text-sm text-[var(--dim)]">See all</button>}>Most played</SectionTitle><Shelf>{c.top.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} subtitle={`${t.playCount} plays`} onClick={() => api.play(c.top.map((x) => x.id), t.id)} />)}</Shelf></>)}
       {c.lists.length > 0 && (<><SectionTitle>Your playlists</SectionTitle><Shelf>{c.lists.map(({ p, tracks }) => <Card key={p.id} cover={<Mosaic tracks={tracks} tq={api.tq} size={144} radius={0} />} title={p.name} subtitle={`${tracks.length} songs`} onClick={() => api.open({ kind: "playlist", key: String(p.id), title: p.name })} />)}</Shelf></>)}
+      {api.vibes.length > 0 ? (
+        <>
+          <SectionTitle>Your vibes</SectionTitle>
+          <Shelf>{api.vibes.map((v) => {
+            const ts_ = v.trackIds.map((id) => api.byId.get(id)).filter((t): t is Track => !!t);
+            return <Card key={v.key} cover={<Mosaic tracks={ts_} tq={api.tq} size={144} radius={0} />} title={v.name} subtitle={`${ts_.length} songs · ~${v.bpm} BPM`} onClick={() => api.open({ kind: "vibe", key: v.key, title: v.name })} />;
+          })}</Shelf>
+          {api.analysis.analyzed < api.analysis.ready && <div className="mt-2 text-[12px] text-[var(--dim3)]">Still listening to your library: {api.analysis.analyzed} of {api.analysis.ready} songs analysed.</div>}
+        </>
+      ) : api.analysis.ready > 0 && api.analysis.analyzed < api.analysis.ready && <div className="mt-6 text-[12px] text-[var(--dim3)]">Vibes appear once your library is analysed ({api.analysis.analyzed} of {api.analysis.ready} songs so far).</div>}
       {c.added.length > 0 && (<><SectionTitle>Recently added</SectionTitle><Shelf>{c.added.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} subtitle={t.artist ?? ""} onClick={() => api.play(c.added.map((x) => x.id), t.id)} />)}</Shelf></>)}
     </div>
   );
@@ -238,16 +254,18 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
       case "liked": return c.liked;
       case "recent": return c.recent;
       case "top": return c.top;
+      case "vibe": return (api.vibes.find((v) => v.key === page.key)?.trackIds ?? []).map((id) => api.byId.get(id)).filter((t): t is Track => !!t);
     }
-  }, [page, c]);
+  }, [page, c, api.vibes, api.byId]);
   const ids = list.map((t) => t.id);
-  const sub = page.kind === "artist" ? "Artist" : page.kind === "album" ? `Album · ${list[0] ? artistsOf(list[0])[0] : ""}` : "Playlist";
+  const vb = page.kind === "vibe" ? api.vibes.find((v) => v.key === page.key) : null;
+  const sub = vb ? `Vibe · ~${vb.bpm} BPM${vb.genres[0] ? ` · ${vb.genres[0]}` : ""}` : page.kind === "artist" ? "Artist" : page.kind === "album" ? `Album · ${list[0] ? artistsOf(list[0])[0] : ""}` : "Playlist";
   return (
     <div>
       <div className="flex flex-col items-center text-center pt-2">
         <div className={`w-52 h-52 overflow-hidden shadow-2xl ${page.kind === "artist" ? "rounded-full" : "rounded-2xl"}`}>
           {page.kind === "liked" ? <span className="grid place-items-center w-full h-full bg-gradient-to-br from-rose-500 to-fuchsia-700 text-white"><HeartIcon size={64} filled /></span>
-            : page.kind === "playlist" || page.kind === "top" || page.kind === "recent" ? <Mosaic tracks={list} tq={api.tq} size="100%" radius={0} />
+            : page.kind === "playlist" || page.kind === "top" || page.kind === "recent" || page.kind === "vibe" ? <Mosaic tracks={list} tq={api.tq} size="100%" radius={0} />
             : list[0] ? <Cover t={list[0]} tq={api.tq} size="100%" radius={0} /> : null}
         </div>
         <h2 className="text-[28px] font-extrabold tracking-tight mt-5 leading-tight">{page.title}</h2>

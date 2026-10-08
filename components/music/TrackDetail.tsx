@@ -45,7 +45,8 @@ const format = (mime: string | null | undefined) => (/flac/i.test(mime ?? "") ? 
  * history every 5 s, and when the track is the one currently playing it
  * shows the running session (position, time heard now).
  */
-export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" }: {
+export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa", chips }: {
+  chips?: string[];
   t: DetailTrack; tq: string; onClose: () => void; dark?: boolean; onRate?: (r: number) => void; lang?: "fa" | "en";
   live?: { pos: number; dur: number; playing: boolean } | null;
 }) {
@@ -107,6 +108,7 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
             <div className="min-w-0 flex-1">
               <div className="text-xl font-extrabold leading-tight" style={{ textWrap: "balance" }}>{t.title ?? "—"}</div>
               <div className="mt-1 text-sm text-[var(--dim2)] truncate">{t.artist}</div>
+              {chips && chips.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{chips.map((c) => <span key={c} className="px-2 py-0.5 rounded-full bg-[var(--s2)] text-[11px] font-medium text-[var(--dim2)] leading-4">{c}</span>)}</div>}
             </div>
           </div>
         </div>

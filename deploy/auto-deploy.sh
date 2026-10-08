@@ -167,6 +167,17 @@ spotdl_selfheal() {
 }
 spotdl_selfheal || true
 
+# Same for the audio-analysis environment (numpy venv; ffmpeg comes from the
+# spotDL setup, so this retries hourly until both exist).
+analyzer_selfheal() {
+  local st=/var/lib/tgsb-tools/analyzer.status
+  grep -q " OK" "$st" 2>/dev/null && return 0
+  [[ -f "$st" && $(( $(date +%s) - $(stat -c %Y "$st") )) -lt 3600 ]] && return 0
+  systemd-run --quiet --collect --unit=tgsb-analyzer-setup -p RuntimeMaxSec=900 \
+    bash "$APP_DIR/deploy/analyzer-setup.sh" >>"$LOG" 2>&1 || true
+}
+analyzer_selfheal || true
+
 cd "$APP_DIR"
 git fetch --quiet origin "$BRANCH"
 LOCAL=$(git rev-parse HEAD)
