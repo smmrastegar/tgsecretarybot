@@ -53,8 +53,11 @@ export async function analysisStep(): Promise<{ analyzed: number | null; genres:
   if (await analyzerReady() && Date.now() - Number(s.musicAnalyzeLock || 0) > TIMEOUT_MS + 30_000) {
     await setSetting("musicAnalyzeLock", String(Date.now()));
     try {
-      const t = await nextTrackToAnalyze(ANALYSIS_VERSION);
-      if (t) {
+      // As many tracks as fit in ~40 s of this tick (the cron fires every minute).
+      const t0 = Date.now();
+      while (Date.now() - t0 < 40_000) {
+        const t = await nextTrackToAnalyze(ANALYSIS_VERSION);
+        if (!t) break;
         const r = await runPython(t.filePath);
         if (r.ok) { await saveFeatures(t.id, r as unknown as Parameters<typeof saveFeatures>[1], ANALYSIS_VERSION); out.analyzed = t.id; }
         else { await saveFeatureError(t.id, String(r.error ?? "failed"), ANALYSIS_VERSION); reportWarn("music", `analysis of track ${t.id} failed: ${String(r.error).slice(0, 120)}`); }
