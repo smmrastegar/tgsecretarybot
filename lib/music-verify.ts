@@ -15,6 +15,33 @@ import { reportWarn } from "@/lib/report";
 const OK = 0.5;
 const BAD = 0.35;
 
+// ---- the file's own ID3 tags (title / artist) against what the library says the song is ----
+function norm(v: string): string[] {
+  return v.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\(.*?\)|\[.*?\]/g, " ").replace(/\bfeat\.?\b|\bft\.?\b|\bremaster(ed)?\b|\bversion\b|\blive\b/g, " ")
+    .split(/[^\p{L}\p{N}]+/u).filter((x) => x.length >= 2);
+}
+const overlap = (want: string[], have: Set<string>) => (want.length ? want.filter((w) => have.has(w) || [...have].some((h) => h.length > 3 && (h.includes(w) || w.includes(h)))).length / want.length : 1);
+
+function readTags(file: string): Promise<{ title: string | null; artist: string | null }> {
+  return new Promise(async (resolve) => {
+    const child = spawn(await ffmpegPath(), ["-v", "error", "-i", file, "-f", "ffmetadata", "-"], { stdio: ["ignore", "pipe", "ignore"] });
+    let out = "";
+    child.stdout.on("data", (b) => { out += b.toString(); });
+    const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+    const done = () => { clearTimeout(timer); const g = (k: string) => new RegExp(`^${k}=(.*)$`, "im").exec(out)?.[1]?.trim() || null; resolve({ title: g("title"), artist: g("artist") }); };
+    child.on("close", done); child.on("error", done);
+  });
+}
+
+/** match / mismatch / none (no tags to judge by). Needs BOTH the title and the artist to disagree to call it a mismatch. */
+async function tagCheck(file: string, title: string | null, artist: string | null): Promise<{ status: string; title: string | null; artist: string | null }> {
+  const t = await readTags(file);
+  if (!t.title && !t.artist) return { status: "none", ...t };
+  const titleOk = !t.title || overlap(norm(title ?? ""), new Set(norm(t.title))) >= 0.5;
+  const artistOk = !t.artist || !artist || overlap(norm(artist), new Set(norm(t.artist))) >= 0.34 || overlap(norm(t.artist), new Set(norm(artist))) >= 0.5;
+  return { status: !titleOk && !artistOk ? "mismatch" : !titleOk || !artistOk ? "partial" : "match", ...t };
+}
+
 function run(file: string, preview: string): Promise<{ ok: boolean; score?: number; error?: string }> {
   return new Promise(async (resolve) => {
     const script = path.join(process.cwd(), "deploy", "audio-verify.py");
@@ -39,19 +66,28 @@ export async function verifyStep(): Promise<number> {
     while (Date.now() - t0 < 40_000) {
       const t = await nextTrackToVerify();
       if (!t) break;
+      const tag = await tagCheck(t.filePath, t.title, t.artist);
       const meta = await pageMeta(t.spotifyUrl);
-      if (!meta?.previewUrl) { await saveVerify(t.id, meta ? "nopreview" : "error", null, t.sizeBytes, t.fixes); done++; continue; }
       const tmp = path.join(os.tmpdir(), `tgsb-prev-${t.id}.mp3`);
       try {
-        const r = await fetch(meta.previewUrl, { signal: AbortSignal.timeout(30_000) });
-        if (!r.ok) { await saveVerify(t.id, "error", null, t.sizeBytes, t.fixes); done++; continue; }
-        await fs.writeFile(tmp, Buffer.from(await r.arrayBuffer()));
-        const v = await run(t.filePath, tmp);
-        if (!v.ok || v.score == null) { await saveVerify(t.id, "error", null, t.sizeBytes, t.fixes); done++; continue; }
-        const status = v.score >= OK ? "ok" : v.score < BAD ? "mismatch" : "unsure";
+        let score: number | null = null;
+        if (meta?.previewUrl) {
+          const r = await fetch(meta.previewUrl, { signal: AbortSignal.timeout(30_000) }).catch(() => null);
+          if (r?.ok) {
+            await fs.writeFile(tmp, Buffer.from(await r.arrayBuffer()));
+            const v = await run(t.filePath, tmp);
+            if (v.ok && v.score != null) score = v.score;
+          }
+        }
+        // The audio comparison is decisive when there is a preview; otherwise the file's own tags decide.
+        let status: string;
+        if (score != null) status = score >= OK ? "ok" : score < BAD ? "mismatch" : "unsure";
+        else if (tag.status === "mismatch") status = "mismatch";
+        else if (tag.status === "match") status = "tags_ok";
+        else status = meta ? "nopreview" : "error";
         let fixes = t.fixes;
         if (status === "mismatch") {
-          reportWarn("music", `track ${t.id}: file does not match Spotify's preview (score ${v.score})`);
+          reportWarn("music", `track ${t.id}: file does not match the song (preview score ${score ?? "n/a"}, tags: ${tag.status})`);
           if (t.fixes < 1 && ((await getAllSettings()).spotsaverLicense ?? "").trim()) {
             // one automatic repair: queue a fresh copy; the size change re-triggers this check
             let list: number[] = [];
@@ -60,9 +96,9 @@ export async function verifyStep(): Promise<number> {
             fixes = t.fixes + 1;
           }
         }
-        await saveVerify(t.id, status, v.score, t.sizeBytes, fixes);
+        await saveVerify(t.id, status, score, t.sizeBytes, fixes, tag);
         done++;
-      } catch { await saveVerify(t.id, "error", null, t.sizeBytes, t.fixes); done++; }
+      } catch { await saveVerify(t.id, "error", null, t.sizeBytes, t.fixes, tag); done++; }
       finally { await fs.unlink(tmp).catch(() => {}); }
     }
   } catch (err) { reportWarn("music", "verify step failed:", err); }

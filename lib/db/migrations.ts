@@ -347,6 +347,15 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // The file's own ID3 title/artist, compared with what the library says the song is.
+    id: "2026-10-09-005-music-verify-tags",
+    up: async (q) => {
+      await q`ALTER TABLE music_verify ADD COLUMN IF NOT EXISTS tags TEXT`;
+      await q`ALTER TABLE music_verify ADD COLUMN IF NOT EXISTS tag_title TEXT`;
+      await q`ALTER TABLE music_verify ADD COLUMN IF NOT EXISTS tag_artist TEXT`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;
