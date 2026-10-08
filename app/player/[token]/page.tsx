@@ -439,7 +439,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             <div className="mt-1 flex items-center justify-between shrink-0">
               <button onClick={() => setShuffle((s) => !s)} className={`p-3 ${shuffle ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Shuffle" aria-pressed={shuffle}><ShuffleIcon size={24} /></button>
               <button onClick={() => step(-1)} className="p-3" aria-label="Previous"><PrevIcon size={34} /></button>
-              <button onClick={toggle} className="w-16 h-16 rounded-full grid place-items-center text-[var(--acfg)] active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={34} /> : <PlayIcon size={34} className="translate-x-[2px]" />}</button>
+              <button onClick={toggle} className="w-16 h-16 rounded-full grid place-items-center text-[var(--acfg)] active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={34} /> : <PlayIcon size={34} />}</button>
               <button onClick={() => step(1)} className="p-3" aria-label="Next"><NextIcon size={34} /></button>
               <button onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} className={`p-3 ${repeat !== "off" ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label={`Repeat ${repeat}`}><RepeatIcon size={24} one={repeat === "one"} /></button>
             </div>

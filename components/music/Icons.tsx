@@ -4,7 +4,7 @@
 type P = { size?: number; className?: string };
 const base = (size: number) => ({ width: size, height: size, viewBox: "0 0 24 24", "aria-hidden": true as const });
 
-export const PlayIcon = ({ size = 24, className }: P) => (<svg {...base(size)} className={className} fill="currentColor"><path d="M8 5.2v13.6a1 1 0 0 0 1.52.85l11-6.8a1 1 0 0 0 0-1.7l-11-6.8A1 1 0 0 0 8 5.2z" /></svg>);
+export const PlayIcon = ({ size = 24, className }: P) => (<svg {...base(size)} className={className} fill="currentColor"><path transform="translate(-0.5 0)" d="M8 5.2v13.6a1 1 0 0 0 1.52.85l11-6.8a1 1 0 0 0 0-1.7l-11-6.8A1 1 0 0 0 8 5.2z" /></svg>);
 export const PauseIcon = ({ size = 24, className }: P) => (<svg {...base(size)} className={className} fill="currentColor"><rect x="6" y="4.5" width="4.2" height="15" rx="1.4" /><rect x="13.8" y="4.5" width="4.2" height="15" rx="1.4" /></svg>);
 export const NextIcon = ({ size = 24, className }: P) => (<svg {...base(size)} className={className} fill="currentColor"><path d="M5 5.4v13.2a1 1 0 0 0 1.55.83l9-6.6a1 1 0 0 0 0-1.66l-9-6.6A1 1 0 0 0 5 5.4z" /><rect x="17" y="4.8" width="2.6" height="14.4" rx="1.1" /></svg>);
 export const PrevIcon = ({ size = 24, className }: P) => (<svg {...base(size)} className={className} fill="currentColor" style={{ transform: "scaleX(-1)" }}><path d="M5 5.4v13.2a1 1 0 0 0 1.55.83l9-6.6a1 1 0 0 0 0-1.66l-9-6.6A1 1 0 0 0 5 5.4z" /><rect x="17" y="4.8" width="2.6" height="14.4" rx="1.1" /></svg>);
