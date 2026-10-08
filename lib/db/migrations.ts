@@ -275,6 +275,22 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // "Login with Telegram" button: the browser opens t.me/<bot>?start=login_<nonce>,
+    // the bot approves the request for an allowed account, the page polls.
+    id: "2026-10-08-003-login-requests",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS login_requests (
+          nonce_hash   TEXT PRIMARY KEY,
+          secret_hash  TEXT NOT NULL,
+          status       TEXT NOT NULL DEFAULT 'pending',
+          tg_user      JSONB,
+          created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          expires_at   TIMESTAMPTZ NOT NULL
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

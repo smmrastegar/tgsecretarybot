@@ -279,6 +279,24 @@ function buildBot(): Bot {
     const from = ctx.from;
     const arg = ctx.match?.toString().trim() ?? "";
 
+    // Dashboard login button: t.me/<bot>?start=login_<nonce>. Only accounts that
+    // are connected to this bot (the same rule as /login) can approve it.
+    if (arg.startsWith("login_") && from) {
+      const { approveLoginRequest } = await import("../db");
+      const { sha256 } = await import("../tg-login");
+      if (!(await isAllowedUser(from.id).catch(() => false))) {
+        await ctx.reply("این اکانت تلگرام به ربات وصل نیست؛ اول از Telegram Business → Chatbots وصلش کن.");
+        return;
+      }
+      const ok = await approveLoginRequest(sha256(arg.slice("login_".length)), {
+        userId: from.id, username: from.username ?? null, firstName: from.first_name ?? null, lastName: from.last_name ?? null, photoUrl: null,
+      }).catch(() => false);
+      await ctx.reply(ok
+        ? "✅ ورود تأیید شد. به مرورگر برگرد؛ خودکار وارد می‌شی.\n\nاگه خودت این درخواست رو نزدی، نادیده‌اش بگیر."
+        : "این درخواست ورود منقضی شده یا قبلاً استفاده شده. از صفحه‌ی ورود دوباره دکمه رو بزن.");
+      return;
+    }
+
     // Deep-link board login: t.me/<bot>?start=board_<shareToken>. The
     // person taps Start, we record their access request (verified by
     // their Telegram identity here), ping the owner to approve, and hand
