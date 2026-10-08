@@ -1,9 +1,7 @@
 import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { getAllSettings, nextTrackToVerify, saveVerify, setSetting } from "@/lib/db";
-import { ffmpegPath, PY, analyzerReady } from "@/lib/music-analysis";
+import { ffmpegPath, analyzerReady } from "@/lib/music-analysis";
+import { previewScore, PREVIEW_BAD as BAD, PREVIEW_OK as OK } from "@/lib/music-preview";
 import { pageMeta } from "@/lib/music-spotsaver";
 import { reportWarn } from "@/lib/report";
 
@@ -12,8 +10,6 @@ import { reportWarn } from "@/lib/report";
 // the best spectral similarity): ≥ 0.5 same recording, < 0.35 a different song.
 // A mismatch is repaired once automatically through SpotSaver (the old file keeps playing until
 // the new one is in); if the replacement also fails the check it stays flagged for the owner.
-const OK = 0.5;
-const BAD = 0.35;
 
 // ---- the file's own ID3 tags (title / artist) against what the library says the song is ----
 function norm(v: string): string[] {
@@ -42,18 +38,6 @@ async function tagCheck(file: string, title: string | null, artist: string | nul
   return { status: !titleOk && !artistOk ? "mismatch" : !titleOk || !artistOk ? "partial" : "match", ...t };
 }
 
-function run(file: string, preview: string): Promise<{ ok: boolean; score?: number; error?: string }> {
-  return new Promise(async (resolve) => {
-    const script = path.join(process.cwd(), "deploy", "audio-verify.py");
-    const child = spawn(PY, [script, file, preview, await ffmpegPath()], { stdio: ["ignore", "pipe", "pipe"] });
-    let out = "";
-    child.stdout.on("data", (b) => { out += b.toString(); });
-    const timer = setTimeout(() => child.kill("SIGKILL"), 120_000);
-    child.on("close", () => { clearTimeout(timer); try { resolve(JSON.parse(out.trim().split("\n").pop() ?? "{}")); } catch { resolve({ ok: false, error: "no output" }); } });
-    child.on("error", (e) => { clearTimeout(timer); resolve({ ok: false, error: String(e) }); });
-  });
-}
-
 /** Cron step (background, own lock): verify a few unchecked tracks. Never throws. */
 export async function verifyStep(): Promise<number> {
   if (!(await analyzerReady())) return 0;
@@ -68,17 +52,8 @@ export async function verifyStep(): Promise<number> {
       if (!t) break;
       const tag = await tagCheck(t.filePath, t.title, t.artist);
       const meta = await pageMeta(t.spotifyUrl);
-      const tmp = path.join(os.tmpdir(), `tgsb-prev-${t.id}.mp3`);
       try {
-        let score: number | null = null;
-        if (meta?.previewUrl) {
-          const r = await fetch(meta.previewUrl, { signal: AbortSignal.timeout(30_000) }).catch(() => null);
-          if (r?.ok) {
-            await fs.writeFile(tmp, Buffer.from(await r.arrayBuffer()));
-            const v = await run(t.filePath, tmp);
-            if (v.ok && v.score != null) score = v.score;
-          }
-        }
+        const score = meta?.previewUrl ? await previewScore(t.filePath, meta.previewUrl) : null;
         // The audio comparison is decisive when there is a preview; otherwise the file's own tags decide.
         let status: string;
         if (score != null) status = score >= OK ? "ok" : score < BAD ? "mismatch" : "unsure";
@@ -99,7 +74,6 @@ export async function verifyStep(): Promise<number> {
         await saveVerify(t.id, status, score, t.sizeBytes, fixes, tag);
         done++;
       } catch { await saveVerify(t.id, "error", null, t.sizeBytes, t.fixes, tag); done++; }
-      finally { await fs.unlink(tmp).catch(() => {}); }
     }
   } catch (err) { reportWarn("music", "verify step failed:", err); }
   finally { await setSetting("musicVerifyLock", "0"); }

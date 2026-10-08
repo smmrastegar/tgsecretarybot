@@ -74,13 +74,15 @@ export async function spotdlFallbackStep(): Promise<{ tried: number | null; ok?:
     const t0 = Date.now();
     // Owner-requested fresh copies of tracks that already play (see POST /api/music/<id>?via=spotsaver).
     if (saver) {
-      let redo: number[] = [];
-      try { redo = JSON.parse(s.spotsaverRedo || "[]") as number[]; } catch { /* ignore */ }
-      while (redo.length && Date.now() - t0 < 150_000) {
-        const id = redo.shift()!;
-        const why = await spotsaverDownloadTrack(id, true);
-        (why ? reportWarn : reportInfo)("music", `SpotSaver re-download of track ${id}: ${why ?? "replaced"}`);
-        await setSetting("spotsaverRedo", JSON.stringify(redo));
+      for (const [key, mode] of [["spotsaverRedo", "redo"], ["spotsaverPurge", "purge"]] as const) {
+        let redo: number[] = [];
+        try { redo = JSON.parse(s[key] || "[]") as number[]; } catch { /* ignore */ }
+        while (redo.length && Date.now() - t0 < 150_000) {
+          const id = redo.shift()!;
+          const why = await spotsaverDownloadTrack(id, mode);
+          (why ? reportWarn : reportInfo)("music", `SpotSaver re-download of track ${id}: ${why ?? "replaced"}`);
+          await setSetting(key, JSON.stringify(redo));
+        }
       }
     }
     while (Date.now() - t0 < 150_000) {

@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { getAllSettings, getMusicTrack, updateMusicTrack } from "@/lib/db";
+import { getAllSettings, getMusicTrack, setSetting, updateMusicTrack } from "@/lib/db";
+import { previewScore, PREVIEW_BAD, PREVIEW_OK } from "@/lib/music-preview";
 import { MUSIC_DIR } from "@/lib/music";
 import { reportWarn } from "@/lib/report";
 
@@ -50,14 +52,18 @@ export async function pageMeta(spotifyUrl: string): Promise<{ title: string; art
   } catch { return null; }
 }
 
+const idOf = (c: unknown): string => typeof c === "string" ? c : c && typeof c === "object" ? String((c as Record<string, unknown>).videoId ?? (c as Record<string, unknown>).id ?? "") : "";
+
 /**
- * Download one library track through SpotSaver the way its own page does (its title/artist
- * wording → matched video → MP3). A file whose length is within 5 % of Spotify's is taken at once;
- * otherwise a few other phrasings are tried and the closest-length file wins, as long as it is
- * between half and double the expected length (the same song, a different edit). Returns null on
- * success, else a short reason.
+ * Download one library track through SpotSaver and keep only a copy that really is the song:
+ * every source video the site offers (its best match for a few phrasings, then the runners-up) is
+ * fetched and compared with Spotify's 30 s preview (lib/music-preview.ts); the first one that
+ * matches wins. Without a preview, the old rule applies (length within 5 % of Spotify's, or the
+ * closest between half and double). `redo` never leaves a playing track unplayable; `purge` is the
+ * opposite: when no copy matches, the wrong file is removed and the track is marked failed.
+ * Returns null on success, else a short reason.
  */
-export async function spotsaverDownloadTrack(trackId: number, redo = false): Promise<string | null> {
+export async function spotsaverDownloadTrack(trackId: number, mode: "new" | "redo" | "purge" = "new"): Promise<string | null> {
   const t = await getMusicTrack(trackId);
   if (!t?.title) return "no title";
   const key = ((await getAllSettings()).spotsaverLicense ?? "").trim();
@@ -67,38 +73,65 @@ export async function spotsaverDownloadTrack(trackId: number, redo = false): Pro
   const expect = t.spotifyDurationS ?? 0;
   const meta = await pageMeta(t.spotifyUrl);
   const queries: Array<{ title: string; artist: string }> = [
-    ...(meta ? [meta] : []),
+    ...(meta ? [{ title: meta.title, artist: meta.artist }] : []),
     { title: t.title, artist: first },
     { title: t.title, artist: `${first} official audio` },
     { title: t.title, artist: "" },
   ];
+  const name = `${t.title} - ${first}`.trim();
+  const preview = meta?.previewUrl ?? "";
   const seen = new Set<string>();
-  let best: Got | null = null;
+  const trace: string[] = [];
+  let best: { got: Got; score: number | null } | null = null;
   let lastReason = "no match";
+  const tmp = path.join(os.tmpdir(), `tgsb-ss-${trackId}.mp3`);
+  const t0 = Date.now();
+  let tries = 0;
   try {
-    // A re-download of a working track must never leave it unplayable if SpotSaver fails.
-    if (!redo) await updateMusicTrack(trackId, { status: "downloading", error: null });
-    for (const q of queries) {
+    if (mode === "new") await updateMusicTrack(trackId, { status: "downloading", error: null });
+    outer: for (const q of queries) {
+      if (Date.now() - t0 > 140_000) break;
       const id = await post("/api/get-id/", q, 40_000);
       const vid = String(id.json.videoId ?? "");
       if (!id.json.success || !vid) { lastReason = `no match (${id.status})`; continue; }
-      if (seen.has(vid)) continue;
-      seen.add(vid);
-      const got = await getVideo(vid, Array.isArray(id.json.candidateIds) ? id.json.candidateIds : [], `${t.title} - ${first}`.trim(), key);
-      if (!("buf" in got)) { lastReason = got.reason; if (got.reason === "rate limited") return got.reason; continue; }
-      if (!expect || Math.abs(got.secs - expect) <= expect * 0.05) { best = got; break; }
-      if (got.secs >= expect * 0.5 && got.secs <= expect * 2 && (!best || Math.abs(got.secs - expect) < Math.abs(best.secs - expect))) best = got;
-      else lastReason = `wrong length (${Math.round(got.secs)}s vs ${expect}s)`;
+      const cands = Array.isArray(id.json.candidateIds) ? id.json.candidateIds : [];
+      const ids = [vid, ...cands.map(idOf).filter(Boolean)];
+      for (const v of ids) {
+        if (seen.has(v) || tries >= 6 || Date.now() - t0 > 140_000) continue;
+        seen.add(v); tries++;
+        const got = await getVideo(v, v === vid ? cands : [], name, key);
+        if (!("buf" in got)) { lastReason = got.reason; trace.push(`${v}:${got.reason}`); if (got.reason === "rate limited") return got.reason; continue; }
+        if (preview) {
+          await fs.writeFile(tmp, got.buf);
+          const score = await previewScore(tmp, preview);
+          trace.push(`${v}:${Math.round(got.secs)}s:${score == null ? "?" : score.toFixed(2)}`);
+          if (score != null && score >= PREVIEW_OK) { best = { got, score }; break outer; }
+          if (score != null && score >= PREVIEW_BAD && (!best || score > (best.score ?? 0))) best = { got, score };
+          if (score != null) { lastReason = `wrong song (${score.toFixed(2)})`; continue; }
+        }
+        // no preview to compare with (or it could not be judged): rely on the length
+        if (!expect || Math.abs(got.secs - expect) <= expect * 0.05) { best = { got, score: null }; if (!preview) break outer; }
+        else if (!preview && got.secs >= expect * 0.5 && got.secs <= expect * 2 && (!best || Math.abs(got.secs - expect) < Math.abs(best.got.secs - expect))) best = { got, score: null };
+        else if (!preview) lastReason = `wrong length (${Math.round(got.secs)}s vs ${expect}s)`;
+      }
     }
-    if (!best) return lastReason;
+    await setSetting("spotsaverTrace", `${trackId}: ${trace.join(" | ")}`.slice(0, 900));
+    if (!best) {
+      if (mode === "purge") {
+        const old = t.filePath;
+        await updateMusicTrack(trackId, { status: "failed", error: `Track not found (SpotSaver: ${lastReason}; the previous file was a different song)`.slice(0, 300), filePath: null, sizeBytes: null });
+        if (old) await fs.unlink(old).catch(() => {});
+      }
+      return lastReason;
+    }
     await fs.mkdir(MUSIC_DIR, { recursive: true });
     const dest = path.join(MUSIC_DIR, `${trackId}.mp3`);
-    await fs.writeFile(dest, best.buf);
+    await fs.writeFile(dest, best.got.buf);
     // The file's own length is what the player should show (it can differ from Spotify's edit).
-    await updateMusicTrack(trackId, { filePath: dest, mime: "audio/mpeg", sizeBytes: best.buf.length, durationS: Math.round(best.secs), status: "ready", error: null });
-    if (expect && Math.abs(best.secs - expect) > expect * 0.05) reportWarn("music", `SpotSaver gave track ${trackId} a different edit: ${Math.round(best.secs)}s vs Spotify's ${expect}s`);
+    await updateMusicTrack(trackId, { filePath: dest, mime: "audio/mpeg", sizeBytes: best.got.buf.length, durationS: Math.round(best.got.secs), status: "ready", error: null });
+    if (expect && Math.abs(best.got.secs - expect) > expect * 0.05) reportWarn("music", `SpotSaver gave track ${trackId} a different edit: ${Math.round(best.got.secs)}s vs Spotify's ${expect}s`);
     return null;
   } catch (err) {
     return String(err instanceof Error ? err.message : err).slice(0, 100);
-  }
+  } finally { await fs.unlink(tmp).catch(() => {}); }
 }
