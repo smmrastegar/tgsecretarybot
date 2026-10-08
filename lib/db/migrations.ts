@@ -332,6 +332,21 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS can_create_playlists BOOLEAN NOT NULL DEFAULT TRUE`;
     },
   },
+  {
+    // Content check of every library file against Spotify's 30 s preview of the song.
+    id: "2026-10-09-004-music-verify",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_verify (
+          track_id    BIGINT PRIMARY KEY,
+          status      TEXT NOT NULL,
+          score       REAL,
+          size_bytes  BIGINT,
+          fixes       INT NOT NULL DEFAULT 0,
+          checked_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

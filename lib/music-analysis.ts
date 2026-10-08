@@ -16,7 +16,7 @@ import { reportWarn } from "@/lib/report";
 
 export const ANALYSIS_VERSION = 2; // 2: whole track + Discogs-EffNet embedding / genres / moods
 const TOOLS = "/var/lib/tgsb-tools";
-const PY = `${TOOLS}/analyzer/bin/python`;
+export const PY = `${TOOLS}/analyzer/bin/python`;
 const TIMEOUT_MS = 300_000;
 
 export async function analyzerReady(): Promise<boolean> {
@@ -28,7 +28,7 @@ export async function mlAvailable(): Promise<boolean> {
   try { await fs.access(`${TOOLS}/models/genre_discogs400-discogs-effnet-1.pb`); return true; } catch { return false; }
 }
 
-async function ffmpegPath(): Promise<string> {
+export async function ffmpegPath(): Promise<string> {
   for (const p of [`${TOOLS}/home/.config/spotdl/ffmpeg`, "/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]) {
     try { await fs.access(p); return p; } catch { /* next */ }
   }

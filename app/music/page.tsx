@@ -44,6 +44,13 @@ export default function MusicPage() {
   const [reports, setReports] = useState<Rep[]>([]);
   const [reasonLabels, setReasonLabels] = useState<Record<string, string>>({});
   const [showReports, setShowReports] = useState(false);
+  type Sus = { trackId: number; status: string; score: number | null; fixes: number; title: string | null; artist: string | null };
+  const [verify, setVerify] = useState<{ counts: Record<string, number>; suspicious: Sus[] } | null>(null);
+  const loadVerify = useCallback(async () => {
+    const r = await fetch("/api/music/verify", { cache: "no-store" });
+    if (r.ok) setVerify((await r.json()) as { counts: Record<string, number>; suspicious: Sus[] });
+  }, []);
+  useEffect(() => { void loadVerify(); const i = window.setInterval(() => void loadVerify(), 60_000); return () => window.clearInterval(i); }, [loadVerify]);
   const loadReports = useCallback(async () => {
     const r = await fetch("/api/music/reports?status=open", { cache: "no-store" });
     if (!r.ok) return;
@@ -338,6 +345,28 @@ export default function MusicPage() {
       </div>
       <SmartPlaylistCard tracks={tracks} onMessage={setMsg} onCreated={() => { void load(); setLinksKey((k) => k + 1); }} />
       <LinksCard onMessage={setMsg} refreshKey={linksKey + playlists.length} />
+      {verify && Object.keys(verify.counts).length > 0 && (
+        <Card className="mb-4">
+          <div className="text-sm font-medium">🔍 بررسی درستیِ فایل آهنگ‌ها (مقایسه با پیش‌نمایش ۳۰ ثانیه‌ای اسپاتیفای)</div>
+          <div className="mt-2 text-xs text-[var(--color-text-dim)] leading-6">
+            تأییدشده: {verify.counts.ok ?? 0} · بدون پیش‌نمایش (قابل بررسی نیست): {verify.counts.nopreview ?? 0} · مشکوک: {(verify.counts.mismatch ?? 0) + (verify.counts.unsure ?? 0)} · خطا: {verify.counts.error ?? 0}
+            <span className="block">فایل نادرست یک بار خودکار از SpotSaver جایگزین می‌شود؛ اگر باز هم نخواند، اینجا می‌ماند.</span>
+          </div>
+          {verify.suspicious.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {verify.suspicious.map((s) => (
+                <div key={s.trackId} className="rounded-lg border border-[var(--color-border)] p-3 text-xs flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-sm" dir="ltr">{s.title} — {s.artist}</span>
+                  <span className={`px-2 py-0.5 rounded-full ${s.status === "mismatch" ? "bg-rose-500/15 text-rose-300" : "bg-amber-500/15 text-amber-200"}`}>{s.status === "mismatch" ? "فایل اشتباه" : "نامطمئن"} · {s.score != null ? s.score.toFixed(2) : "—"}{s.fixes > 0 ? " · یک بار اصلاح شده" : ""}</span>
+                  <button onClick={async () => { await fetch(`/api/music/${s.trackId}?via=spotsaver`, { method: "POST" }); setMsg("در صف SpotSaver؛ تا یکی دو دقیقه دیگر"); void loadVerify(); }} className="px-3 py-1 rounded-md border border-[var(--color-border)]">↻ از SpotSaver</button>
+                  <button onClick={async () => { if (!confirm("از ربات تلگرام دوباره دانلود شود؟")) return; await fetch(`/api/music/${s.trackId}`, { method: "POST" }); void load(); void loadVerify(); }} className="px-3 py-1 rounded-md border border-[var(--color-border)]">↻ از ربات</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
       {reports.length > 0 && (
         <Card className="mb-4">
           <button onClick={() => setShowReports((v) => !v)} className="text-sm font-medium w-full text-right">🚩 گزارش مشکل از پلیر ({reports.length}) {showReports ? "▴" : "▾"}</button>

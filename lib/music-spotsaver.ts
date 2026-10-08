@@ -41,12 +41,12 @@ async function getVideo(videoId: string, candidateIds: unknown[], name: string, 
 }
 
 /** The page's own view of a song (title / artist as it phrases them). */
-async function pageMeta(spotifyUrl: string): Promise<{ title: string; artist: string } | null> {
+export async function pageMeta(spotifyUrl: string): Promise<{ title: string; artist: string; previewUrl: string } | null> {
   try {
     const r = await fetch(`${BASE}/api/spotify/?url=${encodeURIComponent(spotifyUrl)}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(30_000) });
-    const j = (await r.json()) as { items?: Array<{ title?: string; artist?: string }> };
+    const j = (await r.json()) as { items?: Array<{ title?: string; artist?: string; previewUrl?: string | null }> };
     const i = j.items?.[0];
-    return i?.title ? { title: i.title, artist: i.artist ?? "" } : null;
+    return i?.title ? { title: i.title, artist: i.artist ?? "", previewUrl: i.previewUrl ?? "" } : null;
   } catch { return null; }
 }
 
