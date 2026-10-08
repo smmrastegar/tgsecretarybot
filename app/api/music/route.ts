@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
-import { authorizeMusic, notFound } from "@/lib/music-token";
-import { addMusicTrack, listMusicPlaylists, listMusicTracks, parseSpotifyTrackUrl } from "@/lib/db";
+import { allowedTrackIds, musicAccess, notFound } from "@/lib/music-token";
+import { resolvedPlaylists } from "@/lib/music-playlists";
+import { addMusicTrack, listMusicTracks, parseSpotifyTrackUrl } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
 import { reportError } from "@/lib/report";
 
@@ -9,9 +10,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request): Promise<Response> {
-  if (!(await authorizeMusic(request))) return notFound();
+  const access = await musicAccess(request);
+  if (!access) return notFound();
   try {
-    const [tracks, playlists] = await Promise.all([listMusicTracks(), listMusicPlaylists()]);
+    const all = await listMusicTracks();
+    const [pls, allowed] = await Promise.all([resolvedPlaylists(all), allowedTrackIds(access)]);
+    // A player link only ever sees its own playlists and the songs in them.
+    const tracks = allowed ? all.filter((t) => allowed.has(t.id)) : all;
+    const lists = access.kind === "link" && access.playlistIds ? pls.filter((p) => access.playlistIds!.includes(p.id)) : pls;
+    const playlists = lists.map((p) => ({ id: p.id, name: p.name, trackIds: allowed ? p.trackIds.filter((id) => allowed.has(id)) : p.trackIds, smart: p.smart, ...(access.kind === "session" ? { rules: p.rules } : {}) }));
     return NextResponse.json({ tracks, playlists });
   } catch (err) {
     reportError("music", "list failed:", err);

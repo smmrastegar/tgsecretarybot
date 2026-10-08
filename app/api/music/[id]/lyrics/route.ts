@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authorizeMusic, notFound } from "@/lib/music-token";
+import { guardTrack } from "@/lib/music-token";
 import { getAllSettings, getMusicTrack, setSetting } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -10,8 +10,9 @@ type Lyrics = { synced: string | null; plain: string | null; found: boolean };
 // Lyrics come from LRCLIB (free, keyless). Results, including misses, are
 // cached in settings so each track is looked up at most once.
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
-  if (!(await authorizeMusic(request))) return notFound();
   const id = Number((await ctx.params).id);
+  const g = await guardTrack(request, id);
+  if ("deny" in g) return g.deny;
   const key = `lyrics.${id}`;
   const cached = (await getAllSettings())[key];
   if (cached) { try { return NextResponse.json(JSON.parse(cached) as Lyrics); } catch { /* refetch */ } }

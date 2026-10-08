@@ -156,13 +156,13 @@ function genreBonus(m: Model, a: number, b: number): number {
 
 export type Similar = { id: number; score: number };
 
-export async function similarTo(trackId: number, n = 30, exclude: Set<number> = new Set()): Promise<Similar[]> {
+export async function similarTo(trackId: number, n = 30, exclude: Set<number> = new Set(), allowed: Set<number> | null = null): Promise<Similar[]> {
   const m = await model();
   const i = m.idx.get(trackId);
   if (i == null) return [];
   const out: Similar[] = [];
   for (let j = 0; j < m.ids.length; j++) {
-    if (j === i || exclude.has(m.ids[j]!)) continue;
+    if (j === i || exclude.has(m.ids[j]!) || (allowed && !allowed.has(m.ids[j]!))) continue;
     out.push({ id: m.ids[j]!, score: sim(m, i, j) + genreBonus(m, trackId, m.ids[j]!) });
   }
   return out.sort((a, b) => b.score - a.score).slice(0, n);
@@ -190,7 +190,7 @@ function tempoPenalty(a: number, b: number): number {
  * closest unplayed ones to the CURRENT song (not just the first), with gentle
  * tempo / key / artist continuity, picked from the top 3 so it doesn't loop.
  */
-export async function radioFrom(trackId: number, n = 40, artistOf: (id: number) => string = () => ""): Promise<Similar[]> {
+export async function radioFrom(trackId: number, n = 40, artistOf: (id: number) => string = () => "", allowed: Set<number> | null = null): Promise<Similar[]> {
   const m = await model();
   const start = m.idx.get(trackId);
   if (start == null) return [];
@@ -201,13 +201,14 @@ export async function radioFrom(trackId: number, n = 40, artistOf: (id: number) 
   while (out.length < n && used.size < m.ids.length) {
     const cands: Array<{ j: number; s: number }> = [];
     for (let j = 0; j < m.ids.length; j++) {
-      if (used.has(j)) continue;
+      if (used.has(j) || (allowed && !allowed.has(m.ids[j]!))) continue;
       let s = sim(m, cur, j) + genreBonus(m, m.ids[cur]!, m.ids[j]!);
       s -= tempoPenalty(m.feats[cur]!.bpm, m.feats[j]!.bpm) + keyPenalty(m.feats[cur]!, m.feats[j]!);
       const art = artistOf(m.ids[cur]!);
       if (art && art === artistOf(m.ids[j]!)) s -= 0.05;
       cands.push({ j, s });
     }
+    if (cands.length === 0) break;
     cands.sort((a, b) => b.s - a.s);
     const top = cands.slice(0, 3);
     const pick = top[Math.min(top.length - 1, Math.floor(rnd() * rnd() * top.length))]!;

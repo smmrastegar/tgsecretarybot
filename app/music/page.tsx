@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
+import LinksCard from "@/components/music/dashboard/LinksCard";
+import SmartPlaylistCard from "@/components/music/dashboard/SmartPlaylistCard";
 import MusicStats from "@/components/music/Stats";
 import TrackDetail from "@/components/music/TrackDetail";
 import { useListenTracker } from "@/components/music/useListenTracker";
@@ -20,7 +22,7 @@ type Track = {
   rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
   releaseDate: string | null; mime: string | null; readyAt: string | null; createdAt: string; listenSeconds: number;
 };
-type Playlist = { id: number; name: string; trackIds: number[] };
+type Playlist = { id: number; name: string; trackIds: number[]; smart?: boolean };
 
 type SpCfg = { hasCredentials: boolean; clientId: string; accounts: Array<{ id: number; displayName: string | null; spotifyUserId: string }>; redirectUri: string };
 type SpLib = { playlists: Array<{ id: string; name: string; tracks: number; owner: string }>; likedCount: number; me: string };
@@ -35,7 +37,7 @@ export default function MusicPage() {
   const [paste, setPaste] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [playerUrl, setPlayerUrl] = useState<string | null>(null);
+  const [linksKey, setLinksKey] = useState(0);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [showStats, setShowStats] = useState(false);
   type Rep = { id: number; trackId: number; trackTitle: string | null; reasons: string[]; note: string | null; context: Record<string, unknown> | null; status: string; createdAt: string };
@@ -233,11 +235,6 @@ export default function MusicPage() {
   }
   async function del(t: Track) { if (confirm(`«${t.title ?? "آهنگ"}» حذف شود؟`)) { await fetch(`/api/music/${t.id}`, { method: "DELETE" }); if (cur === t.id) { audio.current?.pause(); setCur(null); } void load(); } }
   async function retry(t: Track) { await fetch(`/api/music/${t.id}`, { method: "POST" }); void load(); }
-  async function playerLink(rotate: boolean) {
-    if (rotate && !confirm("لینک قبلی فوراً از کار می‌افتد. لینک جدید ساخته شود؟")) return;
-    const r = await fetch("/api/music/player-link", { method: rotate ? "POST" : "GET" });
-    if (r.ok) setPlayerUrl(((await r.json()) as { url: string }).url);
-  }
   async function repair() {
     if (!confirm("همه‌ی آهنگ‌ها از اسپاتیفای اصلاح می‌شوند (نام، خواننده، کاور) و فایل‌هایی که مال آهنگ دیگری هستند دوباره دانلود می‌شوند. ادامه؟")) return;
     setMsg("در حال اصلاح کتابخانه… (ممکن است چند دقیقه طول بکشد)");
@@ -339,20 +336,8 @@ export default function MusicPage() {
         <button onClick={smartMix} disabled={readyVisible.length === 0} className={`px-4 py-2 rounded-lg border text-sm disabled:opacity-50 ${mixOn ? "border-amber-400 text-amber-200" : "border-[var(--color-border)]"}`}>🎲 ترکیب هوشمند</button>
         <span className="text-[11px] text-[var(--color-text-dim)] self-center">لایک = بیشتر پخش می‌شود · دیسلایک = هرگز · ردشدن زود = کمتر</span>
       </div>
-      <Card className="mb-4">
-        <div className="text-sm font-medium mb-1">🔗 لینک خصوصی پلیر (بدون لاگین)</div>
-        <p className="text-xs text-[var(--color-text-dim)] mb-2">یک صفحه‌ی جدا برای پخش، لایک و دیسلایک؛ آدرسش یک کد ۲۵۶ بیتی است، قابل حدس نیست، ایندکس نمی‌شود و پیش‌نمایش ندارد. آن را برای هیچ‌کس و هیچ‌جا نفرست (بات و گروه هم نه).</p>
-        {playerUrl ? (
-          <div className="flex gap-2 items-center flex-wrap">
-            <input readOnly dir="ltr" value={playerUrl} onFocus={(e) => e.currentTarget.select()} className="flex-1 min-w-48 text-xs font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5" />
-            <button onClick={() => { void navigator.clipboard.writeText(playerUrl); setMsg("لینک پلیر کپی شد"); }} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">کپی</button>
-            <button onClick={() => window.open(playerUrl, "_blank", "noopener,noreferrer")} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">باز کردن</button>
-            <button onClick={() => void playerLink(true)} className="text-xs px-3 py-1.5 rounded-md border border-rose-500/40 text-rose-200">ساخت لینک جدید</button>
-          </div>
-        ) : (
-          <button onClick={() => void playerLink(false)} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">نمایش لینک</button>
-        )}
-      </Card>
+      <SmartPlaylistCard tracks={tracks} onMessage={setMsg} onCreated={() => { void load(); setLinksKey((k) => k + 1); }} />
+      <LinksCard onMessage={setMsg} refreshKey={linksKey + playlists.length} />
       {reports.length > 0 && (
         <Card className="mb-4">
           <button onClick={() => setShowReports((v) => !v)} className="text-sm font-medium w-full text-right">🚩 گزارش مشکل از پلیر ({reports.length}) {showReports ? "▴" : "▾"}</button>
@@ -384,7 +369,7 @@ export default function MusicPage() {
         <button onClick={() => setView("all")} className={`text-xs px-3 py-1.5 rounded-md border ${view === "all" ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>همه ({tracks.length})</button>
         <button onClick={() => setView("liked")} className={`text-xs px-3 py-1.5 rounded-md border ${view === "liked" ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>❤️ لایک‌شده‌ها ({tracks.filter((t) => t.rating > 0).length})</button>
         {playlists.map((p) => (
-          <button key={p.id} onClick={() => setView(p.id)} className={`text-xs px-3 py-1.5 rounded-md border ${view === p.id ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>{p.name} ({p.trackIds.length})</button>
+          <button key={p.id} onClick={() => setView(p.id)} className={`text-xs px-3 py-1.5 rounded-md border ${view === p.id ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>{p.smart ? "✨ " : ""}{p.name} ({p.trackIds.length})</button>
         ))}
         <button onClick={newPlaylist} className="text-xs px-3 py-1.5 rounded-md border border-dashed border-[var(--color-border)]">+ پلی‌لیست خالی</button>
         <button onClick={() => void createPlaylistWith(readyVisible.map((t) => t.id), view === "all" ? "همه" : view === "liked" ? "لایک‌های من" : playlists.find((p) => p.id === view)?.name ?? "")} disabled={readyVisible.length === 0} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-40">+ پلی‌لیست از همین نما ({readyVisible.length})</button>
@@ -406,7 +391,7 @@ export default function MusicPage() {
             <button onClick={() => setSel(new Set())} className="px-2 py-1 rounded-md border border-[var(--color-border)]">هیچ‌کدام</button>
             <select value="" disabled={sel.size === 0} onChange={(e) => { const v = e.target.value; if (v === "new") void createPlaylistWith([...sel], ""); else if (v) void addSelectedTo(Number(v)); }} className="px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-40">
               <option value="">افزودن به پلی‌لیست…</option>
-              {playlists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {playlists.filter((p) => !p.smart).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               <option value="new">+ پلی‌لیست جدید</option>
             </select>
           </div>
@@ -432,7 +417,7 @@ export default function MusicPage() {
             {t.status === "ready" && playlists.length > 0 && (
               <select value="" onChange={(e) => { const pl = playlists.find((p) => p.id === Number(e.target.value)); if (pl) void toggleIn(pl, t); }} className="text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1 py-1 w-20">
                 <option value="">+ لیست</option>
-                {playlists.map((p) => <option key={p.id} value={p.id}>{p.trackIds.includes(t.id) ? "✓ " : ""}{p.name}</option>)}
+                {playlists.filter((p) => !p.smart).map((p) => <option key={p.id} value={p.id}>{p.trackIds.includes(t.id) ? "✓ " : ""}{p.name}</option>)}
               </select>
             )}
             <button onClick={() => setDetailId(t.id)} title="جزئیات" className="text-sm px-1 opacity-60 hover:opacity-100">ℹ️</button>

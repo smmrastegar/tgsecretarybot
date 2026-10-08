@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authorizeMusic, notFound } from "@/lib/music-token";
+import { guardTrack } from "@/lib/music-token";
 import { addMusicReport, getMusicTrack, listMusicReports } from "@/lib/db";
 import { reportWarn } from "@/lib/report";
 
@@ -8,8 +8,9 @@ export const dynamic = "force-dynamic";
 
 // POST { reasons: string[], note?: string, context?: object } — "this song has a problem".
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
-  if (!(await authorizeMusic(request))) return notFound();
   const id = Number((await ctx.params).id);
+  const g = await guardTrack(request, id);
+  if ("deny" in g) return g.deny;
   const b = (await request.json().catch(() => ({}))) as { reasons?: unknown; note?: unknown; context?: unknown };
   const reasons = Array.isArray(b.reasons) ? b.reasons.map(String) : [];
   const note = typeof b.note === "string" ? b.note.trim() : "";

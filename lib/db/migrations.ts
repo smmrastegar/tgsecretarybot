@@ -291,6 +291,24 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // Several private player links, each with its own set of playlists
+    // (manual or smart), and rule-based "smart" playlists.
+    id: "2026-10-09-001-player-links",
+    up: async (q) => {
+      await q`ALTER TABLE music_playlists ADD COLUMN IF NOT EXISTS rules JSONB`;
+      await q`
+        CREATE TABLE IF NOT EXISTS player_links (
+          id            BIGSERIAL PRIMARY KEY,
+          name          TEXT NOT NULL,
+          token         TEXT NOT NULL UNIQUE,
+          active        BOOLEAN NOT NULL DEFAULT TRUE,
+          playlist_ids  BIGINT[] NOT NULL DEFAULT '{}',
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_used_at  TIMESTAMPTZ
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

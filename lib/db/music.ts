@@ -160,23 +160,24 @@ export async function attachMusicJob(jobId: number, trackId: number): Promise<vo
   await q().query(`UPDATE link_download_jobs SET music_track_id = $1 WHERE id = $2`, [trackId, jobId]);
 }
 
-export type MusicPlaylist = { id: number; name: string; trackIds: number[] };
+export type MusicPlaylist = { id: number; name: string; trackIds: number[]; rules: Record<string, unknown> | null };
 
 export async function listMusicPlaylists(): Promise<MusicPlaylist[]> {
   if (!hasDb()) return [];
   await ensureSchema();
-  const pls = (await q().query(`SELECT id, name FROM music_playlists ORDER BY id`)) as Row[];
+  const pls = (await q().query(`SELECT id, name, rules FROM music_playlists ORDER BY id`)) as Row[];
   const links = (await q().query(`SELECT playlist_id, track_id FROM music_playlist_tracks ORDER BY playlist_id, position, track_id`)) as Row[];
   return pls.map((p) => ({
     id: num(p, "id"),
     name: str(p, "name"),
     trackIds: links.filter((l) => num(l, "playlist_id") === num(p, "id")).map((l) => num(l, "track_id")),
+    rules: (p.rules && typeof p.rules === "object" ? p.rules : typeof p.rules === "string" ? JSON.parse(p.rules) : null) as Record<string, unknown> | null,
   }));
 }
 
-export async function createMusicPlaylist(name: string): Promise<number> {
+export async function createMusicPlaylist(name: string, rules?: Record<string, unknown> | null): Promise<number> {
   await ensureSchema();
-  const rows = (await q().query(`INSERT INTO music_playlists (name) VALUES ($1) RETURNING id`, [name.slice(0, 100)])) as Row[];
+  const rows = (await q().query(`INSERT INTO music_playlists (name, rules) VALUES ($1, $2::jsonb) RETURNING id`, [name.slice(0, 100), rules ? JSON.stringify(rules) : null])) as Row[];
   return num(rows[0]!, "id");
 }
 
@@ -269,33 +270,36 @@ export type MusicStats = {
   recent: Array<{ id: number; title: string | null; artist: string | null; at: string; seconds: number; completed: boolean }>;
 };
 
-export async function getMusicStats(): Promise<MusicStats> {
+export async function getMusicStats(trackIds?: number[] | null): Promise<MusicStats> {
   await ensureSchema();
-  const one = async (sqlText: string): Promise<Row> => ((await q().query(sqlText)) as Row[])[0] ?? {};
+  // A player link only sees stats for its own songs.
+  const P = trackIds ? [trackIds] : [];
+  const W = (col: string, first = false) => (trackIds ? ` ${first ? "WHERE" : "AND"} ${col} = ANY($1::bigint[])` : "");
+  const one = async (sqlText: string): Promise<Row> => ((await q().query(sqlText, P)) as Row[])[0] ?? {};
   const t = await one(`SELECT COUNT(*) FILTER (WHERE status='ready')::int AS tracks,
       COALESCE(SUM(play_count),0)::int AS plays, COALESCE(SUM(skip_count),0)::int AS skips,
       COUNT(*) FILTER (WHERE rating > 0)::int AS likes, COUNT(*) FILTER (WHERE rating < 0)::int AS dislikes
-    FROM music_tracks`);
-  const l = await one(`SELECT COALESCE(SUM(seconds),0)::int AS s FROM music_events`);
+    FROM music_tracks${W("id", true)}`);
+  const l = await one(`SELECT COALESCE(SUM(seconds),0)::int AS s FROM music_events${W("track_id", true)}`);
   const top = (await q().query(`
     SELECT t.id, t.title, t.artist, t.play_count, t.skip_count, (t.cover_path IS NOT NULL) AS has_cover,
            COALESCE((SELECT SUM(seconds) FROM music_events e WHERE e.track_id = t.id), 0)::int AS listen_s
-      FROM music_tracks t WHERE t.play_count > 0 OR t.skip_count > 0
-     ORDER BY t.play_count DESC, listen_s DESC LIMIT 15`)) as Row[];
+      FROM music_tracks t WHERE (t.play_count > 0 OR t.skip_count > 0)${W("t.id")}
+     ORDER BY t.play_count DESC, listen_s DESC LIMIT 15`, P)) as Row[];
   const artists = (await q().query(`
     SELECT t.artist, SUM(t.play_count)::int AS plays, COUNT(*)::int AS tracks,
            COALESCE(SUM((SELECT SUM(seconds) FROM music_events e WHERE e.track_id = t.id)), 0)::int AS listen_s
-      FROM music_tracks t WHERE t.artist IS NOT NULL AND t.play_count > 0
-     GROUP BY t.artist ORDER BY plays DESC, listen_s DESC LIMIT 10`)) as Row[];
+      FROM music_tracks t WHERE t.artist IS NOT NULL AND t.play_count > 0${W("t.id")}
+     GROUP BY t.artist ORDER BY plays DESC, listen_s DESC LIMIT 10`, P)) as Row[];
   const days = (await q().query(`
     SELECT to_char(d::date, 'MM-DD') AS day,
            COALESCE(SUM(e.seconds), 0)::int AS sec, COUNT(e.id) FILTER (WHERE e.completed OR e.seconds >= 30)::int AS plays
       FROM generate_series((NOW() AT TIME ZONE 'Asia/Tehran')::date - 13, (NOW() AT TIME ZONE 'Asia/Tehran')::date, '1 day') d
-      LEFT JOIN music_events e ON (e.at AT TIME ZONE 'Asia/Tehran')::date = d::date
-     GROUP BY d ORDER BY d`)) as Row[];
+      LEFT JOIN music_events e ON (e.at AT TIME ZONE 'Asia/Tehran')::date = d::date${W("e.track_id")}
+     GROUP BY d ORDER BY d`, P)) as Row[];
   const recent = (await q().query(`
     SELECT t.id, t.title, t.artist, to_char(e.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at, e.seconds, e.completed
-      FROM music_events e JOIN music_tracks t ON t.id = e.track_id ORDER BY e.id DESC LIMIT 15`)) as Row[];
+      FROM music_events e JOIN music_tracks t ON t.id = e.track_id${W("e.track_id", true)} ORDER BY e.id DESC LIMIT 15`, P)) as Row[];
   return {
     totals: { tracks: num(t, "tracks"), plays: num(t, "plays"), listenSeconds: num(l, "s"), likes: num(t, "likes"), dislikes: num(t, "dislikes"), skips: num(t, "skips") },
     topTracks: top.map((r) => ({ id: num(r, "id"), title: strOrNull(r, "title"), artist: strOrNull(r, "artist"), plays: num(r, "play_count"), skips: num(r, "skip_count"), listenSeconds: num(r, "listen_s"), hasCover: r.has_cover === true || r.has_cover === "t" })),

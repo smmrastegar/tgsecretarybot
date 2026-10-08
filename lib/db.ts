@@ -22,3 +22,4 @@ export * from "./db/roadmap";
 export * from "./db/music";
 export * from "./db/music-analysis";
 export * from "./db/login-requests";
+export * from "./db/player-links";

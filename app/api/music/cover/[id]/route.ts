@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
-import { authorizeMusic, notFound } from "@/lib/music-token";
+import { guardTrack } from "@/lib/music-token";
 import { getMusicTrack } from "@/lib/db";
 import { MUSIC_DIR } from "@/lib/music";
 
@@ -15,8 +15,9 @@ const SIZES = [128, 320];
 const HEADERS = { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=604800" };
 
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
-  if (!(await authorizeMusic(request))) return notFound();
   const id = Number((await ctx.params).id);
+  const g = await guardTrack(request, id);
+  if ("deny" in g) return g.deny;
   const t = await getMusicTrack(id);
   if (!t?.coverPath) return new Response("none", { status: 404 });
   const w = Number(new URL(request.url).searchParams.get("w"));

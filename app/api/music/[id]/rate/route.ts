@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authorizeMusic, notFound } from "@/lib/music-token";
+import { guardTrack } from "@/lib/music-token";
 import { rateMusicTrack } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -7,8 +7,10 @@ export const dynamic = "force-dynamic";
 
 // POST { rating: -1 | 0 | 1 }
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
-  if (!(await authorizeMusic(request))) return notFound();
+  const id = Number((await ctx.params).id);
+  const g = await guardTrack(request, id);
+  if ("deny" in g) return g.deny;
   const b = (await request.json().catch(() => ({}))) as { rating?: number };
-  await rateMusicTrack(Number((await ctx.params).id), Number(b.rating ?? 0));
+  await rateMusicTrack(id, Number(b.rating ?? 0));
   return NextResponse.json({ ok: true });
 }
