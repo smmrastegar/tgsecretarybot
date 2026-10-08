@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDownIcon, DownloadIcon, ShareIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon } from "../Icons";
+import { ArrowDownIcon, CheckIcon, DownloadIcon, FlagIcon, ShareIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon } from "../Icons";
 import { Cover, type Track } from "./shared";
 
 export function Sheet({ onClose, title, children }: { onClose: () => void; title?: string; children: ReactNode }) {
@@ -25,8 +25,8 @@ const Item = ({ icon, label, onClick, active }: { icon: ReactNode; label: string
   </button>
 );
 
-export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails, offline, onOffline, onShare }: {
-  onShare: () => void;
+export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails, offline, onOffline, onShare, onReport }: {
+  onShare: () => void; onReport: () => void;
   offline: boolean; onOffline: () => void;
   t: Track; tq: string; onClose: () => void; onNext: () => void; onAdd: () => void; onRate: (r: number) => void;
   onArtist: () => void; onAlbum: () => void; onDetails: () => void;
@@ -46,6 +46,7 @@ export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onA
       {t.album && <Item icon={<ChevronRightIcon size={22} />} label="Go to album" onClick={go(onAlbum)} />}
       <Item icon={<ShareIcon size={22} />} label="Share" onClick={go(onShare)} />
       <Item icon={<DownloadIcon size={22} />} label={offline ? "Remove offline copy" : "Save for offline"} onClick={go(onOffline)} />
+      <Item icon={<FlagIcon size={22} />} label="Report a problem" onClick={go(onReport)} />
       <Item icon={<InfoIcon size={22} />} label="Details & stats" onClick={go(onDetails)} />
     </Sheet>
   );
@@ -127,6 +128,57 @@ export function LyricsSheet({ t, tq, pos, onSeek, onClose }: { t: Track; tq: str
           <button key={i} data-active={i === active ? "1" : "0"} onClick={() => onSeek(l.t)} className={`block w-full py-1.5 text-[20px] font-bold leading-snug transition-colors ${i === active ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`}>{l.text || "♪"}</button>
         ))}
         {data?.found && lines.length === 0 && <pre className="whitespace-pre-wrap font-[inherit] text-[17px] leading-relaxed text-[var(--dim2)]">{data.plain}</pre>}
+      </div>
+    </Sheet>
+  );
+}
+
+export const REPORT_REASONS: Array<[string, string]> = [
+  ["wrong_song", "Wrong song / different audio"],
+  ["wrong_cover", "Wrong or missing cover"],
+  ["wrong_info", "Wrong title or artist"],
+  ["bad_quality", "Bad sound quality"],
+  ["cut_off", "Cuts off, too short or too long"],
+  ["wont_play", "Won't play / keeps stalling"],
+  ["glitches", "Skips, clicks or glitches"],
+  ["wrong_lyrics", "Wrong lyrics"],
+  ["other", "Something else"],
+];
+
+export function ReportSheet({ t, tq, context, onClose, onDone }: { t: Track; tq: string; context: () => Record<string, unknown>; onClose: () => void; onDone: (msg: string) => void }) {
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const toggle = (k: string) => setPicked((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const ok = picked.size > 0 || note.trim().length > 0;
+  async function send() {
+    if (!ok || busy) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/music/${t.id}/report?${tq}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reasons: [...picked], note, context: context() }) });
+      onDone(r.ok ? "Thanks — problem reported" : "Could not send the report");
+      if (r.ok) onClose();
+    } catch { onDone("Could not send the report"); }
+    setBusy(false);
+  }
+  return (
+    <Sheet onClose={onClose} title="Report a problem">
+      <div className="px-5 pb-1 text-[13px] text-[var(--dim)] truncate">{t.title} · {t.artist}</div>
+      <div className="px-2 pt-1">
+        {REPORT_REASONS.map(([k, label]) => {
+          const on = picked.has(k);
+          return (
+            <button key={k} onClick={() => toggle(k)} role="checkbox" aria-checked={on} className="w-full flex items-center gap-3 px-3 py-3 text-left text-[15px] rounded-xl active:bg-[var(--s1)]">
+              <span className={`w-[22px] h-[22px] rounded-md grid place-items-center border ${on ? "bg-[rgb(var(--ac))] border-transparent text-[var(--acfg)]" : "border-[var(--bd)]"}`}>{on && <CheckIcon size={14} />}</span>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="px-5 pt-2">
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} rows={3} placeholder="Describe what's wrong (optional)…" className="w-full rounded-xl bg-[var(--s1)] border border-[var(--bd)] px-3 py-2.5 text-[15px] outline-none focus:border-[rgb(var(--ac))] resize-none" />
+        <button onClick={() => void send()} disabled={!ok || busy} className="mt-3 w-full py-3 rounded-full font-semibold text-[15px] bg-[rgb(var(--ac))] text-[var(--acfg)] disabled:opacity-35 active:scale-[.98] transition">{busy ? "Sending…" : "Send report"}</button>
+        <div className="mt-2 text-center text-[11px] text-[var(--dim3)]">Playback details (position, connection, app version) are attached automatically.</div>
       </div>
     </Sheet>
   );

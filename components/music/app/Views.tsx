@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, SearchIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
 import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, PlayAllButton, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
 
@@ -26,7 +26,8 @@ const albumKey = (t: Track) => `${t.album ?? "Single"}|${artistsOf(t)[0] ?? ""}`
 
 /* ---------- rows ---------- */
 
-export function TrackRow({ t, api, ids, index }: { t: Track; api: Api; ids: number[]; index?: number }) {
+type RowProps = { t: Track; api: Api; ids: number[]; index?: number };
+function TrackRowImpl({ t, api, ids, index }: RowProps) {
   const active = api.cur === t.id;
   return (
     <div className={`flex items-center gap-3 py-2 ${t.rating < 0 ? "opacity-45" : ""}`} style={{ contentVisibility: "auto", containIntrinsicSize: "0 64px" }}>
@@ -46,6 +47,14 @@ export function TrackRow({ t, api, ids, index }: { t: Track; api: Api; ids: numb
     </div>
   );
 }
+
+// A row only re-renders when its own track, position, or "is this the one
+// playing" state changes — not on every progress tick or unrelated update.
+export const TrackRow = memo(TrackRowImpl, (a, b) => {
+  const act = a.api.cur === a.t.id;
+  return a.t === b.t && a.ids === b.ids && a.index === b.index && a.api.tq === b.api.tq && a.api.play === b.api.play
+    && act === (b.api.cur === b.t.id) && (!act || a.api.playing === b.api.playing);
+});
 
 export function TrackList({ list, api, numbered }: { list: Track[]; api: Api; numbered?: boolean }) {
   const ids = useMemo(() => list.map((t) => t.id), [list]);
@@ -164,7 +173,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
             <div className="grid grid-cols-2 gap-4 mt-3">
               {songs.map((t) => (
                 <button key={t.id} onClick={() => api.play(songs.map((x) => x.id), t.id)} className="text-left active:scale-[.97] transition" style={{ contentVisibility: "auto", containIntrinsicSize: "0 200px" }}>
-                  <Cover t={t} tq={api.tq} size="100%" radius={12} className="aspect-square shadow-lg" />
+                  <Cover t={t} tq={api.tq} size="100%" radius={12} className="aspect-square shadow-lg" res={320} />
                   <div className="mt-2 text-[15px] font-semibold truncate">{t.title}</div>
                   <div className="text-[13px] text-[var(--dim)] truncate">{t.artist}</div>
                 </button>
@@ -178,7 +187,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
         <div className="mt-3 divide-y divide-[var(--bd0)]">
           {artists.map(([name, list]) => (
             <button key={name} onClick={() => api.open({ kind: "artist", key: name, title: name })} className="w-full flex items-center gap-3 py-2.5 text-left" style={{ contentVisibility: "auto", containIntrinsicSize: "0 68px" }}>
-              <span className="w-14 h-14 rounded-full overflow-hidden shrink-0 block"><Cover t={list[0]!} tq={api.tq} size="100%" radius={0} /></span>
+              <span className="w-14 h-14 rounded-full overflow-hidden shrink-0 block"><Cover t={list[0]!} tq={api.tq} size="100%" radius={0} res={128} /></span>
               <span className="min-w-0 flex-1"><span className="block text-[16px] font-medium truncate">{name}</span><span className="block text-[13px] text-[var(--dim)]">{list.length} {list.length === 1 ? "song" : "songs"}</span></span>
               <ChevronRightIcon size={18} className="text-[var(--dim3)]" />
             </button>
@@ -190,7 +199,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
         <div className="grid grid-cols-2 gap-4 mt-4">
           {albums.map(([key, list]) => (
             <button key={key} onClick={() => api.open({ kind: "album", key, title: list[0]!.album ?? "Singles" })} className="text-left active:scale-[.97] transition" style={{ contentVisibility: "auto", containIntrinsicSize: "0 210px" }}>
-              <Cover t={list[0]!} tq={api.tq} size="100%" radius={12} className="aspect-square shadow-lg" />
+              <Cover t={list[0]!} tq={api.tq} size="100%" radius={12} className="aspect-square shadow-lg" res={320} />
               <div className="mt-2 text-[15px] font-semibold truncate">{list[0]!.album ?? "Singles"}</div>
               <div className="text-[13px] text-[var(--dim)] truncate">{artistsOf(list[0]!)[0]} · {list.length}</div>
             </button>
@@ -271,7 +280,7 @@ export function SearchView({ api, c }: { api: Api; c: Collections }) {
       {!s && <Empty text="Search your library." />}
       {s && songs.length === 0 && artists.length === 0 && albums.length === 0 && <Empty text={`No results for “${q}”.`} />}
       {artists.length > 0 && (<><SectionTitle>Artists</SectionTitle>{artists.map(([n, l]) => (
-        <button key={n} onClick={() => api.open({ kind: "artist", key: n, title: n })} className="w-full flex items-center gap-3 py-2 text-left"><span className="w-12 h-12 rounded-full overflow-hidden block shrink-0"><Cover t={l[0]!} tq={api.tq} size="100%" radius={0} /></span><span className="flex-1 font-medium truncate">{n}</span><ChevronRightIcon size={18} className="text-[var(--dim3)]" /></button>))}</>)}
+        <button key={n} onClick={() => api.open({ kind: "artist", key: n, title: n })} className="w-full flex items-center gap-3 py-2 text-left"><span className="w-12 h-12 rounded-full overflow-hidden block shrink-0"><Cover t={l[0]!} tq={api.tq} size="100%" radius={0} res={128} /></span><span className="flex-1 font-medium truncate">{n}</span><ChevronRightIcon size={18} className="text-[var(--dim3)]" /></button>))}</>)}
       {albums.length > 0 && (<><SectionTitle>Albums</SectionTitle>{albums.map(([k, l]) => (
         <button key={k} onClick={() => api.open({ kind: "album", key: k, title: l[0]!.album ?? "Singles" })} className="w-full flex items-center gap-3 py-2 text-left"><Cover t={l[0]!} tq={api.tq} size={48} radius={8} /><span className="flex-1 min-w-0"><span className="block font-medium truncate">{l[0]!.album ?? "Singles"}</span><span className="block text-[13px] text-[var(--dim)] truncate">{artistsOf(l[0]!)[0]}</span></span><ChevronRightIcon size={18} className="text-[var(--dim3)]" /></button>))}</>)}
       {songs.length > 0 && (<><SectionTitle>Songs</SectionTitle><TrackList list={songs.slice(0, 40)} api={api} /></>)}

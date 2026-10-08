@@ -141,7 +141,7 @@ export default function StatsView({ api }: { api: Api }) {
               const d = dur(a.listenSeconds);
               return (
                 <button key={a.artist} onClick={() => api.open({ kind: "artist", key: first, title: first })} className="w-full flex items-center gap-3 py-2.5 text-left">
-                  <span className="w-[46px] h-[46px] rounded-full overflow-hidden block shrink-0"><Cover t={rep ?? { id: 0, title: first, hasCover: false }} tq={api.tq} size="100%" radius={0} /></span>
+                  <span className="w-[46px] h-[46px] rounded-full overflow-hidden block shrink-0"><Cover t={rep ?? { id: 0, title: first, hasCover: false }} tq={api.tq} size="100%" radius={0} res={128} /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-[15px] font-medium truncate">{a.artist}</span>
                     <span className="mt-1.5 flex items-center gap-2"><span className="h-1 flex-1 rounded-full bg-[var(--s2)] overflow-hidden"><span className="block h-full rounded-full bg-[rgb(var(--ac))] opacity-80" style={{ width: `${(a.plays / topArtistPlays) * 100}%` }} /></span><span className="text-[12px] text-[var(--dim)] tabular-nums w-20 text-right">{d.v} {d.u}</span></span>

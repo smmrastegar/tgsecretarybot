@@ -20,14 +20,18 @@ export const ts = (iso: string | null | undefined): number => {
 };
 
 export type Ctx = { tq: string };
-export const coverUrl = (t: Pick<Track, "id">, tq: string) => `/api/music/cover/${t.id}?${tq}`;
+/** Small renditions for rows/tiles (server resizes + caches), full art for big views. */
+export const coverUrl = (t: Pick<Track, "id">, tq: string, size?: number | string, res?: 128 | 320) => {
+  const w = res ?? (typeof size === "number" ? (size <= 64 ? 128 : size <= 160 ? 320 : 0) : 0);
+  return `/api/music/cover/${t.id}?${tq}${w ? `&w=${w}` : ""}`;
+};
 
 /** Cover art, or a tinted letter tile when the track has none. */
-export function Cover({ t, tq, size, radius = 10, className = "" }: { t: Pick<Track, "id" | "title" | "hasCover">; tq: string; size: number | string; radius?: number; className?: string }) {
+export function Cover({ t, tq, size, radius = 10, className = "", res }: { t: Pick<Track, "id" | "title" | "hasCover">; tq: string; size: number | string; radius?: number; className?: string; res?: 128 | 320 }) {
   const hue = (t.id * 47) % 360;
   const box = { width: size, height: size, borderRadius: radius };
   return t.hasCover ? (
-    <img src={coverUrl(t, tq)} alt="" loading="lazy" decoding="async" className={`object-cover bg-[var(--s2)] shrink-0 ${className}`} style={box} />
+    <img src={coverUrl(t, tq, size, res)} alt="" loading="lazy" decoding="async" className={`object-cover bg-[var(--s2)] shrink-0 ${className}`} style={box} />
   ) : (
     <span className={`grid place-items-center shrink-0 font-bold text-white/85 ${className}`} style={{ ...box, background: `linear-gradient(135deg, hsl(${hue} 50% 36%), hsl(${(hue + 40) % 360} 55% 20%))`, fontSize: typeof size === "number" ? size * 0.4 : undefined }}>
       {(t.title ?? "♪").trim().charAt(0).toUpperCase() || "♪"}
@@ -43,7 +47,7 @@ export function Mosaic({ tracks, tq, size, radius = 12 }: { tracks: Track[]; tq:
   }
   return (
     <span className="grid grid-cols-2 overflow-hidden shrink-0 bg-[var(--s2)]" style={{ width: size, height: size, borderRadius: radius }}>
-      {four.map((t) => <Cover key={t.id} t={t} tq={tq} size="100%" radius={0} />)}
+      {four.map((t) => <Cover key={t.id} t={t} tq={tq} size="100%" radius={0} res={128} />)}
     </span>
   );
 }

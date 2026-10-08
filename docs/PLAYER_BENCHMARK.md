@@ -61,3 +61,19 @@ Measured with Playwright (touch + mobile emulation, the page's real DOM): art he
 | 6 | Play button size | ⚠️ 72 px | ✅ 64 px |
 | 7 | Secondary actions in one row | ✅ | ✅ more compact |
 | 8 | Safe-area padding | ✅ | ✅ |
+
+## Performance pass — measured (431-track library, mobile emulation, production build)
+
+Data that drove it (listening log, 110 sessions): only 3 completed plays, 76 of 110 sessions ended before 15 s, and 28 of 29 sub-5-second skips happened on day one (the wrong-audio bug). So the audio path was fixed first; this pass targets the cost of the UI itself.
+
+| Metric | Before | After | Change |
+|---|---|---|---|
+| Home screen cover bytes (41 images, mocked 640 px source) | 3,176 KB | 391 KB | −88 % (rows/tiles now fetch 128/320 px renditions, cached on disk) |
+| CPU while a track plays (script + layout + style, per second) | 92 ms/s | 39 ms/s | −58 % (rows memoised; progress tick no longer re-renders lists) |
+| Tap on a row → audio source set | 46 ms | 26 ms | −43 % |
+| /player first-load JS | 125 kB | 122 kB | Stats + track details load on demand |
+| Scroll 12 000 px (frames >50 ms) | 0 | 0 | already smooth (`content-visibility`) |
+| DOM nodes, full 431-song list | 5,318 | 5,318 | unchanged (lazy rendering already in place) |
+
+## Problem reports (new)
+Small flag icon in the now-playing header and "Report a problem" in every track menu: tick-boxes (wrong song, wrong cover, wrong title/artist, bad quality, cuts off, won't play, glitches, wrong lyrics, other) plus free text. Playback context (position, duration, connection, audio error code, app build, viewport) is attached automatically. Reports land in `music_reports`, in the System Log, and in a "گزارش مشکل از پلیر" card on /music with *re-download & close* / *resolved*.

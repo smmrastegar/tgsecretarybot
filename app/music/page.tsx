@@ -38,6 +38,27 @@ export default function MusicPage() {
   const [playerUrl, setPlayerUrl] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [showStats, setShowStats] = useState(false);
+  type Rep = { id: number; trackId: number; trackTitle: string | null; reasons: string[]; note: string | null; context: Record<string, unknown> | null; status: string; createdAt: string };
+  const [reports, setReports] = useState<Rep[]>([]);
+  const [reasonLabels, setReasonLabels] = useState<Record<string, string>>({});
+  const [showReports, setShowReports] = useState(false);
+  const loadReports = useCallback(async () => {
+    const r = await fetch("/api/music/reports?status=open", { cache: "no-store" });
+    if (!r.ok) return;
+    const j = (await r.json()) as { reports: Rep[]; reasons: Record<string, string> };
+    setReports(j.reports); setReasonLabels(j.reasons);
+  }, []);
+  useEffect(() => { void loadReports(); }, [loadReports]);
+  async function resolveReport(id: number) {
+    await fetch(`/api/music/reports/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "resolved" }) });
+    void loadReports();
+  }
+  async function redownload(trackId: number, reportId: number) {
+    if (!confirm("فایل این آهنگ دوباره دانلود شود؟")) return;
+    await fetch(`/api/music/${trackId}`, { method: "POST" });
+    await resolveReport(reportId);
+    void load();
+  }
   const [selecting, setSelecting] = useState(false);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const tracker = useListenTracker("");
@@ -332,6 +353,28 @@ export default function MusicPage() {
           <button onClick={() => void playerLink(false)} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">نمایش لینک</button>
         )}
       </Card>
+      {reports.length > 0 && (
+        <Card className="mb-4">
+          <button onClick={() => setShowReports((v) => !v)} className="text-sm font-medium w-full text-right">🚩 گزارش مشکل از پلیر ({reports.length}) {showReports ? "▴" : "▾"}</button>
+          {showReports && (
+            <div className="mt-3 space-y-2">
+              {reports.map((r) => (
+                <div key={r.id} className="rounded-lg border border-[var(--color-border)] p-3 text-xs space-y-1.5">
+                  <div className="font-medium text-sm" dir="ltr">{r.trackTitle ?? `#${r.trackId}`}</div>
+                  <div className="flex flex-wrap gap-1.5" dir="ltr">{r.reasons.map((k) => <span key={k} className="px-2 py-0.5 rounded-full bg-[var(--color-surface-2)]">{reasonLabels[k] ?? k}</span>)}</div>
+                  {r.note && <div className="text-[var(--color-text-dim)]" dir="auto">{r.note}</div>}
+                  {r.context && <div className="text-[var(--color-text-dim)] opacity-70" dir="ltr">{["position", "duration", "connection", "online", "audioError", "build"].filter((k) => r.context![k] != null).map((k) => `${k}=${String(r.context![k])}`).join(" · ")}</div>}
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={() => void redownload(r.trackId, r.id)} className="px-3 py-1 rounded-md border border-[var(--color-border)]">↻ دانلود مجدد و بستن</button>
+                    <button onClick={() => void resolveReport(r.id)} className="px-3 py-1 rounded-md border border-[var(--color-border)]">✓ حل شد</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
       <Card className="mb-4">
         <button onClick={() => setShowStats((v) => !v)} className="text-sm font-medium w-full text-right">📊 آمار شنیدن {showStats ? "▴" : "▾"}</button>
         {showStats && <div className="mt-3"><MusicStats tq="" /></div>}

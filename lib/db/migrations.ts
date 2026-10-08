@@ -227,6 +227,26 @@ export const MIGRATIONS: Migration[] = [
       await q`SELECT 1`;
     },
   },
+  {
+    // "Report a problem" on a library track (private player): what is
+    // wrong (tick-boxes + free text) plus the playback context.
+    id: "2026-10-08-001-music-reports",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_reports (
+          id           BIGSERIAL PRIMARY KEY,
+          track_id     BIGINT NOT NULL,
+          track_title  TEXT,
+          reasons      TEXT[] NOT NULL DEFAULT '{}',
+          note         TEXT,
+          context      JSONB,
+          status       TEXT NOT NULL DEFAULT 'open',
+          created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          resolved_at  TIMESTAMPTZ
+        )`;
+      await q`CREATE INDEX IF NOT EXISTS music_reports_status_idx ON music_reports (status, id DESC)`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

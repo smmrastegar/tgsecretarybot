@@ -372,3 +372,53 @@ export async function nextSpotdlCandidate(): Promise<number | null> {
   const r = (await q().query(`SELECT id FROM music_tracks WHERE status = 'failed' AND error LIKE 'Track not found%' AND error NOT LIKE '%spotDL%' ORDER BY id LIMIT 1`)) as Row[];
   return r[0] ? num(r[0], "id") : null;
 }
+
+// ---- problem reports ----
+
+export const REPORT_REASONS: Record<string, string> = {
+  wrong_song: "Wrong song / different audio",
+  wrong_cover: "Wrong or missing cover",
+  wrong_info: "Wrong title or artist",
+  bad_quality: "Bad sound quality",
+  cut_off: "Cuts off, too short or too long",
+  wont_play: "Won't play / keeps stalling",
+  glitches: "Skips, clicks or glitches",
+  wrong_lyrics: "Wrong lyrics",
+  other: "Something else",
+};
+
+export type MusicReport = {
+  id: number; trackId: number; trackTitle: string | null; reasons: string[]; note: string | null;
+  context: Record<string, unknown> | null; status: string; createdAt: string; resolvedAt: string | null;
+};
+
+export async function addMusicReport(trackId: number, reasons: string[], note: string, context: Record<string, unknown>): Promise<number> {
+  await ensureSchema();
+  const t = await getMusicTrack(trackId);
+  const clean = [...new Set(reasons.filter((r) => r in REPORT_REASONS))].slice(0, 9);
+  const rows = (await q().query(
+    `INSERT INTO music_reports (track_id, track_title, reasons, note, context) VALUES ($1, $2, $3::text[], $4, $5::jsonb) RETURNING id`,
+    [trackId, t ? `${t.title ?? "?"} — ${t.artist ?? ""}`.slice(0, 200) : null, clean, note.slice(0, 1000) || null, JSON.stringify(context).slice(0, 4000)],
+  )) as Row[];
+  return num(rows[0]!, "id");
+}
+
+export async function listMusicReports(status?: string): Promise<MusicReport[]> {
+  await ensureSchema();
+  const rows = (await q().query(
+    `SELECT id, track_id, track_title, reasons, note, context, status, created_at::text AS created_at, resolved_at::text AS resolved_at
+       FROM music_reports ${status ? "WHERE status = $1" : ""} ORDER BY id DESC LIMIT 200`,
+    status ? [status] : [],
+  )) as Row[];
+  return rows.map((r) => ({
+    id: num(r, "id"), trackId: num(r, "track_id"), trackTitle: strOrNull(r, "track_title"),
+    reasons: Array.isArray(r.reasons) ? (r.reasons as string[]) : [], note: strOrNull(r, "note"),
+    context: (r.context && typeof r.context === "object" ? r.context : null) as Record<string, unknown> | null,
+    status: str(r, "status"), createdAt: str(r, "created_at"), resolvedAt: strOrNull(r, "resolved_at"),
+  }));
+}
+
+export async function setMusicReportStatus(id: number, status: "open" | "resolved"): Promise<void> {
+  await ensureSchema();
+  await q().query(`UPDATE music_reports SET status = $2, resolved_at = ${status === "resolved" ? "NOW()" : "NULL"} WHERE id = $1`, [id, status]);
+}

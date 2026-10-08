@@ -2,21 +2,28 @@
 
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartIcon, CloseIcon, ChevronDownIcon, FadeIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
-import StatsView from "@/components/music/app/StatsView";
+import dynamic from "next/dynamic";
+import { memo, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChartIcon, CloseIcon, ChevronDownIcon, FadeIcon, FlagIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
+
 import Spectrum from "@/components/music/Spectrum";
-import TrackDetail from "@/components/music/TrackDetail";
+
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, fmt, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { artistsOf, DetailView, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
-import { LyricsSheet, OptionSheet, QueueSheet, TrackMenu } from "@/components/music/app/Sheets";
+import { LyricsSheet, OptionSheet, QueueSheet, ReportSheet, TrackMenu } from "@/components/music/app/Sheets";
 
 // Private personal player. The URL's 256-bit token is the credential.
 type Tab = "home" | "search" | "library" | "stats";
 const SLEEP = [{ v: 0, label: "Off" }, { v: 5, label: "5 minutes" }, { v: 15, label: "15 minutes" }, { v: 30, label: "30 minutes" }, { v: 60, label: "1 hour" }, { v: -1, label: "End of track" }];
 const FADES = [{ v: 0, label: "Off" }, { v: 3, label: "3 seconds" }, { v: 6, label: "6 seconds" }, { v: 10, label: "10 seconds" }];
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2].map((v) => ({ v, label: v === 1 ? "Normal (1×)" : `${v}×` }));
+
+// Rarely-opened screens load on demand to keep the first paint small.
+const StatsView = dynamic(() => import("@/components/music/app/StatsView"), { ssr: false });
+const TrackDetail = dynamic(() => import("@/components/music/TrackDetail"), { ssr: false });
+
+const MHome = memo(HomeView), MLibrary = memo(LibraryView), MSearch = memo(SearchView), MDetail = memo(DetailView);
 
 export default function PlayerPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
@@ -40,6 +47,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [full, setFull] = useState(false);
   const [sheet, setSheet] = useState<null | "queue" | "sleep" | "speed" | "fade" | "lyrics">(null);
   const [menuT, setMenuT] = useState<Track | null>(null);
+  const [reportT, setReportT] = useState<Track | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [toast, setToast] = useState("");
@@ -222,6 +230,18 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, [fade, playing, vol]);
 
   const share = async (t: Track) => { const m = await shareText(t.title ?? "Song", trackShareLines(t)); if (m) flash(m); };
+  // Attached to every problem report so a bug can be reproduced.
+  const reportContext = () => {
+    const a = audio.current;
+    return {
+      position: a ? Math.round(a.currentTime) : null, duration: a && Number.isFinite(a.duration) ? Math.round(a.duration) : null,
+      playing, speed, fade, repeat, shuffle, offlineCopy: reportT ? offline.has(reportT.id) : false,
+      audioError: a?.error ? a.error.code : null, readyState: a?.readyState ?? null, online: navigator.onLine,
+      connection: (navigator as unknown as { connection?: { effectiveType?: string } }).connection?.effectiveType ?? null,
+      build: build.current, standalone: window.matchMedia("(display-mode: standalone)").matches,
+      ua: navigator.userAgent.slice(0, 160), viewport: `${innerWidth}x${innerHeight}`, theme,
+    };
+  };
   const toggleOffline = async (t: Track) => {
     const key = `/api/music/stream/${t.id}`;
     const c = await caches.open("player-audio");
@@ -276,7 +296,18 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, [toggle, step, rate, cur, sheet, full]);
 
   const now = cur != null ? byId.get(cur) ?? null : null;
-  const api: Api = { tq, tracks, playlists, byId, cur, playing, loading, play, smartMix, menu: setMenuT, rate, open: (p) => setStack((s) => [...s, p]) };
+  // Stable function identities (via a ref) + a memoised api object: the
+  // progress tick (4×/s) re-renders only the player chrome, not the lists.
+  const fns = useRef({ play, smartMix, rate });
+  fns.current = { play, smartMix, rate };
+  const stable = useMemo(() => ({
+    play: (ids: number[], startId?: number, sh?: boolean) => fns.current.play(ids, startId, sh),
+    smartMix: (ids: number[]) => fns.current.smartMix(ids),
+    rate: (t: Track, r: number) => fns.current.rate(t, r),
+    menu: setMenuT,
+    open: (p: Page) => setStack((s) => [...s, p]),
+  }), []);
+  const api: Api = useMemo(() => ({ tq, tracks, playlists, byId, cur, playing, loading, ...stable }), [tq, tracks, playlists, byId, cur, playing, loading, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -335,10 +366,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           <button onClick={flipTheme} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center" aria-label="Toggle theme">{theme === "dark" ? <SunIcon size={20} /> : <MoonIcon size={20} />}</button>
         </header>
 
-        {page ? <DetailView page={page} api={api} c={c} />
-          : tab === "home" ? <HomeView api={api} c={c} />
-          : tab === "search" ? <SearchView api={api} c={c} />
-          : tab === "library" ? <LibraryView api={api} c={c} />
+        {page ? <MDetail page={page} api={api} c={c} />
+          : tab === "home" ? <MHome api={api} c={c} />
+          : tab === "search" ? <MSearch api={api} c={c} />
+          : tab === "library" ? <MLibrary api={api} c={c} />
           : <StatsView api={api} />}
       </div>
 
@@ -379,7 +410,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             <div className="flex items-center justify-between h-11 shrink-0">
               <button onClick={() => setFull(false)} className="p-2 -ml-2" aria-label="Minimise"><ChevronDownIcon size={28} /></button>
               <span className="text-xs uppercase tracking-widest text-[var(--dim)]">Now playing</span>
-              <span className="flex items-center"><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button></span>
+              <span className="flex items-center"><button onClick={() => setReportT(now)} className="p-2 text-[var(--dim3)]" aria-label="Report a problem"><FlagIcon size={19} /></button><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button></span>
             </div>
 
             <div className="relative flex-1 min-h-0 my-2">
@@ -433,9 +464,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {sheet === "queue" && <QueueSheet ids={queue} byId={byId} cur={cur} tq={tq} onClose={() => setSheet(null)} onPlay={(id) => { history.current.push(cur ?? id); setCur(id); }} onRemove={(id) => setQueue((q) => q.filter((x) => x !== id))} onMove={moveQ} onClear={() => setQueue((q) => (cur != null ? [cur] : q.slice(0, 0)))} />}
       {sheet === "sleep" && <OptionSheet title="Sleep timer" options={SLEEP} value={sleepMin} onPick={(v) => { setSleepMin(v); if (v === 0) sleepEnd.current = 0; }} onClose={() => setSheet(null)} />}
       {sheet === "speed" && <OptionSheet title="Playback speed" options={SPEEDS} value={speed} onPick={setSpeed} onClose={() => setSheet(null)} />}
+      {reportT && <ReportSheet t={reportT} tq={tq} context={reportContext} onClose={() => setReportT(null)} onDone={flash} />}
       {sheet === "fade" && <OptionSheet title="Fade between tracks" options={FADES} value={fade} onPick={pickFade} onClose={() => setSheet(null)} />}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
-      {menuT && <TrackMenu onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
+      {menuT && <TrackMenu onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
         onArtist={() => { const a = artistsOf(menuT)[0]!; setFull(false); setTab("library"); setStack([{ kind: "artist", key: a, title: a }]); }}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}
