@@ -23,6 +23,11 @@ export async function analyzerReady(): Promise<boolean> {
   try { await fs.access(PY); return true; } catch { return false; }
 }
 
+/** True once the ML models are installed (analyzer-setup.sh finished its ML stage). */
+export async function mlAvailable(): Promise<boolean> {
+  try { await fs.access(`${TOOLS}/models/genre_discogs400-discogs-effnet-1.pb`); return true; } catch { return false; }
+}
+
 async function ffmpegPath(): Promise<string> {
   for (const p of [`${TOOLS}/home/.config/spotdl/ffmpeg`, "/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]) {
     try { await fs.access(p); return p; } catch { /* next */ }
@@ -54,13 +59,16 @@ export async function analysisStep(): Promise<{ analyzed: number | null; genres:
     await setSetting("musicAnalyzeLock", String(Date.now()));
     try {
       // As many tracks as fit in ~40 s of this tick (the cron fires every minute).
+      // Tracks analysed before the ML models existed are saved as version 1 and
+      // revisited once they do (version 2 = full analysis was attempted).
       const t0 = Date.now();
       while (Date.now() - t0 < 40_000) {
-        const t = await nextTrackToAnalyze(ANALYSIS_VERSION);
+        const ml = await mlAvailable();
+        const t = await nextTrackToAnalyze(ml ? ANALYSIS_VERSION : 1);
         if (!t) break;
         const r = await runPython(t.filePath);
-        if (r.ok) { await saveFeatures(t.id, r as unknown as Parameters<typeof saveFeatures>[1], ANALYSIS_VERSION); out.analyzed = t.id; }
-        else { await saveFeatureError(t.id, String(r.error ?? "failed"), ANALYSIS_VERSION); reportWarn("music", `analysis of track ${t.id} failed: ${String(r.error).slice(0, 120)}`); }
+        if (r.ok) { await saveFeatures(t.id, r as unknown as Parameters<typeof saveFeatures>[1], ml ? ANALYSIS_VERSION : 1); out.analyzed = t.id; }
+        else { await saveFeatureError(t.id, String(r.error ?? "failed"), ml ? ANALYSIS_VERSION : 1); reportWarn("music", `analysis of track ${t.id} failed: ${String(r.error).slice(0, 120)}`); }
       }
     } catch (err) { reportWarn("music", "analysis step failed:", err); }
     finally { await setSetting("musicAnalyzeLock", "0"); }
