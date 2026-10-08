@@ -536,8 +536,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <span className="flex items-center"><button onClick={() => setSmartT(now)} className="p-2" aria-label="Smart playlist from this song"><SparkIcon size={20} /></button><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2" aria-label="Details"><InfoIcon size={24} /></button><button onClick={() => setMenuT(now)} className="p-2 -mr-2" aria-label="More options"><MoreIcon size={24} /></button></span>
             </div>
 
-            <div className="relative flex-1 min-h-0 my-2">
-              <div data-art className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-full max-h-full max-w-full aspect-square rounded-2xl overflow-hidden shadow-2xl bg-[var(--s2)]" onTouchStart={(e) => { e.stopPropagation(); touch.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }; }} onTouchEnd={(e) => { e.stopPropagation(); onTouchEnd(e, "art"); }}>
+            <div className="relative flex-1 min-h-0 my-2" style={{ containerType: "size" }}>
+              <div data-art className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-2xl overflow-hidden shadow-2xl bg-[var(--s2)]" style={{ width: "min(100cqw, 100cqh)", height: "min(100cqw, 100cqh)" }} onTouchStart={(e) => { e.stopPropagation(); touch.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }; }} onTouchEnd={(e) => { e.stopPropagation(); onTouchEnd(e, "art"); }}>
               <Cover t={now} tq={tq} size="100%" radius={0} />
               <div className="absolute inset-x-0 bottom-0 px-3 pb-2 pt-10 pointer-events-none" style={{ background: "linear-gradient(transparent, rgba(0,0,0,.6))" }}>
                 <Spectrum audio={audio} playing={playing} enabled={viz} height={40} rgb="255,255,255" />
