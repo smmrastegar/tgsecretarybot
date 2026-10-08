@@ -225,7 +225,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     let dead = false;
     tracker.begin(cur);
     const start = (src: string) => { if (dead) return; a.src = src; a.playbackRate = speed; void a.play().catch(() => {}); };
-    const net = `/api/music/stream/${cur}?${tq}`;
+    // &v=<size> changes when a file is replaced, so a stale copy in the HTTP cache is never reused
+    const net = `/api/music/stream/${cur}?${tq}&v=${byIdRef.current.get(cur)?.sizeBytes ?? 0}`;
     if (blobUrl.current) { URL.revokeObjectURL(blobUrl.current); blobUrl.current = null; }
     if ("caches" in window) {
       void caches.open("player-audio").then((c) => c.match(`/api/music/stream/${cur}`)).then(async (hit) => {
@@ -248,7 +249,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const i = queue.indexOf(cur); const nid = queue[i + 1];
     if (nid == null || offline.has(nid)) return;
     const p = preload.current ?? (preload.current = new Audio());
-    p.preload = "auto"; p.src = `/api/music/stream/${nid}?${tq}`;
+    p.preload = "auto"; p.src = `/api/music/stream/${nid}?${tq}&v=${byIdRef.current.get(nid)?.sizeBytes ?? 0}`;
   }, [cur, queue, tq, offline]);
 
   // Fade out the tail and fade in the head of tracks (volume dip crossfade).

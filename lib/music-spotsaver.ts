@@ -57,7 +57,7 @@ async function pageMeta(spotifyUrl: string): Promise<{ title: string; artist: st
  * between half and double the expected length (the same song, a different edit). Returns null on
  * success, else a short reason.
  */
-export async function spotsaverDownloadTrack(trackId: number): Promise<string | null> {
+export async function spotsaverDownloadTrack(trackId: number, redo = false): Promise<string | null> {
   const t = await getMusicTrack(trackId);
   if (!t?.title) return "no title";
   const key = ((await getAllSettings()).spotsaverLicense ?? "").trim();
@@ -76,7 +76,8 @@ export async function spotsaverDownloadTrack(trackId: number): Promise<string | 
   let best: Got | null = null;
   let lastReason = "no match";
   try {
-    await updateMusicTrack(trackId, { status: "downloading", error: null });
+    // A re-download of a working track must never leave it unplayable if SpotSaver fails.
+    if (!redo) await updateMusicTrack(trackId, { status: "downloading", error: null });
     for (const q of queries) {
       const id = await post("/api/get-id/", q, 40_000);
       const vid = String(id.json.videoId ?? "");

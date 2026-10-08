@@ -55,9 +55,9 @@ export default function MusicPage() {
     await fetch(`/api/music/reports/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "resolved" }) });
     void loadReports();
   }
-  async function redownload(trackId: number, reportId: number) {
-    if (!confirm("فایل این آهنگ دوباره دانلود شود؟")) return;
-    await fetch(`/api/music/${trackId}`, { method: "POST" });
+  async function redownload(trackId: number, reportId: number, via?: "spotsaver") {
+    if (!confirm(via ? "یک نسخه‌ی تازه از SpotSaver گرفته شود و جای فایل فعلی بیاید؟ (تا یکی دو دقیقه طول می‌کشد)" : "فایل این آهنگ دوباره دانلود شود؟")) return;
+    await fetch(`/api/music/${trackId}${via ? "?via=spotsaver" : ""}`, { method: "POST" });
     await resolveReport(reportId);
     void load();
   }
@@ -351,6 +351,7 @@ export default function MusicPage() {
                   {r.context && <div className="text-[var(--color-text-dim)] opacity-70" dir="ltr">{["position", "duration", "connection", "online", "audioError", "build"].filter((k) => r.context![k] != null).map((k) => `${k}=${String(r.context![k])}`).join(" · ")}</div>}
                   <div className="flex gap-2 pt-1">
                     <button onClick={() => void redownload(r.trackId, r.id)} className="px-3 py-1 rounded-md border border-[var(--color-border)]">↻ دانلود مجدد و بستن</button>
+                    <button onClick={() => void redownload(r.trackId, r.id, "spotsaver")} className="px-3 py-1 rounded-md border border-[var(--color-border)]">↻ از SpotSaver</button>
                     <button onClick={() => void resolveReport(r.id)} className="px-3 py-1 rounded-md border border-[var(--color-border)]">✓ حل شد</button>
                   </div>
                 </div>
@@ -428,6 +429,7 @@ export default function MusicPage() {
               </>
             )}
             {t.status === "failed" && <button onClick={() => retry(t)} className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)]">↻</button>}
+            {t.status === "ready" && <button onClick={async () => { if (!confirm(`«${t.title ?? "آهنگ"}» دوباره از SpotSaver گرفته شود؟`)) return; await fetch(`/api/music/${t.id}?via=spotsaver`, { method: "POST" }); setMsg("در صف SpotSaver؛ تا یکی دو دقیقه دیگر جایگزین می‌شود"); void load(); }} className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)]" title="فایل این آهنگ اشتباه است؟ نسخه‌ی تازه از SpotSaver بگیر">↻ SS</button>}
             {t.status === "failed" && (
               <label className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] cursor-pointer" title="فایل صوتی این آهنگ را خودت بده (mp3, m4a, flac…)">
                 ⬆ فایل
