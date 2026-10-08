@@ -464,7 +464,7 @@ export async function getLinkStats(linkId: number, trackIds: number[] | null): P
   const P: unknown[] = ids ? [linkId, ids] : [linkId];
   const one = async (t: string): Promise<Row> => ((await q().query(t, P)) as Row[])[0] ?? {};
   const ev = await one(`SELECT COUNT(*) FILTER (WHERE completed OR seconds >= 30)::int AS plays, COUNT(*) FILTER (WHERE skipped)::int AS skips, COALESCE(SUM(seconds),0)::int AS sec FROM music_events e${E("e", true)}`);
-  const count = await one(`SELECT COUNT(*) FILTER (WHERE status = 'ready')::int AS tracks FROM music_tracks t ${ids ? "WHERE t.id = ANY($2::bigint[])" : "WHERE $1::bigint IS NOT NULL"}`);
+  const count = await one(`SELECT COUNT(*) FILTER (WHERE status = 'ready')::int AS tracks FROM music_tracks t WHERE $1::bigint IS NOT NULL${ids ? " AND t.id = ANY($2::bigint[])" : ""}`);
   const likes = linkId > 0
     ? await one(`SELECT COUNT(*) FILTER (WHERE rating > 0)::int AS likes, COUNT(*) FILTER (WHERE rating < 0)::int AS dislikes FROM music_link_ratings r WHERE r.link_id = $1${ids ? " AND r.track_id = ANY($2::bigint[])" : ""}`)
     : await one(`SELECT COUNT(*) FILTER (WHERE rating > 0)::int AS likes, COUNT(*) FILTER (WHERE rating < 0)::int AS dislikes FROM music_tracks t WHERE $1::bigint IS NOT NULL${ids ? " AND t.id = ANY($2::bigint[])" : ""}`);
