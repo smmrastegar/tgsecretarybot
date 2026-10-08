@@ -402,7 +402,7 @@ export async function listTracksForMeta(): Promise<MetaRow[]> {
 /** A failed "Track not found" track that spotDL has not been tried on yet. */
 export async function nextSpotdlCandidate(): Promise<number | null> {
   await ensureSchema();
-  const r = (await q().query(`SELECT id FROM music_tracks WHERE status = 'failed' AND error LIKE 'Track not found%' AND error NOT LIKE '%spotDL%' ORDER BY id LIMIT 1`)) as Row[];
+  const r = (await q().query(`SELECT id FROM music_tracks WHERE status = 'failed' AND error NOT LIKE '%spotDL%' AND error NOT LIKE '%SpotSaver%' AND (error LIKE 'Track not found%' OR error LIKE 'بات دانلودر%' OR error LIKE 'فایل %MB است%' OR error LIKE 'timeout after%') ORDER BY id LIMIT 1`)) as Row[];
   return r[0] ? num(r[0], "id") : null;
 }
 

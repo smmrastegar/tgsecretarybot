@@ -4,6 +4,7 @@ import path from "node:path";
 import { getAllSettings, getMusicTrack, nextSpotdlCandidate, setSetting, updateMusicTrack } from "@/lib/db";
 import { reportInfo, reportWarn } from "@/lib/report";
 import { MUSIC_DIR } from "@/lib/music";
+import { spotsaverDownloadTrack, spotsaverReady } from "@/lib/music-spotsaver";
 
 // Fallback downloader: spotDL (YouTube Music matched to the Spotify track)
 // for tracks the Telegram downloader bot does not have. Installed by
@@ -56,14 +57,27 @@ export async function spotdlDownloadTrack(trackId: number): Promise<boolean> {
   }
 }
 
-/** Cron step: give ONE "Track not found" track a spotDL attempt. */
+/**
+ * Cron step: give ONE failed track a second chance — first through the owner's SpotSaver
+ * subscription (if configured), then through spotDL. Runs in the background with its own lock.
+ */
 export async function spotdlFallbackStep(): Promise<{ tried: number | null; ok?: boolean; ready: boolean }> {
-  if (!(await spotdlReady())) return { tried: null, ready: false };
+  const saver = await spotsaverReady();
+  const dl = await spotdlReady();
+  if (!saver && !dl) return { tried: null, ready: false };
   const s = await getAllSettings();
   if (Date.now() - Number(s.musicSpotdlLock || 0) < TIMEOUT_MS + 30_000) return { tried: null, ready: true };
   const id = await nextSpotdlCandidate();
   if (id == null) return { tried: null, ready: true };
+  await setSetting("musicSpotdlLock", String(Date.now()));
   try {
+    if (saver) {
+      const why = await spotsaverDownloadTrack(id);
+      if (!why) { reportInfo("music", `SpotSaver fallback for track ${id}: ready`); return { tried: id, ok: true, ready: true }; }
+      reportWarn("music", `SpotSaver fallback for track ${id} failed: ${why}`);
+      await updateMusicTrack(id, { status: "failed", error: `Track not found (SpotSaver: ${why})`.slice(0, 300) });
+    }
+    if (!dl) return { tried: id, ok: false, ready: true };
     const ok = await spotdlDownloadTrack(id);
     (ok ? reportInfo : reportWarn)("music", `spotDL fallback for track ${id}: ${ok ? "ready" : "failed"}`);
     return { tried: id, ok, ready: true };
