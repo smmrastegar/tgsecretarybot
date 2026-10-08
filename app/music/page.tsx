@@ -317,7 +317,7 @@ export default function MusicPage() {
             <div className="flex flex-wrap gap-2">
               {spLib && <button disabled={!!spBusy} onClick={() => importSp("liked", `لایک‌ها (${spLib.me})`)} className="px-3 py-1.5 rounded-md border border-[#1db954] text-[#1db954] disabled:opacity-50">{spBusy === "liked" ? "…" : `♥ لایک‌ها (${spLib.likedCount})`}</button>}
               {spLib?.playlists.map((p) => (
-                <button key={p.id} disabled={!!spBusy} onClick={() => importSp(p.id, p.name)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-50">{spBusy === p.id ? "…" : `${p.name} (${p.tracks})`}</button>
+                <button key={p.id} disabled={!!spBusy} onClick={() => importSp(p.id, p.name)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-50">{spBusy === p.id ? "…" : `${p.name}${p.tracks >= 0 ? ` (${p.tracks})` : ""}`}</button>
               ))}
             </div>
           </div>

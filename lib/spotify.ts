@@ -91,9 +91,20 @@ export async function listMyPlaylists(accountId: number): Promise<{ playlists: S
   const out: SpotifyPlaylist[] = [];
   let next: string | null = "/me/playlists?limit=50";
   while (next && out.length < 500) {
-    const page: { items: Array<{ id: string; name: string; tracks?: { total: number }; owner?: { display_name?: string } } | null>; next: string | null } = await api(token, next);
-    for (const p of page.items) if (p) out.push({ id: p.id, name: p.name, tracks: p.tracks?.total ?? 0, owner: p.owner?.display_name ?? "" });
+    // Spotify's 2026 API revision renamed the playlist's `tracks` object to `items`;
+    // accept both, and report -1 ("unknown") rather than a false 0.
+    const page: { items: Array<{ id: string; name: string; tracks?: { total: number }; items?: { total: number }; owner?: { display_name?: string } } | null>; next: string | null } = await api(token, next);
+    for (const p of page.items) if (p) out.push({ id: p.id, name: p.name, tracks: p.items?.total ?? p.tracks?.total ?? -1, owner: p.owner?.display_name ?? "" });
     next = page.next;
+  }
+  // Unknown counts: ask each playlist for its total (new /items endpoint, then the old /tracks).
+  const unknown = out.filter((p) => p.tracks < 0);
+  for (let i = 0; i < unknown.length; i += 8) {
+    await Promise.all(unknown.slice(i, i + 8).map(async (p) => {
+      for (const ep of ["items", "tracks"]) {
+        try { p.tracks = (await api<{ total: number }>(token, `/playlists/${encodeURIComponent(p.id)}/${ep}?limit=1`)).total; return; } catch { /* next endpoint */ }
+      }
+    }));
   }
   return { playlists: out, likedCount: liked.total, me: me.display_name ?? me.id };
 }
@@ -102,11 +113,20 @@ export async function listMyPlaylists(accountId: number): Promise<{ playlists: S
 export async function fetchTrackIds(accountId: number, id: string, max = 2000): Promise<Array<{ id: string; name: string }>> {
   const token = await accessToken(accountId);
   const out: Array<{ id: string; name: string }> = [];
-  let next: string | null = id === "liked" ? "/me/tracks?limit=50" : `/playlists/${encodeURIComponent(id)}/tracks?limit=100`;
+  // The playlist endpoint moved from /tracks to /items (and `track` → `item`) in
+  // Spotify's 2026 revision: try the new one first, fall back to the old.
+  type Trk = { id?: string | null; name?: string; is_local?: boolean; type?: string } | null;
+  type Page = { items: Array<{ track?: Trk; item?: Trk }>; next: string | null };
+  let next: string | null = id === "liked" ? "/me/tracks?limit=50" : `/playlists/${encodeURIComponent(id)}/items?limit=100`;
   while (next && out.length < max) {
-    const page: { items: Array<{ track?: { id?: string | null; name?: string; is_local?: boolean; type?: string } | null }>; next: string | null } = await api(token, next);
+    let page: Page;
+    try { page = await api<Page>(token, next); }
+    catch (e) {
+      if (id !== "liked" && out.length === 0 && next.includes("/items?")) { next = `/playlists/${encodeURIComponent(id)}/tracks?limit=100`; continue; }
+      throw e;
+    }
     for (const it of page.items) {
-      const t = it.track;
+      const t = it.item ?? it.track;
       if (t?.id && !t.is_local && (t.type ?? "track") === "track") out.push({ id: t.id, name: t.name ?? "" });
     }
     next = page.next;

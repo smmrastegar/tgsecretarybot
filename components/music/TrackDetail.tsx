@@ -83,10 +83,10 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa",
   const skipRate = sessions > 0 ? Math.round((t.skipCount / sessions) * 100) : null;
   const max = Math.max(1, ...(h?.days.map((d) => d.minutes) ?? [1]));
   const tile = (label: string, value: string, sub?: string) => (
-    <div className="rounded-2xl bg-[var(--s1)] border border-[var(--bd)] px-2 py-3 min-h-[92px] flex flex-col items-center justify-center text-center">
+    <div className="rounded-2xl bg-[var(--s1)] border border-[var(--bd)] px-2 py-3 min-h-[96px] flex flex-col items-center justify-center text-center">
       <div className="text-lg font-extrabold leading-none tabular-nums">{value}</div>
       <div className="text-[11px] leading-none text-[var(--dim)] mt-2">{label}</div>
-      <div className="text-[10px] leading-none text-[var(--dim3)] mt-1.5 min-h-[10px]">{sub ?? ""}</div>
+      <div className="text-[10px] leading-none text-[var(--dim3)] mt-1.5">{sub ?? "—"}</div>
     </div>
   );
   const info: Array<[string, string]> = [
@@ -127,14 +127,14 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa",
 
           {onRate && (
             <div className="flex gap-2">
-              <button onClick={() => onRate(1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating > 0 ? "border-rose-400/60 bg-rose-500/20 text-rose-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2 leading-none"><HeartIcon size={20} filled={t.rating > 0} /> {T.like}</span></button>
-              <button onClick={() => onRate(-1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating < 0 ? "border-[var(--bd)] bg-[var(--s2)]" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2 leading-none"><ThumbDownIcon size={20} filled={t.rating < 0} /> {T.dislike}</span></button>
+              <button onClick={() => onRate(1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating > 0 ? "border-rose-400/60 bg-rose-500/20 text-rose-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="flex items-center justify-center gap-2 leading-none"><span className="w-6 h-6 grid place-items-center"><HeartIcon size={22} filled={t.rating > 0} /></span>{T.like}</span></button>
+              <button onClick={() => onRate(-1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating < 0 ? "border-[var(--bd)] bg-[var(--s2)]" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="flex items-center justify-center gap-2 leading-none"><span className="w-6 h-6 grid place-items-center"><ThumbDownIcon size={22} filled={t.rating < 0} /></span>{T.dislike}</span></button>
             </div>
           )}
 
           <div className="grid grid-cols-3 gap-2">
             {tile(T.plays, d(t.playCount), h ? `${d(h.completions)} ${en ? T.toEnd : T.toEnd}` : undefined)}
-            {tile(T.total, listen(t.listenSeconds))}
+            {tile(T.total, listen(t.listenSeconds), sessions > 0 ? (en ? `avg ${listen(t.listenSeconds / sessions)} per play` : `میانگین ${listen(t.listenSeconds / sessions)} هر بار`) : "—")}
             {tile(T.skips, d(t.skipCount), skipRate == null ? undefined : `${d(skipRate)}% ${T.ofPlays}`)}
           </div>
           {avgPct != null && (

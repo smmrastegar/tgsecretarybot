@@ -146,7 +146,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, [tq]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    const go = () => void fetch(`/api/music/vibes?${tq}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j) setVibeData(j); }).catch(() => {});
+    const go = () => void fetch(`/api/music/vibes?${tq}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j && Array.isArray(j.vibes)) setVibeData({ vibes: j.vibes, tracks: j.tracks ?? {}, progress: { analyzed: j.progress?.analyzed ?? 0, ready: j.progress?.ready ?? 0 } }); }).catch(() => {});
     go();
     const i = setInterval(go, 10 * 60 * 1000);
     return () => clearInterval(i);
