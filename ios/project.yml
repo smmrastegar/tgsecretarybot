@@ -1,0 +1,35 @@
+name: MyMusic
+options:
+  bundleIdPrefix: bz.text
+  deploymentTarget: { iOS: "15.0" }
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""   # filled by the CI workflow from the APPLE_TEAM_ID secret
+targets:
+  MyMusic:
+    type: application
+    platform: iOS
+    sources: [MyMusic]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: bz.text.music
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: MyMusic/Info.plist
+    info:
+      path: MyMusic/Info.plist
+      properties:
+        CFBundleDisplayName: My Music
+        UIBackgroundModes: [audio]
+        UILaunchScreen: { UIColorName: "" }
+        UIRequiredDeviceCapabilities: [arm64]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        "UISupportedInterfaceOrientations~ipad": [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UIViewControllerBasedStatusBarAppearance: true
+        ITSAppUsesNonExemptEncryption: false
