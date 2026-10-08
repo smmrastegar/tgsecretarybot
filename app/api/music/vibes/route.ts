@@ -14,5 +14,5 @@ export async function GET(request: Request): Promise<Response> {
   // Per link: only its own songs, and only vibes that still have a few of them.
   const scoped = allowed ? v.map((x) => ({ ...x, trackIds: x.trackIds.filter((id) => allowed.has(id)) })).filter((x) => x.trackIds.length >= 3) : v;
   const tracks = Object.fromEntries([...d].filter(([id]) => !allowed || allowed.has(id)));
-  return NextResponse.json({ vibes: scoped, tracks, progress });
+  return NextResponse.json({ vibes: scoped, tracks, progress, canCreate: access.kind === "link" && access.canCreate });
 }

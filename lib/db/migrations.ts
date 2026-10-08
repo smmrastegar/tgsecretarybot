@@ -325,6 +325,13 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // A link may build its own smart playlists from a sample song (dashboard can switch it off per link).
+    id: "2026-10-09-003-link-can-create",
+    up: async (q) => {
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS can_create_playlists BOOLEAN NOT NULL DEFAULT TRUE`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

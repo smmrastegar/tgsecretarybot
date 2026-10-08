@@ -17,8 +17,8 @@ export async function GET(): Promise<NextResponse> {
   const [links, pls] = await Promise.all([listPlayerLinks(), resolvedPlaylists()]);
   return NextResponse.json({
     links: [
-      { id: 0, name: "Main link (everything)", url: url(await getLegacyToken()), active: await isLegacyActive(), playlistIds: null, legacy: true, createdAt: null, lastUsedAt: null },
-      ...links.map((l) => ({ id: l.id, name: l.name, url: url(l.token), active: l.active, playlistIds: l.playlistIds, legacy: false, createdAt: l.createdAt, lastUsedAt: l.lastUsedAt })),
+      { id: 0, name: "Main link (everything)", url: url(await getLegacyToken()), active: await isLegacyActive(), playlistIds: null, legacy: true, canCreate: true, createdAt: null, lastUsedAt: null },
+      ...links.map((l) => ({ id: l.id, name: l.name, url: url(l.token), active: l.active, playlistIds: l.playlistIds, legacy: false, canCreate: l.canCreate, createdAt: l.createdAt, lastUsedAt: l.lastUsedAt })),
     ],
     playlists: pls.map((p) => ({ id: p.id, name: p.name, smart: p.smart, count: p.trackIds.length })),
   }, { headers: { "Cache-Control": "no-store" } });

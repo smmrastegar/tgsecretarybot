@@ -21,6 +21,7 @@ export type Api = {
   vibes: Vibe[];
   desc: Record<number, Desc>;
   radio: (t: Track) => void;
+  details: (t: Track) => void;
   analysis: { analyzed: number; ready: number };
 };
 export type Desc = { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[]; moods?: Record<string, number>; vocal?: number };

@@ -28,7 +28,7 @@ export async function setLegacyActive(on: boolean): Promise<void> { await setSet
 
 export type MusicAccess =
   | { kind: "session" }
-  | { kind: "link"; linkId: number; name: string; playlistIds: number[] | null }; // null = the whole library (Main link)
+  | { kind: "link"; linkId: number; name: string; playlistIds: number[] | null; canCreate: boolean }; // playlistIds null = the whole library (Main link)
 
 async function accessForToken(presented: string | null | undefined): Promise<MusicAccess | null> {
   const p = (presented ?? "").trim();
@@ -36,12 +36,12 @@ async function accessForToken(presented: string | null | undefined): Promise<Mus
   const s = await getAllSettings();
   const legacy = (s[KEY] ?? "").trim();
   if (legacy.length === p.length && (s[LEGACY_ACTIVE] ?? "1") !== "0") {
-    try { if (timingSafeEqual(Buffer.from(p), Buffer.from(legacy))) return { kind: "link", linkId: 0, name: "Main link", playlistIds: null }; } catch { /* fall through */ }
+    try { if (timingSafeEqual(Buffer.from(p), Buffer.from(legacy))) return { kind: "link", linkId: 0, name: "Main link", playlistIds: null, canCreate: true }; } catch { /* fall through */ }
   }
   const link = await findActiveLinkByToken(p).catch(() => null);
   if (!link) return null;
   void touchPlayerLink(link.id).catch(() => {});
-  return { kind: "link", linkId: link.id, name: link.name, playlistIds: link.playlistIds };
+  return { kind: "link", linkId: link.id, name: link.name, playlistIds: link.playlistIds, canCreate: link.canCreate };
 }
 
 export async function isValidPlayerToken(presented: string | null | undefined): Promise<boolean> {

@@ -6,7 +6,7 @@ import { Card } from "@/components/Card";
 // Player links: any number of private links, each with its own playlists.
 // Creating a link never touches the others; a link can only be switched off
 // (and on again), never deleted.
-type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; createdAt: string | null; lastUsedAt: string | null };
+type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; createdAt: string | null; lastUsedAt: string | null };
 type Pl = { id: number; name: string; smart: boolean; count: number };
 
 const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
@@ -63,6 +63,7 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
               <button onClick={() => { void navigator.clipboard.writeText(l.url); onMessage(`لینک «${l.name}» کپی شد`); }} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">کپی</button>
               <button onClick={() => window.open(l.url, "_blank", "noopener,noreferrer")} disabled={!l.active} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-40">باز کردن</button>
               {!l.legacy && <button onClick={() => setOpen(open === l.id ? null : l.id)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">پلی‌لیست‌ها {open === l.id ? "▴" : "▾"}</button>}
+              {!l.legacy && <button onClick={() => void patch(l.id, { canCreate: !(l.canCreate ?? true) })} title="اجازه‌ی ساخت پلی‌لیست هوشمند از روی یک آهنگ، داخل پلیر" className={`px-3 py-1.5 rounded-md border ${(l.canCreate ?? true) ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>✨ ساخت پلی‌لیست در پلیر: {(l.canCreate ?? true) ? "روشن" : "خاموش"}</button>}
               {!l.legacy && <button onClick={() => { const n = prompt("نام لینک:", l.name); if (n?.trim()) void patch(l.id, { name: n.trim() }); }} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">نام</button>}
               <button onClick={() => { if (l.active && !confirm(`«${l.name}» غیرفعال شود؟ هر که این لینک را دارد دیگر وارد نمی‌شود (هر وقت خواستی دوباره فعالش کن).`)) return; void patch(l.id, { active: !l.active }); }}
                 className={`px-3 py-1.5 rounded-md border ${l.active ? "border-rose-500/40 text-rose-200" : "border-emerald-500/40 text-emerald-200"}`}>{l.active ? "غیرفعال کردن" : "فعال کردن"}</button>

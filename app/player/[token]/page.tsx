@@ -13,7 +13,7 @@ import Spectrum from "@/components/music/Spectrum";
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { artistsOf, DetailView, type Desc, type Vibe, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
-import { LyricsSheet, OptionSheet, QueueSheet, ReportSheet, TrackMenu } from "@/components/music/app/Sheets";
+import { LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SmartFromSongSheet, TrackMenu } from "@/components/music/app/Sheets";
 
 // Private personal player. The URL's 256-bit token is the credential.
 type Tab = "home" | "search" | "library" | "stats";
@@ -55,7 +55,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [toast, setToast] = useState("");
   const [fade, setFade] = useState(0);
   const [buf, setBuf] = useState(0);
-  const [vibeData, setVibeData] = useState<{ vibes: Vibe[]; tracks: Record<number, Desc>; progress: { analyzed: number; ready: number } }>({ vibes: [], tracks: {}, progress: { analyzed: 0, ready: 0 } });
+  const [vibeData, setVibeData] = useState<{ vibes: Vibe[]; tracks: Record<number, Desc>; progress: { analyzed: number; ready: number }; canCreate: boolean }>({ vibes: [], tracks: {}, progress: { analyzed: 0, ready: 0 }, canCreate: false });
+  const [smartT, setSmartT] = useState<Track | null>(null);
   const [viz, setViz] = useState(true);
   const [installEvt, setInstallEvt] = useState<{ prompt: () => Promise<void> } | null>(null);
   const [iosHint, setIosHint] = useState(false);
@@ -146,7 +147,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, [tq]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    const go = () => void fetch(`/api/music/vibes?${tq}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j && Array.isArray(j.vibes)) setVibeData({ vibes: j.vibes, tracks: j.tracks ?? {}, progress: { analyzed: j.progress?.analyzed ?? 0, ready: j.progress?.ready ?? 0 } }); }).catch(() => {});
+    const go = () => void fetch(`/api/music/vibes?${tq}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j && Array.isArray(j.vibes)) setVibeData({ vibes: j.vibes, tracks: j.tracks ?? {}, progress: { analyzed: j.progress?.analyzed ?? 0, ready: j.progress?.ready ?? 0 }, canCreate: j.canCreate === true }); }).catch(() => {});
     go();
     const i = setInterval(go, 10 * 60 * 1000);
     return () => clearInterval(i);
@@ -346,6 +347,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     rate: (t: Track, r: number) => fns.current.rate(t, r),
     menu: setMenuT,
     open: (p: Page) => setStack((s) => [...s, p]),
+    details: (t: Track) => setDetailId(t.id),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
   const api: Api = useMemo(() => ({ tq, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, ...stable }), [tq, tracks, playlists, byId, cur, playing, loading, vibeData, stable]);
@@ -514,9 +516,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {sheet === "sleep" && <OptionSheet title="Sleep timer" options={SLEEP} value={sleepMin} onPick={(v) => { setSleepMin(v); if (v === 0) sleepEnd.current = 0; }} onClose={() => setSheet(null)} />}
       {sheet === "speed" && <OptionSheet title="Playback speed" options={SPEEDS} value={speed} onPick={setSpeed} onClose={() => setSheet(null)} />}
       {reportT && <ReportSheet t={reportT} tq={tq} context={reportContext} onClose={() => setReportT(null)} onDone={flash} />}
+      {smartT && <SmartFromSongSheet t={smartT} d={vibeData.tracks[smartT.id]} tq={tq} onClose={() => setSmartT(null)} onMessage={flash}
+        onCreated={(id, name) => { flash("Smart playlist created"); void load().then(() => setStack((s) => [...s, { kind: "playlist", key: String(id), title: name }])); }} />}
+      {smartT && <BackLayer onClose={() => setSmartT(null)} />}
       {sheet === "fade" && <OptionSheet title="Fade between tracks" options={FADES} value={fade} onPick={pickFade} onClose={() => setSheet(null)} />}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
-      {menuT && <TrackMenu onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
+      {menuT && <TrackMenu onSmart={vibeData.canCreate ? () => setSmartT(menuT) : undefined} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
         onArtist={() => { const a = artistsOf(menuT)[0]!; setFull(false); setTab("library"); setStack([{ kind: "artist", key: a, title: a }]); }}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}

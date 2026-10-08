@@ -117,7 +117,7 @@ export default function StatsView({ api }: { api: Api }) {
             {s.topTracks.slice(0, 8).map((t, i) => {
               const tr: Track | undefined = api.byId.get(t.id);
               return (
-                <button key={t.id} onClick={() => tr && api.play(s.topTracks.map((x) => x.id).filter((id) => api.byId.has(id)), t.id)} className="w-full flex items-center gap-3 py-2.5 text-left">
+                <button key={t.id} onClick={() => tr && api.details(tr)} className="w-full flex items-center gap-3 py-2.5 text-left">
                   <span className="w-5 text-center text-sm text-[var(--dim3)] tabular-nums">{i + 1}</span>
                   <Cover t={tr ?? { id: t.id, title: t.title, hasCover: false }} tq={api.tq} size={46} radius={8} />
                   <span className="min-w-0 flex-1">
@@ -160,11 +160,11 @@ export default function StatsView({ api }: { api: Api }) {
             {s.recent.slice(0, 10).map((r, i) => {
               const tr = api.byId.get(r.id);
               return (
-                <div key={`${r.id}-${i}`} className="flex items-center gap-3 py-2">
+                <button key={`${r.id}-${i}`} onClick={() => tr && api.details(tr)} className="w-full flex items-center gap-3 py-2 text-left">
                   <Cover t={tr ?? { id: r.id, title: r.title, hasCover: false }} tq={api.tq} size={40} radius={7} />
                   <span className="min-w-0 flex-1"><span className="block text-[14px] truncate">{r.title ?? "—"}</span><span className="block text-[12px] text-[var(--dim)] truncate">{r.artist}</span></span>
                   <span className="text-right shrink-0"><span className="block text-[12px] tabular-nums">{r.completed ? "Full" : fmt(r.seconds)}</span><span className="block text-[11px] text-[var(--dim3)]">{ago(r.at)}</span></span>
-                </div>
+                </button>
               );
             })}
           </div>

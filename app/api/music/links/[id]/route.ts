@@ -12,7 +12,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   const guard = await requireSessionOr401();
   if (guard) return guard;
   const id = Number((await ctx.params).id);
-  const b = (await request.json().catch(() => ({}))) as { name?: string; active?: boolean; playlistIds?: number[] };
+  const b = (await request.json().catch(() => ({}))) as { name?: string; active?: boolean; playlistIds?: number[]; canCreate?: boolean };
   if (id === 0) {
     if (typeof b.active === "boolean") await setLegacyActive(b.active);
     return NextResponse.json({ ok: true });
@@ -21,6 +21,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     name: typeof b.name === "string" && b.name.trim() ? b.name.trim() : undefined,
     active: typeof b.active === "boolean" ? b.active : undefined,
     playlistIds: Array.isArray(b.playlistIds) ? b.playlistIds.map(Number) : undefined,
+    canCreate: typeof b.canCreate === "boolean" ? b.canCreate : undefined,
   });
   return NextResponse.json({ ok: true });
 }

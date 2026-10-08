@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDownIcon, CheckIcon, SparkIcon, DownloadIcon, FlagIcon, ShareIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon } from "../Icons";
 import { Cover, type Track } from "./shared";
+import type { Desc } from "./Views";
 
 export function Sheet({ onClose, title, children }: { onClose: () => void; title?: string; children: ReactNode }) {
   // Drag the handle / title down to dismiss. The panel follows the finger
@@ -40,8 +41,8 @@ const Item = ({ icon, label, onClick, active }: { icon: ReactNode; label: string
   </button>
 );
 
-export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio }: {
-  onShare: () => void; onReport: () => void; onRadio: () => void;
+export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
+  onShare: () => void; onReport: () => void; onRadio: () => void; onSmart?: () => void;
   offline: boolean; onOffline: () => void;
   t: Track; tq: string; onClose: () => void; onNext: () => void; onAdd: () => void; onRate: (r: number) => void;
   onArtist: () => void; onAlbum: () => void; onDetails: () => void;
@@ -54,6 +55,7 @@ export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onA
         <div className="min-w-0"><div className="font-semibold truncate">{t.title}</div><div className="text-sm text-[var(--dim)] truncate">{t.artist}</div></div>
       </div>
       <Item icon={<SparkIcon size={22} />} label="Start radio (similar songs)" onClick={go(onRadio)} />
+      {onSmart && <Item icon={<SparkIcon size={22} />} label="Smart playlist from this song…" onClick={go(onSmart)} />}
       <Item icon={<PlayNextIcon size={22} />} label="Play next" onClick={go(onNext)} />
       <Item icon={<QueueIcon size={22} />} label="Add to queue" onClick={go(onAdd)} />
       <Item icon={<HeartIcon size={22} filled={t.rating > 0} />} label={t.rating > 0 ? "Remove from liked" : "Like"} active={t.rating > 0} onClick={go(() => onRate(1))} />
@@ -196,6 +198,93 @@ export function ReportSheet({ t, tq, context, onClose, onDone }: { t: Track; tq:
         <button onClick={() => void send()} disabled={!ok || busy} className="mt-3 w-full py-3 rounded-full font-semibold text-[15px] bg-[rgb(var(--ac))] text-[var(--acfg)] disabled:opacity-35 active:scale-[.98] transition">{busy ? "Sending…" : "Send report"}</button>
         <div className="mt-2 text-center text-[11px] text-[var(--dim3)]">Playback details (position, connection, app version) are attached automatically.</div>
       </div>
+    </Sheet>
+  );
+}
+
+/**
+ * "More like this song": shows what the analysis found out about the song and
+ * lets the user pick which of those parameters the new smart playlist must
+ * match, with a live count. The playlist is created for THIS link only.
+ */
+export function SmartFromSongSheet({ t, d, tq, onClose, onCreated, onMessage }: { t: Track; d: Desc | undefined; tq: string; onClose: () => void; onCreated: (id: number, name: string) => void; onMessage: (m: string) => void }) {
+  const moods = (["sad", "happy", "relaxed", "aggressive", "danceable"] as const).filter((k) => (d?.moods?.[k] ?? 0) > (k === "relaxed" ? 0.55 : k === "aggressive" ? 0.4 : k === "danceable" ? 0.6 : 0.5));
+  const energyWord = d ? (d.energy < 0.35 ? "low energy" : d.energy > 0.6 ? "high energy" : "medium energy") : "";
+  const tag = d?.genres?.[0];
+  const sub = tag ? (tag.split(" / ").pop() ?? tag) : null;
+  const instr = d?.moods?.instrumental;
+  const [on, setOn] = useState<Set<string>>(new Set(["tempo", "energy", ...(moods[0] ? [`mood:${moods[0]}`] : [])]));
+  const [n, setN] = useState(40);
+  const [name, setName] = useState(`More like ${t.title ?? "this song"}`.slice(0, 80));
+  const [preview, setPreview] = useState<{ count: number; sample: string[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const flip = (k: string) => setOn((s) => { const x = new Set(s); if (x.has(k)) x.delete(k); else x.add(k); return x; });
+
+  const rules = () => {
+    const r: Record<string, unknown> = { seed: { trackId: t.id, n } };
+    if (d && on.has("tempo")) r.bpm = [Math.round(d.bpm * 0.88), Math.round(d.bpm * 1.12)];
+    if (d && on.has("energy")) r.energy = [Math.max(0, d.energy - 0.2), Math.min(1, d.energy + 0.2)];
+    const m: Record<string, number> = {};
+    for (const k of moods) if (on.has(`mood:${k}`)) m[k] = 0.5;
+    if (Object.keys(m).length) r.moods = m;
+    if (on.has("voice") && instr != null) r.vocal = instr > 0.5 ? "instrumental" : "vocal";
+    if (on.has("genre") && sub) r.genres = [sub.toLowerCase()];
+    if (on.has("mode") && d) r.mode = d.mode;
+    return r;
+  };
+  const key = JSON.stringify([...on].sort()) + n;
+  useEffect(() => {
+    let live = true;
+    const h = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/music/smart/preview?${tq}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rules: rules() }) });
+        if (live && r.ok) setPreview(await r.json());
+      } catch { /* offline */ }
+    }, 350);
+    return () => { live = false; clearTimeout(h); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` captures every input of rules()
+  }, [key, tq]);
+
+  async function create() {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/music/smart/create?${tq}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, rules: rules() }) });
+      const j = (await r.json().catch(() => ({}))) as { id?: number; error?: string };
+      if (r.ok && j.id != null) { onCreated(j.id, name); onClose(); } else onMessage(j.error ?? "Could not create the playlist");
+    } catch { onMessage("Could not create the playlist"); }
+    setBusy(false);
+  }
+
+  const Chip = ({ k, label }: { k: string; label: string }) => (
+    <button onClick={() => flip(k)} role="checkbox" aria-checked={on.has(k)} className={`px-3 py-2 rounded-full text-[13px] font-medium border transition ${on.has(k) ? "bg-[rgb(var(--ac))] text-[var(--acfg)] border-transparent" : "border-[var(--bd)] text-[var(--dim2)]"}`}>{label}</button>
+  );
+  return (
+    <Sheet onClose={onClose} title="Smart playlist from this song">
+      <div className="px-5 pb-2 flex items-center gap-3"><Cover t={t} tq={tq} size={48} radius={8} /><div className="min-w-0"><div className="font-semibold truncate">{t.title}</div><div className="text-xs text-[var(--dim)] truncate">{t.artist}</div></div></div>
+      {!d ? (
+        <div className="px-5 py-6 text-sm text-[var(--dim)]">This song hasn&apos;t been analysed yet — try again in a few minutes.</div>
+      ) : (
+        <div className="px-5">
+          <p className="text-[13px] text-[var(--dim)] leading-5">Finds songs that sound like this one, then keeps only those that also match the parameters you leave switched on.</p>
+          <div className="mt-3 text-[11px] uppercase tracking-wide text-[var(--dim3)]">Parameters of this song</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Chip k="tempo" label={`Tempo ~${d.bpm} BPM`} />
+            <Chip k="energy" label={`Energy: ${energyWord}`} />
+            {moods.map((k) => <Chip key={k} k={`mood:${k}`} label={k[0]!.toUpperCase() + k.slice(1)} />)}
+            {instr != null && <Chip k="voice" label={instr > 0.5 ? "Instrumental" : "With vocals"} />}
+            {sub && <Chip k="genre" label={`Genre: ${sub.replace(/\b\w/g, (c) => c.toUpperCase())}`} />}
+            <Chip k="mode" label={d.mode === "minor" ? "Minor key" : "Major key"} />
+          </div>
+          <div className="mt-4 text-[11px] uppercase tracking-wide text-[var(--dim3)]">How many songs</div>
+          <div className="mt-2 flex gap-2">{[20, 40, 60].map((v) => <button key={v} onClick={() => setN(v)} className={`flex-1 py-2 rounded-xl text-sm font-semibold ${n === v ? "bg-[var(--s2)]" : "bg-[var(--s1)] text-[var(--dim)]"}`}>{v}</button>)}</div>
+          <div className="mt-4 rounded-xl bg-[var(--s1)] px-4 py-3 text-sm min-h-[64px]">
+            {preview ? (<><b>{preview.count}</b> {preview.count === 1 ? "song matches" : "songs match"} right now{preview.sample.length ? <div className="mt-1 text-xs text-[var(--dim)] truncate">{preview.sample.join(" · ")}</div> : null}</>) : <span className="text-[var(--dim)]">Counting…</span>}
+          </div>
+          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className="mt-4 w-full rounded-xl bg-[var(--s1)] border border-[var(--bd)] px-3 py-2.5 text-[15px] outline-none focus:border-[rgb(var(--ac))]" aria-label="Playlist name" />
+          <button onClick={() => void create()} disabled={busy || !preview || preview.count < 2} className="mt-3 w-full py-3 rounded-full font-semibold text-[15px] bg-[rgb(var(--ac))] text-[var(--acfg)] disabled:opacity-35 active:scale-[.98] transition">{busy ? "Creating…" : "Create smart playlist"}</button>
+          <div className="mt-2 text-center text-[11px] text-[var(--dim3)]">It stays up to date as the library grows. Only this link gets it.</div>
+        </div>
+      )}
     </Sheet>
   );
 }
