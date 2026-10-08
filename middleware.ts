@@ -47,6 +47,7 @@ const PUBLIC_PREFIXES = [
   // x-deploy-token: <WEBHOOK_SECRET_TOKEN> header, not a session
   // cookie, because the caller is deploy/auto-deploy.sh.
   "/api/deploy-status",
+  "/api/deploy-apk",
   // Static downloads (the OTP-notification build of the Android SMS
   // forwarder). Nothing secret in there; a direct link is the reliable
   // way to get an APK onto the phone.

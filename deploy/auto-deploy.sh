@@ -167,32 +167,26 @@ spotdl_selfheal() {
 }
 spotdl_selfheal || true
 
-# Whenever public/downloads/MyMusic.apk changes (a new Android build was committed), send it to
-# the owner in Telegram, once per distinct file. Retries every 10 min if Telegram is unreachable.
+# Whenever public/downloads/MyMusic.apk changes (a new Android build was committed) the app sends
+# it to the owner in Telegram (POST /api/deploy-apk dedups by hash and knows the owner's chat).
+# Checked every tick against a local hash so the app is only asked when the file is new; a failed
+# attempt is retried after 10 minutes.
 apk_selfheal() {
-  local f="$APP_DIR/public/downloads/MyMusic.apk" dir=/var/lib/tgsb-tools tok owner sum ver code
+  local f="$APP_DIR/public/downloads/MyMusic.apk" dir=/var/lib/tgsb-tools tok sum out
   [[ -f "$f" ]] || return 0
   mkdir -p "$dir"
   sum=$(sha256sum "$f" | cut -d' ' -f1)
   [[ "$(cat "$dir/apk.sha" 2>/dev/null)" == "$sum" ]] && return 0
   [[ -f "$dir/apk.fail" && $(( $(date +%s) - $(stat -c %Y "$dir/apk.fail") )) -lt 600 ]] && return 0
-  tok=$(grep -E '^TELEGRAM_BOT_TOKEN=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
-  owner=$(grep -E '^OWNER_NOTIFY_CHAT_ID=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
-  [[ -n "${tok:-}" && -n "${owner:-}" ]] || return 0
-  ver=$(grep -m1 versionName "$APP_DIR/android/app/build.gradle" 2>/dev/null | sed "s/.*'\(.*\)'.*/\1/")
-  code=$(grep -m1 versionCode "$APP_DIR/android/app/build.gradle" 2>/dev/null | grep -o '[0-9]*' | head -1)
-  if curl -fsS -m 180 "https://api.telegram.org/bot${tok}/sendDocument" \
-       -F chat_id="$owner" -F "document=@${f};filename=MyMusic-${ver:-x}.apk" \
-       --form-string "caption=📱 My Music برای اندروید — نسخه ${ver:-?} (build ${code:-?})
-روی آپدیت قبلی نصب می‌شه؛ اگه ننصبید، قبلی رو پاک کن.
-sha256: ${sum:0:12}" >/dev/null; then
+  tok=$(grep -E '^WEBHOOK_SECRET_TOKEN=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
+  [[ -n "${tok:-}" ]] || return 0
+  out=$(curl -sS -m 120 -X POST "http://127.0.0.1:3000/api/deploy-apk" -H "x-deploy-token: ${tok}" 2>&1 || true)
+  if echo "$out" | grep -q '"ok":true'; then
     echo "$sum" >"$dir/apk.sha"; rm -f "$dir/apk.fail"
-    echo "  ✓ apk: MyMusic ${ver:-?} sent to Telegram"
-    report_status "apk" "info" "MyMusic APK ${ver:-?} (build ${code:-?}) sent to the owner in Telegram"
+    echo "  ✓ apk: ${out:0:80}"
   else
     touch "$dir/apk.fail"
-    echo "  ✗ apk: sending to Telegram failed"
-    report_status "apk" "warn" "sending the MyMusic APK to Telegram failed; will retry in 10 minutes"
+    echo "  ✗ apk: ${out:0:160}"
   fi
 }
 apk_selfheal >>"$LOG" 2>&1 || true
