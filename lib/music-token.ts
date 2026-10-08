@@ -50,9 +50,13 @@ export async function isValidPlayerToken(presented: string | null | undefined): 
 
 /** Who is asking: the dashboard session, or a player link (?t= / x-player-token). */
 export async function musicAccess(request: Request): Promise<MusicAccess | null> {
-  if (await getCurrentSession().catch(() => null)) return { kind: "session" };
+  // A player link in the URL always wins, even if this browser is also logged into the dashboard:
+  // otherwise the owner testing a link would silently see the whole library with dashboard rights.
   const url = new URL(request.url);
-  return accessForToken(url.searchParams.get("t") ?? request.headers.get("x-player-token"));
+  const presented = url.searchParams.get("t") ?? request.headers.get("x-player-token");
+  if (presented) return accessForToken(presented);
+  if (await getCurrentSession().catch(() => null)) return { kind: "session" };
+  return null;
 }
 
 /** Backwards-compatible boolean. */

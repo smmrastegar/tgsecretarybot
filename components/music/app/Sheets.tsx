@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDownIcon, CheckIcon, SparkIcon, DownloadIcon, FlagIcon, ShareIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon } from "../Icons";
 import { Cover, type Track } from "./shared";
 import type { Desc } from "./Views";
+import { loadLyrics } from "./lyricsCache";
 
 export function Sheet({ onClose, title, children }: { onClose: () => void; title?: string; children: ReactNode }) {
   // Drag the handle / title down to dismiss. The panel follows the finger
@@ -129,7 +130,7 @@ export function LyricsSheet({ t, tq, pos, onSeek, onClose }: { t: Track; tq: str
   useEffect(() => {
     let live = true;
     setData(null);
-    fetch(`/api/music/${t.id}/lyrics?${tq}`).then((r) => r.json()).then((j) => { if (live) setData(j); }).catch(() => { if (live) setData({ synced: null, plain: null, found: false }); });
+    loadLyrics(t.id, tq).then((j) => { if (live) setData(j); });
     return () => { live = false; };
   }, [t.id, tq]);
   const lines = useMemo(() => (data?.synced ? parseLrc(data.synced) : []), [data]);

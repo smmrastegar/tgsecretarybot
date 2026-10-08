@@ -3,9 +3,10 @@
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
 import dynamic from "next/dynamic";
+import { loadLyrics, removeLyrics, saveLyrics } from "@/components/music/app/lyricsCache";
 import BackLayer from "@/components/music/app/BackLayer";
 import { memo, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartIcon, CloseIcon, SettingsIcon, SparkIcon, ChevronDownIcon, FadeIcon, FlagIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
+import { ChartIcon, CloseIcon, MoreIcon, SettingsIcon, SparkIcon, ChevronDownIcon, FadeIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
 
 import SeekBar from "@/components/music/app/SeekBar";
 import Spectrum from "@/components/music/Spectrum";
@@ -125,7 +126,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   useEffect(() => {
     if (!full || cur == null) return;
     let live = true;
-    fetch(`/api/music/${cur}/lyrics?${tq}`).then((r) => r.json()).then((j: { found?: boolean }) => { if (live) setLyr({ id: cur, found: !!j.found }); }).catch(() => {});
+    loadLyrics(cur, tq).then((j) => { if (live) setLyr({ id: cur, found: !!j.found }); });
     return () => { live = false; };
   }, [full, cur, tq]);
   const hasLyrics = lyr?.id === cur && lyr.found;
@@ -309,6 +310,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           const r = await fetch(`/api/music/stream/${id}?${tq}`, { signal: ctl.signal });
           if (r.status !== 200) throw new Error(`http ${r.status}`);
           await c.put(`/api/music/stream/${id}`, r);
+          await saveLyrics(id, tq);
           setOffline((s) => new Set(s).add(id));
         } catch (e) {
           if (ctl.signal.aborted) return;
@@ -332,12 +334,13 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const toggleOffline = async (t: Track) => {
     const key = `/api/music/stream/${t.id}`;
     const c = await caches.open("player-audio");
-    if (offline.has(t.id)) { await c.delete(key); setOffline((s) => { const n = new Set(s); n.delete(t.id); return n; }); flash("Offline copy removed"); return; }
+    if (offline.has(t.id)) { await c.delete(key); await removeLyrics(t.id); setOffline((s) => { const n = new Set(s); n.delete(t.id); return n; }); flash("Offline copy removed"); return; }
     flash("Saving for offline…");
     try {
       const r = await fetch(`${key}?${tq}`);
       if (!r.ok || r.status !== 200) throw new Error("bad");
       await c.put(key, r);
+      await saveLyrics(t.id, tq);
       setOffline((s) => new Set(s).add(t.id)); flash("Saved for offline");
     } catch { flash("Could not save"); }
   };
@@ -530,7 +533,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           <div className="relative max-w-md mx-auto px-6 pt-[max(14px,env(safe-area-inset-top))] pb-[max(16px,env(safe-area-inset-bottom))] h-full min-h-[520px] flex flex-col">
             <div className="flex items-center justify-between h-11 shrink-0">
               <button onClick={() => setFull(false)} className="p-2 -ml-2" aria-label="Minimise"><ChevronDownIcon size={28} /></button>
-              <span className="flex items-center"><button onClick={() => setSmartT(now)} className="p-2" aria-label="Smart playlist from this song"><SparkIcon size={20} /></button><button onClick={() => setReportT(now)} className="p-2 text-[var(--dim3)]" aria-label="Report a problem"><FlagIcon size={19} /></button><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button></span>
+              <span className="flex items-center"><button onClick={() => setSmartT(now)} className="p-2" aria-label="Smart playlist from this song"><SparkIcon size={20} /></button><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2" aria-label="Details"><InfoIcon size={24} /></button><button onClick={() => setMenuT(now)} className="p-2 -mr-2" aria-label="More options"><MoreIcon size={24} /></button></span>
             </div>
 
             <div className="relative flex-1 min-h-0 my-2">
