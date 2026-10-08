@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useMemo, useState } from "react";
-import { ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, SearchIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
+import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, SearchIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
 import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, PlayAllButton, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
 
 // Everything the views need from the player engine.
@@ -22,6 +22,9 @@ export type Api = {
   desc: Record<number, Desc>;
   radio: (t: Track) => void;
   details: (t: Track) => void;
+  download: (ids: number[], label: string) => void;
+  offline: Set<number>;
+  dl: { done: number; total: number } | null;
   analysis: { analyzed: number; ready: number };
 };
 export type Desc = { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[]; moods?: Record<string, number>; vocal?: number };
@@ -271,10 +274,20 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
         </div>
         <h2 className="text-[28px] font-extrabold tracking-tight mt-5 leading-tight">{page.title}</h2>
         <div className="text-[14px] text-[var(--dim)] mt-1">{sub} · {list.length} {list.length === 1 ? "song" : "songs"}</div>
-        <div className="flex items-center gap-3 mt-5">
+        <div className="flex items-center justify-center gap-2.5 mt-5 flex-wrap">
           <PlayAllButton onClick={() => list[0] && api.play(ids, ids[0])} />
           <button onClick={() => api.play(ids, undefined, true)} className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[var(--s2)] font-semibold text-[15px] active:scale-95 transition"><ShuffleIcon size={18} /> Shuffle</button>
           <button onClick={() => void shareText(page.title, [`${page.title} — ${list.length} songs`, "", ...list.slice(0, 50).flatMap((t) => [...trackShareLines(t, api.tq), ""])])} className="w-11 h-11 grid place-items-center rounded-full bg-[var(--s2)] active:scale-95 transition" aria-label="Share"><ShareIcon size={18} /></button>
+          {(() => {
+            const left = ids.filter((id) => !api.offline.has(id)).length;
+            const all = left === 0 && ids.length > 0;
+            return (
+              <button onClick={() => left > 0 && !api.dl && api.download(ids, page.title)} disabled={all || !!api.dl} aria-label={all ? "Downloaded for offline" : "Download for offline"}
+                className={`h-11 ${api.dl ? "px-4" : "w-11"} inline-flex items-center justify-center gap-1.5 rounded-full bg-[var(--s2)] text-[13px] font-semibold tabular-nums active:scale-95 transition ${all ? "text-[rgb(var(--ac))]" : ""}`}>
+                {api.dl ? `${api.dl.done}/${api.dl.total}` : all ? <CheckIcon size={18} /> : <DownloadIcon size={18} />}
+              </button>
+            );
+          })()}
         </div>
       </div>
       <div className="mt-6"><TrackList list={list} api={api} numbered={page.kind === "album"} /></div>

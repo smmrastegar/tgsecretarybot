@@ -5,7 +5,7 @@
 import dynamic from "next/dynamic";
 import BackLayer from "@/components/music/app/BackLayer";
 import { memo, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartIcon, CloseIcon, ChevronDownIcon, FadeIcon, FlagIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
+import { ChartIcon, CloseIcon, SettingsIcon, ChevronDownIcon, FadeIcon, FlagIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
 
 import SeekBar from "@/components/music/app/SeekBar";
 import Spectrum from "@/components/music/Spectrum";
@@ -13,7 +13,7 @@ import Spectrum from "@/components/music/Spectrum";
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { artistsOf, DetailView, type Desc, type Vibe, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
-import { LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SmartFromSongSheet, TrackMenu } from "@/components/music/app/Sheets";
+import { DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, TrackMenu } from "@/components/music/app/Sheets";
 
 // Private personal player. The URL's 256-bit token is the credential.
 type Tab = "home" | "search" | "library" | "stats";
@@ -57,9 +57,15 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [buf, setBuf] = useState(0);
   const [vibeData, setVibeData] = useState<{ vibes: Vibe[]; tracks: Record<number, Desc>; progress: { analyzed: number; ready: number }; canCreate: boolean }>({ vibes: [], tracks: {}, progress: { analyzed: 0, ready: 0 }, canCreate: false });
   const [smartT, setSmartT] = useState<Track | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [dlPlan, setDlPlan] = useState<{ ids: number[]; label: string; bytes: number } | null>(null);
+  const [dl, setDl] = useState<{ done: number; total: number } | null>(null);
+  const dlCtl = useRef<AbortController | null>(null);
   const [viz, setViz] = useState(true);
   const [installEvt, setInstallEvt] = useState<{ prompt: () => Promise<void> } | null>(null);
   const [iosHint, setIosHint] = useState(false);
+  const [isIosBrowser, setIsIosBrowser] = useState(false);
+  const [bannerOn, setBannerOn] = useState(true);
   const [updateReady, setUpdateReady] = useState(false);
   const build = useRef<string | null>(null);
   const [lyr, setLyr] = useState<{ id: number; found: boolean } | null>(null);
@@ -85,8 +91,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   useEffect(() => {
     const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as unknown as { standalone?: boolean }).standalone === true;
     const dismissed = (() => { try { return localStorage.getItem("player.installDismissed") === "1"; } catch { return false; } })();
-    if (!standalone && !dismissed && /iphone|ipad|ipod/i.test(navigator.userAgent)) setIosHint(true);
-    const onPrompt = (e: Event) => { e.preventDefault(); if (!standalone && !dismissed) setInstallEvt(e as unknown as { prompt: () => Promise<void> }); };
+    if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) setIsIosBrowser(true);
+    if (dismissed) setBannerOn(false);
+    if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) setIosHint(true);
+    const onPrompt = (e: Event) => { e.preventDefault(); if (!standalone) setInstallEvt(e as unknown as { prompt: () => Promise<void> }); };
     const onInstalled = () => setInstallEvt(null);
     window.addEventListener("beforeinstallprompt", onPrompt); window.addEventListener("appinstalled", onInstalled);
     return () => { window.removeEventListener("beforeinstallprompt", onPrompt); window.removeEventListener("appinstalled", onInstalled); };
@@ -109,7 +117,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, [checkUpdate]);
   // Reload into the new version as soon as nothing is playing.
   useEffect(() => { if (updateReady && !playing) window.location.reload(); }, [updateReady, playing]);
-  const dismissInstall = () => { setInstallEvt(null); setIosHint(false); try { localStorage.setItem("player.installDismissed", "1"); } catch {} };
+  const dismissInstall = () => { setBannerOn(false); try { localStorage.setItem("player.installDismissed", "1"); } catch {} };
   const doInstall = async () => { await installEvt?.prompt(); setInstallEvt(null); };
   // Only offer lyrics when the track has some (the server caches lookups).
   useEffect(() => {
@@ -135,6 +143,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   byIdRef.current = byId;
   const c = useCollections(tracks, playlists, byId);
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(""), 1800); };
+
+  // Remember this link on the device so the installed launcher (/listen) can reopen it.
+  useEffect(() => { try { localStorage.setItem("listenLink", token); } catch { /* private mode */ } }, [token]);
 
   const load = useCallback(async () => {
     try {
@@ -273,6 +284,45 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const vibe = vibeData.vibes.find((v) => v.key === d.vibe)?.name;
     return [`${d.bpm} BPM`, `${d.key} ${d.mode}`, d.energy < 0.35 ? "Low energy" : d.energy > 0.6 ? "High energy" : "Medium energy", d.brightness > 0.4 ? "Bright" : d.brightness < 0.2 ? "Warm" : "Balanced", ...(vibe ? [vibe] : []), ...moodChips(d.moods), ...d.genres.slice(0, 3).map((g) => g.split(" / ").map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase())).join(" / "))];
   };
+  const requestDownload = (ids: number[], label: string) => {
+    const todo = ids.filter((id) => !offline.has(id));
+    if (todo.length === 0) { flash("Already downloaded"); return; }
+    if (!("caches" in window)) { flash("Offline storage isn't available in this browser"); return; }
+    setDlPlan({ ids: todo, label, bytes: todo.reduce((a, id) => a + (byIdRef.current.get(id)?.sizeBytes ?? 8_000_000), 0) });
+  };
+  const startDownload = async (ids: number[]) => {
+    try { await navigator.storage?.persist?.(); } catch { /* best effort: asks the browser not to evict our songs */ }
+    const c = await caches.open("player-audio");
+    const ctl = new AbortController(); dlCtl.current = ctl;
+    let done = 0, failed = 0, next = 0, noSpace = false;
+    setDl({ done: 0, total: ids.length });
+    const worker = async () => {
+      while (!ctl.signal.aborted) {
+        const id = ids[next++]; if (id == null) return;
+        try {
+          const r = await fetch(`/api/music/stream/${id}?${tq}`, { signal: ctl.signal });
+          if (r.status !== 200) throw new Error(`http ${r.status}`);
+          await c.put(`/api/music/stream/${id}`, r);
+          setOffline((s) => new Set(s).add(id));
+        } catch (e) {
+          if (ctl.signal.aborted) return;
+          failed++;
+          if ((e as Error).name === "QuotaExceededError") { noSpace = true; ctl.abort(); return; }
+        }
+        done++; setDl({ done, total: ids.length });
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    setDl(null); dlCtl.current = null;
+    flash(noSpace ? "Not enough free space — download stopped" : ctl.signal.aborted ? "Download stopped" : failed ? `Downloaded, ${failed} failed` : "Downloaded for offline");
+  };
+  const removeDownloads = async () => { try { await caches.delete("player-audio"); } catch { /* ignore */ } setOffline(new Set()); flash("Downloads removed"); };
+  const signOut = async (wipe: boolean) => {
+    dlCtl.current?.abort();
+    try { localStorage.removeItem("listenLink"); } catch { /* ignore */ }
+    try { if (wipe) await caches.delete("player-audio"); await caches.delete("player-shell-v2"); await caches.delete("player-shell-v1"); } catch { /* ignore */ }
+    window.location.replace("/listen?signedout=1");
+  };
   const toggleOffline = async (t: Track) => {
     const key = `/api/music/stream/${t.id}`;
     const c = await caches.open("player-audio");
@@ -339,8 +389,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       flash(`Radio: ${j.ids.length} songs in the same lane`);
     } catch { flash("Couldn't start radio"); }
   };
-  const fns = useRef({ play, smartMix, rate, radio: startRadio });
-  fns.current = { play, smartMix, rate, radio: startRadio };
+  const fns = useRef({ play, smartMix, rate, radio: startRadio, download: requestDownload });
+  fns.current = { play, smartMix, rate, radio: startRadio, download: requestDownload };
   const stable = useMemo(() => ({
     play: (ids: number[], startId?: number, sh?: boolean) => fns.current.play(ids, startId, sh),
     smartMix: (ids: number[]) => fns.current.smartMix(ids),
@@ -348,9 +398,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     menu: setMenuT,
     open: (p: Page) => setStack((s) => [...s, p]),
     details: (t: Track) => setDetailId(t.id),
+    download: (ids: number[], label: string) => fns.current.download(ids, label),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, ...stable }), [tq, tracks, playlists, byId, cur, playing, loading, vibeData, stable]);
+  const api: Api = useMemo(() => ({ tq, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -390,7 +441,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       `}</style>
 
       <div className="relative max-w-2xl mx-auto px-4 pt-[max(14px,env(safe-area-inset-top))]" style={{ paddingBottom: now ? 168 : 96 }}>
-        {(installEvt || iosHint) && !page && tab === "home" && (
+        {bannerOn && (installEvt || iosHint) && !page && tab === "home" && (
           <div className="mb-3 flex items-center gap-3 rounded-2xl bg-[var(--s1)] border border-[var(--bd)] p-3">
             <img src="/icons/player-192.png" alt="" className="w-11 h-11 rounded-xl shrink-0" />
             <div className="min-w-0 flex-1 text-[13px] leading-snug">
@@ -408,7 +459,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           ) : (
             <h1 className="text-[28px] font-extrabold tracking-tight">{tab === "home" ? greeting() : tab === "search" ? "Search" : tab === "library" ? "Your Library" : "Stats"}</h1>
           )}
-          <button onClick={flipTheme} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center" aria-label="Toggle theme">{theme === "dark" ? <SunIcon size={20} /> : <MoonIcon size={20} />}</button>
+          <span className="flex items-center gap-2">
+            <button onClick={() => setSettingsOpen(true)} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center" aria-label="Settings"><SettingsIcon size={20} /></button>
+            <button onClick={flipTheme} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center" aria-label="Toggle theme">{theme === "dark" ? <SunIcon size={20} /> : <MoonIcon size={20} />}</button>
+          </span>
         </header>
 
         {page ? <MDetail page={page} api={api} c={c} />
@@ -519,6 +573,14 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {smartT && <SmartFromSongSheet t={smartT} d={vibeData.tracks[smartT.id]} tq={tq} onClose={() => setSmartT(null)} onMessage={flash}
         onCreated={(id, name) => { flash("Smart playlist created"); void load().then(() => setStack((s) => [...s, { kind: "playlist", key: String(id), title: name }])); }} />}
       {smartT && <BackLayer onClose={() => setSmartT(null)} />}
+      {dlPlan && <DownloadSheet label={dlPlan.label} count={dlPlan.ids.length} bytes={dlPlan.bytes} onAllow={() => void startDownload(dlPlan.ids)} onClose={() => setDlPlan(null)} />}
+      {dlPlan && <BackLayer onClose={() => setDlPlan(null)} />}
+      {settingsOpen && <SettingsSheet downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <BackLayer onClose={() => setSettingsOpen(false)} />}
+      {dl && <div className="fixed left-3 right-3 z-[60] max-w-2xl mx-auto rounded-2xl glass border border-[var(--bd)] px-4 py-3 flex items-center gap-3" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))" }} role="status">
+        <div className="min-w-0 flex-1"><div className="text-[13px] font-semibold">Downloading {dl.done} of {dl.total}</div><div className="mt-1.5 h-1 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full bg-[rgb(var(--ac))] transition-[width]" style={{ width: `${(dl.done / dl.total) * 100}%` }} /></div></div>
+        <button onClick={() => dlCtl.current?.abort()} className="px-3 py-1.5 rounded-full bg-[var(--s2)] text-[12px] font-semibold">Stop</button>
+      </div>}
       {sheet === "fade" && <OptionSheet title="Fade between tracks" options={FADES} value={fade} onPick={pickFade} onClose={() => setSheet(null)} />}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
       {menuT && <TrackMenu onSmart={vibeData.canCreate ? () => setSmartT(menuT) : undefined} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}

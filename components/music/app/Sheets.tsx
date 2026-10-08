@@ -288,3 +288,57 @@ export function SmartFromSongSheet({ t, d, tq, onClose, onCreated, onMessage }: 
     </Sheet>
   );
 }
+
+const mb = (b: number) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : `${Math.max(1, Math.round(b / 1048576))} MB`);
+
+/** Ask before storing songs on this phone (explicit permission), with the size. */
+export function DownloadSheet({ label, count, bytes, onAllow, onClose }: { label: string; count: number; bytes: number; onAllow: () => void; onClose: () => void }) {
+  const [free, setFree] = useState<string | null>(null);
+  useEffect(() => { void navigator.storage?.estimate?.().then((e) => { if (e.quota != null && e.usage != null) setFree(mb(Math.max(0, e.quota - e.usage))); }).catch(() => {}); }, []);
+  return (
+    <Sheet onClose={onClose} title="Download for offline listening">
+      <div className="px-5 pb-1 text-[15px] leading-6">
+        Save <b>{count}</b> {count === 1 ? "song" : "songs"} from <b>{label}</b> on this phone (about <b>{mb(bytes)}</b>) so they play without internet?
+        <div className="mt-2 text-[13px] text-[var(--dim)]">{free ? `Free space available to this app: ${free}. ` : ""}Downloads stay until you remove them in Settings. They are only readable by this app.</div>
+      </div>
+      <div className="px-5 pt-4 flex gap-3">
+        <button onClick={onClose} className="flex-1 py-3 rounded-full bg-[var(--s1)] font-semibold">Not now</button>
+        <button onClick={() => { onAllow(); onClose(); }} className="flex-1 py-3 rounded-full bg-[rgb(var(--ac))] text-[var(--acfg)] font-semibold">Allow & download</button>
+      </div>
+    </Sheet>
+  );
+}
+
+/** App settings: storage, visualizer, install, and "sign out" so a different link can be used. */
+export function SettingsSheet({ downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onSignOut, onClose }: {
+  downloaded: number; viz: boolean; onViz: () => void; installable: boolean; iosHint: boolean; onInstall: () => void;
+  onRemoveDownloads: () => Promise<void>; onSignOut: (removeDownloads: boolean) => void; onClose: () => void;
+}) {
+  const [usage, setUsage] = useState<string | null>(null);
+  const [confirmOut, setConfirmOut] = useState(false);
+  const [wipe, setWipe] = useState(false);
+  const refresh = () => { void navigator.storage?.estimate?.().then((e) => { if (e.usage != null) setUsage(mb(e.usage)); }).catch(() => {}); };
+  useEffect(refresh, []);
+  const Row = ({ label, sub, right }: { label: string; sub?: string; right: ReactNode }) => (
+    <div className="flex items-center gap-3 px-5 py-3.5 border-b border-[var(--bd0)]"><div className="min-w-0 flex-1"><div className="text-[15px]">{label}</div>{sub && <div className="text-[12px] text-[var(--dim)] mt-0.5">{sub}</div>}</div>{right}</div>
+  );
+  const btn = "px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--s2)] active:scale-95 transition";
+  return (
+    <Sheet onClose={onClose} title="Settings">
+      <Row label="Offline downloads" sub={`${downloaded} ${downloaded === 1 ? "song" : "songs"} on this phone${usage ? ` · app storage ${usage}` : ""}`}
+        right={<button disabled={downloaded === 0} onClick={async () => { if (confirm("Remove every downloaded song from this phone?")) { await onRemoveDownloads(); refresh(); } }} className={`${btn} disabled:opacity-35`}>Remove all</button>} />
+      <Row label="Spectrum on the cover" sub="Turn off to save battery" right={<button role="switch" aria-checked={viz} onClick={onViz} className={`w-12 h-7 rounded-full relative transition ${viz ? "bg-[rgb(var(--ac))]" : "bg-[var(--s2)]"}`}><span className={`absolute top-0.5 w-6 h-6 rounded-full bg-[var(--bg2)] shadow transition-all ${viz ? "left-[22px]" : "left-0.5"}`} style={viz ? undefined : { background: "var(--dim)" }} /></button>} />
+      {(installable || iosHint) && <Row label="Install as an app" sub={installable ? "Full screen with its own icon" : "In Safari: Share → Add to Home Screen"} right={installable ? <button onClick={onInstall} className={btn}>Install</button> : <span />} />}
+      {!confirmOut ? (
+        <Row label="Sign out of this link" sub="Forget the link on this phone and enter a different one" right={<button onClick={() => setConfirmOut(true)} className={`${btn} text-rose-400`}>Sign out</button>} />
+      ) : (
+        <div className="px-5 py-4 border-b border-[var(--bd0)] text-[14px] leading-6">
+          Sign out and go back to the link screen?
+          <label className="mt-2 flex items-center gap-2 text-[13px] text-[var(--dim2)]"><input type="checkbox" checked={wipe} onChange={(e) => setWipe(e.target.checked)} /> Also remove downloaded songs ({downloaded})</label>
+          <div className="mt-3 flex gap-3"><button onClick={() => setConfirmOut(false)} className="flex-1 py-2.5 rounded-full bg-[var(--s1)] font-semibold">Cancel</button><button onClick={() => onSignOut(wipe)} className="flex-1 py-2.5 rounded-full bg-rose-500 text-white font-semibold">Sign out</button></div>
+        </div>
+      )}
+      <div className="px-5 pt-4 text-[12px] text-[var(--dim3)] leading-5">The link is stored only on this phone. Signing out lets you paste a new link whenever you want.</div>
+    </Sheet>
+  );
+}
