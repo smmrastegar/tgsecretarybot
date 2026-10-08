@@ -244,7 +244,17 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     return () => clearInterval(i);
   }, [fade, playing, vol]);
 
-  const share = async (t: Track) => { const m = await shareText(t.title ?? "Song", trackShareLines(t)); if (m) flash(m); };
+  // Open a shared song link (?track=ID): load it into the player, then tidy the URL.
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    if (deepLinked.current || tracks.length === 0) return;
+    deepLinked.current = true;
+    const id = Number(new URLSearchParams(window.location.search).get("track"));
+    if (!Number.isFinite(id) || !byIdRef.current.has(id)) return;
+    play(tracks.map((t) => t.id), id);
+    try { window.history.replaceState(window.history.state, "", window.location.pathname); } catch { /* ignore */ }
+  }, [tracks, play]);
+  const share = async (t: Track) => { const m = await shareText(t.title ?? "Song", trackShareLines(t, tq)); if (m) flash(m); };
   // Attached to every problem report so a bug can be reproduced.
   const reportContext = () => {
     const a = audio.current;

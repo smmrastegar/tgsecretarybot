@@ -107,4 +107,11 @@ export async function shareText(title: string, lines: string[]): Promise<string>
   } catch (e) { if ((e as Error).name === "AbortError") return ""; }
   try { await navigator.clipboard.writeText(text); return "Copied to clipboard"; } catch { return "Could not share"; }
 }
-export const trackShareLines = (t: Pick<Track, "title" | "artist" | "spotifyUrl">) => [`${t.title ?? "—"} — ${t.artist ?? ""}`.trim(), ...(t.spotifyUrl ? [t.spotifyUrl] : [])];
+// What a shared song links to. "internal" (current, for testing) opens the song
+// inside this player — NOTE the link carries the player token, so it gives full
+// access to whoever opens it; only send it to yourself. Switch to "spotify" to
+// share the public Spotify page instead.
+export const SHARE_LINK_MODE = "internal" as "internal" | "spotify";
+export const trackLink = (t: Pick<Track, "id" | "spotifyUrl">, tq: string): string =>
+  SHARE_LINK_MODE === "spotify" ? (t.spotifyUrl ?? "") : `${window.location.origin}/player/${tq.replace(/^t=/, "")}?track=${t.id}`;
+export const trackShareLines = (t: Pick<Track, "id" | "title" | "artist" | "spotifyUrl">, tq: string) => [`${t.title ?? "—"} — ${t.artist ?? ""}`.trim(), ...(trackLink(t, tq) ? [trackLink(t, tq)] : [])];
