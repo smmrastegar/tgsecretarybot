@@ -5,7 +5,7 @@
 import dynamic from "next/dynamic";
 import BackLayer from "@/components/music/app/BackLayer";
 import { memo, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartIcon, CloseIcon, SettingsIcon, ChevronDownIcon, FadeIcon, FlagIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
+import { ChartIcon, CloseIcon, SettingsIcon, SparkIcon, ChevronDownIcon, FadeIcon, FlagIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
 
 import SeekBar from "@/components/music/app/SeekBar";
 import Spectrum from "@/components/music/Spectrum";
@@ -509,7 +509,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             <div className="flex items-center justify-between h-11 shrink-0">
               <button onClick={() => setFull(false)} className="p-2 -ml-2" aria-label="Minimise"><ChevronDownIcon size={28} /></button>
               <span className="text-xs uppercase tracking-widest text-[var(--dim)]">Now playing</span>
-              <span className="flex items-center"><button onClick={() => setReportT(now)} className="p-2 text-[var(--dim3)]" aria-label="Report a problem"><FlagIcon size={19} /></button><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button></span>
+              <span className="flex items-center">{vibeData.canCreate && <button onClick={() => setSmartT(now)} className="p-2" aria-label="Smart playlist from this song"><SparkIcon size={20} /></button>}<button onClick={() => setReportT(now)} className="p-2 text-[var(--dim3)]" aria-label="Report a problem"><FlagIcon size={19} /></button><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button></span>
             </div>
 
             <div className="relative flex-1 min-h-0 my-2">

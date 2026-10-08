@@ -58,6 +58,7 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
               <span className="text-[var(--color-text-dim)]">{l.playlistIds == null ? "همه‌ی آهنگ‌ها" : `${fa(l.playlistIds.length)} پلی‌لیست`}</span>
               <span className="ms-auto text-[var(--color-text-dim)]">آخرین استفاده: {when(l.lastUsedAt)}</span>
             </div>
+            {!l.legacy && l.playlistIds && l.playlistIds.length === 0 && <div className="mt-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 px-3 py-2">هیچ پلی‌لیستی به این لینک داده نشده؛ پلیرش خالی است. روی «پلی‌لیست‌ها» بزن و حداقل یکی را انتخاب کن.</div>}
             <input readOnly dir="ltr" value={l.url} onFocus={(e) => e.currentTarget.select()} className="mt-2 w-full text-[11px] font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5" />
             <div className="mt-2 flex gap-2 flex-wrap">
               <button onClick={() => { void navigator.clipboard.writeText(l.url); onMessage(`لینک «${l.name}» کپی شد`); }} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">کپی</button>
