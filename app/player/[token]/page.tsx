@@ -3,13 +3,15 @@
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
 import dynamic from "next/dynamic";
+import BackLayer from "@/components/music/app/BackLayer";
 import { memo, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartIcon, CloseIcon, ChevronDownIcon, FadeIcon, FlagIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
 
+import SeekBar from "@/components/music/app/SeekBar";
 import Spectrum from "@/components/music/Spectrum";
 
 import { useListenTracker } from "@/components/music/useListenTracker";
-import { Cover, fmt, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
+import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { artistsOf, DetailView, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
 import { LyricsSheet, OptionSheet, QueueSheet, ReportSheet, TrackMenu } from "@/components/music/app/Sheets";
 
@@ -52,6 +54,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [toast, setToast] = useState("");
   const [fade, setFade] = useState(0);
+  const [buf, setBuf] = useState(0);
+  const [viz, setViz] = useState(true);
   const [installEvt, setInstallEvt] = useState<{ prompt: () => Promise<void> } | null>(null);
   const [iosHint, setIosHint] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
@@ -69,6 +73,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, []);
   useEffect(() => {
     try { const f = Number(localStorage.getItem("player.fade")); if ([3, 6, 10].includes(f)) setFade(f); } catch {}
+    // The visualizer routes audio through Web Audio, which iOS can suspend in
+    // the background — so it defaults to off there.
+    try { const v = localStorage.getItem("player.viz"); setViz(v ? v === "1" : !/iphone|ipad|ipod/i.test(navigator.userAgent)); } catch {}
     if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/player-sw.js", { scope: "/player/", updateViaCache: "none" }).catch(() => {});
     if ("caches" in window) void caches.open("player-audio").then((c) => c.keys()).then((ks) => setOffline(new Set(ks.map((k) => Number(new URL(k.url).pathname.split("/").pop())).filter(Number.isFinite)))).catch(() => {});
   }, []);
@@ -110,6 +117,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     return () => { live = false; };
   }, [full, cur, tq]);
   const hasLyrics = lyr?.id === cur && lyr.found;
+  const flipViz = () => setViz((v) => { try { localStorage.setItem("player.viz", v ? "0" : "1"); } catch {} flash(v ? "Visualizer off" : "Visualizer on"); return !v; });
   const pickFade = (v: number) => { setFade(v); try { localStorage.setItem("player.fade", String(v)); } catch {} };
   const flipTheme = () => setTheme((t) => { const n = t === "dark" ? "light" : "dark"; try { localStorage.setItem("player.theme", n); } catch {} return n; });
   const accent = theme === "dark" ? "255,255,255" : "24,24,32";
@@ -333,8 +341,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const upNextCount = cur != null ? Math.max(0, queue.length - queue.indexOf(cur) - 1) : 0;
 
   return (
-    <div dir="ltr" lang="en" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', letterSpacing: "-0.01em" }} className="relative overflow-x-hidden">
+    <div dir="ltr" lang="en" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: 'var(--font-inter), -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', letterSpacing: "-0.011em", fontOpticalSizing: "auto", WebkitFontSmoothing: "antialiased" }} className="relative overflow-x-hidden">
       <style>{`
+        html, body { overscroll-behavior: none; }
+        svg[aria-hidden] { display: block; }
         @keyframes eq { 0%,100% { height: 25% } 50% { height: 100% } }
         @keyframes rise { from { transform: translateY(100%) } to { transform: none } }
         @keyframes fade { from { opacity: 0 } to { opacity: 1 } }
@@ -374,7 +384,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       </div>
 
       <audio ref={audio} onTimeUpdate={(e) => { setPos(e.currentTarget.currentTime); tracker.tick(e.currentTarget.currentTime, e.currentTarget.duration); }}
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
         onEnded={() => { tracker.flush(true); if (sleepMin === -1) { setSleepMin(0); setPlaying(false); flash("Sleep timer: paused"); return; } step(1, true); }} />
 
       {/* mini player */}
@@ -417,8 +427,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <div data-art className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-full max-h-full max-w-full aspect-square rounded-2xl overflow-hidden shadow-2xl bg-[var(--s2)]" onTouchStart={(e) => { e.stopPropagation(); touch.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }; }} onTouchEnd={(e) => { e.stopPropagation(); onTouchEnd(e, "art"); }}>
               <Cover t={now} tq={tq} size="100%" radius={0} />
               <div className="absolute inset-x-0 bottom-0 px-3 pb-2 pt-10 pointer-events-none" style={{ background: "linear-gradient(transparent, rgba(0,0,0,.6))" }}>
-                <Spectrum audio={audio} playing={playing} height={36} rgb="255,255,255" />
+                <Spectrum audio={audio} playing={playing} enabled={viz} height={40} rgb="255,255,255" />
               </div>
+              <button onClick={flipViz} className="absolute inset-x-0 bottom-0 h-14" aria-label="Toggle visualizer" />
               </div>
             </div>
 
@@ -432,8 +443,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             </div>
 
             <div className="mt-2 shrink-0">
-              <input type="range" min={0} max={dur || 0} step={0.1} value={Math.min(pos, dur || 0)} onChange={(e) => seek(Number(e.target.value))} className="w-full" aria-label="Seek" />
-              <div className="flex justify-between text-xs text-[var(--dim)] tabular-nums"><span>{fmt(pos)}</span><span>-{fmt(Math.max(0, dur - pos))}</span></div>
+              <SeekBar pos={pos} dur={dur} buffered={buf} onSeek={seek} />
             </div>
 
             <div className="mt-1 flex items-center justify-between shrink-0">
@@ -461,6 +471,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         </div>
       )}
 
+      {full && <BackLayer onClose={() => setFull(false)} />}
+      {stack.map((_, i) => <BackLayer key={i} onClose={() => setStack((s) => s.slice(0, i))} />)}
+      {sheet && <BackLayer onClose={() => setSheet(null)} />}
+      {menuT && <BackLayer onClose={() => setMenuT(null)} />}
+      {reportT && <BackLayer onClose={() => setReportT(null)} />}
+      {detailId != null && <BackLayer onClose={() => setDetailId(null)} />}
       {sheet === "queue" && <QueueSheet ids={queue} byId={byId} cur={cur} tq={tq} onClose={() => setSheet(null)} onPlay={(id) => { history.current.push(cur ?? id); setCur(id); }} onRemove={(id) => setQueue((q) => q.filter((x) => x !== id))} onMove={moveQ} onClear={() => setQueue((q) => (cur != null ? [cur] : q.slice(0, 0)))} />}
       {sheet === "sleep" && <OptionSheet title="Sleep timer" options={SLEEP} value={sleepMin} onPick={(v) => { setSleepMin(v); if (v === 0) sleepEnd.current = 0; }} onClose={() => setSheet(null)} />}
       {sheet === "speed" && <OptionSheet title="Playback speed" options={SPEEDS} value={speed} onPick={setSpeed} onClose={() => setSheet(null)} />}

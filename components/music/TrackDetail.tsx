@@ -82,10 +82,10 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
   const skipRate = sessions > 0 ? Math.round((t.skipCount / sessions) * 100) : null;
   const max = Math.max(1, ...(h?.days.map((d) => d.minutes) ?? [1]));
   const tile = (label: string, value: string, sub?: string) => (
-    <div className="rounded-2xl bg-[var(--s1)] border border-[var(--bd)] p-3 text-center">
-      <div className="text-lg font-extrabold leading-tight">{value}</div>
-      <div className="text-[11px] text-[var(--dim)] mt-1">{label}</div>
-      {sub && <div className="text-[10px] text-[var(--dim3)] mt-0.5">{sub}</div>}
+    <div className="rounded-2xl bg-[var(--s1)] border border-[var(--bd)] px-2 py-3 min-h-[92px] flex flex-col items-center justify-center text-center">
+      <div className="text-lg font-extrabold leading-none tabular-nums">{value}</div>
+      <div className="text-[11px] leading-none text-[var(--dim)] mt-2">{label}</div>
+      <div className="text-[10px] leading-none text-[var(--dim3)] mt-1.5 min-h-[10px]">{sub ?? ""}</div>
     </div>
   );
   const info: Array<[string, string]> = [
@@ -98,15 +98,15 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
       <div dir={T.dir} onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2, #0d0d13)", color: "var(--fg, #ececf1)", animation: "rise .25s ease-out" }}
         className="relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto rounded-t-[2rem] sm:rounded-[2rem] border border-[var(--bd)] shadow-2xl">
         <style>{`@keyframes rise{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}} @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
-        <div className="relative h-44 overflow-hidden rounded-t-[2rem]">
+        <div className="relative overflow-hidden rounded-t-[2rem] px-5 pt-16 pb-5">
           {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="absolute inset-0 w-full h-full object-cover scale-125 blur-2xl opacity-60" /> : <div className="absolute inset-0 bg-[var(--s2)]" />}
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, transparent, var(--bg2, #0d0d13))" }} />
-          <button onClick={onClose} className="absolute top-3 left-3 w-9 h-9 rounded-full bg-black/45 text-white grid place-items-center" aria-label={T.close}><CloseIcon size={18} /></button>
-          <div className="absolute bottom-3 inset-x-4 flex items-end gap-3">
-            {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="w-24 h-24 rounded-2xl object-cover shadow-2xl ring-1 ring-white/10" /> : <div className="w-24 h-24 rounded-2xl bg-[var(--s2)]" />}
-            <div className="min-w-0 flex-1 pb-1">
-              <div className="text-xl font-extrabold leading-snug">{t.title ?? "—"}</div>
-              <div className="text-sm text-[var(--dim2)] truncate">{t.artist}</div>
+          <button onClick={onClose} className="absolute top-3 left-3 w-10 h-10 rounded-full bg-black/45 text-white grid place-items-center" aria-label={T.close}><CloseIcon size={18} /></button>
+          <div className="relative flex items-center gap-4">
+            {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="w-24 h-24 shrink-0 rounded-2xl object-cover shadow-2xl ring-1 ring-white/10" /> : <div className="w-24 h-24 shrink-0 rounded-2xl bg-[var(--s2)]" />}
+            <div className="min-w-0 flex-1">
+              <div className="text-xl font-extrabold leading-tight" style={{ textWrap: "balance" }}>{t.title ?? "—"}</div>
+              <div className="mt-1 text-sm text-[var(--dim2)] truncate">{t.artist}</div>
             </div>
           </div>
         </div>
@@ -125,8 +125,8 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa" 
 
           {onRate && (
             <div className="flex gap-2">
-              <button onClick={() => onRate(1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating > 0 ? "border-rose-400/60 bg-rose-500/20 text-rose-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><HeartIcon size={20} filled={t.rating > 0} /> {T.like}</span></button>
-              <button onClick={() => onRate(-1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating < 0 ? "border-[var(--bd)] bg-[var(--s2)]" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2"><ThumbDownIcon size={20} filled={t.rating < 0} /> {T.dislike}</span></button>
+              <button onClick={() => onRate(1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating > 0 ? "border-rose-400/60 bg-rose-500/20 text-rose-400" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2 leading-none"><HeartIcon size={20} filled={t.rating > 0} /> {T.like}</span></button>
+              <button onClick={() => onRate(-1)} className={`flex-1 py-2.5 rounded-2xl border text-base font-medium transition ${t.rating < 0 ? "border-[var(--bd)] bg-[var(--s2)]" : "border-[var(--bd)] bg-[var(--s1)]"}`}><span className="inline-flex items-center justify-center gap-2 leading-none"><ThumbDownIcon size={20} filled={t.rating < 0} /> {T.dislike}</span></button>
             </div>
           )}
 

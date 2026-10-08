@@ -5,11 +5,26 @@ import { ArrowDownIcon, CheckIcon, DownloadIcon, FlagIcon, ShareIcon, ArrowUpIco
 import { Cover, type Track } from "./shared";
 
 export function Sheet({ onClose, title, children }: { onClose: () => void; title?: string; children: ReactNode }) {
+  // Drag the handle / title down to dismiss. The panel follows the finger
+  // (pointer events + touch-action:none so the browser never turns the drag
+  // into pull-to-refresh or a page scroll).
+  const [dy, setDy] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const start = useRef<{ y: number; t: number } | null>(null);
+  const down = (e: React.PointerEvent) => { start.current = { y: e.clientY, t: Date.now() }; setDragging(true); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); };
+  const move = (e: React.PointerEvent) => { if (start.current) setDy(Math.max(0, e.clientY - start.current.y)); };
+  const up = (e: React.PointerEvent) => {
+    const s = start.current; start.current = null; setDragging(false);
+    if (!s) return;
+    const d = Math.max(0, e.clientY - s.y), v = d / Math.max(1, Date.now() - s.t);
+    if (d > 110 || (d > 40 && v > 0.6)) onClose(); else setDy(0);
+  };
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center" role="dialog" aria-modal="true">
-      <button className="absolute inset-0 bg-black/55" onClick={onClose} aria-label="Close" />
-      <div className="relative w-full max-w-xl max-h-[85dvh] overflow-y-auto rounded-t-3xl border border-[var(--bd)] bg-[var(--bg2)] pb-[max(16px,env(safe-area-inset-bottom))]" style={{ animation: "rise .22s ease-out" }}>
-        <div className="sticky top-0 bg-[var(--bg2)] z-10 pt-2.5 pb-1">
+    <div className="fixed inset-0 z-[70] flex items-end justify-center" role="dialog" aria-modal="true" style={{ overscrollBehavior: "contain" }}>
+      <button className="absolute inset-0 bg-black/55" style={{ opacity: Math.max(0.2, 1 - dy / 500) }} onClick={onClose} aria-label="Close" />
+      <div className="relative w-full max-w-xl max-h-[85dvh] overflow-y-auto rounded-t-3xl border border-[var(--bd)] bg-[var(--bg2)] pb-[max(16px,env(safe-area-inset-bottom))]"
+        style={{ animation: dy === 0 && !dragging ? "rise .22s ease-out" : undefined, transform: dy ? `translateY(${dy}px)` : undefined, transition: dragging ? "none" : "transform .2s ease-out", overscrollBehavior: "contain" }}>
+        <div className="sticky top-0 bg-[var(--bg2)] z-10 pt-2.5 pb-1 cursor-grab" style={{ touchAction: "none" }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
           <div className="mx-auto h-1 w-10 rounded-full bg-[var(--s2)]" />
           {title && <div className="px-5 pt-3 pb-1 text-sm font-semibold text-[var(--dim2)]">{title}</div>}
         </div>

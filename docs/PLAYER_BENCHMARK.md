@@ -77,3 +77,48 @@ Data that drove it (listening log, 110 sessions): only 3 completed plays, 76 of 
 
 ## Problem reports (new)
 Small flag icon in the now-playing header and "Report a problem" in every track menu: tick-boxes (wrong song, wrong cover, wrong title/artist, bad quality, cuts off, won't play, glitches, wrong lyrics, other) plus free text. Playback context (position, duration, connection, audio error code, app build, viewport) is attached automatically. Reports land in `music_reports`, in the System Log, and in a "گزارش مشکل از پلیر" card on /music with *re-download & close* / *resolved*.
+
+## Seek bar, spectrum, font, navigation — benchmark & changes (2026-10-08)
+
+Reference: Spotify, Apple Music, YouTube Music (mobile now-playing).
+
+### Seek bar
+| Criterion | Before (native `<input range>`) | After (`SeekBar`) |
+|---|---|---|
+| Touch target ≥ 44 px | ❌ 40 px | ✅ 44 px |
+| Track thickens while held, larger thumb | ❌ | ✅ 4 → 8 px, thumb ×1.45 |
+| Time bubble above the thumb while dragging | ❌ | ✅ |
+| Buffered segment | ❌ | ✅ |
+| Seek commits on release (no stutter while dragging) | ❌ every `change` | ✅ |
+| Tap at 50 % lands at 50 % | ❌ 0 % in lab (non-seekable mock) / unreliable | ✅ 0.50 |
+| ARIA slider + keyboard (←/→, Shift = 30 s, Home/End) | ⚠️ native only | ✅ |
+
+### Spectrum
+| Criterion | Before | After |
+|---|---|---|
+| Frequency mapping | linear FFT bins (bass crammed in 2–3 bars) | ✅ 44 log-spaced bands, 50 Hz–14 kHz, mirrored, bass centred |
+| Quiet/loud tracks fill the height | ❌ fixed gain | ✅ treble tilt + slow auto-gain |
+| Peak caps with gravity | ❌ | ✅ |
+| CPU while **paused** | 51 ms/s (loop never stopped) | **0 ms/s** (loop stops once settled; also while tab hidden / reduced motion) |
+| Draw cost | gradient + path per bar, 60 fps | 1 gradient + 2 batched paths, ~38 fps |
+| User control | ❌ | ✅ tap the strip to turn it off (remembered); default **off on iOS** because Web Audio routing can be suspended in the background there |
+
+Verdict: a log-band mirrored analyser is the right choice for a cover overlay; Spotify/Apple don't show one at all, so it stays optional.
+
+### Font
+| Candidate | Size | Cross-device consistency | Tabular figures | Verdict |
+|---|---|---|---|---|
+| OS default (Roboto / SF / Segoe) | 0 KB | ❌ differs per phone, so spacing and centring differ | partly | previous |
+| **Inter variable (latin subset), self-hosted** | 47 KB | ✅ identical everywhere | ✅ `tnum` | **chosen** |
+Measured: CLS 0 (next/font size-matched fallback), font loaded from our own origin and cached by the service worker.
+
+### Navigation & sheets
+| Criterion | Before | After |
+|---|---|---|
+| Android Back closes the top layer (sheet → full player → drill-down page) instead of leaving | ❌ left the player | ✅ history-backed layer stack, verified end-to-end |
+| Drag a sheet's handle/title down to dismiss | ❌ | ✅ (and no pull-to-refresh / page collapse) |
+| Details sheet: hero text vertically centred against the cover | ❌ bottom-aligned, overflowed | ✅ |
+| Stat tiles: content centred in equal-height tiles | ❌ uneven | ✅ |
+| Icons: no inline-baseline offset | ❌ | ✅ `display:block` |
+
+Daily lab numbers are appended to `docs/PLAYER_BENCH_LOG.md` by `scripts/player-bench.mjs --append`.

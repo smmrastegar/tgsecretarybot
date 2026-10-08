@@ -15,6 +15,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
     "@neondatabase/serverless": "^1.1.0",
     "@upstash/redis": "^1.38.0",
     "dotenv": "^16.4.7",
@@ -37,6 +38,7 @@
     "@types/react-dom": "^19.0.0",
     "eslint": "^9.39.5",
     "eslint-config-next": "^15.5.25",
+    "playwright-core": "1.64.0",
     "tailwindcss": "^4.0.0-beta.7",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
