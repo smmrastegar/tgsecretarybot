@@ -8,6 +8,8 @@ import { LOGIN_COOKIE, newToken, sha256 } from "@/lib/tg-login";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+let botUsername: string | undefined;
+
 // POST: begin "Login with Telegram". Returns the deep link that opens the bot;
 // the browser then polls /api/auth/tg-poll. The poll must come from the same
 // browser (httpOnly cookie holding a secret), so a leaked nonce is useless.
@@ -26,7 +28,8 @@ async function start(): Promise<NextResponse> {
     return NextResponse.json({ error: "Too many login attempts right now. Try again in a minute." }, { status: 429 });
   }
   const bot = getBot();
-  const username = bot.botInfo?.username ?? (await bot.api.getMe()).username;
+  botUsername ??= (await bot.api.getMe()).username;
+  const username = botUsername;
   (await cookies()).set(LOGIN_COOKIE, secret, { httpOnly: true, secure: true, sameSite: "lax", path: "/api/auth", maxAge: 600 });
   return NextResponse.json({
     nonce, expiresIn: 300, bot: username,
