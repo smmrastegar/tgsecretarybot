@@ -172,7 +172,10 @@ spotdl_selfheal || true
 analyzer_selfheal() {
   local st=/var/lib/tgsb-tools/analyzer.status
   grep -qE "ml=(ok|wheel-failed|low-disk)" "$st" 2>/dev/null && return 0
-  [[ -f "$st" && $(( $(date +%s) - $(stat -c %Y "$st") )) -lt 3600 ]] && return 0
+  # an old-format status (no "ml=") means the ML stage never ran: do it now
+  if grep -q "ml=" "$st" 2>/dev/null; then
+    [[ -f "$st" && $(( $(date +%s) - $(stat -c %Y "$st") )) -lt 3600 ]] && return 0
+  fi
   systemd-run --quiet --collect --unit=tgsb-analyzer-setup -p RuntimeMaxSec=2400 \
     bash "$APP_DIR/deploy/analyzer-setup.sh" >>"$LOG" 2>&1 || true
 }
