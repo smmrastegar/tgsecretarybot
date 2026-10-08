@@ -530,7 +530,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           <div className="relative max-w-md mx-auto px-6 pt-[max(14px,env(safe-area-inset-top))] pb-[max(16px,env(safe-area-inset-bottom))] h-full min-h-[520px] flex flex-col">
             <div className="flex items-center justify-between h-11 shrink-0">
               <button onClick={() => setFull(false)} className="p-2 -ml-2" aria-label="Minimise"><ChevronDownIcon size={28} /></button>
-              <span className="flex items-center">{vibeData.canCreate && <button onClick={() => setSmartT(now)} className="p-2" aria-label="Smart playlist from this song"><SparkIcon size={20} /></button>}<button onClick={() => setReportT(now)} className="p-2 text-[var(--dim3)]" aria-label="Report a problem"><FlagIcon size={19} /></button><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button></span>
+              <span className="flex items-center"><button onClick={() => setSmartT(now)} className="p-2" aria-label="Smart playlist from this song"><SparkIcon size={20} /></button><button onClick={() => setReportT(now)} className="p-2 text-[var(--dim3)]" aria-label="Report a problem"><FlagIcon size={19} /></button><button onClick={() => void share(now)} className="p-2" aria-label="Share"><ShareIcon size={22} /></button><button onClick={() => setDetailId(now.id)} className="p-2 -mr-2" aria-label="Details"><InfoIcon size={24} /></button></span>
             </div>
 
             <div className="relative flex-1 min-h-0 my-2">
@@ -591,7 +591,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {sheet === "sleep" && <OptionSheet title="Sleep timer" options={SLEEP} value={sleepMin} onPick={(v) => { setSleepMin(v); if (v === 0) sleepEnd.current = 0; }} onClose={() => setSheet(null)} />}
       {sheet === "speed" && <OptionSheet title="Playback speed" options={SPEEDS} value={speed} onPick={setSpeed} onClose={() => setSheet(null)} />}
       {reportT && <ReportSheet t={reportT} tq={tq} context={reportContext} onClose={() => setReportT(null)} onDone={flash} />}
-      {smartT && <SmartFromSongSheet t={smartT} d={vibeData.tracks[smartT.id]} tq={tq} onClose={() => setSmartT(null)} onMessage={flash}
+      {smartT && <SmartFromSongSheet blocked={!vibeData.canCreate} t={smartT} d={vibeData.tracks[smartT.id]} tq={tq} onClose={() => setSmartT(null)} onMessage={flash}
         onCreated={(id, name) => { flash("Smart playlist created"); void load().then(() => setStack((s) => [...s, { kind: "playlist", key: String(id), title: name }])); }} />}
       {smartT && <BackLayer onClose={() => setSmartT(null)} />}
       {dlPlan && <DownloadSheet label={dlPlan.label} count={dlPlan.ids.length} bytes={dlPlan.bytes} onAllow={() => void startDownload(dlPlan.ids)} onClose={() => setDlPlan(null)} />}
@@ -604,7 +604,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       </div>}
       {sheet === "fade" && <OptionSheet title="Fade between tracks" options={FADES} value={fade} onPick={pickFade} onClose={() => setSheet(null)} />}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
-      {menuT && <TrackMenu onSmart={vibeData.canCreate ? () => setSmartT(menuT) : undefined} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
+      {menuT && <TrackMenu onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
         onArtist={() => { const a = artistsOf(menuT)[0]!; setFull(false); setTab("library"); setStack([{ kind: "artist", key: a, title: a }]); }}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}

@@ -207,7 +207,7 @@ export function ReportSheet({ t, tq, context, onClose, onDone }: { t: Track; tq:
  * lets the user pick which of those parameters the new smart playlist must
  * match, with a live count. The playlist is created for THIS link only.
  */
-export function SmartFromSongSheet({ t, d, tq, onClose, onCreated, onMessage }: { t: Track; d: Desc | undefined; tq: string; onClose: () => void; onCreated: (id: number, name: string) => void; onMessage: (m: string) => void }) {
+export function SmartFromSongSheet({ t, d, tq, blocked, onClose, onCreated, onMessage }: { t: Track; d: Desc | undefined; tq: string; blocked?: boolean; onClose: () => void; onCreated: (id: number, name: string) => void; onMessage: (m: string) => void }) {
   const moods = (["sad", "happy", "relaxed", "aggressive", "danceable"] as const).filter((k) => (d?.moods?.[k] ?? 0) > (k === "relaxed" ? 0.55 : k === "aggressive" ? 0.4 : k === "danceable" ? 0.6 : 0.5));
   const energyWord = d ? (d.energy < 0.35 ? "low energy" : d.energy > 0.6 ? "high energy" : "medium energy") : "";
   const tag = d?.genres?.[0];
@@ -261,7 +261,9 @@ export function SmartFromSongSheet({ t, d, tq, onClose, onCreated, onMessage }: 
   return (
     <Sheet onClose={onClose} title="Smart playlist from this song">
       <div className="px-5 pb-2 flex items-center gap-3"><Cover t={t} tq={tq} size={48} radius={8} /><div className="min-w-0"><div className="font-semibold truncate">{t.title}</div><div className="text-xs text-[var(--dim)] truncate">{t.artist}</div></div></div>
-      {!d ? (
+      {blocked ? (
+        <div className="px-5 py-6 text-sm text-[var(--dim)] leading-6">This link isn&apos;t allowed to create playlists. Turn on “ساخت پلی‌لیست در پلیر” for this link in the dashboard (/music → player links).</div>
+      ) : !d ? (
         <div className="px-5 py-6 text-sm text-[var(--dim)]">This song hasn&apos;t been analysed yet — try again in a few minutes.</div>
       ) : (
         <div className="px-5">
