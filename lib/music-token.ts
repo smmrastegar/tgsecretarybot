@@ -7,7 +7,7 @@
 // "Main link" (everything) until it is switched off.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { getCurrentSession } from "./auth";
-import { findActiveLinkByToken, getAllSettings, listMusicTracks, setSetting, touchPlayerLink } from "./db";
+import { applyLinkView, findActiveLinkByToken, getAllSettings, listMusicTracks, setSetting, touchPlayerLink } from "./db";
 import { resolvedPlaylists } from "./music-playlists";
 
 const KEY = "musicPlayerToken";
@@ -68,7 +68,8 @@ export async function allowedTrackIds(access: MusicAccess): Promise<Set<number> 
   const key = `${access.linkId}:${access.playlistIds.join(",")}`;
   const hit = allowedCache.get(key);
   if (hit && Date.now() - hit.at < 20_000) return hit.ids;
-  const tracks = await listMusicTracks();
+  // Smart "liked" rules mean THIS link's likes.
+  const tracks = await applyLinkView(await listMusicTracks(), access.linkId);
   const pls = await resolvedPlaylists(tracks);
   const ids = new Set<number>();
   for (const p of pls) if (access.playlistIds.includes(p.id)) for (const id of p.trackIds) ids.add(id);

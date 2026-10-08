@@ -11,6 +11,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const g = await guardTrack(request, id);
   if ("deny" in g) return g.deny;
   const b = (await request.json().catch(() => ({}))) as { seconds?: number; duration?: number; completed?: boolean };
-  await recordListen(id, Number(b.seconds ?? 0) || 0, Number(b.duration ?? 0) || 0, b.completed === true);
+  await recordListen(id, Number(b.seconds ?? 0) || 0, Number(b.duration ?? 0) || 0, b.completed === true, g.access.kind === "link" ? g.access.linkId : 0);
   return NextResponse.json({ ok: true });
 }

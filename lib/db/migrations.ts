@@ -309,6 +309,22 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // Each player link keeps its own likes/dislikes and its own listening
+    // history: events carry the link they came from (0 = Main link / dashboard).
+    id: "2026-10-09-002-link-ratings-events",
+    up: async (q) => {
+      await q`ALTER TABLE music_events ADD COLUMN IF NOT EXISTS link_id BIGINT NOT NULL DEFAULT 0`;
+      await q`CREATE INDEX IF NOT EXISTS music_events_link_idx ON music_events (link_id, track_id)`;
+      await q`
+        CREATE TABLE IF NOT EXISTS music_link_ratings (
+          link_id   BIGINT NOT NULL,
+          track_id  BIGINT NOT NULL,
+          rating    SMALLINT NOT NULL,
+          PRIMARY KEY (link_id, track_id)
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

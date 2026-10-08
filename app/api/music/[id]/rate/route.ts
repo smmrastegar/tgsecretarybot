@@ -11,6 +11,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const g = await guardTrack(request, id);
   if ("deny" in g) return g.deny;
   const b = (await request.json().catch(() => ({}))) as { rating?: number };
-  await rateMusicTrack(id, Number(b.rating ?? 0));
+  // Player links keep their own likes; Main link and dashboard share the global rating.
+  await rateMusicTrack(id, Number(b.rating ?? 0), g.access.kind === "link" ? g.access.linkId : 0);
   return NextResponse.json({ ok: true });
 }

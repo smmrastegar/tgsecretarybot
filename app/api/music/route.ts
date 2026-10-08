@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
 import { allowedTrackIds, musicAccess, notFound } from "@/lib/music-token";
 import { resolvedPlaylists } from "@/lib/music-playlists";
-import { addMusicTrack, listMusicTracks, parseSpotifyTrackUrl } from "@/lib/db";
+import { addMusicTrack, applyLinkView, listMusicTracks, parseSpotifyTrackUrl } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
 import { reportError } from "@/lib/report";
 
@@ -13,7 +13,9 @@ export async function GET(request: Request): Promise<Response> {
   const access = await musicAccess(request);
   if (!access) return notFound();
   try {
-    const all = await listMusicTracks();
+    const base = await listMusicTracks();
+    // A link sees its own likes, plays and skips (Main link: its own plays, the shared likes).
+    const all = access.kind === "link" ? await applyLinkView(base, access.linkId) : base;
     const [pls, allowed] = await Promise.all([resolvedPlaylists(all), allowedTrackIds(access)]);
     // A player link only ever sees its own playlists and the songs in them.
     const tracks = allowed ? all.filter((t) => allowed.has(t.id)) : all;

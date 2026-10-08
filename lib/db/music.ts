@@ -241,9 +241,35 @@ export async function requeueFailedTracks(): Promise<number> {
   return rows.length;
 }
 
-export async function rateMusicTrack(id: number, rating: number): Promise<void> {
+/** linkId > 0: that player link's own rating; 0 (Main link, dashboard): the global one. */
+export async function rateMusicTrack(id: number, rating: number, linkId = 0): Promise<void> {
   const r = rating > 0 ? 1 : rating < 0 ? -1 : 0;
+  if (linkId > 0) {
+    await ensureSchema();
+    if (r === 0) await q().query(`DELETE FROM music_link_ratings WHERE link_id = $1 AND track_id = $2`, [linkId, id]);
+    else await q().query(`INSERT INTO music_link_ratings (link_id, track_id, rating) VALUES ($1, $2, $3) ON CONFLICT (link_id, track_id) DO UPDATE SET rating = EXCLUDED.rating`, [linkId, id, r]);
+    return;
+  }
   await q().query(`UPDATE music_tracks SET rating = $1 WHERE id = $2`, [r, id]);
+}
+
+/**
+ * What one player link sees: its own plays/skips/listening time/last-played from
+ * its own events, and (for links other than Main) its own likes and dislikes.
+ */
+export async function applyLinkView(tracks: MusicTrack[], linkId: number): Promise<MusicTrack[]> {
+  await ensureSchema();
+  const ev = (await q().query(
+    `SELECT track_id, COUNT(*) FILTER (WHERE completed OR seconds >= 30)::int AS plays, COUNT(*) FILTER (WHERE skipped)::int AS skips,
+            COALESCE(SUM(seconds), 0)::int AS sec,
+            to_char(MAX(at) FILTER (WHERE completed OR seconds >= 30) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last
+       FROM music_events WHERE link_id = $1 GROUP BY track_id`, [linkId])) as Row[];
+  const by = new Map(ev.map((r) => [num(r, "track_id"), r]));
+  const rt = linkId > 0 ? new Map(((await q().query(`SELECT track_id, rating FROM music_link_ratings WHERE link_id = $1`, [linkId])) as Row[]).map((r) => [num(r, "track_id"), num(r, "rating")])) : null;
+  return tracks.map((t) => {
+    const e = by.get(t.id);
+    return { ...t, playCount: e ? num(e, "plays") : 0, skipCount: e ? num(e, "skips") : 0, listenSeconds: e ? num(e, "sec") : 0, lastPlayedAt: e ? strOrNull(e, "last") : null, rating: rt ? (rt.get(t.id) ?? 0) : t.rating };
+  });
 }
 
 
@@ -252,12 +278,12 @@ export async function rateMusicTrack(id: number, rating: number): Promise<void> 
  * 30 s were heard or the track completed; a "skip" when it was left
  * before 30% without completing. Seconds are logged either way.
  */
-export async function recordListen(id: number, seconds: number, durationS: number, completed: boolean): Promise<void> {
+export async function recordListen(id: number, seconds: number, durationS: number, completed: boolean, linkId = 0): Promise<void> {
   const sec = Math.max(0, Math.min(Math.round(seconds), 6 * 3600));
   if (sec === 0 && !completed) return;
   const skipped = !completed && durationS > 0 && sec / durationS < 0.3;
   const counted = completed || sec >= 30;
-  await q().query(`INSERT INTO music_events (track_id, seconds, completed, skipped) VALUES ($1, $2, $3, $4)`, [id, sec, completed, skipped]);
+  await q().query(`INSERT INTO music_events (track_id, seconds, completed, skipped, link_id) VALUES ($1, $2, $3, $4, $5)`, [id, sec, completed, skipped, linkId]);
   if (counted) await q().query(`UPDATE music_tracks SET play_count = play_count + 1, last_played_at = NOW() WHERE id = $1`, [id]);
   if (skipped) await q().query(`UPDATE music_tracks SET skip_count = skip_count + 1 WHERE id = $1`, [id]);
 }
@@ -316,20 +342,23 @@ export type TrackHistory = {
   completions: number;
 };
 
-export async function getTrackHistory(id: number): Promise<TrackHistory> {
+export async function getTrackHistory(id: number, linkId?: number): Promise<TrackHistory> {
   await ensureSchema();
+  // A player link sees only its own listening history (dashboard: everything).
+  const LF = linkId == null ? "" : " AND e.link_id = $2";
+  const PP = linkId == null ? [id] : [id, linkId];
   const days = (await q().query(
     `SELECT to_char(d::date, 'MM-DD') AS day, COALESCE(SUM(e.seconds), 0)::int AS sec,
             COUNT(e.id) FILTER (WHERE e.completed OR e.seconds >= 30)::int AS plays
        FROM generate_series((NOW() AT TIME ZONE 'Asia/Tehran')::date - 13, (NOW() AT TIME ZONE 'Asia/Tehran')::date, '1 day') d
-       LEFT JOIN music_events e ON e.track_id = $1 AND (e.at AT TIME ZONE 'Asia/Tehran')::date = d::date
-      GROUP BY d ORDER BY d`, [id])) as Row[];
+       LEFT JOIN music_events e ON e.track_id = $1${LF} AND (e.at AT TIME ZONE 'Asia/Tehran')::date = d::date
+      GROUP BY d ORDER BY d`, PP)) as Row[];
   const sessions = (await q().query(
     `SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at, seconds, completed, skipped
-       FROM music_events WHERE track_id = $1 ORDER BY id DESC LIMIT 12`, [id])) as Row[];
+       FROM music_events e WHERE e.track_id = $1${LF} ORDER BY e.id DESC LIMIT 12`, PP)) as Row[];
   const agg = ((await q().query(
     `SELECT to_char(MIN(at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS first, COUNT(*) FILTER (WHERE completed)::int AS done
-       FROM music_events WHERE track_id = $1`, [id])) as Row[])[0] ?? {};
+       FROM music_events e WHERE e.track_id = $1${LF}`, PP)) as Row[])[0] ?? {};
   return {
     days: days.map((r) => ({ day: str(r, "day"), minutes: Math.round(num(r, "sec") / 60 * 10) / 10, plays: num(r, "plays") })),
     sessions: sessions.map((r) => ({ at: str(r, "at"), seconds: num(r, "seconds"), completed: r.completed === true || r.completed === "t", skipped: r.skipped === true || r.skipped === "t" })),
@@ -425,4 +454,42 @@ export async function listMusicReports(status?: string): Promise<MusicReport[]> 
 export async function setMusicReportStatus(id: number, status: "open" | "resolved"): Promise<void> {
   await ensureSchema();
   await q().query(`UPDATE music_reports SET status = $2, resolved_at = ${status === "resolved" ? "NOW()" : "NULL"} WHERE id = $1`, [id, status]);
+}
+
+/** Stats for one player link: only its own listening events and ratings, over its own songs (null = all). */
+export async function getLinkStats(linkId: number, trackIds: number[] | null): Promise<MusicStats> {
+  await ensureSchema();
+  const ids = trackIds ?? null;
+  const E = (alias = "e", first = false) => ` ${first ? "WHERE" : "AND"} ${alias}.link_id = $1${ids ? ` AND ${alias}.track_id = ANY($2::bigint[])` : ""}`;
+  const P: unknown[] = ids ? [linkId, ids] : [linkId];
+  const one = async (t: string): Promise<Row> => ((await q().query(t, P)) as Row[])[0] ?? {};
+  const ev = await one(`SELECT COUNT(*) FILTER (WHERE completed OR seconds >= 30)::int AS plays, COUNT(*) FILTER (WHERE skipped)::int AS skips, COALESCE(SUM(seconds),0)::int AS sec FROM music_events e${E("e", true)}`);
+  const count = await one(`SELECT COUNT(*) FILTER (WHERE status = 'ready')::int AS tracks FROM music_tracks t ${ids ? "WHERE t.id = ANY($2::bigint[])" : "WHERE $1::bigint IS NOT NULL"}`);
+  const likes = linkId > 0
+    ? await one(`SELECT COUNT(*) FILTER (WHERE rating > 0)::int AS likes, COUNT(*) FILTER (WHERE rating < 0)::int AS dislikes FROM music_link_ratings r WHERE r.link_id = $1${ids ? " AND r.track_id = ANY($2::bigint[])" : ""}`)
+    : await one(`SELECT COUNT(*) FILTER (WHERE rating > 0)::int AS likes, COUNT(*) FILTER (WHERE rating < 0)::int AS dislikes FROM music_tracks t WHERE $1::bigint IS NOT NULL${ids ? " AND t.id = ANY($2::bigint[])" : ""}`);
+  const top = (await q().query(`
+    SELECT t.id, t.title, t.artist, (t.cover_path IS NOT NULL) AS has_cover,
+           COUNT(*) FILTER (WHERE e.completed OR e.seconds >= 30)::int AS plays, COUNT(*) FILTER (WHERE e.skipped)::int AS skips, COALESCE(SUM(e.seconds),0)::int AS listen_s
+      FROM music_events e JOIN music_tracks t ON t.id = e.track_id${E("e", true)}
+     GROUP BY t.id ORDER BY plays DESC, listen_s DESC LIMIT 15`, P)) as Row[];
+  const artists = (await q().query(`
+    SELECT t.artist, COUNT(*) FILTER (WHERE e.completed OR e.seconds >= 30)::int AS plays, COUNT(DISTINCT t.id)::int AS tracks, COALESCE(SUM(e.seconds),0)::int AS listen_s
+      FROM music_events e JOIN music_tracks t ON t.id = e.track_id${E("e", true)} AND t.artist IS NOT NULL
+     GROUP BY t.artist HAVING COUNT(*) FILTER (WHERE e.completed OR e.seconds >= 30) > 0 ORDER BY plays DESC, listen_s DESC LIMIT 10`, P)) as Row[];
+  const days = (await q().query(`
+    SELECT to_char(d::date, 'MM-DD') AS day, COALESCE(SUM(e.seconds), 0)::int AS sec, COUNT(e.id) FILTER (WHERE e.completed OR e.seconds >= 30)::int AS plays
+      FROM generate_series((NOW() AT TIME ZONE 'Asia/Tehran')::date - 13, (NOW() AT TIME ZONE 'Asia/Tehran')::date, '1 day') d
+      LEFT JOIN music_events e ON (e.at AT TIME ZONE 'Asia/Tehran')::date = d::date${E("e")}
+     GROUP BY d ORDER BY d`, P)) as Row[];
+  const recent = (await q().query(`
+    SELECT t.id, t.title, t.artist, to_char(e.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at, e.seconds, e.completed
+      FROM music_events e JOIN music_tracks t ON t.id = e.track_id${E("e", true)} ORDER BY e.id DESC LIMIT 15`, P)) as Row[];
+  return {
+    totals: { tracks: num(count, "tracks"), plays: num(ev, "plays"), listenSeconds: num(ev, "sec"), likes: num(likes, "likes"), dislikes: num(likes, "dislikes"), skips: num(ev, "skips") },
+    topTracks: top.map((r) => ({ id: num(r, "id"), title: strOrNull(r, "title"), artist: strOrNull(r, "artist"), plays: num(r, "plays"), skips: num(r, "skips"), listenSeconds: num(r, "listen_s"), hasCover: r.has_cover === true || r.has_cover === "t" })),
+    topArtists: artists.map((r) => ({ artist: str(r, "artist"), plays: num(r, "plays"), listenSeconds: num(r, "listen_s"), tracks: num(r, "tracks") })),
+    days: days.map((r) => ({ day: str(r, "day"), minutes: Math.round(num(r, "sec") / 60), plays: num(r, "plays") })),
+    recent: recent.map((r) => ({ id: num(r, "id"), title: strOrNull(r, "title"), artist: strOrNull(r, "artist"), at: str(r, "at"), seconds: num(r, "seconds"), completed: r.completed === true || r.completed === "t" })),
+  };
 }
