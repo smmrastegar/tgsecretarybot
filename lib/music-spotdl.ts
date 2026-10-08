@@ -67,20 +67,27 @@ export async function spotdlFallbackStep(): Promise<{ tried: number | null; ok?:
   if (!saver && !dl) return { tried: null, ready: false };
   const s = await getAllSettings();
   if (Date.now() - Number(s.musicSpotdlLock || 0) < TIMEOUT_MS + 30_000) return { tried: null, ready: true };
-  const id = await nextSpotdlCandidate();
-  if (id == null) return { tried: null, ready: true };
   await setSetting("musicSpotdlLock", String(Date.now()));
+  let last: { tried: number | null; ok?: boolean; ready: boolean } = { tried: null, ready: true };
   try {
-    if (saver) {
-      const why = await spotsaverDownloadTrack(id);
-      if (!why) { reportInfo("music", `SpotSaver fallback for track ${id}: ready`); return { tried: id, ok: true, ready: true }; }
-      reportWarn("music", `SpotSaver fallback for track ${id} failed: ${why}`);
-      await updateMusicTrack(id, { status: "failed", error: `Track not found (SpotSaver: ${why})`.slice(0, 300) });
+    // Several tracks per tick (up to ~2.5 min): the SpotSaver route takes ~10–40 s each.
+    const t0 = Date.now();
+    while (Date.now() - t0 < 150_000) {
+      const id = await nextSpotdlCandidate();
+      if (id == null) break;
+      if (saver) {
+        const why = await spotsaverDownloadTrack(id);
+        if (!why) { reportInfo("music", `SpotSaver fallback for track ${id}: ready`); last = { tried: id, ok: true, ready: true }; continue; }
+        reportWarn("music", `SpotSaver fallback for track ${id} failed: ${why}`);
+        await updateMusicTrack(id, { status: "failed", error: `Track not found (SpotSaver: ${why})`.slice(0, 300) });
+        last = { tried: id, ok: false, ready: true };
+        continue; // with a subscription configured, spotDL (blocked by YouTube on our IP) is not worth the wait
+      }
+      const ok = await spotdlDownloadTrack(id);
+      (ok ? reportInfo : reportWarn)("music", `spotDL fallback for track ${id}: ${ok ? "ready" : "failed"}`);
+      last = { tried: id, ok, ready: true };
     }
-    if (!dl) return { tried: id, ok: false, ready: true };
-    const ok = await spotdlDownloadTrack(id);
-    (ok ? reportInfo : reportWarn)("music", `spotDL fallback for track ${id}: ${ok ? "ready" : "failed"}`);
-    return { tried: id, ok, ready: true };
+    return last;
   } finally {
     await setSetting("musicSpotdlLock", "0");
   }
