@@ -14,10 +14,10 @@ import { reportWarn } from "@/lib/report";
 //   "what sounds like this" with cosine similarity (+ small genre bonus),
 //   builds smooth "radio" queues and groups the library into vibes.
 
-export const ANALYSIS_VERSION = 1;
+export const ANALYSIS_VERSION = 2; // 2: whole track + Discogs-EffNet embedding / genres / moods
 const TOOLS = "/var/lib/tgsb-tools";
 const PY = `${TOOLS}/analyzer/bin/python`;
-const TIMEOUT_MS = 150_000;
+const TIMEOUT_MS = 300_000;
 
 export async function analyzerReady(): Promise<boolean> {
   try { await fs.access(PY); return true; } catch { return false; }
@@ -33,7 +33,7 @@ async function ffmpegPath(): Promise<string> {
 function runPython(file: string): Promise<{ ok: boolean; [k: string]: unknown }> {
   return new Promise(async (resolve) => {
     const script = path.join(process.cwd(), "deploy", "audio-analyze.py");
-    const child = spawn(PY, [script, file, await ffmpegPath()], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(PY, [script, file, await ffmpegPath()], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, TGSB_MODELS: `${TOOLS}/models`, TF_CPP_MIN_LOG_LEVEL: "3" } });
     let out = "", err = "";
     child.stdout.on("data", (b) => { out += b.toString(); });
     child.stderr.on("data", (b) => { err = (err + b.toString()).slice(-500); });
@@ -83,11 +83,11 @@ export async function analysisStep(): Promise<{ analyzed: number | null; genres:
 // ---------------------------------------------------------------- model
 
 type Model = {
-  ids: number[]; idx: Map<number, number>; vecs: Float64Array[]; feats: TrackFeatures[]; genres: Map<number, string[]>; at: number; count: number;
+  ids: number[]; idx: Map<number, number>; vecs: Float64Array[]; embs: Array<Float64Array | null>; feats: TrackFeatures[]; genres: Map<number, string[]>; at: number; count: number; allEmb: boolean;
 };
 let cache: Model | null = null;
 
-// Feature groups of the 47-d vector and how much each counts.
+// Feature groups of the 47-d hand-made vector and how much each counts.
 const GROUPS: Array<[number, number, number]> = [[0, 13, 1.0], [13, 26, 0.5], [26, 30, 0.9], [30, 33, 0.7], [33, 35, 1.3], [35, 47, 0.5]];
 
 async function model(): Promise<Model> {
@@ -108,11 +108,36 @@ async function model(): Promise<Model> {
     for (let d = 0; d < dim; d++) v[d]! /= norm;
     return v;
   });
-  cache = { ids: f.map((x) => x.trackId), idx: new Map(f.map((x, i) => [x.trackId, i])), vecs, feats: f, genres, at: Date.now(), count: n };
+  // Learned embeddings (when the ML stage ran): centred on the library mean, then L2-normalised.
+  const withEmb = f.filter((x) => x.emb);
+  const em = new Float64Array(1280);
+  for (const x of withEmb) for (let d = 0; d < 1280; d++) em[d]! += x.emb![d]! / withEmb.length;
+  const embs = f.map((x) => {
+    if (!x.emb) return null;
+    const v = new Float64Array(1280); let norm = 0;
+    for (let d = 0; d < 1280; d++) { v[d] = x.emb[d]! - em[d]!; norm += v[d]! * v[d]!; }
+    norm = Math.sqrt(norm) || 1;
+    for (let d = 0; d < 1280; d++) v[d]! /= norm;
+    return v;
+  });
+  // Tags per track: Discogs styles ("Electronic---Downtempo" → "electronic / downtempo") + Spotify artist genres.
+  const tagged = new Map<number, string[]>();
+  for (const x of f) {
+    const ml = x.genres.filter(([, p]) => p >= 0.1).slice(0, 4).map(([g]) => g.replace(/---/g, " / ").toLowerCase());
+    tagged.set(x.trackId, [...new Set([...(genres.get(x.trackId) ?? []), ...ml])]);
+  }
+  cache = { ids: f.map((x) => x.trackId), idx: new Map(f.map((x, i) => [x.trackId, i])), vecs, embs, feats: f, genres: tagged, at: Date.now(), count: n, allEmb: n > 0 && embs.every(Boolean) };
   return cache;
 }
 
 const dot = (a: Float64Array, b: Float64Array) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]! * b[i]!; return s; };
+
+/** Similarity of two tracks by index: learned embedding (70%) + hand-made features (30%) when both have an embedding. */
+function sim(m: Model, i: number, j: number): number {
+  const h = dot(m.vecs[i]!, m.vecs[j]!);
+  const ea = m.embs[i], eb = m.embs[j];
+  return ea && eb ? 0.7 * dot(ea, eb) + 0.3 * h : h;
+}
 
 function genreBonus(m: Model, a: number, b: number): number {
   const ga = m.genres.get(a), gb = m.genres.get(b);
@@ -130,7 +155,7 @@ export async function similarTo(trackId: number, n = 30, exclude: Set<number> = 
   const out: Similar[] = [];
   for (let j = 0; j < m.ids.length; j++) {
     if (j === i || exclude.has(m.ids[j]!)) continue;
-    out.push({ id: m.ids[j]!, score: dot(m.vecs[i]!, m.vecs[j]!) + genreBonus(m, trackId, m.ids[j]!) });
+    out.push({ id: m.ids[j]!, score: sim(m, i, j) + genreBonus(m, trackId, m.ids[j]!) });
   }
   return out.sort((a, b) => b.score - a.score).slice(0, n);
 }
@@ -169,7 +194,7 @@ export async function radioFrom(trackId: number, n = 40, artistOf: (id: number) 
     const cands: Array<{ j: number; s: number }> = [];
     for (let j = 0; j < m.ids.length; j++) {
       if (used.has(j)) continue;
-      let s = dot(m.vecs[cur]!, m.vecs[j]!) + genreBonus(m, m.ids[cur]!, m.ids[j]!);
+      let s = sim(m, cur, j) + genreBonus(m, m.ids[cur]!, m.ids[j]!);
       s -= tempoPenalty(m.feats[cur]!.bpm, m.feats[j]!.bpm) + keyPenalty(m.feats[cur]!, m.feats[j]!);
       const art = artistOf(m.ids[cur]!);
       if (art && art === artistOf(m.ids[j]!)) s -= 0.05;
@@ -185,36 +210,42 @@ export async function radioFrom(trackId: number, n = 40, artistOf: (id: number) 
 
 // ---------------------------------------------------------------- vibes
 
-export type Vibe = { key: string; name: string; trackIds: number[]; bpm: number; energy: number; brightness: number; minorShare: number; genres: string[] };
+export type Vibe = { key: string; name: string; trackIds: number[]; bpm: number; energy: number; brightness: number; minorShare: number; genres: string[]; moods: Record<string, number> };
 let vibeCache: { at: number; count: number; vibes: Vibe[] } | null = null;
+
+const subGenre = (g: string) => (g.split(" / ").pop() ?? g).replace(/\b\w/g, (c) => c.toUpperCase());
 
 export async function vibes(): Promise<Vibe[]> {
   const m = await model();
   if (vibeCache && vibeCache.count === m.count && Date.now() - vibeCache.at < 10 * 60_000) return vibeCache.vibes;
   const n = m.ids.length;
   if (n < 6) return [];
-  const k = Math.max(3, Math.min(8, Math.round(Math.sqrt(n / 2))));
-  // deterministic k-means++ on the weighted vectors
+  // Clustering space: learned embedding + hand-made features when every track has both, else hand-made only.
+  const space: Float64Array[] = m.allEmb
+    ? m.vecs.map((v, i) => { const e = m.embs[i]!, o = new Float64Array(v.length + e.length); for (let d = 0; d < v.length; d++) o[d] = v[d]! * 0.6; for (let d = 0; d < e.length; d++) o[v.length + d] = e[d]! * 0.8; const nm = Math.sqrt(o.reduce((a, b) => a + b * b, 0)) || 1; for (let d = 0; d < o.length; d++) o[d]! /= nm; return o; })
+    : m.vecs;
+  const dim = space[0]!.length;
+  const k = Math.max(3, Math.min(10, Math.round(Math.sqrt(n / 2))));
   let seed = 12345; const rnd = () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647; };
-  const cent: Float64Array[] = [m.vecs[Math.floor(rnd() * n)]!.slice()];
+  const cent: Float64Array[] = [space[Math.floor(rnd() * n)]!.slice()];
   while (cent.length < k) {
-    const d2 = m.vecs.map((v) => Math.min(...cent.map((c) => 1 - dot(v, c))) ** 2);
+    const d2 = space.map((v) => Math.min(...cent.map((c) => 1 - dot(v, c))) ** 2);
     let r = rnd() * d2.reduce((a, b) => a + b, 0), pick = 0;
     for (let i = 0; i < n; i++) { r -= d2[i]!; if (r <= 0) { pick = i; break; } }
-    cent.push(m.vecs[pick]!.slice());
+    cent.push(space[pick]!.slice());
   }
   let assign = new Array<number>(n).fill(0);
-  for (let it = 0; it < 30; it++) {
-    const next = m.vecs.map((v) => { let b = 0, bs = -2; cent.forEach((c, ci) => { const s = dot(v, c); if (s > bs) { bs = s; b = ci; } }); return b; });
+  for (let it = 0; it < 40; it++) {
+    const next = space.map((v) => { let b = 0, bs = -2; cent.forEach((c, ci) => { const s = dot(v, c); if (s > bs) { bs = s; b = ci; } }); return b; });
     const changed = next.some((x, i) => x !== assign[i]);
     assign = next;
     for (let ci = 0; ci < k; ci++) {
       const mem = assign.flatMap((a, i) => (a === ci ? [i] : []));
       if (!mem.length) continue;
-      const c = new Float64Array(47);
-      for (const i of mem) for (let d = 0; d < 47; d++) c[d]! += m.vecs[i]![d]!;
+      const c = new Float64Array(dim);
+      for (const i of mem) for (let d = 0; d < dim; d++) c[d]! += space[i]![d]!;
       const norm = Math.sqrt(c.reduce((a, b) => a + b * b, 0)) || 1;
-      for (let d = 0; d < 47; d++) c[d]! /= norm;
+      for (let d = 0; d < dim; d++) c[d]! /= norm;
       cent[ci] = c;
     }
     if (!changed) break;
@@ -224,41 +255,50 @@ export async function vibes(): Promise<Vibe[]> {
     const mem = assign.flatMap((a, i) => (a === ci ? [i] : []));
     if (mem.length < 3) continue;
     // order members from the cluster core outwards so "play" starts on a typical song
-    mem.sort((a, b) => dot(m.vecs[b]!, cent[ci]!) - dot(m.vecs[a]!, cent[ci]!));
+    mem.sort((a, b) => dot(space[b]!, cent[ci]!) - dot(space[a]!, cent[ci]!));
     const fs_ = mem.map((i) => m.feats[i]!);
     const avg = (f: (x: TrackFeatures) => number) => fs_.reduce((a, x) => a + f(x), 0) / fs_.length;
     const gcount = new Map<string, number>();
     for (const i of mem) for (const g of m.genres.get(m.ids[i]!) ?? []) gcount.set(g, (gcount.get(g) ?? 0) + 1);
-    const topG = [...gcount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).filter(([, c]) => c >= Math.max(2, mem.length * 0.25)).map(([g]) => g);
-    raw.push({ key: `v${ci}`, name: "", trackIds: mem.map((i) => m.ids[i]!), bpm: Math.round(avg((x) => x.bpm)), energy: +avg((x) => x.energy).toFixed(2), brightness: +avg((x) => x.brightness).toFixed(2), minorShare: +avg((x) => (x.mode === "minor" ? 1 : 0)).toFixed(2), genres: topG });
+    const topG = [...gcount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).filter(([, c]) => c >= Math.max(2, mem.length * 0.25)).map(([g]) => g);
+    const moods: Record<string, number> = {};
+    for (const mk of ["happy", "sad", "aggressive", "relaxed", "danceable", "instrumental"]) {
+      const have = fs_.filter((x) => x.moods[mk] != null);
+      if (have.length) moods[mk] = +(have.reduce((a, x) => a + x.moods[mk]!, 0) / have.length).toFixed(2);
+    }
+    raw.push({ key: `v${ci}`, name: "", trackIds: mem.map((i) => m.ids[i]!), bpm: Math.round(avg((x) => x.bpm)), energy: +avg((x) => x.energy).toFixed(2), brightness: +avg((x) => x.brightness).toFixed(2), minorShare: +avg((x) => (x.mode === "minor" ? 1 : 0)).toFixed(2), genres: topG, moods });
   }
-  // name relative to the other vibes (energy / brightness ranks), then genre
+  // Name: mood (learned, else energy rank) + a tone word + the dominant sub-genre.
   const rank = (f: (v: Vibe) => number) => { const s = [...raw].sort((a, b) => f(a) - f(b)); return new Map(s.map((v, i) => [v.key, raw.length > 1 ? i / (raw.length - 1) : 0.5])); };
   const re = rank((v) => v.energy), rb = rank((v) => v.brightness);
   const used = new Map<string, number>();
   for (const v of raw) {
-    const e = re.get(v.key)!, b = rb.get(v.key)!;
-    const lead = e < 0.34 ? "Calm" : e > 0.66 ? "Energetic" : "Easy-going";
-    const tone = v.minorShare > 0.6 ? "moody" : b > 0.66 ? "bright" : b < 0.34 ? "warm" : v.minorShare < 0.35 ? "sunny" : "balanced";
+    const e = re.get(v.key)!, b = rb.get(v.key)!, mo = v.moods;
+    const lead = mo.aggressive != null && mo.aggressive > 0.35 ? "Intense"
+      : mo.sad != null && mo.sad > 0.5 && e < 0.7 ? "Melancholic"
+      : mo.happy != null && mo.happy > 0.45 ? "Cheerful"
+      : mo.relaxed != null && mo.relaxed > 0.55 && e < 0.5 ? "Relaxed"
+      : e < 0.34 ? "Calm" : e > 0.66 ? "Energetic" : "Easy-going";
+    const tone = mo.instrumental != null && mo.instrumental > 0.7 ? "instrumental" : v.minorShare > 0.6 ? "moody" : b > 0.66 ? "bright" : b < 0.34 ? "warm" : v.minorShare < 0.35 ? "sunny" : "balanced";
     let name = `${lead} · ${tone}`;
-    if (v.genres[0]) name += ` · ${v.genres[0]}`;
+    if (v.genres[0]) name += ` · ${subGenre(v.genres[0])}`;
     const c = (used.get(name) ?? 0) + 1; used.set(name, c);
     v.name = c > 1 ? `${name} ${c}` : name;
   }
-  const vibes = raw.sort((a, b) => b.trackIds.length - a.trackIds.length);
-  vibeCache = { at: Date.now(), count: m.count, vibes };
-  return vibes;
+  const out = raw.sort((a, b) => b.trackIds.length - a.trackIds.length);
+  vibeCache = { at: Date.now(), count: m.count, vibes: out };
+  return out;
 }
 
-/** Descriptor per track for the list API (bpm / key / energy / vibe / genres). */
-export async function descriptors(): Promise<Map<number, { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[] }>> {
+export type Descriptor = { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[]; moods: Record<string, number>; vocal: number; bass: number; dynamics: number };
+
+/** Descriptor per track for the list API (bpm / key / energy / vibe / genres / moods). */
+export async function descriptors(): Promise<Map<number, Descriptor>> {
   const m = await model();
   const v = await vibes();
   const vibeOf = new Map<number, string>();
   for (const x of v) for (const id of x.trackIds) vibeOf.set(id, x.key);
-  const out = new Map<number, { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[] }>();
-  m.feats.forEach((f) => out.set(f.trackId, { bpm: Math.round(f.bpm), key: f.key, mode: f.mode, energy: f.energy, brightness: f.brightness, vibe: vibeOf.get(f.trackId) ?? null, genres: m.genres.get(f.trackId) ?? [] }));
+  const out = new Map<number, Descriptor>();
+  m.feats.forEach((f) => out.set(f.trackId, { bpm: Math.round(f.bpm), key: f.key, mode: f.mode, energy: f.energy, brightness: f.brightness, vibe: vibeOf.get(f.trackId) ?? null, genres: m.genres.get(f.trackId) ?? [], moods: f.moods, vocal: f.vocal, bass: f.bass, dynamics: f.dynamics }));
   return out;
 }
-
-

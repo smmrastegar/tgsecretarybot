@@ -23,8 +23,8 @@ export type Api = {
   radio: (t: Track) => void;
   analysis: { analyzed: number; ready: number };
 };
-export type Desc = { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[] };
-export type Vibe = { key: string; name: string; trackIds: number[]; bpm: number; energy: number; brightness: number; minorShare: number; genres: string[] };
+export type Desc = { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[]; moods?: Record<string, number>; vocal?: number };
+export type Vibe = { key: string; name: string; trackIds: number[]; bpm: number; energy: number; brightness: number; minorShare: number; genres: string[]; moods?: Record<string, number> };
 export type Page = { kind: "artist" | "album" | "playlist" | "liked" | "recent" | "top" | "vibe"; key: string; title: string };
 
 export const artistsOf = (t: Track): string[] => (t.artist ?? "Unknown").split(/,\s*/).filter(Boolean);

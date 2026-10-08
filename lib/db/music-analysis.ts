@@ -8,16 +8,24 @@ function q() {
 export type TrackFeatures = {
   trackId: number; vec: number[]; bpm: number; key: string; mode: string; energy: number; brightness: number; beat: number;
   rms: number; flux: number; centroid: number;
+  bass: number; vocal: number; onsetRate: number; dynamics: number;
+  emb: number[] | null; genres: Array<[string, number]>; moods: Record<string, number>;
 };
 
-export async function saveFeatures(trackId: number, f: { vec: number[]; bpm: number; key: string; mode: string; energy: number; brightness: number; beat: number; rms: number; flux: number; centroid: number }, version: number): Promise<void> {
+/** What audio-analyze.py prints (ok:true). */
+export type AnalyzerResult = {
+  vec: number[]; bpm: number; key: string; mode: string; energy: number; brightness: number; beat: number; rms: number; flux: number; centroid: number;
+  bass?: number; vocal?: number; onsetRate?: number; dynamics?: number; emb?: number[]; genres?: Array<[string, number]>; moods?: Record<string, number>; ml?: boolean;
+};
+
+export async function saveFeatures(trackId: number, f: AnalyzerResult, version: number): Promise<void> {
   await ensureSchema();
   await q().query(
     `INSERT INTO music_features (track_id, features, bpm, key_name, mode, energy, brightness, beat, error, version, analyzed_at)
        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, NULL, $9, NOW())
      ON CONFLICT (track_id) DO UPDATE SET features = EXCLUDED.features, bpm = EXCLUDED.bpm, key_name = EXCLUDED.key_name, mode = EXCLUDED.mode,
        energy = EXCLUDED.energy, brightness = EXCLUDED.brightness, beat = EXCLUDED.beat, error = NULL, version = EXCLUDED.version, analyzed_at = NOW()`,
-    [trackId, JSON.stringify({ vec: f.vec, rms: f.rms, flux: f.flux, centroid: f.centroid }), f.bpm, f.key, f.mode, f.energy, f.brightness, f.beat, version],
+    [trackId, JSON.stringify({ vec: f.vec, rms: f.rms, flux: f.flux, centroid: f.centroid, bass: f.bass, vocal: f.vocal, onsetRate: f.onsetRate, dynamics: f.dynamics, emb: f.emb, genres: f.genres, moods: f.moods, ml: f.ml }), f.bpm, f.key, f.mode, f.energy, f.brightness, f.beat, version],
   );
 }
 
@@ -48,19 +56,24 @@ export async function listFeatures(): Promise<TrackFeatures[]> {
   await ensureSchema();
   const rows = (await q().query(`SELECT track_id, features, bpm, key_name, mode, energy, brightness, beat FROM music_features WHERE features IS NOT NULL AND error IS NULL`)) as Row[];
   return rows.map((r) => {
-    const f = (typeof r.features === "string" ? JSON.parse(r.features) : r.features) as { vec: number[]; rms?: number; flux?: number; centroid?: number };
-    return { trackId: num(r, "track_id"), vec: f.vec, bpm: num(r, "bpm"), key: str(r, "key_name"), mode: str(r, "mode"), energy: num(r, "energy"), brightness: num(r, "brightness"), beat: numOrNull(r, "beat") ?? 0, rms: f.rms ?? 0, flux: f.flux ?? 0, centroid: f.centroid ?? 0 };
+    const f = (typeof r.features === "string" ? JSON.parse(r.features) : r.features) as Partial<AnalyzerResult>;
+    return {
+      trackId: num(r, "track_id"), vec: f.vec ?? [], bpm: num(r, "bpm"), key: str(r, "key_name"), mode: str(r, "mode"), energy: num(r, "energy"), brightness: num(r, "brightness"),
+      beat: numOrNull(r, "beat") ?? 0, rms: f.rms ?? 0, flux: f.flux ?? 0, centroid: f.centroid ?? 0, bass: f.bass ?? 0, vocal: f.vocal ?? 0, onsetRate: f.onsetRate ?? 0, dynamics: f.dynamics ?? 0,
+      emb: Array.isArray(f.emb) && f.emb.length === 1280 ? f.emb : null, genres: f.genres ?? [], moods: f.moods ?? {},
+    };
   });
 }
 
-export async function analysisProgress(): Promise<{ ready: number; analyzed: number; failed: number; genres: number }> {
+export async function analysisProgress(): Promise<{ ready: number; analyzed: number; withMl: number; failed: number; genres: number }> {
   await ensureSchema();
   const r = (await q().query(`SELECT
       (SELECT COUNT(*) FROM music_tracks WHERE status = 'ready')::int AS ready,
       (SELECT COUNT(*) FROM music_features WHERE error IS NULL AND features IS NOT NULL)::int AS analyzed,
+      (SELECT COUNT(*) FROM music_features WHERE error IS NULL AND (features->>'ml') = 'true')::int AS with_ml,
       (SELECT COUNT(*) FROM music_features WHERE error IS NOT NULL)::int AS failed,
       (SELECT COUNT(*) FROM music_track_genres WHERE cardinality(genres) > 0)::int AS genres`)) as Row[];
-  return { ready: num(r[0]!, "ready"), analyzed: num(r[0]!, "analyzed"), failed: num(r[0]!, "failed"), genres: num(r[0]!, "genres") };
+  return { ready: num(r[0]!, "ready"), analyzed: num(r[0]!, "analyzed"), withMl: num(r[0]!, "with_ml"), failed: num(r[0]!, "failed"), genres: num(r[0]!, "genres") };
 }
 
 // ---- genres ----

@@ -270,7 +270,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const chipsFor = (id: number): string[] => {
     const d = vibeData.tracks[id]; if (!d) return [];
     const vibe = vibeData.vibes.find((v) => v.key === d.vibe)?.name;
-    return [`${d.bpm} BPM`, `${d.key} ${d.mode}`, d.energy < 0.35 ? "Low energy" : d.energy > 0.6 ? "High energy" : "Medium energy", d.brightness > 0.4 ? "Bright" : d.brightness < 0.2 ? "Warm" : "Balanced", ...(vibe ? [vibe] : []), ...d.genres.slice(0, 3)];
+    return [`${d.bpm} BPM`, `${d.key} ${d.mode}`, d.energy < 0.35 ? "Low energy" : d.energy > 0.6 ? "High energy" : "Medium energy", d.brightness > 0.4 ? "Bright" : d.brightness < 0.2 ? "Warm" : "Balanced", ...(vibe ? [vibe] : []), ...moodChips(d.moods), ...d.genres.slice(0, 3).map((g) => g.split(" / ").map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase())).join(" / "))];
   };
   const toggleOffline = async (t: Track) => {
     const key = `/api/music/stream/${t.id}`;
@@ -524,6 +524,17 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {toast && <div className="fixed left-1/2 -translate-x-1/2 z-[80] px-4 py-2 rounded-full text-sm bg-[rgb(var(--ac))] text-[var(--acfg)] shadow-lg" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))", animation: "fade .15s" }} role="status">{toast}</div>}
     </div>
   );
+}
+
+function moodChips(m?: Record<string, number>): string[] {
+  if (!m) return [];
+  const out: string[] = [];
+  if ((m.sad ?? 0) > 0.5) out.push("Sad"); else if ((m.happy ?? 0) > 0.5) out.push("Happy");
+  if ((m.relaxed ?? 0) > 0.55) out.push("Relaxed");
+  if ((m.aggressive ?? 0) > 0.4) out.push("Aggressive");
+  if ((m.danceable ?? 0) > 0.6) out.push("Danceable");
+  if (m.instrumental != null) out.push(m.instrumental > 0.6 ? "Instrumental" : "Vocal");
+  return out;
 }
 
 function greeting() {
