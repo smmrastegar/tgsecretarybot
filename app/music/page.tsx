@@ -30,6 +30,16 @@ type SpLib = { playlists: Array<{ id: string; name: string; tracks: number; owne
 
 const fmt = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
 
+function FocusShell({ children }: { children: React.ReactNode }) {
+  async function out() { await fetch("/api/auth/logout", { method: "POST" }).catch(() => {}); window.location.href = "/login"; }
+  return (
+    <div className="min-h-screen max-w-2xl mx-auto px-4 py-5">
+      <div className="flex justify-end mb-2"><button onClick={() => void out()} className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-dim)]">خروج</button></div>
+      {children}
+    </div>
+  );
+}
+
 export default function MusicPage() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -83,6 +93,13 @@ export default function MusicPage() {
   const audio = useRef<HTMLAudioElement>(null);
   const history = useRef<number[]>([]);
   const [mixOn, setMixOn] = useState(false);
+  // playlist.bz / numeric-password sign-in: just the Spotify connection card, lists folded until tapped.
+  const [focus, setFocus] = useState(false);
+  const [spOpen, setSpOpen] = useState(false);
+  useEffect(() => {
+    if (/(^|\.)playlist\.bz$/.test(window.location.hostname)) { setFocus(true); return; }
+    void fetch("/api/auth/pin", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d: { canManage?: boolean } | null) => { if (d && d.canManage === false) setFocus(true); }).catch(() => {});
+  }, []);
   const [sp, setSp] = useState<SpCfg | null>(null);
   const [spLib, setSpLib] = useState<SpLib | null>(null);
   const [spErr, setSpErr] = useState<string | null>(null);
@@ -286,8 +303,9 @@ export default function MusicPage() {
   }, [cur, queue, byId]);
   const btn = "px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-lg";
 
+  const Wrap = focus ? FocusShell : Shell;
   return (
-    <Shell>
+    <Wrap>
       <PageTitle title="🎧 پلیر موسیقی" subtitle="کتابخانه‌ی شخصی روی سرور خودت. لینک آهنگ اسپاتیفای بده؛ از بات دانلودر گرفته و ذخیره می‌شود." />
       <Card className="mb-4">
         <div className="text-sm font-medium mb-2">🟢 اتصال به اسپاتیفای (لایک‌ها و پلی‌لیست‌ها)</div>
@@ -318,6 +336,12 @@ export default function MusicPage() {
               <span className="text-[var(--color-text-dim)]">لیست‌های وارد‌شده هر ساعت خودکار بررسی می‌شوند و آهنگ جدید دانلود می‌شود.{syncMsg ? ` ${syncMsg}` : ""}</span>
             </div>
             {spErr && <div className="text-rose-300">{spErr}</div>}
+            {focus && spLib && (
+              <button onClick={() => setSpOpen((o) => !o)} aria-expanded={spOpen} className="w-full flex items-center justify-between px-3 py-2.5 rounded-md border border-[var(--color-border)]">
+                <span>📋 لیست‌ها ({spLib.playlists.length + 1})</span><span aria-hidden>{spOpen ? "▴" : "▾"}</span>
+              </button>
+            )}
+            {(!focus || spOpen) && (<>
             {spLib && <div className="text-[var(--color-text-dim)]">روی هر لیست بزن تا آهنگ‌هایش وارد صف دانلود شود (حساب فعلی: «{spLib.me}»):</div>}
             <div className="flex flex-wrap gap-2">
               {spLib && <button disabled={!!spBusy} onClick={() => importSp("liked", `لایک‌ها (${spLib.me})`)} className="px-3 py-1.5 rounded-md border border-[#1db954] text-[#1db954] disabled:opacity-50">{spBusy === "liked" ? "…" : `♥ لایک‌ها (${spLib.likedCount})`}</button>}
@@ -325,9 +349,11 @@ export default function MusicPage() {
                 <button key={p.id} disabled={!!spBusy} onClick={() => importSp(p.id, p.name)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-50">{spBusy === p.id ? "…" : `${p.name}${p.tracks >= 0 ? ` (${p.tracks})` : ""}`}</button>
               ))}
             </div>
+            </>)}
           </div>
         )}
       </Card>
+      {!focus && (<>
 
       <Card className="mb-4">
         <textarea value={paste} onChange={(e) => setPaste(e.target.value)} dir="ltr" rows={2}
@@ -507,6 +533,7 @@ export default function MusicPage() {
         </div>
       )}
       {detailId != null && byId.get(detailId) && <TrackDetail t={byId.get(detailId)!} tq="" onClose={() => setDetailId(null)} onRate={(r) => void rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
-    </Shell>
+    </>)}
+    </Wrap>
   );
 }
