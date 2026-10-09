@@ -179,6 +179,7 @@ function LoginInner() {
           </>
         )}
 
+        {!pinMode && (
         <details className="mt-6 text-xs text-[var(--color-text-dim)]">
           <summary className="cursor-pointer select-none">روش‌های دیگر ورود</summary>
           <div ref={widgetRef} className="mt-4 flex justify-center">
@@ -213,6 +214,7 @@ function LoginInner() {
           </p>
         </div>
         </details>
+        )}
 
         {pending && (
           <p className="text-sm text-[var(--color-text-dim)] mt-4 text-center">
