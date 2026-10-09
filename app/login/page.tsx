@@ -37,7 +37,7 @@ function LoginInner() {
   const widgetRef = useRef<HTMLDivElement | null>(null);
 
   // Numeric password: the way in on playlist.bz (also reachable anywhere with ?pin=1).
-  const [pinMode, setPinMode] = useState(false);
+  const [pinMode, setPinMode] = useState<boolean | null>(null); // null until the host is known (so the Telegram widget never loads on playlist.bz)
   const [pin, setPin] = useState("");
   const [pinBusy, setPinBusy] = useState(false);
   useEffect(() => { setPinMode(/(^|\.)playlist\.bz$/.test(window.location.hostname) || params.get("pin") === "1"); }, [params]);
@@ -179,7 +179,7 @@ function LoginInner() {
           </>
         )}
 
-        {!pinMode && (
+        {pinMode === false && (
         <details className="mt-6 text-xs text-[var(--color-text-dim)]">
           <summary className="cursor-pointer select-none">روش‌های دیگر ورود</summary>
           <div ref={widgetRef} className="mt-4 flex justify-center">
