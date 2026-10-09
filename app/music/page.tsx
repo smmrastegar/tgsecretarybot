@@ -96,6 +96,14 @@ export default function MusicPage() {
   // playlist.bz / numeric-password sign-in: just the Spotify connection card, lists folded until tapped.
   const [focus, setFocus] = useState(false);
   const [spOpen, setSpOpen] = useState(false);
+  const [spNote, setSpNote] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => { // back from Spotify's sign-in
+    const q = new URLSearchParams(window.location.search).get("spotify");
+    if (!q) return;
+    const t: Record<string, string> = { connected: "حساب اسپاتیفای وصل شد ✓", denied: "اجازه داده نشد؛ حساب وصل نشد", state: "درخواست ورود منقضی شد؛ دوباره امتحان کن", failed: "وصل شدن ناموفق بود؛ دوباره امتحان کن", nocreds: "اول Client ID / Secret در داشبورد اصلی تنظیم شود" };
+    setSpNote({ ok: q === "connected", text: t[q] ?? q });
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
   useEffect(() => {
     if (/(^|\.)playlist\.bz$/.test(window.location.hostname)) { setFocus(true); return; }
     void fetch("/api/auth/pin", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d: { canManage?: boolean } | null) => { if (d && d.canManage === false) setFocus(true); }).catch(() => {});
@@ -309,6 +317,7 @@ export default function MusicPage() {
       <PageTitle title="🎧 پلیر موسیقی" subtitle="کتابخانه‌ی شخصی روی سرور خودت. لینک آهنگ اسپاتیفای بده؛ از بات دانلودر گرفته و ذخیره می‌شود." />
       <Card className="mb-4">
         <div className="text-sm font-medium mb-2">🟢 اتصال به اسپاتیفای (لایک‌ها و پلی‌لیست‌ها)</div>
+        {spNote && <div className={`mb-2 text-xs rounded-md px-3 py-2 border ${spNote.ok ? "border-[#1db954] text-[#1db954]" : "border-rose-400 text-rose-300"}`}>{spNote.text}</div>}
         {sp && (sp.accounts.length === 0 || !sp.hasCredentials) && (
           <div className="text-xs text-[var(--color-text-dim)] space-y-2">
             <p>یک‌بار: در developer.spotify.com/dashboard یک App بساز، این آدرس را به‌عنوان Redirect URI ثبت کن، و Client ID / Secret را اینجا بده.</p>

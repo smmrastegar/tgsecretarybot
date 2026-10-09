@@ -2,7 +2,7 @@
 // the owner's playlists and liked songs so they can be queued into the
 // personal library. Client id/secret come from the owner's own Spotify
 // developer app; the refresh token is stored in settings.
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { config } from "./config";
 import { deleteSpotifyAccount, getAllSettings, getSpotifyRefreshToken, listSpotifyAccounts, setSetting, setSpotifyRefreshToken, upsertSpotifyAccount } from "./db";
 
@@ -27,6 +27,32 @@ export async function saveSpotifyCredentials(clientId: string, clientSecret: str
 
 export function newState(): string {
   return randomBytes(16).toString("base64url");
+}
+
+// The sign-in can start on one host (playlist.bz) and come back on another (the redirect URI registered
+// with Spotify is bot.text.bz), where the starting browser's cookies do not exist. So the state itself
+// carries the host to return to and is signed (only a signed-in session can obtain one) and short-lived.
+const RETURN_HOSTS = new Set(["bot.text.bz", "playlist.bz", "www.playlist.bz"]);
+const stateKey = () => process.env.SESSION_SECRET || process.env.WEBHOOK_SECRET_TOKEN || "dev-session-secret-change-me";
+const sign = (body: string) => createHmac("sha256", stateKey()).update(`spotify-state:${body}`).digest("base64url");
+
+export function signedState(host: string | null): string {
+  const h = host && RETURN_HOSTS.has(host) ? host : "bot.text.bz";
+  const body = Buffer.from(JSON.stringify({ h, n: randomBytes(8).toString("base64url"), e: Date.now() + 10 * 60_000 })).toString("base64url");
+  return `${body}.${sign(body)}`;
+}
+
+/** The host to send the browser back to, or null when the state is forged, altered or expired. */
+export function readSignedState(state: string): { host: string } | null {
+  const [body, sig] = state.split(".");
+  if (!body || !sig) return null;
+  const want = Buffer.from(sign(body)), have = Buffer.from(sig);
+  if (want.length !== have.length || !timingSafeEqual(want, have)) return null;
+  try {
+    const j = JSON.parse(Buffer.from(body, "base64url").toString()) as { h?: string; e?: number };
+    if (!j.h || !RETURN_HOSTS.has(j.h) || typeof j.e !== "number" || j.e < Date.now()) return null;
+    return { host: j.h };
+  } catch { return null; }
 }
 
 export async function authorizeUrl(state: string): Promise<string | null> {
