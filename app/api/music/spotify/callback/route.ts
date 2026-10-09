@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
+import { setSetting } from "@/lib/db";
+import { reportWarn } from "@/lib/report";
 import { exchangeCode, readSignedState } from "@/lib/spotify";
 
 export const runtime = "nodejs";
@@ -25,7 +27,11 @@ export async function GET(request: Request): Promise<NextResponse> {
   try {
     await exchangeCode(code);
     return back("connected");
-  } catch {
-    return back("failed");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    reportWarn("music", `Spotify connect failed: ${msg}`);
+    await setSetting("spotifyLastError", `${new Date().toISOString()} ${msg}`.slice(0, 300)).catch(() => {});
+    // In development mode Spotify only lets accounts listed under the app's User Management sign in: /me answers 403.
+    return back(/\b403\b/.test(msg) ? "notallowed" : "failed");
   }
 }

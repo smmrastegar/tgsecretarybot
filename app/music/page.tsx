@@ -100,7 +100,7 @@ export default function MusicPage() {
   useEffect(() => { // back from Spotify's sign-in
     const q = new URLSearchParams(window.location.search).get("spotify");
     if (!q) return;
-    const t: Record<string, string> = { connected: "حساب اسپاتیفای وصل شد ✓", denied: "اجازه داده نشد؛ حساب وصل نشد", state: "درخواست ورود منقضی شد؛ دوباره امتحان کن", failed: "وصل شدن ناموفق بود؛ دوباره امتحان کن", nocreds: "اول Client ID / Secret در داشبورد اصلی تنظیم شود" };
+    const t: Record<string, string> = { connected: "حساب اسپاتیفای وصل شد ✓", denied: "اجازه داده نشد؛ حساب وصل نشد", state: "درخواست ورود منقضی شد؛ دوباره امتحان کن", failed: "وصل شدن ناموفق بود؛ دوباره امتحان کن", notallowed: "این حساب در لیست کاربران مجازِ اپ اسپاتیفای نیست؛ ایمیلش را در developer.spotify.com ← اپ ← User Management اضافه کن", nocreds: "اول Client ID / Secret در داشبورد اصلی تنظیم شود" };
     setSpNote({ ok: q === "connected", text: t[q] ?? q });
     window.history.replaceState(null, "", window.location.pathname);
   }, []);
