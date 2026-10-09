@@ -356,6 +356,19 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE music_verify ADD COLUMN IF NOT EXISTS tag_artist TEXT`;
     },
   },
+  {
+    // An imported Spotify list belongs to ONE account (matched by account + source id, not by name,
+    // so two accounts' lists with the same name no longer merge).
+    id: "2026-10-09-006-playlist-account",
+    up: async (q) => {
+      await q`ALTER TABLE music_playlists ADD COLUMN IF NOT EXISTS spotify_account_id BIGINT`;
+      await q`ALTER TABLE music_playlists ADD COLUMN IF NOT EXISTS spotify_source_id TEXT`;
+      await q`
+        UPDATE music_playlists p SET spotify_account_id = (e->>'accountId')::bigint, spotify_source_id = e->>'id'
+          FROM settings s, jsonb_array_elements(s.value::jsonb) e
+         WHERE s.key = 'musicSyncSources' AND s.value LIKE '[%' AND p.name = e->>'name' AND p.spotify_source_id IS NULL`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

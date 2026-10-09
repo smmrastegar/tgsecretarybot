@@ -326,7 +326,7 @@ export default function MusicPage() {
               {sp.accounts.map((a) => (
                 <span key={a.id} className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 ${acct === a.id ? "border-[#1db954] text-[#1db954]" : "border-[var(--color-border)]"}`}>
                   <button onClick={() => setAcct(a.id)}>{a.displayName ?? a.spotifyUserId}</button>
-                  <button onClick={() => disconnectSp(a.id)} title="قطع" className="text-rose-300">×</button>
+                  {!focus && <button onClick={() => disconnectSp(a.id)} title="قطع" className="text-rose-300">×</button>}
                 </span>
               ))}
               <button onClick={() => { window.location.href = "/api/music/spotify/login"; }} className="px-3 py-1 rounded-full bg-[#1db954] text-black font-medium">{sp.accounts.length ? "+ حساب دیگر" : "ورود با اسپاتیفای"}</button>

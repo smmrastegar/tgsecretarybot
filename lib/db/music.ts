@@ -175,10 +175,21 @@ export async function listMusicPlaylists(): Promise<MusicPlaylist[]> {
   }));
 }
 
-export async function createMusicPlaylist(name: string, rules?: Record<string, unknown> | null): Promise<number> {
+export async function createMusicPlaylist(name: string, rules?: Record<string, unknown> | null, source?: { accountId: number; sourceId: string }): Promise<number> {
   await ensureSchema();
-  const rows = (await q().query(`INSERT INTO music_playlists (name, rules) VALUES ($1, $2::jsonb) RETURNING id`, [name.slice(0, 100), rules ? JSON.stringify(rules) : null])) as Row[];
+  const rows = (await q().query(`INSERT INTO music_playlists (name, rules, spotify_account_id, spotify_source_id) VALUES ($1, $2::jsonb, $3, $4) RETURNING id`,
+    [name.slice(0, 100), rules ? JSON.stringify(rules) : null, source?.accountId ?? null, source?.sourceId ?? null])) as Row[];
   return num(rows[0]!, "id");
+}
+
+/** The library playlist that mirrors one Spotify list of one account — created on first use, never shared between accounts. */
+export async function ensureSpotifyPlaylist(accountId: number, sourceId: string, name: string, accountLabel: string): Promise<number> {
+  await ensureSchema();
+  const found = (await q().query(`SELECT id FROM music_playlists WHERE spotify_account_id = $1 AND spotify_source_id = $2 ORDER BY id LIMIT 1`, [accountId, sourceId])) as Row[];
+  if (found[0]) return num(found[0], "id");
+  // Another playlist already has this name (a different account's, or a hand-made one): keep both, tell them apart.
+  const clash = (await q().query(`SELECT 1 FROM music_playlists WHERE name = $1 LIMIT 1`, [name.slice(0, 100)])) as Row[];
+  return createMusicPlaylist(clash.length ? `${name.slice(0, 80)} (${accountLabel})` : name, null, { accountId, sourceId });
 }
 
 export async function deleteMusicPlaylist(id: number): Promise<void> {

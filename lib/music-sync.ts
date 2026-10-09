@@ -1,4 +1,4 @@
-import { addMusicTrack, createMusicPlaylist, getAllSettings, listMusicPlaylists, setPlaylistTrack, setSetting } from "@/lib/db";
+import { addMusicTrack, ensureSpotifyPlaylist, getAllSettings, listMusicPlaylists, setPlaylistTrack, setSetting } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
 import { fetchTrackIds, listMyPlaylists, listSpotifyAccounts } from "@/lib/spotify";
 
@@ -21,8 +21,8 @@ export async function registerSyncSource(src: SyncSource): Promise<void> {
 /** Read one source; queue + add everything not yet in the library. */
 export async function syncSource(src: SyncSource): Promise<{ total: number; added: number }> {
   const items = await fetchTrackIds(src.accountId, src.id);
-  const existing = (await listMusicPlaylists()).find((p) => p.name === src.name);
-  const plId = existing?.id ?? (await createMusicPlaylist(src.name));
+  const acct = (await listSpotifyAccounts()).find((a) => a.id === src.accountId);
+  const plId = await ensureSpotifyPlaylist(src.accountId, src.id, src.name, acct?.displayName ?? acct?.spotifyUserId ?? `#${src.accountId}`);
   let added = 0;
   for (const t of items) {
     const r = await addMusicTrack(t.id, `https://open.spotify.com/track/${t.id}`);

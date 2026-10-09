@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
-import { addMusicTrack, createMusicPlaylist, listMusicPlaylists, setPlaylistTrack } from "@/lib/db";
+import { addMusicTrack, ensureSpotifyPlaylist, setPlaylistTrack } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
 import { registerSyncSource } from "@/lib/music-sync";
-import { fetchTrackIds } from "@/lib/spotify";
+import { fetchTrackIds, listSpotifyAccounts } from "@/lib/spotify";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,8 +19,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     const items = await fetchTrackIds(Number(b.accountId), b.id);
     const name = (b.name ?? (b.id === "liked" ? "لایک‌ها" : "Spotify")).slice(0, 100);
-    const existing = (await listMusicPlaylists()).find((p) => p.name === name);
-    const plId = existing?.id ?? (await createMusicPlaylist(name));
+    const acct = (await listSpotifyAccounts()).find((a) => a.id === Number(b.accountId));
+    const plId = await ensureSpotifyPlaylist(Number(b.accountId), b.id, name, acct?.displayName ?? acct?.spotifyUserId ?? `#${b.accountId}`);
     let added = 0, already = 0;
     for (const t of items) {
       const r = await addMusicTrack(t.id, `https://open.spotify.com/track/${t.id}`);
