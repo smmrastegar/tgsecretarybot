@@ -70,6 +70,9 @@ const PUBLIC_PREFIXES = [
   "/favicon",
 ];
 
+// The music-only domain: the dashboard itself stays on the main host.
+const isMusicHost = (h: string) => h === "playlist.bz" || h === "www.playlist.bz";
+
 function isPublic(pathname: string): boolean {
   return PUBLIC_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
@@ -78,6 +81,7 @@ function isPublic(pathname: string): boolean {
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+  if (pathname === "/" && isMusicHost(req.nextUrl.hostname)) return NextResponse.redirect(new URL("/music", req.url));
   if (isPublic(pathname)) return NextResponse.next();
 
   const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
@@ -90,6 +94,13 @@ export async function middleware(req: NextRequest) {
     const loginUrl = new URL("/login", req.url);
     if (pathname !== "/") loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
+  }
+  // playlist.bz (and anyone signed in with the numeric password) gets the music pages only.
+  if (session.scope === "music" || isMusicHost(req.nextUrl.hostname)) {
+    if (pathname !== "/music" && !pathname.startsWith("/music/")) {
+      if (pathname.startsWith("/api/")) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+      return NextResponse.redirect(new URL("/music", req.url));
+    }
   }
   return NextResponse.next();
 }

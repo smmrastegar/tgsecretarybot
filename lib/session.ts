@@ -9,6 +9,8 @@ export type Session = {
   firstName?: string | null;
   lastName?: string | null;
   photoUrl?: string | null;
+  /** "music": signed in with the numeric password — the music pages only, never the rest of the dashboard. */
+  scope?: "music";
 };
 
 function sessionSecret(): string {
@@ -49,6 +51,7 @@ export async function readSessionFromToken(
       firstName: (payload.firstName as string) ?? null,
       lastName: (payload.lastName as string) ?? null,
       photoUrl: (payload.photoUrl as string) ?? null,
+      scope: payload.scope === "music" ? "music" : undefined,
     };
   } catch {
     return null;

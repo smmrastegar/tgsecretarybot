@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
 import LinksCard from "@/components/music/dashboard/LinksCard";
+import PinCard from "@/components/music/dashboard/PinCard";
 import SmartPlaylistCard from "@/components/music/dashboard/SmartPlaylistCard";
 import MusicStats from "@/components/music/Stats";
 import TrackDetail from "@/components/music/TrackDetail";
@@ -345,6 +346,7 @@ export default function MusicPage() {
       </div>
       <SmartPlaylistCard tracks={tracks} onMessage={setMsg} onCreated={() => { void load(); setLinksKey((k) => k + 1); }} />
       <LinksCard onMessage={setMsg} refreshKey={linksKey + playlists.length} />
+      <PinCard onMessage={setMsg} />
       {verify && Object.keys(verify.counts).length > 0 && (
         <Card className="mb-4">
           <div className="text-sm font-medium">🔍 بررسی درستیِ فایل آهنگ‌ها (مقایسه با پیش‌نمایش ۳۰ ثانیه‌ای اسپاتیفای)</div>

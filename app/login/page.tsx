@@ -36,6 +36,24 @@ function LoginInner() {
   const [pending, setPending] = useState(false);
   const widgetRef = useRef<HTMLDivElement | null>(null);
 
+  // Numeric password: the way in on playlist.bz (also reachable anywhere with ?pin=1).
+  const [pinMode, setPinMode] = useState(false);
+  const [pin, setPin] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
+  useEffect(() => { setPinMode(/(^|\.)playlist\.bz$/.test(window.location.hostname) || params.get("pin") === "1"); }, [params]);
+  async function submitPin(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null); setPinBusy(true);
+    try {
+      const r = await fetch("/api/auth/pin-login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin }) });
+      const d = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(d.error ?? `خطا (${r.status})`);
+      router.replace(next === "/" ? "/music" : next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err)); setPinBusy(false); setPin("");
+    }
+  }
+
   // "Login with Telegram" button: open the bot with a one-time start link, then poll.
   const [phase, setPhase] = useState<"idle" | "starting" | "waiting" | "expired">("idle");
   const [link, setLink] = useState<string | null>(null);
@@ -116,6 +134,16 @@ function LoginInner() {
         <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
           tgsecretarybot
         </div>
+        {pinMode && (
+          <form onSubmit={(e) => void submitPin(e)} className="mt-3 mb-8">
+            <h1 className="text-2xl font-semibold">ورود به پلیر</h1>
+            <p className="text-sm text-[var(--color-text-dim)] mt-2">رمز عددی‌ات را بزن.</p>
+            <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 10))} inputMode="numeric" pattern="[0-9]*" autoComplete="current-password" autoFocus dir="ltr" aria-label="رمز عددی" placeholder="••••••"
+              className="mt-4 w-full h-14 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] px-4 text-center text-2xl tracking-[0.4em] tabular-nums" />
+            <button type="submit" disabled={pinBusy || pin.length < 6} className="mt-3 w-full h-12 rounded-xl bg-[#2AABEE] text-white font-semibold disabled:opacity-50">{pinBusy ? "…" : "ورود"}</button>
+            <div className="mt-6 pt-6 border-t border-[var(--color-border)] text-xs text-[var(--color-text-dim)]">یا با تلگرام (داشبورد کامل روی دامنهٔ اصلی):</div>
+          </form>
+        )}
         <h1 className="text-2xl font-semibold mt-1">ورود با تلگرام</h1>
         <p className="text-sm text-[var(--color-text-dim)] mt-3 leading-relaxed">
           از همون اکانت تلگرامی استفاده کن که از طریق Telegram Business →
