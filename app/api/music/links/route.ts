@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
-import { config } from "@/lib/config";
 import { createPlayerLink, listPlayerLinks } from "@/lib/db";
 import { getLegacyToken, isLegacyActive, newLinkToken } from "@/lib/music-token";
 import { resolvedPlaylists } from "@/lib/music-playlists";
@@ -8,7 +7,8 @@ import { resolvedPlaylists } from "@/lib/music-playlists";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const url = (t: string) => `${(config.publicAppUrl || "https://bot.text.bz").replace(/\/$/, "")}/player/${t}`;
+// Player links live on their own domain (playlist.bz); PLAYER_APP_URL overrides it.
+const url = (t: string) => `${(process.env.PLAYER_APP_URL || "https://playlist.bz").replace(/\/$/, "")}/player/${t}`;
 
 // GET → every player link (the original "Main link" first) + the playlists they can be given.
 export async function GET(): Promise<NextResponse> {
