@@ -69,8 +69,8 @@ export default function MusicStats({ tq, lang = "fa" }: { tq: string; lang?: "fa
           ))}
         </div>
       </div>
-      <div className="grid md:grid-cols-2 gap-4">
-        <div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="min-w-0">
           <div className="text-xs text-[var(--dim)] mb-1">{L.topT}</div>
           {s.topTracks.length === 0 ? <div className="text-xs text-[var(--dim3)]">{L.none}</div> : s.topTracks.map((t, i) => (
             <div key={t.id} className="flex items-center gap-2 py-1 text-sm border-b border-[var(--bd0)]">
@@ -81,7 +81,7 @@ export default function MusicStats({ tq, lang = "fa" }: { tq: string; lang?: "fa
             </div>
           ))}
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-xs text-[var(--dim)] mb-1">{L.topA}</div>
           {s.topArtists.length === 0 ? <div className="text-xs text-[var(--dim3)]">{L.none}</div> : s.topArtists.map((a, i) => (
             <div key={a.artist} className="flex items-center gap-2 py-1 text-sm border-b border-[var(--bd0)]">

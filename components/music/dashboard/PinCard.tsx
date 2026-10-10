@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Card } from "@/components/Card";
+import Section from "./Section";
 
 // Numeric password for signing in to the music pages on playlist.bz (it opens the player only).
 export default function PinCard({ onMessage }: { onMessage: (m: string) => void }) {
@@ -31,8 +31,7 @@ export default function PinCard({ onMessage }: { onMessage: (m: string) => void 
   }
 
   return (
-    <Card>
-      <h2 className="font-semibold">🔢 رمز عددی ورود به playlist.bz</h2>
+    <Section icon="🔢" title="رمز عددی playlist.bz" summary={state.configured ? "تنظیم شده" : "هنوز تنظیم نشده"}>
       <p className="text-sm text-[var(--color-text-dim)] mt-2 leading-7">
         با این رمز در <span dir="ltr">playlist.bz/music</span> وارد می‌شوی. این ورود فقط به پلیر دسترسی دارد، نه به بقیهٔ داشبورد.
         {" "}{state.configured ? "رمز فعلی تنظیم شده؛ برای تغییر، رمز تازه را بنویس." : "هنوز رمزی تنظیم نشده."}
@@ -43,6 +42,6 @@ export default function PinCard({ onMessage }: { onMessage: (m: string) => void 
         <button onClick={() => void save()} disabled={busy || pin.length < 6} className="h-11 px-4 rounded-lg bg-[var(--color-accent,#3b82f6)] text-white disabled:opacity-50">{state.configured ? "تغییر رمز" : "ذخیره رمز"}</button>
         {state.configured && <button onClick={() => void remove()} className="h-11 px-4 rounded-lg border border-[var(--color-border)]">حذف رمز</button>}
       </div>
-    </Card>
+    </Section>
   );
 }

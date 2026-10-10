@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Card } from "@/components/Card";
+import Section from "./Section";
 
 // Smart playlists are built here only. Their songs are computed from the rules
 // every time (genre, mood, energy, tempo, likes, "sounds like …"), so they keep
@@ -71,10 +71,9 @@ export default function SmartPlaylistCard({ tracks, onCreated, onMessage }: { tr
   const field = "text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5";
 
   return (
-    <Card className="mb-4">
-      <button onClick={() => setOpen((v) => !v)} className="text-sm font-medium w-full text-right">✨ ساخت پلی‌لیست هوشمند {open ? "▴" : "▾"}</button>
+    <Section icon="✨" title="پلی‌لیست هوشمند" summary="بر اساس سبک، حال‌وهوا، انرژی یا شباهت به یک آهنگ" open={open} onOpenChange={setOpen}>
       {open && (
-        <div className="mt-3 space-y-3 text-xs">
+        <div className="space-y-3 text-xs">
           <p className="text-[var(--color-text-dim)] leading-6">آهنگ‌ها را بر اساس سبک، حال‌وهوا، انرژی، تمپو، لایک یا شباهت به یک آهنگ خودکار انتخاب می‌کند و همیشه به‌روز می‌ماند. شرط‌های خالی نادیده گرفته می‌شوند.</p>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="نام پلی‌لیست" className={`${field} w-full text-sm py-2`} />
           <label className="flex items-center gap-2"><input type="checkbox" checked={liked} onChange={(e) => setLiked(e.target.checked)} /> فقط آهنگ‌های لایک‌شده</label>
@@ -110,6 +109,6 @@ export default function SmartPlaylistCard({ tracks, onCreated, onMessage }: { tr
           <button onClick={() => void create()} disabled={busy} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-xs disabled:opacity-50">ساخت پلی‌لیست هوشمند</button>
         </div>
       )}
-    </Card>
+    </Section>
   );
 }

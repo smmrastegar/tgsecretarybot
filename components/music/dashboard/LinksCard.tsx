@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Card } from "@/components/Card";
+import Section from "./Section";
 
 // Player links: any number of private links, each with its own playlists.
 // Creating a link never touches the others; a link can only be switched off
@@ -42,8 +42,7 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
   const toggleIn = (set: Set<number>, id: number) => { const n = new Set(set); if (n.has(id)) n.delete(id); else n.add(id); return n; };
 
   return (
-    <Card className="mb-4">
-      <div className="text-sm font-medium mb-1">🔗 لینک‌های خصوصی پلیر (بدون لاگین)</div>
+    <Section icon="🔗" title="لینک‌های خصوصی پلیر" summary={`${links.filter((l) => l.active).length} لینک فعال · بدون نیاز به ورود`}>
       <p className="text-xs text-[var(--color-text-dim)] mb-3 leading-6">
         هر لینک یک پلیر جداست و فقط پلی‌لیست‌هایی را می‌بیند که به آن داده‌ای. لینک تازه چیزی را پاک نمی‌کند؛ هر لینک را فقط می‌شود غیرفعال (و دوباره فعال) کرد.
         آدرس‌ها یک کد ۲۵۶ بیتی‌اند، قابل حدس نیستند و ایندکس نمی‌شوند. لینک را فقط برای خودت و دستگاه‌های خودت بفرست.
@@ -95,6 +94,6 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
         </div>
         <button onClick={() => void create()} disabled={busy} className="mt-3 text-xs px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white disabled:opacity-50">+ ساخت لینک جدید</button>
       </div>
-    </Card>
+    </Section>
   );
 }

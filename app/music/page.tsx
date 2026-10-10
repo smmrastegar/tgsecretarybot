@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
 import LinksCard from "@/components/music/dashboard/LinksCard";
+import Section, { Pill } from "@/components/music/dashboard/Section";
+import SpotifySection, { type SpCfg, type SpLib } from "@/components/music/dashboard/SpotifySection";
 import PinCard from "@/components/music/dashboard/PinCard";
 import SmartPlaylistCard from "@/components/music/dashboard/SmartPlaylistCard";
 import MusicStats from "@/components/music/Stats";
@@ -25,10 +27,13 @@ type Track = {
 };
 type Playlist = { id: number; name: string; trackIds: number[]; smart?: boolean };
 
-type SpCfg = { hasCredentials: boolean; clientId: string; accounts: Array<{ id: number; displayName: string | null; spotifyUserId: string }>; redirectUri: string };
-type SpLib = { playlists: Array<{ id: string; name: string; tracks: number; owner: string }>; likedCount: number; me: string };
 
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
 const fmt = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
+
+function MenuItem({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
+  return <button role="menuitem" onClick={onClick} className={`block w-full min-h-11 px-3 py-2.5 rounded-xl text-start hover:bg-[var(--color-surface-2)] active:bg-[var(--color-surface-2)] ${danger ? "text-rose-300" : ""}`}>{children}</button>;
+}
 
 function FocusShell({ children }: { children: React.ReactNode }) {
   async function out() { await fetch("/api/auth/logout", { method: "POST" }).catch(() => {}); window.location.href = "/login"; }
@@ -51,10 +56,10 @@ export default function MusicPage() {
   const [linksKey, setLinksKey] = useState(0);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [showStats, setShowStats] = useState(false);
+  const [menuFor, setMenuFor] = useState<number | null>(null);
   type Rep = { id: number; trackId: number; trackTitle: string | null; reasons: string[]; note: string | null; context: Record<string, unknown> | null; status: string; createdAt: string };
   const [reports, setReports] = useState<Rep[]>([]);
   const [reasonLabels, setReasonLabels] = useState<Record<string, string>>({});
-  const [showReports, setShowReports] = useState(false);
   type Sus = { trackId: number; status: string; score: number | null; fixes: number; title: string | null; artist: string | null };
   const [verify, setVerify] = useState<{ counts: Record<string, number>; suspicious: Sus[] } | null>(null);
   const loadVerify = useCallback(async () => {
@@ -95,7 +100,6 @@ export default function MusicPage() {
   const [mixOn, setMixOn] = useState(false);
   // playlist.bz / numeric-password sign-in: just the Spotify connection card, lists folded until tapped.
   const [focus, setFocus] = useState(false);
-  const [spOpen, setSpOpen] = useState(false);
   const [spNote, setSpNote] = useState<{ ok: boolean; text: string } | null>(null);
   useEffect(() => { // back from Spotify's sign-in
     const q = new URLSearchParams(window.location.search).get("spotify");
@@ -153,6 +157,7 @@ export default function MusicPage() {
     setCsec(""); void loadSp();
   }
   async function disconnectSp(id: number) { if (!confirm("این حساب قطع شود؟ آهنگ‌های دانلودشده می‌مانند.")) return; await fetch("/api/music/spotify/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ disconnect: true, accountId: id }) }); void loadSp(); }
+  const [spMsg, setSpMsg] = useState<string | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
   async function syncNow() {
@@ -164,11 +169,12 @@ export default function MusicPage() {
     void load();
   }
   async function importSp(id: string, name: string) {
-    setSpBusy(id); setMsg(null);
+    setSpBusy(id); setMsg(null); setSpMsg(null);
     const r = await fetch("/api/music/spotify/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name, accountId: acct }) });
     const j = (await r.json()) as { total?: number; added?: number; already?: number; error?: string };
     setSpBusy(null);
-    setMsg(r.ok ? `«${name}»: ${j.total} آهنگ — ${j.added} جدید به صف دانلود، ${j.already} قبلاً بود` : `خطا: ${j.error}`);
+    const done = r.ok ? `«${name}»: ${j.total} آهنگ — ${j.added} جدید به صف دانلود، ${j.already} قبلاً بود` : `خطا: ${j.error}`;
+    setMsg(done); setSpMsg(done);
     void load();
   }
   // Poll while anything is still downloading.
@@ -314,77 +320,35 @@ export default function MusicPage() {
   const Wrap = focus ? FocusShell : Shell;
   return (
     <Wrap>
-      <PageTitle title="🎧 پلیر موسیقی" subtitle="کتابخانه‌ی شخصی روی سرور خودت. لینک آهنگ اسپاتیفای بده؛ از بات دانلودر گرفته و ذخیره می‌شود." />
-      <Card className="mb-4">
-        <div className="text-sm font-medium mb-2">🟢 اتصال به اسپاتیفای (لایک‌ها و پلی‌لیست‌ها)</div>
-        {spNote && <div className={`mb-2 text-xs rounded-md px-3 py-2 border ${spNote.ok ? "border-[#1db954] text-[#1db954]" : "border-rose-400 text-rose-300"}`}>{spNote.text}</div>}
-        {sp && (sp.accounts.length === 0 || !sp.hasCredentials) && (
-          <div className="text-xs text-[var(--color-text-dim)] space-y-2">
-            <p>یک‌بار: در developer.spotify.com/dashboard یک App بساز، این آدرس را به‌عنوان Redirect URI ثبت کن، و Client ID / Secret را اینجا بده.</p>
-            <div dir="ltr" className="font-mono bg-[var(--color-surface-2)] rounded px-2 py-1 select-all break-all">{sp.redirectUri}</div>
-            <div className="flex gap-2 flex-wrap" dir="ltr">
-              <input value={cid} onChange={(e) => setCid(e.target.value)} placeholder="Client ID" className="flex-1 min-w-40 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5" />
-              <input value={csec} onChange={(e) => setCsec(e.target.value)} type="password" placeholder={sp.hasCredentials ? "Client Secret (ذخیره شده)" : "Client Secret"} className="flex-1 min-w-40 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5" />
-              <button onClick={saveCreds} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] text-sm">ذخیره</button>
-            </div>
-          </div>
-        )}
-        {sp?.hasCredentials && (
-          <div className="text-xs space-y-2 mt-2">
-            <div className="flex flex-wrap gap-2 items-center">
-              {sp.accounts.map((a) => (
-                <span key={a.id} className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 ${acct === a.id ? "border-[#1db954] text-[#1db954]" : "border-[var(--color-border)]"}`}>
-                  <button onClick={() => setAcct(a.id)}>{a.displayName ?? a.spotifyUserId}</button>
-                  {!focus && <button onClick={() => disconnectSp(a.id)} title="قطع" className="text-rose-300">×</button>}
-                </span>
-              ))}
-              <button onClick={() => { window.location.href = "/api/music/spotify/login"; }} className="px-3 py-1 rounded-full bg-[#1db954] text-black font-medium">{sp.accounts.length ? "+ حساب دیگر" : "ورود با اسپاتیفای"}</button>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <button disabled={syncBusy} onClick={syncNow} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-50">{syncBusy ? "…" : "↻ همگام‌سازی همین حالا"}</button>
-              <span className="text-[var(--color-text-dim)]">لیست‌های وارد‌شده هر ساعت خودکار بررسی می‌شوند و آهنگ جدید دانلود می‌شود.{syncMsg ? ` ${syncMsg}` : ""}</span>
-            </div>
-            {spErr && <div className="text-rose-300">{spErr}</div>}
-            {focus && spLib && (
-              <button onClick={() => setSpOpen((o) => !o)} aria-expanded={spOpen} className="w-full flex items-center justify-between px-3 py-2.5 rounded-md border border-[var(--color-border)]">
-                <span>📋 لیست‌ها ({spLib.playlists.length + 1})</span><span aria-hidden>{spOpen ? "▴" : "▾"}</span>
-              </button>
-            )}
-            {(!focus || spOpen) && (<>
-            {spLib && <div className="text-[var(--color-text-dim)]">روی هر لیست بزن تا آهنگ‌هایش وارد صف دانلود شود (حساب فعلی: «{spLib.me}»):</div>}
-            <div className="flex flex-wrap gap-2">
-              {spLib && <button disabled={!!spBusy} onClick={() => importSp("liked", `لایک‌ها (${spLib.me})`)} className="px-3 py-1.5 rounded-md border border-[#1db954] text-[#1db954] disabled:opacity-50">{spBusy === "liked" ? "…" : `♥ لایک‌ها (${spLib.likedCount})`}</button>}
-              {spLib?.playlists.map((p) => (
-                <button key={p.id} disabled={!!spBusy} onClick={() => importSp(p.id, p.name)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-50">{spBusy === p.id ? "…" : `${p.name}${p.tracks >= 0 ? ` (${p.tracks})` : ""}`}</button>
-              ))}
-            </div>
-            </>)}
-          </div>
-        )}
-      </Card>
+      <PageTitle title="🎧 پلیر موسیقی" subtitle="کتابخانهٔ شخصی روی سرور خودت" />
+      <SpotifySection sp={sp} spLib={spLib} acct={acct} canManage={!focus} note={spNote} error={spErr} busy={spBusy} syncBusy={syncBusy} syncMsg={syncMsg} importMsg={spMsg}
+        cid={cid} csec={csec} setCid={setCid} setCsec={setCsec} onSaveCreds={() => void saveCreds()} onSelect={setAcct} onDisconnect={(id) => void disconnectSp(id)}
+        onSync={() => void syncNow()} onImport={(id, name) => void importSp(id, name)} onConnect={() => { window.location.href = "/api/music/spotify/login"; }} />
       {!focus && (<>
 
-      <Card className="mb-4">
-        <textarea value={paste} onChange={(e) => setPaste(e.target.value)} dir="ltr" rows={2}
+      <section className="mb-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+        <label htmlFor="paste" className="block text-sm font-semibold mb-2">➕ افزودن آهنگ به کتابخانه</label>
+        <textarea id="paste" value={paste} onChange={(e) => setPaste(e.target.value)} dir="ltr" rows={2}
           placeholder="https://open.spotify.com/track/…  (چند لینک، هر کدام در یک خط)"
-          className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2" />
-        <div className="flex items-center gap-3 mt-2 flex-wrap">
-          <button onClick={add} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-sm">افزودن به کتابخانه</button>
-          {msg && <span className="text-xs text-[var(--color-text-dim)]">{msg}</span>}
+          className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3 py-2.5" />
+        <div className="flex items-center gap-3 mt-2.5 flex-wrap">
+          <button onClick={add} className="min-h-11 px-5 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium w-full sm:w-auto">افزودن</button>
+          {msg && <span className="text-xs text-[var(--color-text-dim)] leading-6" role="status">{msg}</span>}
         </div>
-      </Card>
+      </section>
 
-      <div className="flex gap-2 mb-3 flex-wrap">
-        <button onClick={() => readyVisible[0] && playTrack(readyVisible[0].id)} disabled={readyVisible.length === 0} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-sm disabled:opacity-50">▶ پخش همه ({readyVisible.length})</button>
-        <button onClick={smartMix} disabled={readyVisible.length === 0} className={`px-4 py-2 rounded-lg border text-sm disabled:opacity-50 ${mixOn ? "border-amber-400 text-amber-200" : "border-[var(--color-border)]"}`}>🎲 ترکیب هوشمند</button>
-        <span className="text-[11px] text-[var(--color-text-dim)] self-center">لایک = بیشتر پخش می‌شود · دیسلایک = هرگز · ردشدن زود = کمتر</span>
+      <div className="grid grid-cols-2 gap-2 mb-1">
+        <button onClick={() => readyVisible[0] && playTrack(readyVisible[0].id)} disabled={readyVisible.length === 0} className="min-h-11 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium disabled:opacity-50">▶ پخش همه ({readyVisible.length})</button>
+        <button onClick={smartMix} disabled={readyVisible.length === 0} className={`min-h-11 rounded-xl border text-sm disabled:opacity-50 ${mixOn ? "border-amber-400 text-amber-200" : "border-[var(--color-border)]"}`}>🎲 ترکیب هوشمند</button>
       </div>
+      <p className="text-[11px] text-[var(--color-text-dim)] mb-4 px-1 leading-6">لایک = بیشتر پخش می‌شود · دیسلایک = هرگز · ردشدن زود = کمتر</p>
       <SmartPlaylistCard tracks={tracks} onMessage={setMsg} onCreated={() => { void load(); setLinksKey((k) => k + 1); }} />
       <LinksCard onMessage={setMsg} refreshKey={linksKey + playlists.length} />
       <PinCard onMessage={setMsg} />
       {verify && Object.keys(verify.counts).length > 0 && (
-        <Card className="mb-4">
-          <div className="text-sm font-medium">🔍 بررسی درستیِ فایل آهنگ‌ها (مقایسه با پیش‌نمایش ۳۰ ثانیه‌ای اسپاتیفای)</div>
+        <Section icon="🔍" title="درستیِ فایل آهنگ‌ها" summary={`${fa(verify.counts.ok ?? 0)} تأییدشده · ${fa(verify.counts.nopreview ?? 0)} بدون پیش‌نمایش`}
+          badge={(verify.counts.mismatch ?? 0) + (verify.counts.unsure ?? 0) > 0 ? <Pill tone="warn">{fa((verify.counts.mismatch ?? 0) + (verify.counts.unsure ?? 0))} مشکوک</Pill> : <Pill tone="ok">سالم</Pill>}>
+          <div className="text-[11px] text-[var(--color-text-dim)]">مقایسهٔ صدای هر فایل با پیش‌نمایش ۳۰ ثانیه‌ای اسپاتیفای.</div>
           <div className="mt-2 text-xs text-[var(--color-text-dim)] leading-6">
             تأییدشده: {verify.counts.ok ?? 0} · بدون پیش‌نمایش (قابل بررسی نیست): {verify.counts.nopreview ?? 0} · مشکوک: {(verify.counts.mismatch ?? 0) + (verify.counts.unsure ?? 0)} · خطا: {verify.counts.error ?? 0}
             <span className="block">فایل نادرست یک بار خودکار از SpotSaver جایگزین می‌شود؛ اگر باز هم نخواند، اینجا می‌ماند.</span>
@@ -401,14 +365,13 @@ export default function MusicPage() {
               ))}
             </div>
           )}
-        </Card>
+        </Section>
       )}
 
       {reports.length > 0 && (
-        <Card className="mb-4">
-          <button onClick={() => setShowReports((v) => !v)} className="text-sm font-medium w-full text-right">🚩 گزارش مشکل از پلیر ({reports.length}) {showReports ? "▴" : "▾"}</button>
-          {showReports && (
-            <div className="mt-3 space-y-2">
+        <Section icon="🚩" title="گزارش مشکل از پلیر" summary="مشکلاتی که از پلیر گزارش شده" badge={<Pill tone="warn">{fa(reports.length)}</Pill>}>
+          {(
+            <div className="space-y-2">
               {reports.map((r) => (
                 <div key={r.id} className="rounded-lg border border-[var(--color-border)] p-3 text-xs space-y-1.5">
                   <div className="font-medium text-sm" dir="ltr">{r.trackTitle ?? `#${r.trackId}`}</div>
@@ -424,20 +387,21 @@ export default function MusicPage() {
               ))}
             </div>
           )}
-        </Card>
+        </Section>
       )}
 
-      <Card className="mb-4">
-        <button onClick={() => setShowStats((v) => !v)} className="text-sm font-medium w-full text-right">📊 آمار شنیدن {showStats ? "▴" : "▾"}</button>
-        {showStats && <div className="mt-3"><MusicStats tq="" /></div>}
-      </Card>
+      <Section icon="📊" title="آمار شنیدن" summary="چه چیزی، چقدر و کی شنیده‌ای" open={showStats} onOpenChange={setShowStats}><MusicStats tq="" /></Section>
       {loadErr && <Card className="mb-3"><p className="text-sm text-rose-300">{loadErr}</p></Card>}
-      <div className="flex gap-2 flex-wrap items-center mb-3">
-        <button onClick={() => setView("all")} className={`text-xs px-3 py-1.5 rounded-md border ${view === "all" ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>همه ({tracks.length})</button>
-        <button onClick={() => setView("liked")} className={`text-xs px-3 py-1.5 rounded-md border ${view === "liked" ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>❤️ لایک‌شده‌ها ({tracks.filter((t) => t.rating > 0).length})</button>
+      <div className="mb-3 space-y-2">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجو در کتابخانه…" aria-label="جستجو" className="w-full min-h-11 text-sm bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4" />
+        <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&>button]:shrink-0 [&>button]:whitespace-nowrap">
+        <button onClick={() => setView("all")} className={`text-xs min-h-9 px-3.5 rounded-full border ${view === "all" ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>همه ({tracks.length})</button>
+        <button onClick={() => setView("liked")} className={`text-xs min-h-9 px-3.5 rounded-full border ${view === "liked" ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>❤️ لایک‌شده‌ها ({tracks.filter((t) => t.rating > 0).length})</button>
         {playlists.map((p) => (
-          <button key={p.id} onClick={() => setView(p.id)} className={`text-xs px-3 py-1.5 rounded-md border ${view === p.id ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>{p.smart ? "✨ " : ""}{p.name} ({p.trackIds.length})</button>
+          <button key={p.id} onClick={() => setView(p.id)} className={`text-xs min-h-9 px-3.5 rounded-full border ${view === p.id ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>{p.smart ? "✨ " : ""}{p.name} ({p.trackIds.length})</button>
         ))}
+        </div>
+        <div className="flex gap-2 flex-wrap items-center [&>button]:min-h-9">
         <button onClick={newPlaylist} className="text-xs px-3 py-1.5 rounded-md border border-dashed border-[var(--color-border)]">+ پلی‌لیست خالی</button>
         <button onClick={() => void createPlaylistWith(readyVisible.map((t) => t.id), view === "all" ? "همه" : view === "liked" ? "لایک‌های من" : playlists.find((p) => p.id === view)?.name ?? "")} disabled={readyVisible.length === 0} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-40">+ پلی‌لیست از همین نما ({readyVisible.length})</button>
         <button onClick={() => { setSelecting((v) => !v); setSel(new Set()); }} className={`text-xs px-3 py-1.5 rounded-md border ${selecting ? "border-amber-400 text-amber-200" : "border-[var(--color-border)]"}`}>☑ انتخاب چندتایی</button>
@@ -447,7 +411,7 @@ export default function MusicPage() {
         )}
         {typeof view === "number" && <button onClick={() => { const p = playlists.find((x) => x.id === view); if (p) void renamePlaylist(p); }} className="text-xs">✎ تغییر نام</button>}
         {typeof view === "number" && <button onClick={() => { const p = playlists.find((x) => x.id === view); if (p) void delPlaylist(p); }} className="text-xs text-rose-300">حذف این پلی‌لیست</button>}
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجو…" className="mr-auto text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5" />
+        </div>
       </div>
 
       {selecting && (
@@ -473,43 +437,53 @@ export default function MusicPage() {
               {t.hasCover ? <img src={`/api/music/cover/${t.id}`} alt="" className="w-full h-full object-cover" /> : <span>🎵</span>}
             </button>
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium truncate">{t.title ?? t.spotifyUrl.split("/").pop()}</div>
-              <div className="text-[11px] text-[var(--color-text-dim)] truncate">
+              <div className="text-sm font-medium truncate" dir="auto">{t.title ?? t.spotifyUrl.split("/").pop()}</div>
+              <div className="text-[11px] text-[var(--color-text-dim)] truncate" dir="auto">
                 {t.status === "ready" && `${t.artist ?? ""}${t.album ? ` · ${t.album}` : ""}${t.durationS ? ` · ${fmt(t.durationS)}` : ""}${t.playCount ? ` · ▶ ${t.playCount}` : ""}${t.skipCount ? ` · ⏭ ${t.skipCount}` : ""}`}
                 {t.status === "queued" && "⏳ در صف دانلود"}
                 {t.status === "downloading" && "⬇️ در حال دانلود از بات…"}
                 {t.status === "failed" && <span className="text-rose-300">❌ {t.error ?? "ناموفق"}</span>}
               </div>
             </div>
-            {t.status === "ready" && playlists.length > 0 && (
-              <select value="" onChange={(e) => { const pl = playlists.find((p) => p.id === Number(e.target.value)); if (pl) void toggleIn(pl, t); }} className="text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1 py-1 w-20">
-                <option value="">+ لیست</option>
-                {playlists.filter((p) => !p.smart).map((p) => <option key={p.id} value={p.id}>{p.trackIds.includes(t.id) ? "✓ " : ""}{p.name}</option>)}
-              </select>
-            )}
-            <button onClick={() => setDetailId(t.id)} title="جزئیات" className="text-sm px-1 opacity-60 hover:opacity-100">ℹ️</button>
             {t.status === "ready" && (
-              <>
-                <button onClick={() => rate(t, 1)} title="لایک" className={`text-base px-1 ${t.rating > 0 ? "" : "opacity-30 hover:opacity-70"}`}>❤️</button>
-                <button onClick={() => rate(t, -1)} title="دیسلایک" className={`text-base px-1 ${t.rating < 0 ? "" : "opacity-30 hover:opacity-70"}`}>👎</button>
-              </>
+              <button onClick={() => rate(t, 1)} aria-label="لایک" aria-pressed={t.rating > 0} className={`shrink-0 w-10 h-10 grid place-items-center rounded-xl text-lg ${t.rating > 0 ? "" : "opacity-30 hover:opacity-70"}`}>❤️</button>
             )}
-            {t.status === "failed" && <button onClick={() => retry(t)} className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)]">↻</button>}
-            {t.status === "ready" && <button onClick={async () => { if (!confirm(`«${t.title ?? "آهنگ"}» دوباره از SpotSaver گرفته شود؟`)) return; await fetch(`/api/music/${t.id}?via=spotsaver`, { method: "POST" }); setMsg("در صف SpotSaver؛ تا یکی دو دقیقه دیگر جایگزین می‌شود"); void load(); }} className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)]" title="فایل این آهنگ اشتباه است؟ نسخه‌ی تازه از SpotSaver بگیر">↻ SS</button>}
-            {t.status === "failed" && (
-              <label className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] cursor-pointer" title="فایل صوتی این آهنگ را خودت بده (mp3, m4a, flac…)">
-                ⬆ فایل
-                <input type="file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.flac,.wav" className="hidden" onChange={async (e) => {
-                  const f = e.target.files?.[0]; e.target.value = ""; if (!f) return;
-                  setMsg(`در حال آپلود «${f.name}»…`);
-                  const fd = new FormData(); fd.append("file", f);
-                  const r = await fetch(`/api/music/${t.id}/upload`, { method: "POST", body: fd });
-                  const j = (await r.json().catch(() => ({}))) as { error?: string };
-                  setMsg(r.ok ? `«${t.title ?? "آهنگ"}» آماده شد` : `آپلود ناموفق: ${j.error ?? r.status}`); void load();
-                }} />
-              </label>
-            )}
-            <button onClick={() => del(t)} className="text-xs px-2 py-1 rounded-md border border-rose-500/40 text-rose-200">🗑</button>
+            {t.status === "failed" && <button onClick={() => retry(t)} aria-label="تلاش دوباره" className="shrink-0 w-10 h-10 grid place-items-center rounded-xl border border-[var(--color-border)]">↻</button>}
+            <div className="relative shrink-0">
+              <button onClick={() => setMenuFor(menuFor === t.id ? null : t.id)} aria-label="بیشتر" aria-expanded={menuFor === t.id} className="w-10 h-10 grid place-items-center rounded-xl border border-[var(--color-border)] text-lg leading-none active:bg-[var(--color-surface-2)]">⋯</button>
+              {menuFor === t.id && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setMenuFor(null)} />
+                  <div role="menu" className="absolute end-0 top-full mt-1 z-40 w-60 max-w-[calc(100vw-2rem)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-1.5 text-sm">
+                    <MenuItem onClick={() => { setMenuFor(null); setDetailId(t.id); }}>ℹ️ جزئیات</MenuItem>
+                    {t.status === "ready" && <MenuItem onClick={() => { setMenuFor(null); rate(t, -1); }}>{t.rating < 0 ? "↩ برداشتن دیسلایک" : "👎 دیسلایک (هرگز پخش نشود)"}</MenuItem>}
+                    {t.status === "ready" && <MenuItem onClick={async () => { setMenuFor(null); if (!confirm(`«${t.title ?? "آهنگ"}» دوباره از SpotSaver گرفته شود؟`)) return; await fetch(`/api/music/${t.id}?via=spotsaver`, { method: "POST" }); setMsg("در صف SpotSaver؛ تا یکی دو دقیقه دیگر جایگزین می‌شود"); void load(); }}>↻ فایل اشتباه است؟ از SpotSaver بگیر</MenuItem>}
+                    {t.status === "failed" && (
+                      <label className="block w-full min-h-11 px-3 py-2.5 rounded-xl hover:bg-[var(--color-surface-2)] cursor-pointer">
+                        ⬆ آپلود فایل صوتی
+                        <input type="file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.flac,.wav" className="hidden" onChange={async (e) => {
+                          const f = e.target.files?.[0]; e.target.value = ""; setMenuFor(null); if (!f) return;
+                          setMsg(`در حال آپلود «${f.name}»…`);
+                          const fd = new FormData(); fd.append("file", f);
+                          const r = await fetch(`/api/music/${t.id}/upload`, { method: "POST", body: fd });
+                          const j = (await r.json().catch(() => ({}))) as { error?: string };
+                          setMsg(r.ok ? `«${t.title ?? "آهنگ"}» آماده شد` : `آپلود ناموفق: ${j.error ?? r.status}`); void load();
+                        }} />
+                      </label>
+                    )}
+                    {t.status === "ready" && playlists.some((pl) => !pl.smart) && (
+                      <div className="mt-1 pt-1 border-t border-[var(--color-border)]">
+                        <div className="px-3 py-1 text-[11px] text-[var(--color-text-dim)]">پلی‌لیست‌ها</div>
+                        <div className="max-h-40 overflow-y-auto">
+                          {playlists.filter((pl) => !pl.smart).map((pl) => <MenuItem key={pl.id} onClick={() => void toggleIn(pl, t)}>{pl.trackIds.includes(t.id) ? "✓ " : "＋ "}{pl.name}</MenuItem>)}
+                        </div>
+                      </div>
+                    )}
+                    <div className="mt-1 pt-1 border-t border-[var(--color-border)]"><MenuItem danger onClick={() => { setMenuFor(null); del(t); }}>🗑 حذف از کتابخانه</MenuItem></div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         ))}
       </div>
