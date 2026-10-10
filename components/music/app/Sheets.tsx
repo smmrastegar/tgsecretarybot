@@ -313,10 +313,11 @@ export function DownloadSheet({ label, count, bytes, onAllow, onClose }: { label
 }
 
 /** App settings: storage, visualizer, install, and "sign out" so a different link can be used. */
-export function SettingsSheet({ downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onSignOut, onClose }: {
+export function SettingsSheet({ downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onRefresh, onSignOut, onClose }: {
   downloaded: number; viz: boolean; onViz: () => void; installable: boolean; iosHint: boolean; onInstall: () => void;
-  onRemoveDownloads: () => Promise<void>; onSignOut: (removeDownloads: boolean) => void; onClose: () => void;
+  onRemoveDownloads: () => Promise<void>; onRefresh: () => Promise<void>; onSignOut: (removeDownloads: boolean) => void; onClose: () => void;
 }) {
+  const [refreshing, setRefreshing] = useState(false);
   const [usage, setUsage] = useState<string | null>(null);
   const [confirmOut, setConfirmOut] = useState(false);
   const [wipe, setWipe] = useState(false);
@@ -328,6 +329,8 @@ export function SettingsSheet({ downloaded, viz, onViz, installable, iosHint, on
   const btn = "px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--s2)] active:scale-95 transition";
   return (
     <Sheet onClose={onClose} title="Settings">
+      <Row label="Refresh player" sub="Reload the app and your whole library. Downloaded songs stay."
+        right={<button disabled={refreshing} onClick={() => { setRefreshing(true); void onRefresh(); }} className={`${btn} disabled:opacity-60`}>{refreshing ? "Refreshing…" : "Refresh"}</button>} />
       <Row label="Offline downloads" sub={`${downloaded} ${downloaded === 1 ? "song" : "songs"} on this phone${usage ? ` · app storage ${usage}` : ""}`}
         right={<button disabled={downloaded === 0} onClick={async () => { if (confirm("Remove every downloaded song from this phone?")) { await onRemoveDownloads(); refresh(); } }} className={`${btn} disabled:opacity-35`}>Remove all</button>} />
       <Row label="Spectrum on the cover" sub="Turn off to save battery" right={<button role="switch" aria-checked={viz} onClick={onViz} className={`shrink-0 w-[52px] h-8 rounded-full relative transition-colors ${viz ? "bg-[rgb(var(--ac))]" : "bg-[var(--s2)]"}`}><span className={`absolute top-1/2 -translate-y-1/2 left-1 w-6 h-6 rounded-full shadow transition-transform duration-200 ${viz ? "translate-x-5 bg-[var(--acfg)]" : "translate-x-0 bg-[var(--dim)]"}`} /></button>} />

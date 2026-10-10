@@ -150,6 +150,13 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   // Remember this link on the device so the installed launcher (/listen) can reopen it.
   useEffect(() => { try { localStorage.setItem("listenLink", token); } catch { /* private mode */ } }, [token]);
 
+  // Full refresh: drop the service worker and its cached app shell / list / covers, then reload from the server.
+  // Downloaded songs and lyrics (Cache API "player-audio") are deliberately left alone.
+  const refreshAll = useCallback(async () => {
+    try { for (const r of (await navigator.serviceWorker?.getRegistrations?.()) ?? []) await r.unregister(); } catch { /* none */ }
+    try { for (const k of await caches.keys()) if (k.startsWith("player-shell")) await caches.delete(k); } catch { /* none */ }
+    window.location.reload();
+  }, []);
   const load = useCallback(async () => {
     try {
       const r = await fetch(`/api/music?${tq}`, { cache: "no-store" });
@@ -600,7 +607,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {smartT && <BackLayer onClose={() => setSmartT(null)} />}
       {dlPlan && <DownloadSheet label={dlPlan.label} count={dlPlan.ids.length} bytes={dlPlan.bytes} onAllow={() => void startDownload(dlPlan.ids)} onClose={() => setDlPlan(null)} />}
       {dlPlan && <BackLayer onClose={() => setDlPlan(null)} />}
-      {settingsOpen && <SettingsSheet downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsSheet downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
       {settingsOpen && <BackLayer onClose={() => setSettingsOpen(false)} />}
       {dl && <div className="fixed left-3 right-3 z-[60] max-w-2xl mx-auto rounded-2xl glass border border-[var(--bd)] px-4 py-3 flex items-center gap-3" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))" }} role="status">
         <div className="min-w-0 flex-1"><div className="text-[13px] font-semibold">Downloading {dl.done} of {dl.total}</div><div className="mt-1.5 h-1 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full bg-[rgb(var(--ac))] transition-[width]" style={{ width: `${(dl.done / dl.total) * 100}%` }} /></div></div>
