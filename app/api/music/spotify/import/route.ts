@@ -21,15 +21,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     const name = (b.name ?? (b.id === "liked" ? "لایک‌ها" : "Spotify")).slice(0, 100);
     const acct = (await listSpotifyAccounts()).find((a) => a.id === Number(b.accountId));
     const plId = await ensureSpotifyPlaylist(Number(b.accountId), b.id, name, acct?.displayName ?? acct?.spotifyUserId ?? `#${b.accountId}`);
-    let added = 0, already = 0;
+    let added = 0, already = 0, skipped = 0;
     for (const t of items) {
       const r = await addMusicTrack(t.id, `https://open.spotify.com/track/${t.id}`);
+      if (r.removed) { skipped++; continue; }
       if (r.created) added++; else already++;
-      await setPlaylistTrack(plId, r.track.id, true);
+      if (r.track) await setPlaylistTrack(plId, r.track.id, true);
     }
     await registerSyncSource({ accountId: Number(b.accountId), id: b.id, name }).catch(() => {});
     if (added > 0) await kickMusicQueue().catch(() => {});
-    return NextResponse.json({ total: items.length, added, already, playlistId: plId });
+    return NextResponse.json({ total: items.length, added, already, skipped, playlistId: plId });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
   }

@@ -34,13 +34,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (guard) return guard;
   const body = (await request.json().catch(() => ({}))) as { text?: string };
   const links = [...new Set((String(body.text ?? "").match(/https?:\/\/open\.spotify\.com\/\S+/g) ?? []))];
-  let added = 0, existing = 0, unsupported = 0;
+  let added = 0, existing = 0, unsupported = 0, removed = 0;
   for (const l of links.slice(0, 100)) {
     const p = parseSpotifyTrackUrl(l);
     if (!p) { unsupported++; continue; }
     const r = await addMusicTrack(p.id, p.url);
-    if (r.created) added++; else existing++;
+    if (r.removed) removed++; else if (r.created) added++; else existing++;
   }
   if (added > 0) await kickMusicQueue().catch(() => {});
-  return NextResponse.json({ added, existing, unsupported });
+  return NextResponse.json({ added, existing, unsupported, removed });
 }

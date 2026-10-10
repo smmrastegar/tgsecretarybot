@@ -88,8 +88,11 @@ export async function getMusicTrack(id: number): Promise<(MusicTrack & { filePat
 }
 
 /** Insert a queued track unless the spotify id is already known. */
-export async function addMusicTrack(spotifyId: string, url: string): Promise<{ track: MusicTrack; created: boolean }> {
+/** `removed: true` → the owner deleted this song earlier; it is not added again (see restoreRemovedTrack). */
+export async function addMusicTrack(spotifyId: string, url: string): Promise<{ track: MusicTrack | null; created: boolean; removed?: boolean }> {
   await ensureSchema();
+  const gone = (await q().query(`SELECT 1 FROM music_removed WHERE spotify_id = $1`, [spotifyId])) as Row[];
+  if (gone.length) return { track: null, created: false, removed: true };
   const ins = (await q().query(
     `INSERT INTO music_tracks (spotify_id, spotify_url) VALUES ($1, $2)
        ON CONFLICT (spotify_id) DO NOTHING RETURNING ${COLS}`,
@@ -98,6 +101,23 @@ export async function addMusicTrack(spotifyId: string, url: string): Promise<{ t
   if (ins[0]) return { track: map(ins[0]), created: true };
   const ex = (await q().query(`SELECT ${COLS} FROM music_tracks WHERE spotify_id = $1`, [spotifyId])) as Row[];
   return { track: map(ex[0]!), created: false };
+}
+
+export type RemovedTrack = { spotifyId: string; title: string | null; artist: string | null; removedAt: string };
+
+export async function listRemovedTracks(): Promise<RemovedTrack[]> {
+  await ensureSchema();
+  const rows = (await q().query(`SELECT spotify_id, title, artist, removed_at FROM music_removed ORDER BY removed_at DESC`)) as Row[];
+  return rows.map((r) => ({ spotifyId: str(r, "spotify_id"), title: strOrNull(r, "title"), artist: strOrNull(r, "artist"), removedAt: String(r.removed_at) }));
+}
+
+/** Allow the song again (the owner asked) and add it back to the library. */
+export async function restoreRemovedTrack(spotifyId: string): Promise<boolean> {
+  await ensureSchema();
+  const gone = (await q().query(`DELETE FROM music_removed WHERE spotify_id = $1 RETURNING 1`, [spotifyId])) as Row[];
+  if (!gone.length) return false;
+  await addMusicTrack(spotifyId, `https://open.spotify.com/track/${spotifyId}`);
+  return true;
 }
 
 export async function updateMusicTrack(id: number, patch: {
@@ -130,6 +150,11 @@ export async function updateMusicTrack(id: number, patch: {
 export async function deleteMusicTrack(id: number): Promise<{ filePath: string | null; coverPath: string | null } | null> {
   const t = await getMusicTrack(id);
   if (!t) return null;
+  // Remember it first: a later sync / import / paste must not resurrect it.
+  if (t.spotifyId) {
+    await ensureSchema();
+    await q().query(`INSERT INTO music_removed (spotify_id, title, artist) VALUES ($1, $2, $3) ON CONFLICT (spotify_id) DO UPDATE SET removed_at = NOW()`, [t.spotifyId, t.title, t.artist]);
+  }
   await q().query(`DELETE FROM music_tracks WHERE id = $1`, [id]);
   return { filePath: t.filePath, coverPath: t.coverPath };
 }

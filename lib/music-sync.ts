@@ -27,7 +27,7 @@ export async function syncSource(src: SyncSource): Promise<{ total: number; adde
   for (const t of items) {
     const r = await addMusicTrack(t.id, `https://open.spotify.com/track/${t.id}`);
     if (r.created) added++;
-    await setPlaylistTrack(plId, r.track.id, true);
+    if (r.track) await setPlaylistTrack(plId, r.track.id, true);
   }
   return { total: items.length, added };
 }

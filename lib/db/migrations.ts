@@ -369,6 +369,20 @@ export const MIGRATIONS: Migration[] = [
          WHERE s.key = 'musicSyncSources' AND s.value LIKE '[%' AND p.name = e->>'name' AND p.spotify_source_id IS NULL`;
     },
   },
+  {
+    // A song removed from the library stays removed: nothing (a Spotify list sync, an import, a pasted link)
+    // may bring it back until the owner restores it.
+    id: "2026-10-10-001-music-removed",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_removed (
+          spotify_id  TEXT PRIMARY KEY,
+          title       TEXT,
+          artist      TEXT,
+          removed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

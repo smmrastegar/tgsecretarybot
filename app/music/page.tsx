@@ -31,6 +31,36 @@ type Playlist = { id: number; name: string; trackIds: number[]; smart?: boolean 
 const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
 const fmt = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
 
+type Removed = { spotifyId: string; title: string | null; artist: string | null; removedAt: string };
+
+// Songs deleted from the library stay blocked everywhere (list sync, import, pasted links) until restored here.
+function RemovedSection({ onRestored }: { onRestored: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<Removed[] | null>(null);
+  const load = useCallback(async () => {
+    const r = await fetch("/api/music/removed", { cache: "no-store" });
+    if (r.ok) setRows(((await r.json()) as { removed: Removed[] }).removed);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  if (!rows || rows.length === 0) return null;
+  return (
+    <Section icon="🗑" title="حذف‌شده‌ها" summary="این آهنگ‌ها از هیچ راهی دوباره اضافه نمی‌شوند" badge={<Pill>{fa(rows.length)}</Pill>} open={open} onOpenChange={setOpen}>
+      <ul className="divide-y divide-[var(--color-border)] max-h-[50vh] overflow-y-auto">
+        {rows.map((r) => (
+          <li key={r.spotifyId} className="flex items-center gap-3 py-2">
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm truncate" dir="auto">{r.title ?? r.spotifyId}</span>
+              <span className="block text-[11px] text-[var(--color-text-dim)] truncate" dir="auto">{r.artist ?? ""}</span>
+            </span>
+            <button onClick={async () => { await fetch("/api/music/removed", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spotifyId: r.spotifyId }) }); await load(); onRestored(); }}
+              className="shrink-0 min-h-10 px-3 rounded-xl border border-[var(--color-border)] text-xs active:bg-[var(--color-surface-2)]">بازگردانی</button>
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
 function MenuItem({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
   return <button role="menuitem" onClick={onClick} className={`block w-full min-h-11 px-3 py-2.5 rounded-xl text-start hover:bg-[var(--color-surface-2)] active:bg-[var(--color-surface-2)] ${danger ? "text-rose-300" : ""}`}>{children}</button>;
 }
@@ -171,9 +201,9 @@ export default function MusicPage() {
   async function importSp(id: string, name: string) {
     setSpBusy(id); setMsg(null); setSpMsg(null);
     const r = await fetch("/api/music/spotify/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name, accountId: acct }) });
-    const j = (await r.json()) as { total?: number; added?: number; already?: number; error?: string };
+    const j = (await r.json()) as { total?: number; added?: number; already?: number; skipped?: number; error?: string };
     setSpBusy(null);
-    const done = r.ok ? `«${name}»: ${j.total} آهنگ — ${j.added} جدید به صف دانلود، ${j.already} قبلاً بود` : `خطا: ${j.error}`;
+    const done = r.ok ? `«${name}»: ${j.total} آهنگ — ${j.added} جدید به صف دانلود، ${j.already} قبلاً بود${j.skipped ? `، ${fa(j.skipped)} حذف‌شده نادیده گرفته شد` : ""}` : `خطا: ${j.error}`;
     setMsg(done); setSpMsg(done);
     void load();
   }
@@ -268,11 +298,11 @@ export default function MusicPage() {
   async function add() {
     if (!paste.trim()) return;
     const r = await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: paste }) });
-    const j = (await r.json()) as { added: number; existing: number; unsupported: number };
-    setMsg(`${j.added} آهنگ به صف دانلود اضافه شد${j.existing ? ` · ${j.existing} قبلاً بود` : ""}${j.unsupported ? ` · ${j.unsupported} لینک غیرآهنگ (فقط لینک track پشتیبانی می‌شود)` : ""}`);
+    const j = (await r.json()) as { added: number; existing: number; unsupported: number; removed?: number };
+    setMsg(`${j.added} آهنگ به صف دانلود اضافه شد${j.existing ? ` · ${j.existing} قبلاً بود` : ""}${j.unsupported ? ` · ${j.unsupported} لینک غیرآهنگ (فقط لینک track پشتیبانی می‌شود)` : ""}${j.removed ? ` · ${j.removed} آهنگ قبلاً حذف شده بود و اضافه نشد (از «حذف‌شده‌ها» بازگردانی کن)` : ""}`);
     setPaste(""); void load();
   }
-  async function del(t: Track) { if (confirm(`«${t.title ?? "آهنگ"}» حذف شود؟`)) { await fetch(`/api/music/${t.id}`, { method: "DELETE" }); if (cur === t.id) { audio.current?.pause(); setCur(null); } void load(); } }
+  async function del(t: Track) { if (confirm(`«${t.title ?? "آهنگ"}» حذف شود؟\nدیگر از هیچ پلی‌لیست، همگام‌سازی یا لینکی برنمی‌گردد (از بخش «حذف‌شده‌ها» می‌شود بازگرداند).`)) { await fetch(`/api/music/${t.id}`, { method: "DELETE" }); if (cur === t.id) { audio.current?.pause(); setCur(null); } void load(); } }
   async function retry(t: Track) { await fetch(`/api/music/${t.id}`, { method: "POST" }); void load(); }
   async function repair() {
     if (!confirm("همه‌ی آهنگ‌ها از اسپاتیفای اصلاح می‌شوند (نام، خواننده، کاور) و فایل‌هایی که مال آهنگ دیگری هستند دوباره دانلود می‌شوند. ادامه؟")) return;
@@ -390,6 +420,7 @@ export default function MusicPage() {
         </Section>
       )}
 
+      <RemovedSection key={tracks.length} onRestored={() => { setMsg("بازگردانده شد و در صف دانلود است"); void load(); }} />
       <Section icon="📊" title="آمار شنیدن" summary="چه چیزی، چقدر و کی شنیده‌ای" open={showStats} onOpenChange={setShowStats}><MusicStats tq="" /></Section>
       {loadErr && <Card className="mb-3"><p className="text-sm text-rose-300">{loadErr}</p></Card>}
       <div className="mb-3 space-y-2">
