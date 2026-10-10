@@ -24,8 +24,15 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
     icons: { icon: "/icons/player-192.png", apple: "/icons/player-180.png" },
   };
 }
-export const viewport: Viewport = { themeColor: "#0b0b0f", width: "device-width", initialScale: 1, viewportFit: "cover" };
+export const viewport: Viewport = { themeColor: "#0b0b0f", width: "device-width", initialScale: 1, maximumScale: 1, userScalable: false, viewportFit: "cover" };
 
 export default function PlayerLayout({ children }: { children: React.ReactNode }) {
-  return <div className={inter.variable}>{children}</div>;
+  // A player is not a document: no pinch / double-tap zoom (an accidental zoom crops the controls off-screen).
+  // touch-action on the root intersects with the elements' own values (the seek bar keeps pan-y).
+  return (
+    <div className={inter.variable}>
+      <style>{"html,body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%;text-size-adjust:100%}"}</style>
+      {children}
+    </div>
+  );
 }

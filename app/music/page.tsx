@@ -87,6 +87,7 @@ export default function MusicPage() {
   const [detailId, setDetailId] = useState<number | null>(null);
   const [showStats, setShowStats] = useState(false);
   const [menuFor, setMenuFor] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState(false);
   type Rep = { id: number; trackId: number; trackTitle: string | null; reasons: string[]; note: string | null; context: Record<string, unknown> | null; status: string; createdAt: string };
   const [reports, setReports] = useState<Rep[]>([]);
   const [reasonLabels, setReasonLabels] = useState<Record<string, string>>({});
@@ -345,7 +346,6 @@ export default function MusicPage() {
     const i = queue.indexOf(cur);
     return queue.slice(i + 1, i + 4).map((id) => byId.get(id)).filter((t): t is Track => !!t);
   }, [cur, queue, byId]);
-  const btn = "px-3 py-2 rounded-lg border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-lg";
 
   const Wrap = focus ? FocusShell : Shell;
   return (
@@ -522,27 +522,38 @@ export default function MusicPage() {
       <audio ref={audio} onTimeUpdate={(e) => { setPos(e.currentTarget.currentTime); tracker.tick(e.currentTarget.currentTime, e.currentTarget.duration); }} onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
         onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { tracker.flush(true); step(1, true); }} />
       {now && (
-        <div className="fixed bottom-16 md:bottom-0 inset-x-0 z-30 border-t border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur px-4 py-2">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center gap-3">
-              {now.hasCover ? <img src={`/api/music/cover/${now.id}`} alt="" className="w-11 h-11 rounded-md" /> : <span className="text-2xl">🎵</span>}
-              <div className="min-w-0 flex-1"><div className="text-sm font-medium truncate">{now.title}</div><div className="text-[11px] text-[var(--color-text-dim)] truncate">{now.artist}</div></div>
-              <button className={btn} onClick={() => setDetailId(now.id)} title="جزئیات">ℹ️</button>
-              <button className={`${btn} ${now.rating > 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, 1)} title="لایک">❤️</button>
-              <button className={`${btn} ${now.rating < 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, -1)} title="دیسلایک (بعدی)">👎</button>
-              <button className={btn} onClick={() => step(-1)}>⏮</button>
-              <button className={btn} onClick={() => (playing ? audio.current?.pause() : void audio.current?.play())}>{playing ? "⏸" : "▶️"}</button>
-              <button className={btn} onClick={() => step(1)}>⏭</button>
+        <div className="fixed bottom-16 md:bottom-0 inset-x-0 z-30 border-t border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur">
+          <div className="max-w-3xl mx-auto px-3 pt-2 pb-2.5">
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => setExpanded((e) => !e)} aria-expanded={expanded} aria-label="گزینه‌های بیشتر پلیر" className="flex items-center gap-3 min-w-0 flex-1 text-start rounded-xl">
+                {now.hasCover ? <img src={`/api/music/cover/${now.id}`} alt="" className="w-11 h-11 rounded-lg shrink-0 object-cover" /> : <span className="grid place-items-center w-11 h-11 rounded-lg bg-[var(--color-surface-2)] shrink-0 text-xl">🎵</span>}
+                <span className="min-w-0"><span className="block text-sm font-medium truncate" dir="auto">{now.title}</span><span className="block text-[11px] text-[var(--color-text-dim)] truncate" dir="auto">{now.artist}</span></span>
+              </button>
+              <div className="flex items-center gap-1 shrink-0" dir="ltr">
+                <button className="w-11 h-11 grid place-items-center rounded-full text-lg active:bg-[var(--color-surface-2)]" onClick={() => step(-1)} aria-label="قبلی">⏮</button>
+                <button className="w-12 h-12 grid place-items-center rounded-full bg-[var(--color-accent)] text-white text-lg" onClick={() => (playing ? audio.current?.pause() : void audio.current?.play())} aria-label={playing ? "مکث" : "پخش"}>{playing ? "⏸" : "▶"}</button>
+                <button className="w-11 h-11 grid place-items-center rounded-full text-lg active:bg-[var(--color-surface-2)]" onClick={() => step(1)} aria-label="بعدی">⏭</button>
+              </div>
+              <button className="w-10 h-10 grid place-items-center rounded-full text-[var(--color-text-dim)] active:bg-[var(--color-surface-2)]" onClick={() => { audio.current?.pause(); setCur(null); setExpanded(false); }} aria-label="بستن پلیر" title="بستن پلیر">✕</button>
             </div>
-            {upNext.length > 0 && <div className="text-[11px] text-[var(--color-text-dim)] truncate mt-0.5">بعدی: {upNext.map((t) => t.title ?? "—").join(" · ")}</div>}
-            <div className="flex items-center gap-2 mt-1" dir="ltr">
-              <span className="text-[11px] w-9 text-right">{fmt(pos)}</span>
-              <input type="range" min={0} max={dur || 1} step={1} value={pos} onChange={(e) => { if (audio.current) audio.current.currentTime = Number(e.target.value); }} className="flex-1" />
-              <span className="text-[11px] w-9">{fmt(dur)}</span>
-              <button className={`text-sm ${shuffle ? "text-amber-300" : "text-[var(--color-text-dim)]"}`} onClick={() => setShuffle((s) => !s)} title="شافل">🔀</button>
-              <button className={`text-sm ${repeat !== "off" ? "text-amber-300" : "text-[var(--color-text-dim)]"}`} onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} title="تکرار">{repeat === "one" ? "🔂" : "🔁"}</button>
-              <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => { const v = Number(e.target.value); setVol(v); if (audio.current) audio.current.volume = v; }} className="w-20" />
+            <div className="flex items-center gap-2 mt-1.5" dir="ltr">
+              <span className="text-[11px] w-9 text-right tabular-nums">{fmt(pos)}</span>
+              <input type="range" min={0} max={dur || 1} step={1} value={pos} aria-label="موقعیت" onChange={(e) => { if (audio.current) audio.current.currentTime = Number(e.target.value); }} className="flex-1 min-w-0" />
+              <span className="text-[11px] w-9 tabular-nums">{fmt(dur)}</span>
             </div>
+            {expanded && (
+              <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-2">
+                {upNext.length > 0 && <div className="text-[11px] text-[var(--color-text-dim)] truncate" dir="auto">بعدی: {upNext.map((t) => t.title ?? "—").join(" · ")}</div>}
+                <div className="flex items-center justify-between gap-1">
+                  <button className={`w-11 h-11 grid place-items-center rounded-xl text-lg ${now.rating > 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, 1)} aria-label="لایک">❤️</button>
+                  <button className={`w-11 h-11 grid place-items-center rounded-xl text-lg ${now.rating < 0 ? "" : "opacity-40"}`} onClick={() => void rate(now, -1)} aria-label="دیسلایک و بعدی">👎</button>
+                  <button className="w-11 h-11 grid place-items-center rounded-xl text-lg" onClick={() => setDetailId(now.id)} aria-label="جزئیات">ℹ️</button>
+                  <button className={`w-11 h-11 grid place-items-center rounded-xl text-lg ${shuffle ? "text-amber-300" : "opacity-50"}`} onClick={() => setShuffle((s) => !s)} aria-label="شافل">🔀</button>
+                  <button className={`w-11 h-11 grid place-items-center rounded-xl text-lg ${repeat !== "off" ? "text-amber-300" : "opacity-50"}`} onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} aria-label="تکرار">{repeat === "one" ? "🔂" : "🔁"}</button>
+                  <input type="range" min={0} max={1} step={0.05} value={vol} aria-label="صدا" onChange={(e) => { const v = Number(e.target.value); setVol(v); if (audio.current) audio.current.volume = v; }} className="w-24 shrink" dir="ltr" />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

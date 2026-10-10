@@ -9,8 +9,13 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, title: "Music", statusBarStyle: "black-translucent" },
   icons: { icon: "/icons/player-192.png", apple: "/icons/player-180.png" },
 };
-export const viewport: Viewport = { themeColor: "#0b0b0f", width: "device-width", initialScale: 1, viewportFit: "cover" };
+export const viewport: Viewport = { themeColor: "#0b0b0f", width: "device-width", initialScale: 1, maximumScale: 1, userScalable: false, viewportFit: "cover" };
 
 export default function ListenLayout({ children }: { children: React.ReactNode }) {
-  return children;
+  return (
+    <>
+      <style>{"html,body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%;text-size-adjust:100%}"}</style>
+      {children}
+    </>
+  );
 }
