@@ -23,7 +23,7 @@ type Track = {
   id: number; spotifyUrl: string; title: string | null; artist: string | null; album: string | null;
   durationS: number | null; hasCover: boolean; status: "queued" | "downloading" | "ready" | "failed";
   error: string | null; sizeBytes: number | null;
-  rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
+  sources?: number[]; rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
   releaseDate: string | null; mime: string | null; readyAt: string | null; createdAt: string; listenSeconds: number;
 };
 type Playlist = { id: number; name: string; trackIds: number[]; smart?: boolean };
@@ -31,6 +31,22 @@ type Playlist = { id: number; name: string; trackIds: number[]; smart?: boolean 
 
 const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
 const fmt = (s: number) => (Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
+
+/** Which Spotify account(s) a song came from: a few tiny, dim initials (hover for the full name). */
+function AccountMarks({ ids, accounts }: { ids?: number[]; accounts: Array<{ id: number; name: string }> }) {
+  if (!ids?.length || accounts.length === 0) return null;
+  const clean = (n: string) => n.replace(/[^\p{L}\p{N}]/gu, "");
+  const mark = (n: string, len: number) => clean(n).slice(0, len).toUpperCase() || "?";
+  const initials = accounts.map((a) => mark(a.name, 1));
+  const label = (a: { id: number; name: string }) => mark(a.name, initials.filter((i) => i === mark(a.name, 1)).length > 1 ? 2 : 1);
+  const mine = accounts.filter((a) => ids.includes(a.id));
+  if (mine.length === 0) return null;
+  return (
+    <span className="ms-1.5 inline-flex gap-0.5 align-middle" dir="ltr">
+      {mine.map((a) => <span key={a.id} title={a.name} aria-label={`از حساب ${a.name}`} className="text-[8px] leading-[10px] px-[3px] rounded-[3px] border border-current opacity-35">{label(a)}</span>)}
+    </span>
+  );
+}
 
 type Removed = { spotifyId: string; title: string | null; artist: string | null; removedAt: string };
 
@@ -77,6 +93,7 @@ function FocusShell({ children }: { children: React.ReactNode }) {
 }
 
 export default function MusicPage() {
+  const [accounts, setAccounts] = useState<Array<{ id: number; name: string }>>([]);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [view, setView] = useState<"all" | "liked" | number>("all");
@@ -161,8 +178,8 @@ export default function MusicPage() {
         setLoadErr(`بارگذاری فهرست ناموفق (${r.status}) ${e.error ?? ""}`);
         return;
       }
-      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[] };
-      setTracks(j.tracks); setPlaylists(j.playlists); setLoadErr(null);
+      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string }> };
+      setTracks(j.tracks); setPlaylists(j.playlists); setAccounts(j.accounts ?? []); setLoadErr(null);
     } catch (e) {
       setLoadErr(`بارگذاری فهرست ناموفق: ${String(e)}`);
     }
@@ -473,6 +490,7 @@ export default function MusicPage() {
               <div className="text-sm font-medium truncate" dir="auto">{t.title ?? t.spotifyUrl.split("/").pop()}</div>
               <div className="text-[11px] text-[var(--color-text-dim)] truncate" dir="auto">
                 {t.status === "ready" && `${t.artist ?? ""}${t.album ? ` · ${t.album}` : ""}${t.durationS ? ` · ${fmt(t.durationS)}` : ""}${t.playCount ? ` · ▶ ${t.playCount}` : ""}${t.skipCount ? ` · ⏭ ${t.skipCount}` : ""}`}
+                {t.status === "ready" && <AccountMarks ids={t.sources} accounts={accounts} />}
                 {t.status === "queued" && "⏳ در صف دانلود"}
                 {t.status === "downloading" && "⬇️ در حال دانلود از بات…"}
                 {t.status === "failed" && <span className="text-rose-300">❌ {t.error ?? "ناموفق"}</span>}

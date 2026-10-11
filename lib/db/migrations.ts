@@ -403,6 +403,25 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // Which Spotify account(s) each library song came from (written by imports and syncs); drives the tiny
+    // account marks in the library list and the "shared by every account" playlist.
+    id: "2026-10-11-002-track-sources",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_track_sources (
+          track_id    BIGINT NOT NULL REFERENCES music_tracks(id) ON DELETE CASCADE,
+          account_id  BIGINT NOT NULL,
+          PRIMARY KEY (track_id, account_id)
+        )`;
+      await q`
+        INSERT INTO music_track_sources (track_id, account_id)
+          SELECT DISTINCT pt.track_id, p.spotify_account_id
+            FROM music_playlist_tracks pt JOIN music_playlists p ON p.id = pt.playlist_id
+           WHERE p.spotify_account_id > 0
+        ON CONFLICT DO NOTHING`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

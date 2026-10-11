@@ -207,6 +207,39 @@ export async function createMusicPlaylist(name: string, rules?: Record<string, u
   return num(rows[0]!, "id");
 }
 
+/** Remember that these songs are in this Spotify account's lists. */
+export async function recordTrackSources(accountId: number, trackIds: number[]): Promise<void> {
+  const ids = [...new Set(trackIds.filter((n) => Number.isFinite(n)))];
+  if (!ids.length || !(accountId > 0)) return;
+  await ensureSchema();
+  await q().query(
+    `INSERT INTO music_track_sources (track_id, account_id) SELECT unnest($1::bigint[]), $2 ON CONFLICT DO NOTHING`,
+    [ids, accountId],
+  );
+}
+
+/** track id → ids of the connected accounts it came from. */
+export async function listTrackSources(): Promise<Map<number, number[]>> {
+  await ensureSchema();
+  const rows = (await q().query(
+    `SELECT s.track_id, s.account_id FROM music_track_sources s JOIN spotify_accounts a ON a.id = s.account_id ORDER BY s.track_id, s.account_id`,
+  )) as Row[];
+  const out = new Map<number, number[]>();
+  for (const r of rows) { const k = num(r, "track_id"); (out.get(k) ?? out.set(k, []).get(k)!).push(num(r, "account_id")); }
+  return out;
+}
+
+/** Songs that every connected account has (needs at least two accounts). */
+export async function sharedTrackIds(): Promise<number[]> {
+  await ensureSchema();
+  const rows = (await q().query(
+    `SELECT s.track_id FROM music_track_sources s JOIN spotify_accounts a ON a.id = s.account_id
+      GROUP BY s.track_id
+     HAVING COUNT(DISTINCT s.account_id) >= GREATEST(2, (SELECT COUNT(*) FROM spotify_accounts))`,
+  )) as Row[];
+  return rows.map((r) => num(r, "track_id"));
+}
+
 /** The library playlist that mirrors one Spotify list of one account — created on first use, never shared between accounts. */
 export async function ensureSpotifyPlaylist(accountId: number, sourceId: string, name: string, accountLabel: string): Promise<number> {
   await ensureSchema();

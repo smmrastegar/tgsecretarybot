@@ -1,4 +1,4 @@
-import { addMusicTrack, ensureSpotifyPlaylist, getAllSettings, listMusicPlaylists, setPlaylistTrack, setSetting } from "@/lib/db";
+import { addMusicTrack, createMusicPlaylist, ensureSpotifyPlaylist, getAllSettings, listMusicPlaylists, recordTrackSources, setPlaylistTrack, setSetting } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
 import { fetchTrackIds, listMyPlaylists, listSpotifyAccounts } from "@/lib/spotify";
 
@@ -24,11 +24,13 @@ export async function syncSource(src: SyncSource): Promise<{ total: number; adde
   const acct = (await listSpotifyAccounts()).find((a) => a.id === src.accountId);
   const plId = await ensureSpotifyPlaylist(src.accountId, src.id, src.name, acct?.displayName ?? acct?.spotifyUserId ?? `#${src.accountId}`);
   let added = 0;
+  const have: number[] = [];
   for (const t of items) {
     const r = await addMusicTrack(t.id, `https://open.spotify.com/track/${t.id}`);
     if (r.created) added++;
-    if (r.track) await setPlaylistTrack(plId, r.track.id, true);
+    if (r.track) { await setPlaylistTrack(plId, r.track.id, true); have.push(r.track.id); }
   }
+  await recordTrackSources(src.accountId, have);
   return { total: items.length, added };
 }
 
@@ -43,6 +45,15 @@ async function backfillSources(): Promise<void> {
   }
 }
 
+/** With two or more accounts connected there is one auto playlist of the songs every account has. */
+export const SHARED_PLAYLIST_NAME = "🤝 مشترک بین همهٔ حساب‌ها";
+export async function ensureSharedPlaylist(): Promise<void> {
+  if ((await listSpotifyAccounts()).length < 2) return;
+  const pls = await listMusicPlaylists();
+  if (pls.some((p) => (p.rules as { sharedByAll?: boolean } | null)?.sharedByAll === true)) return;
+  await createMusicPlaylist(SHARED_PLAYLIST_NAME, { sharedByAll: true });
+}
+
 export async function runSync(): Promise<{ sources: number; added: number; errors: string[] }> {
   const s = await getAllSettings();
   if (s.musicSyncBackfill !== "done") { await backfillSources(); await setSetting("musicSyncBackfill", "done"); }
@@ -51,6 +62,7 @@ export async function runSync(): Promise<{ sources: number; added: number; error
   for (const src of sources) {
     try { added += (await syncSource(src)).added; } catch (e) { errors.push(`${src.name}: ${e instanceof Error ? e.message : String(e)}`); }
   }
+  await ensureSharedPlaylist().catch(() => {});
   await setSetting("musicSyncLast", String(Date.now()));
   if (added > 0) await kickMusicQueue().catch(() => {});
   return { sources: sources.length, added, errors };

@@ -1,4 +1,4 @@
-import { listMusicPlaylists, listMusicTracks, type MusicPlaylist, type MusicTrack } from "@/lib/db";
+import { listMusicPlaylists, listMusicTracks, sharedTrackIds, type MusicPlaylist, type MusicTrack } from "@/lib/db";
 import { descriptors, similarTo, type Descriptor } from "@/lib/music-analysis";
 
 // Smart playlists: membership is computed from rules every time it is asked
@@ -14,6 +14,7 @@ export type SmartRules = {
   energy?: [number, number];       // 0–1
   bpm?: [number, number];
   mode?: "major" | "minor";
+  sharedByAll?: boolean;           // songs that every connected Spotify account has
   seed?: { trackId: number; n?: number }; // the n songs that sound most like this one
   limit?: number;
 };
@@ -32,6 +33,7 @@ export function sanitizeRules(raw: unknown): SmartRules {
   const out: SmartRules = {};
   if (r.liked === true) out.liked = true;
   if (r.includeDisliked === true) out.includeDisliked = true;
+  if (r.sharedByAll === true) out.sharedByAll = true;
   if (strs(r.genres).length) out.genres = strs(r.genres);
   if (strs(r.artists).length) out.artists = strs(r.artists);
   if (r.moods && typeof r.moods === "object") {
@@ -71,7 +73,8 @@ function matches(t: MusicTrack, d: Descriptor | undefined, r: SmartRules): boole
 /** Track ids a rule set selects right now (ready songs only), in a sensible order. */
 export async function resolveRules(rawRules: unknown, tracks?: MusicTrack[]): Promise<number[]> {
   const r = sanitizeRules(rawRules);
-  const all = (tracks ?? (await listMusicTracks())).filter((t) => t.status === "ready");
+  let all = (tracks ?? (await listMusicTracks())).filter((t) => t.status === "ready");
+  if (r.sharedByAll) { const shared = new Set(await sharedTrackIds()); all = all.filter((t) => shared.has(t.id)); }
   const desc = await descriptors().catch(() => new Map<number, Descriptor>());
   let ids: number[];
   if (r.seed) {

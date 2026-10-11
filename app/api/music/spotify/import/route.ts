@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
-import { addMusicTrack, ensureSpotifyPlaylist, setPlaylistTrack } from "@/lib/db";
+import { addMusicTrack, ensureSpotifyPlaylist, recordTrackSources, setPlaylistTrack } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
-import { registerSyncSource } from "@/lib/music-sync";
+import { ensureSharedPlaylist, registerSyncSource } from "@/lib/music-sync";
 import { fetchTrackIds, listSpotifyAccounts } from "@/lib/spotify";
 
 export const runtime = "nodejs";
@@ -22,12 +22,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     const acct = (await listSpotifyAccounts()).find((a) => a.id === Number(b.accountId));
     const plId = await ensureSpotifyPlaylist(Number(b.accountId), b.id, name, acct?.displayName ?? acct?.spotifyUserId ?? `#${b.accountId}`);
     let added = 0, already = 0, skipped = 0;
+    const have: number[] = [];
     for (const t of items) {
       const r = await addMusicTrack(t.id, `https://open.spotify.com/track/${t.id}`);
       if (r.removed) { skipped++; continue; }
       if (r.created) added++; else already++;
-      if (r.track) await setPlaylistTrack(plId, r.track.id, true);
+      if (r.track) { await setPlaylistTrack(plId, r.track.id, true); have.push(r.track.id); }
     }
+    await recordTrackSources(Number(b.accountId), have);
+    await ensureSharedPlaylist().catch(() => {});
     await registerSyncSource({ accountId: Number(b.accountId), id: b.id, name }).catch(() => {});
     if (added > 0) await kickMusicQueue().catch(() => {});
     return NextResponse.json({ total: items.length, added, already, skipped, playlistId: plId });

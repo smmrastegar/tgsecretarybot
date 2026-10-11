@@ -34,4 +34,10 @@ describe("smart playlists", () => {
     expect(await resolveRules({ seed: { trackId: 1 }, liked: true })).toEqual([1, 3]);
     expect(await resolveRules({ artists: ["sara"], limit: 1 })).toEqual([3]);
   });
+
+  it("keeps the shared-by-every-account rule and drops junk", async () => {
+    const { sanitizeRules } = await import("@/lib/music-playlists");
+    expect(sanitizeRules({ sharedByAll: true, bogus: 1 })).toEqual({ sharedByAll: true });
+    expect(sanitizeRules({ sharedByAll: "yes" })).toEqual({});
+  });
 });
