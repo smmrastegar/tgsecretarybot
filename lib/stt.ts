@@ -49,6 +49,15 @@ function mimeToFormat(mime: string): string {
   return "ogg";
 }
 
+// Groq answers 400 "unsupported_audio_format" by file extension, and Telegram names voice notes "*.oga".
+const GROQ_EXTS = new Set(["flac", "mp3", "mp4", "mpeg", "mpga", "m4a", "ogg", "opus", "wav", "webm"]);
+export function groqFileName(name: string, mime: string): string {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  if (GROQ_EXTS.has(ext)) return name;
+  const fmt = mimeToFormat(mime);
+  return `audio.${fmt === "aac" ? "m4a" : fmt}`;
+}
+
 export async function downloadTelegramFile(
   botToken: string,
   fileId: string,
@@ -223,7 +232,7 @@ async function transcribeViaGroq(
   );
 
   const form = new FormData();
-  form.append("file", new Blob([data as BlobPart], { type: mime }), name);
+  form.append("file", new Blob([data as BlobPart], { type: mime }), groqFileName(name, mime));
   form.append("model", GROQ_MODEL);
   form.append("response_format", "verbose_json");
   if (args.language) {
