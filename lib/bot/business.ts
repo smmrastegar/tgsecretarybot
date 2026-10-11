@@ -406,9 +406,10 @@ export async function maybeApplyNoteWatch(args: {
   }
 }
 
-// The owner's OWN voice note, transcribed straight back under itself.
+// The owner's OWN voice note or round video message (video note), transcribed
+// straight back under itself.
 // Deliberately narrow, because that's exactly what was asked for:
-//   * only msg.voice — not video notes, not audio files
+//   * only msg.voice and msg.video_note — not audio files or ordinary videos
 //   * only the owner's own voices — the other party's already go
 //     through the classifier / Transcribe-button path
 //   * the reply is the bare transcript: no header, no rule label,
@@ -423,13 +424,14 @@ async function maybeTranscribeOwnVoice(args: {
   logId: number | null;
 }): Promise<void> {
   const { msg, bot, bcId, rule } = args;
-  if (!msg.voice) return;
+  const media = msg.voice ?? msg.video_note;
+  if (!media) return;
   if (!rule?.selfVoiceTranscript) return;
   if (!sttConfigured()) return;
   const settings = await getSettings();
   const { text } = await transcribeAudio({
     botToken: config.telegramBotToken,
-    fileId: msg.voice.file_id,
+    fileId: media.file_id,
     language: settings.sttLanguage || "fa",
     chatId: msg.chat.id,
     businessConnectionId: bcId,
@@ -691,7 +693,7 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
     // AWAITED, not detached: on a frozen serverless invocation a void
     // promise here would drop the transcript silently. Bounded by the
     // STT timeouts in lib/stt.ts, well inside the webhook budget.
-    if (msg.voice) {
+    if (msg.voice || msg.video_note) {
       const ownRule = await getChatRule(msg.chat.id).catch(() => null);
       await maybeTranscribeOwnVoice({
         msg,
