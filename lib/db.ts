@@ -24,3 +24,4 @@ export * from "./db/music-analysis";
 export * from "./db/login-requests";
 export * from "./db/player-links";
 export * from "./db/music-verify";
+export * from "./db/music-artists";

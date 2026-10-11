@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
+import ArtistsSection from "@/components/music/dashboard/ArtistsSection";
 import LinksCard from "@/components/music/dashboard/LinksCard";
 import Section, { Pill } from "@/components/music/dashboard/Section";
 import SpotifySection, { type SpCfg, type SpLib } from "@/components/music/dashboard/SpotifySection";
@@ -372,6 +373,7 @@ export default function MusicPage() {
         <button onClick={smartMix} disabled={readyVisible.length === 0} className={`min-h-11 rounded-xl border text-sm disabled:opacity-50 ${mixOn ? "border-amber-400 text-amber-200" : "border-[var(--color-border)]"}`}>🎲 ترکیب هوشمند</button>
       </div>
       <p className="text-[11px] text-[var(--color-text-dim)] mb-4 px-1 leading-6">لایک = بیشتر پخش می‌شود · دیسلایک = هرگز · ردشدن زود = کمتر</p>
+      <ArtistsSection onChanged={() => void load()} />
       <SmartPlaylistCard tracks={tracks} onMessage={setMsg} onCreated={() => { void load(); setLinksKey((k) => k + 1); }} />
       <LinksCard onMessage={setMsg} refreshKey={linksKey + playlists.length} />
       <PinCard onMessage={setMsg} />

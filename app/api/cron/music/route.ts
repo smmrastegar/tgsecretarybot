@@ -5,6 +5,7 @@ import { fillMissingMeta, kickMusicQueue, repairLibrary, verifyLibraryLocal } fr
 import { verifyStep } from "@/lib/music-verify";
 import { analysisStep } from "@/lib/music-analysis";
 import { spotdlFallbackStep } from "@/lib/music-spotdl";
+import { artistWatchStep } from "@/lib/music-artists";
 import { runSync, SYNC_EVERY_MS } from "@/lib/music-sync";
 import { reportInfo, reportWarn } from "@/lib/report";
 
@@ -81,6 +82,8 @@ export async function GET(request: Request): Promise<NextResponse> {
       reportWarn("music", "auto-sync failed:", err);
     }
   }
+  // Followed artists: any new release is brought in (the step only does work when an artist is due: every 6 h).
+  void artistWatchStep().catch((err) => reportWarn("music", "artist watch failed:", err));
   // Fallback: one "Track not found" track per tick via spotDL (runs in the
   // background; guarded by its own lock).
   void verifyStep().catch((err) => reportWarn("music", "verify step failed:", err));

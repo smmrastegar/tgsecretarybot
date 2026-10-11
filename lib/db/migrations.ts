@@ -383,6 +383,26 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // Artists the owner follows: new releases are found periodically, downloaded, and added to a playlist
+    // for that artist (library playlist keyed spotify_account_id = 0, spotify_source_id = "artist:<id>").
+    id: "2026-10-11-001-music-artists",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_artists (
+          id                 BIGSERIAL PRIMARY KEY,
+          spotify_artist_id  TEXT NOT NULL UNIQUE,
+          name               TEXT NOT NULL,
+          image_url          TEXT,
+          followed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_checked_at    TIMESTAMPTZ,
+          last_error         TEXT,
+          seen_albums        TEXT NOT NULL DEFAULT '[]',
+          seen_keys          TEXT NOT NULL DEFAULT '[]',
+          track_count        INT NOT NULL DEFAULT 0
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

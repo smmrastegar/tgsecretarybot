@@ -172,6 +172,26 @@ export async function appToken(): Promise<string> {
   return t.access_token;
 }
 
+let catalogTok: { v: string; until: number } | null = null;
+
+/**
+ * GET a public catalogue endpoint (artists, albums…): the app token first (cached), then a linked
+ * account when Spotify answers 401/403 to app tokens. Throws SpotifyRateLimited on 429.
+ */
+export async function catalogGet<T>(pathOrUrl: string): Promise<T> {
+  const url = pathOrUrl.startsWith("http") ? pathOrUrl : `https://api.spotify.com/v1${pathOrUrl}`;
+  if (!catalogTok || catalogTok.until < Date.now()) catalogTok = { v: await appToken(), until: Date.now() + 50 * 60_000 };
+  let r = await spGet(catalogTok.v, url);
+  if (r.status === 401 || r.status === 403) {
+    const acc = (await listSpotifyAccounts())[0];
+    const tok = acc ? await accessToken(acc.id).catch(() => "") : "";
+    if (tok) r = await spGet(tok, url);
+  }
+  if (r.status === 429) throw new SpotifyRateLimited(r.retryAfter || 30);
+  if (r.status !== 200) throw new Error(`spotify ${r.status}: ${r.message}`);
+  return r.json as T;
+}
+
 export type SpotifyTrackMeta = {
   id: string; title: string; artist: string; album: string; releaseDate: string | null; durationS: number; coverUrl: string | null;
 };
