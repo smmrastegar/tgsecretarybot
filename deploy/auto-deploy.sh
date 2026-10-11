@@ -108,6 +108,12 @@ caddy_vhost_selfheal() {
     echo "	reverse_proxy 127.0.0.1:3000"
     echo "}"
     # playlist.bz: the public home of the private player links (Cloudflare proxied, Origin Rule → this port).
+    # chatbot.bz: the new main domain (apex, www, and *.chatbot.bz for per-account email pages), served alongside text.bz.
+    echo "chatbot.bz${port}, www.chatbot.bz${port}, *.chatbot.bz${port} {"
+    echo "	tls internal"
+    echo "	encode zstd gzip"
+    echo "	reverse_proxy 127.0.0.1:3000"
+    echo "}"
     echo "playlist.bz${port}, www.playlist.bz${port} {"
     echo "	tls internal"
     echo "	encode zstd gzip"

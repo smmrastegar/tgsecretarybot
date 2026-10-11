@@ -8,6 +8,7 @@ import WebKit
 /// for any link that is not the player itself.
 final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     private static let host = "bot.text.bz"
+    private static func ours(_ h: String?) -> Bool { ["bot.text.bz", "chatbot.bz", "www.chatbot.bz", "playlist.bz"].contains(h ?? "") }
     private static let home = URL(string: "https://bot.text.bz/listen")!
     private var web: WKWebView!
     private var artTask: URLSessionDataTask?
@@ -107,7 +108,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = action.request.url else { decisionHandler(.allow); return }
-        if url.scheme == "https", url.host == Self.host { decisionHandler(.allow); return }
+        if url.scheme == "https", Self.ours(url.host) { decisionHandler(.allow); return }
         if ["about", "blob", "data"].contains(url.scheme ?? "") { decisionHandler(.allow); return }
         UIApplication.shared.open(url)
         decisionHandler(.cancel)
@@ -116,7 +117,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
     // window.open / target=_blank → same view for our own pages, Safari for everything else.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = action.request.url {
-            if url.host == Self.host { webView.load(URLRequest(url: url)) } else { UIApplication.shared.open(url) }
+            if Self.ours(url.host) { webView.load(URLRequest(url: url)) } else { UIApplication.shared.open(url) }
         }
         return nil
     }

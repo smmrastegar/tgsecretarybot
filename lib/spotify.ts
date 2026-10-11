@@ -32,7 +32,9 @@ export function newState(): string {
 // The sign-in can start on one host (playlist.bz) and come back on another (the redirect URI registered
 // with Spotify is bot.text.bz), where the starting browser's cookies do not exist. So the state itself
 // carries the host to return to and is signed (only a signed-in session can obtain one) and short-lived.
-const RETURN_HOSTS = new Set(["bot.text.bz", "playlist.bz", "www.playlist.bz"]);
+const RETURN_HOSTS = new Set(["bot.text.bz", "chatbot.bz", "www.chatbot.bz", "playlist.bz", "www.playlist.bz"]);
+/** A host the sign-in may start on and return to. */
+export const isReturnHost = (h: string): boolean => RETURN_HOSTS.has(h);
 const stateKey = () => process.env.SESSION_SECRET || process.env.WEBHOOK_SECRET_TOKEN || "dev-session-secret-change-me";
 const sign = (body: string) => createHmac("sha256", stateKey()).update(`spotify-state:${body}`).digest("base64url");
 

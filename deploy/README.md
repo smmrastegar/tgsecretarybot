@@ -33,7 +33,7 @@ chmod 600 .env
 
 # 2) run the bootstrap (installs Node+Caddy, builds, wires systemd+cron,
 #    and repoints the Telegram webhook)
-sudo bash deploy/setup.sh bot.text.bz
+sudo bash deploy/setup.sh bot.text.bz   # (or chatbot.bz — the box serves both)
 ```
 
 ## What setup.sh does

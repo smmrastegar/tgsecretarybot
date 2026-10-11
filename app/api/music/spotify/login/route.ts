@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
 import { config } from "@/lib/config";
-import { authorizeUrl, signedState } from "@/lib/spotify";
+import { authorizeUrl, isReturnHost, signedState } from "@/lib/spotify";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +19,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const host = (request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "").split(":")[0] ?? "";
   const state = signedState(host);
   const url = await authorizeUrl(state);
-  const base = host === "playlist.bz" || host === "www.playlist.bz" ? `https://${host}` : publicBase();
+  const base = isReturnHost(host) ? `https://${host}` : publicBase();
   if (!url) return NextResponse.redirect(new URL("/music?spotify=nocreds", base));
   return NextResponse.redirect(url);
 }

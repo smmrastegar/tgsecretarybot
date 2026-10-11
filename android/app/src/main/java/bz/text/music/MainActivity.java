@@ -30,6 +30,8 @@ import android.webkit.WebViewClient;
  */
 public class MainActivity extends Activity {
     static final String HOST = "bot.text.bz";
+    /** Every host that is "ours": the app stays inside for these, and player links on them open here. */
+    static boolean ours(String h) { return "bot.text.bz".equals(h) || "chatbot.bz".equals(h) || "www.chatbot.bz".equals(h) || "playlist.bz".equals(h); }
     static final String HOME = "https://" + HOST + "/listen";
     static MainActivity instance;
     private WebView web;
@@ -56,7 +58,7 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
                 Uri u = r.getUrl();
-                if (HOST.equals(u.getHost()) && "https".equals(u.getScheme())) return false;
+                if (ours(u.getHost()) && "https".equals(u.getScheme())) return false;
                 try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception ignored) { }
                 return true;
             }
@@ -74,7 +76,7 @@ public class MainActivity extends Activity {
     /** A tapped player link (https://bot.text.bz/player/…) opens straight in the app. */
     private String startUrl(Intent i) {
         Uri d = i == null ? null : i.getData();
-        if (d != null && HOST.equals(d.getHost()) && d.getPath() != null && d.getPath().startsWith("/player/")) return d.toString();
+        if (d != null && ours(d.getHost()) && d.getPath() != null && d.getPath().startsWith("/player/")) return d.toString();
         return HOME;
     }
 
