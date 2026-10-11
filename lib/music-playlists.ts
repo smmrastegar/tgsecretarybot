@@ -15,6 +15,7 @@ export type SmartRules = {
   bpm?: [number, number];
   mode?: "major" | "minor";
   sharedByAll?: boolean;           // songs that every connected Spotify account has
+  sharedByAny?: boolean;           // songs that at least two connected accounts have
   seed?: { trackId: number; n?: number }; // the n songs that sound most like this one
   limit?: number;
 };
@@ -34,6 +35,7 @@ export function sanitizeRules(raw: unknown): SmartRules {
   if (r.liked === true) out.liked = true;
   if (r.includeDisliked === true) out.includeDisliked = true;
   if (r.sharedByAll === true) out.sharedByAll = true;
+  if (r.sharedByAny === true) out.sharedByAny = true;
   if (strs(r.genres).length) out.genres = strs(r.genres);
   if (strs(r.artists).length) out.artists = strs(r.artists);
   if (r.moods && typeof r.moods === "object") {
@@ -74,7 +76,7 @@ function matches(t: MusicTrack, d: Descriptor | undefined, r: SmartRules): boole
 export async function resolveRules(rawRules: unknown, tracks?: MusicTrack[]): Promise<number[]> {
   const r = sanitizeRules(rawRules);
   let all = (tracks ?? (await listMusicTracks())).filter((t) => t.status === "ready");
-  if (r.sharedByAll) { const shared = new Set(await sharedTrackIds()); all = all.filter((t) => shared.has(t.id)); }
+  if (r.sharedByAll || r.sharedByAny) { const shared = new Set(await sharedTrackIds(r.sharedByAll ? "all" : "any")); all = all.filter((t) => shared.has(t.id)); }
   const desc = await descriptors().catch(() => new Map<number, Descriptor>());
   let ids: number[];
   if (r.seed) {

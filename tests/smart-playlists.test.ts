@@ -39,5 +39,6 @@ describe("smart playlists", () => {
     const { sanitizeRules } = await import("@/lib/music-playlists");
     expect(sanitizeRules({ sharedByAll: true, bogus: 1 })).toEqual({ sharedByAll: true });
     expect(sanitizeRules({ sharedByAll: "yes" })).toEqual({});
+    expect(sanitizeRules({ sharedByAny: true })).toEqual({ sharedByAny: true });
   });
 });

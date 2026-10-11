@@ -229,13 +229,14 @@ export async function listTrackSources(): Promise<Map<number, number[]>> {
   return out;
 }
 
-/** Songs that every connected account has (needs at least two accounts). */
-export async function sharedTrackIds(): Promise<number[]> {
+/** Songs shared between accounts: every connected account has it ("all"), or at least two accounts do ("any"). */
+export async function sharedTrackIds(mode: "all" | "any" = "all"): Promise<number[]> {
   await ensureSchema();
+  const need = mode === "all" ? "GREATEST(2, (SELECT COUNT(*) FROM spotify_accounts))" : "2";
   const rows = (await q().query(
     `SELECT s.track_id FROM music_track_sources s JOIN spotify_accounts a ON a.id = s.account_id
       GROUP BY s.track_id
-     HAVING COUNT(DISTINCT s.account_id) >= GREATEST(2, (SELECT COUNT(*) FROM spotify_accounts))`,
+     HAVING COUNT(DISTINCT s.account_id) >= ${need}`,
   )) as Row[];
   return rows.map((r) => num(r, "track_id"));
 }

@@ -45,13 +45,16 @@ async function backfillSources(): Promise<void> {
   }
 }
 
-/** With two or more accounts connected there is one auto playlist of the songs every account has. */
+/** Two or more accounts → a playlist of what every account has; three or more → also what at least two have. */
 export const SHARED_PLAYLIST_NAME = "🤝 مشترک بین همهٔ حساب‌ها";
+export const SHARED_ANY_PLAYLIST_NAME = "👥 مشترک بین حداقل دو حساب";
 export async function ensureSharedPlaylist(): Promise<void> {
-  if ((await listSpotifyAccounts()).length < 2) return;
+  const n = (await listSpotifyAccounts()).length;
+  if (n < 2) return;
   const pls = await listMusicPlaylists();
-  if (pls.some((p) => (p.rules as { sharedByAll?: boolean } | null)?.sharedByAll === true)) return;
-  await createMusicPlaylist(SHARED_PLAYLIST_NAME, { sharedByAll: true });
+  const has = (k: "sharedByAll" | "sharedByAny") => pls.some((p) => (p.rules as Record<string, unknown> | null)?.[k] === true);
+  if (!has("sharedByAll")) await createMusicPlaylist(SHARED_PLAYLIST_NAME, { sharedByAll: true });
+  if (n >= 3 && !has("sharedByAny")) await createMusicPlaylist(SHARED_ANY_PLAYLIST_NAME, { sharedByAny: true });
 }
 
 export async function runSync(): Promise<{ sources: number; added: number; errors: string[] }> {
