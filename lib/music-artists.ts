@@ -17,8 +17,14 @@ export type ArtistHit = { id: string; name: string; followers: number; imageUrl:
 const smallImage = (imgs?: Img[]): string | null => [...(imgs ?? [])].sort((a, b) => (a.width ?? 0) - (b.width ?? 0)).find((i) => (i.width ?? 0) >= 64)?.url ?? imgs?.[0]?.url ?? null;
 
 export async function searchArtists(query: string): Promise<ArtistHit[]> {
-  const j = await catalogGet<{ artists?: { items?: Array<{ id: string; name: string; followers?: { total?: number }; images?: Img[]; genres?: string[] }> } }>(
-    `/search?q=${encodeURIComponent(query.slice(0, 100))}&type=artist&limit=8`);
+  type R = { artists?: { items?: Array<{ id: string; name: string; followers?: { total?: number }; images?: Img[]; genres?: string[] }> } };
+  const base = `/search?q=${encodeURIComponent(query.slice(0, 100))}&type=artist`;
+  let j: R | null = null;
+  for (const limit of [8, 5]) {
+    try { j = await catalogGet<R>(`${base}&limit=${limit}`); break; }
+    catch (e) { if (!(e instanceof Error) || !/Invalid limit/i.test(e.message) || limit === 5) throw e; }
+  }
+  if (!j) return [];
   return (j.artists?.items ?? []).map((a) => ({ id: a.id, name: a.name, followers: a.followers?.total ?? 0, imageUrl: smallImage(a.images), genres: a.genres ?? [] }));
 }
 
@@ -30,9 +36,16 @@ export function trackKey(name: string): string {
 type Album = { id: string; name: string; release_date?: string; album_group?: string };
 type AlbumTrack = { id: string | null; name: string; duration_ms: number; is_local?: boolean };
 
-async function pages<T>(first: string, max: number): Promise<T[]> {
-  const out: T[] = [];
-  let next: string | null = first;
+// Spotify has lowered some page-size caps over time ("Invalid limit" → 400): try the largest size first, then smaller ones.
+async function pages<T>(path: string, max: number): Promise<T[]> {
+  const sep = path.includes("?") ? "&" : "?";
+  let first: { items: T[]; next: string | null } | null = null;
+  for (const limit of [50, 20, 10, 5]) {
+    try { first = await catalogGet<{ items: T[]; next: string | null }>(`${path}${sep}limit=${limit}`); break; }
+    catch (e) { if (!(e instanceof Error) || !/Invalid limit/i.test(e.message) || limit === 5) throw e; }
+  }
+  const out: T[] = [...(first?.items ?? [])];
+  let next = first?.next ?? null;
   while (next && out.length < max) {
     const j: { items: T[]; next: string | null } = await catalogGet(next);
     out.push(...j.items);
@@ -51,13 +64,13 @@ export async function checkArtist(a: MusicArtist, importExisting = true): Promis
   const res: CheckResult = { albums: 0, added: 0, known: 0, titles: [] };
   const seenAlbums = new Set(a.seenAlbums), seenKeys = new Set(a.seenKeys);
   try {
-    const albums = await pages<Album>(`/artists/${a.spotifyArtistId}/albums?include_groups=album,single&limit=50`, 300);
+    const albums = await pages<Album>(`/artists/${a.spotifyArtistId}/albums?include_groups=album,single`, 300);
     const fresh = albums.filter((al) => !seenAlbums.has(al.id)).sort((x, y) => (x.release_date ?? "").localeCompare(y.release_date ?? ""));
     const plId = await ensureSpotifyPlaylist(0, `artist:${a.spotifyArtistId}`, `🎤 ${a.name}`, a.name);
     for (const al of fresh) {
       res.albums++;
       if (importExisting) {
-        const tracks = await pages<AlbumTrack>(`/albums/${al.id}/tracks?limit=50`, 200);
+        const tracks = await pages<AlbumTrack>(`/albums/${al.id}/tracks`, 200);
         for (const t of tracks) {
           if (!t.id || t.is_local) continue;
           const key = trackKey(t.name);
