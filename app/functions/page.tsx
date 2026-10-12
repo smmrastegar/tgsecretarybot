@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
-import { Card, PageTitle, Badge } from "@/components/Card";
+import { Card, PageTitle } from "@/components/Card";
+import Section, { Pill } from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
+import { confirmDialog } from "@/components/ui/Dialogs";
 import { chatTypeLabel } from "@/lib/format";
 
 type FunctionRole =
@@ -77,6 +80,12 @@ type Category = {
   isBuiltin: boolean;
 };
 
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+
+const BTN = "min-h-11 px-4 rounded-xl text-sm font-medium inline-flex items-center justify-center gap-1.5 disabled:opacity-50";
+const BTN_PRIMARY = `${BTN} bg-[var(--color-accent)] text-white`;
+const FIELD = "w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3";
+
 function chatLabel(c: ChatBrief): string {
   const full = [c.firstName, c.lastName].filter(Boolean).join(" ").trim();
   return full || c.chatTitle || `chat ${c.chatId}`;
@@ -89,6 +98,7 @@ export default function FunctionsPage() {
   > | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
   const [newCatSlug, setNewCatSlug] = useState("");
   const [newCatLabel, setNewCatLabel] = useState("");
@@ -97,14 +107,21 @@ export default function FunctionsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await fetch("/api/functions");
-    const j = (await r.json()) as {
-      byRole: Record<FunctionRole, Record<string, ChatBrief[]>>;
-      categories: Category[];
-    };
-    setByRole(j.byRole);
-    setCategories(j.categories);
-    setLoading(false);
+    setErr(null);
+    try {
+      const r = await fetch("/api/functions");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as {
+        byRole: Record<FunctionRole, Record<string, ChatBrief[]>>;
+        categories: Category[];
+      };
+      setByRole(j.byRole);
+      setCategories(j.categories);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -136,7 +153,7 @@ export default function FunctionsPage() {
   };
 
   const deleteCategory = async (slug: string) => {
-    if (!confirm(`گروه «${slug}» پاک بشه؟ همه چت‌های این گروه برمی‌گردن به default.`)) return;
+    if (!(await confirmDialog(`گروه «${slug}» پاک بشه؟ همه چت‌های این گروه برمی‌گردن به default.`, { danger: true, confirmLabel: "پاک شود" }))) return;
     await fetch(`/api/function-categories/${slug}`, { method: "DELETE" });
     await load();
   };
@@ -164,148 +181,166 @@ export default function FunctionsPage() {
         subtitle="هر نقش (downloader / news / ...) می‌تونه چند چت داشته باشه که توی گروه‌های متفاوت سازماندهی شدن. مثلاً «downloader» می‌تونه گروه «default»، «work»، «news» داشته باشه و هرکدوم چت‌های جدا."
       />
 
-      <Card className="mb-3">
-        <div className="text-xs font-medium mb-2">🏷 مدیریت گروه‌های Function</div>
-        <div className="flex flex-wrap gap-1.5 mb-3">
+      <Section
+        icon="🏷"
+        title="مدیریت گروه‌های Function"
+        summary={`${fa(sortedCats.length)} گروه · ساخت و حذف گروه`}
+      >
+        <div className="flex flex-col gap-2 mb-4">
           {sortedCats.map((c) => (
-            <span
+            <div
               key={c.slug}
-              className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)]"
+              className="flex items-center gap-2 min-h-12 px-3 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)]"
             >
-              <span>{c.emoji ?? "📂"}</span>
-              <span>{c.label}</span>
-              <span className="text-[var(--color-text-dim)]">({c.slug})</span>
-              {!c.isBuiltin && (
+              <span aria-hidden className="text-lg shrink-0">{c.emoji ?? "📂"}</span>
+              <span className="min-w-0 flex-1 text-center">
+                <span className="block text-sm font-medium truncate">{c.label}</span>
+                <span dir="ltr" className="block text-xs text-[var(--color-text-dim)] truncate">{c.slug}</span>
+              </span>
+              {!c.isBuiltin ? (
                 <button
-                  onClick={() => deleteCategory(c.slug)}
-                  className="text-red-300 hover:text-red-200 mr-1"
+                  onClick={() => void deleteCategory(c.slug)}
+                  aria-label={`پاک کردن ${c.label}`}
+                  className="shrink-0 w-11 h-11 rounded-xl text-red-300 hover:bg-red-500/10"
                   title="پاک کن"
                 >
                   ✕
                 </button>
+              ) : (
+                <span className="shrink-0 w-11" aria-hidden />
               )}
-            </span>
+            </div>
           ))}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <div className="text-sm font-medium mb-2">+ گروه جدید</div>
+        <div className="grid grid-cols-1 gap-2">
           <input
             type="text"
             value={newCatEmoji}
             onChange={(e) => setNewCatEmoji(e.target.value)}
-            placeholder="😀"
-            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-center"
+            placeholder="😀 ایموجی (اختیاری)"
+            aria-label="ایموجی"
+            className={`${FIELD} text-center`}
           />
           <input
             type="text"
             value={newCatLabel}
             onChange={(e) => setNewCatLabel(e.target.value)}
             placeholder="اسم نمایش (مثلاً «خبری»)"
-            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+            aria-label="اسم نمایش"
+            className={FIELD}
           />
           <input
             type="text"
             value={newCatSlug}
             onChange={(e) => setNewCatSlug(e.target.value)}
             placeholder="slug (مثلاً «news»)"
+            aria-label="slug"
             dir="ltr"
-            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+            className={FIELD}
           />
           <button
             onClick={createCategory}
             disabled={creating || !newCatSlug.trim() || !newCatLabel.trim()}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+            className={`${BTN_PRIMARY} w-full`}
           >
-            + گروه
+            {creating ? "…" : "+ گروه"}
           </button>
         </div>
-      </Card>
+      </Section>
 
-      {loading && <Card>بارگذاری…</Card>}
-      {byRole && (
-        <div className="flex flex-col gap-3">
-          {ROLES_IN_ORDER.map((role) => {
-            const info = ROLE_INFO[role];
-            const groups = byRole[role] ?? {};
-            const total = Object.values(groups).reduce(
-              (n, arr) => n + arr.length,
-              0,
-            );
-            // Render groups in category sort order; only render
-            // categories that have at least one chat (less noise).
-            const groupsToRender = sortedCats.filter(
-              (c) => (groups[c.slug] ?? []).length > 0,
-            );
-            return (
-              <Card key={role}>
-                <div className="flex items-start justify-between gap-2 flex-wrap mb-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold">
-                      {info.emoji} {info.title}
-                    </div>
-                    <div className="text-[11px] text-[var(--color-text-dim)] mt-1">
-                      {info.description}
-                    </div>
-                  </div>
-                  <Badge tone="neutral">{total}</Badge>
-                </div>
-                {total === 0 ? (
-                  <div className="text-[11px] text-[var(--color-text-dim)] italic">
-                    هنوز چتی این نقش رو نداره.
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {groupsToRender.map((c) => {
-                      const chats = groups[c.slug] ?? [];
-                      return (
-                        <div key={c.slug}>
-                          <div className="text-[11px] text-[var(--color-text-dim)] mb-1.5 flex items-center gap-1">
-                            <span>{c.emoji ?? "📂"}</span>
-                            <span className="font-medium">{c.label}</span>
-                            <span className="opacity-60">({chats.length})</span>
-                          </div>
-                          <div className="flex flex-col gap-1.5">
-                            {chats.map((cc) => (
-                              <div
-                                key={cc.chatId}
-                                className="flex items-center gap-2 text-xs p-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                              >
-                                <Link
-                                  href={`/chats/${cc.chatId}`}
-                                  className="flex-1 min-w-0"
-                                >
-                                  <div className="font-medium" dir="auto">
-                                    {chatLabel(cc)}
-                                  </div>
-                                  <div className="text-[10px] text-[var(--color-text-dim)] mt-0.5">
-                                    {chatTypeLabel(cc.chatType)} · id {cc.chatId}
-                                  </div>
-                                </Link>
-                                <select
-                                  value={c.slug}
-                                  onChange={(e) =>
-                                    setCategory(cc.chatId, role, e.target.value)
-                                  }
-                                  className="text-[10px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1.5 py-1"
-                                  title="منتقل کن به گروه دیگه"
-                                >
-                                  {sortedCats.map((opt) => (
-                                    <option key={opt.slug} value={opt.slug}>
-                                      {opt.emoji ?? "📂"} {opt.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            ))}
-                          </div>
+      {err ? (
+        <Card>
+          <p className="text-sm text-red-300">خطا در بارگذاری قابلیت‌ها: {err}</p>
+          <div className="mt-3 flex">
+            <button onClick={() => void load()} className={BTN_PRIMARY}>تلاش دوباره</button>
+          </div>
+        </Card>
+      ) : loading && !byRole ? (
+        <Card>
+          <p className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری…</p>
+        </Card>
+      ) : (
+        byRole &&
+        ROLES_IN_ORDER.map((role) => {
+          const info = ROLE_INFO[role];
+          const groups = byRole[role] ?? {};
+          const total = Object.values(groups).reduce(
+            (n, arr) => n + arr.length,
+            0,
+          );
+          // Render groups in category sort order; only render
+          // categories that have at least one chat (less noise).
+          const groupsToRender = sortedCats.filter(
+            (c) => (groups[c.slug] ?? []).length > 0,
+          );
+          return (
+            <Section
+              key={role}
+              icon={info.emoji}
+              title={info.title}
+              summary={info.description}
+              badge={<Pill tone={total === 0 ? "neutral" : "ok"}>{fa(total)}</Pill>}
+            >
+              <p className="text-xs text-[var(--color-text-dim)] leading-6 mb-4">
+                {info.description}
+              </p>
+              {total === 0 ? (
+                <EmptyState icon={info.emoji} title="هنوز چتی این نقش رو نداره." />
+              ) : (
+                <div className="flex flex-col gap-4">
+                  {groupsToRender.map((c) => {
+                    const chats = groups[c.slug] ?? [];
+                    return (
+                      <div key={c.slug}>
+                        <div className="text-xs text-[var(--color-text-dim)] mb-2 flex items-center justify-center gap-1.5">
+                          <span>{c.emoji ?? "📂"}</span>
+                          <span className="font-medium">{c.label}</span>
+                          <span className="opacity-70">({fa(chats.length)})</span>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </Card>
-            );
-          })}
-        </div>
+                        <div className="flex flex-col gap-2">
+                          {chats.map((cc) => (
+                            <div
+                              key={cc.chatId}
+                              className="flex items-center gap-2 min-h-14 p-2 rounded-xl border border-[var(--color-border)]"
+                            >
+                              <Link
+                                href={`/chats/${cc.chatId}`}
+                                className="flex-1 min-w-0 self-stretch flex flex-col justify-center text-center hover:text-[var(--color-accent)]"
+                              >
+                                <div className="text-sm font-medium truncate" dir="auto">
+                                  {chatLabel(cc)}
+                                </div>
+                                <div className="text-xs text-[var(--color-text-dim)] mt-0.5 truncate">
+                                  {chatTypeLabel(cc.chatType)} · id {cc.chatId}
+                                </div>
+                              </Link>
+                              <select
+                                value={c.slug}
+                                onChange={(e) =>
+                                  setCategory(cc.chatId, role, e.target.value)
+                                }
+                                aria-label="منتقل کن به گروه دیگه"
+                                className="shrink-0 w-28 min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-2"
+                                title="منتقل کن به گروه دیگه"
+                              >
+                                {sortedCats.map((opt) => (
+                                  <option key={opt.slug} value={opt.slug}>
+                                    {opt.emoji ?? "📂"} {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Section>
+          );
+        })
       )}
     </Shell>
   );

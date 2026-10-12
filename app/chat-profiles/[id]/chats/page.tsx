@@ -4,6 +4,7 @@ import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
+import EmptyState from "@/components/ui/EmptyState";
 
 type Profile = {
   id: number;
@@ -17,6 +18,15 @@ type Chat = {
   name: string | null;
   chatType: string;
 };
+
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+
+const BTN = "min-h-11 px-4 rounded-xl text-sm font-medium inline-flex items-center justify-center gap-1.5 disabled:opacity-50";
+const BTN_PRIMARY = `${BTN} bg-[var(--color-accent)] text-white`;
+const BTN_PLAIN = `${BTN} border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]`;
+// Action row: buttons sit on the physical left (also when it holds links, which the global rule does not cover).
+const ACTIONS = "flex flex-wrap gap-2 w-full justify-[left]";
+const FIELD = "w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3";
 
 export default function ProfileChatsPage({
   params,
@@ -33,18 +43,21 @@ export default function ProfileChatsPage({
   const [candidates, setCandidates] = useState<Chat[]>([]);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadErr(null);
     try {
       const r = await fetch(`/api/chat-profiles/${profileId}/chats`);
-      if (r.ok) {
-        const j = (await r.json()) as { profile: Profile; members: Chat[] };
-        setProfile(j.profile);
-        setMembers(j.members);
-      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as { profile: Profile; members: Chat[] };
+      setProfile(j.profile);
+      setMembers(j.members);
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -134,35 +147,37 @@ export default function ProfileChatsPage({
     <Shell>
       <PageTitle
         title={`👥 چت‌های پروفایل «${profile?.emoji ?? ""} ${profile?.name ?? "..."}»`}
-        subtitle={`${members.length} چت عضو این پروفایله. اضافه/حذف از همین صفحه.`}
+        subtitle={`${fa(members.length)} چت عضو این پروفایله. اضافه/حذف از همین صفحه.`}
         actions={
-          <Link
-            href={`/chat-profiles/${profileId}`}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)]"
-          >
-            ← تنظیمات پروفایل
-          </Link>
+          <div className={ACTIONS}>
+            <Link href={`/chat-profiles/${profileId}`} className={BTN_PLAIN}>
+              ← تنظیمات پروفایل
+            </Link>
+          </div>
         }
       />
 
       <Card className="mb-3">
-        <div className="text-xs font-medium mb-2">+ اضافه کردن چت</div>
+        <div className="text-sm font-medium mb-3">+ اضافه کردن چت</div>
         <input
-          type="text"
+          type="search"
+          dir="auto"
           value={candidateQuery}
           onChange={(e) => setCandidateQuery(e.target.value)}
-          placeholder="🔍 جستجو بر اساس اسم یا chatId — حداقل یه حرف تایپ کن"
-          className="w-full text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 mb-2"
+          aria-label="جستجوی چت"
+          placeholder="🔍 جستجو با اسم یا chatId"
+          className={FIELD}
         />
+        <p className="mt-1.5 text-xs text-[var(--color-text-dim)]">حداقل یه حرف تایپ کن.</p>
         {candidateQuery.trim().length > 0 && (
-          <div className="max-h-64 overflow-auto border border-[var(--color-border)] rounded-md mb-2">
+          <div className="mt-3 max-h-72 overflow-y-auto border border-[var(--color-border)] rounded-xl">
             {searching && (
-              <div className="text-[10px] text-[var(--color-text-dim)] p-2">
+              <div className="text-sm text-[var(--color-text-dim)] p-3">
                 در حال جستجو...
               </div>
             )}
             {!searching && candidates.length === 0 && (
-              <div className="text-[10px] text-[var(--color-text-dim)] p-2">
+              <div className="text-sm text-[var(--color-text-dim)] p-3">
                 نتیجه‌ای پیدا نشد.
               </div>
             )}
@@ -172,17 +187,17 @@ export default function ProfileChatsPage({
                   key={c.chatId}
                   className="border-b border-[var(--color-border)]/40 last:border-0"
                 >
-                  <label className="flex items-center gap-2 cursor-pointer p-2 hover:bg-[var(--color-surface-2)]/40">
+                  <label className="flex items-center gap-3 cursor-pointer px-3 min-h-14 py-2 hover:bg-[var(--color-surface-2)]/40 active:bg-[var(--color-surface-2)]">
                     <input
                       type="checkbox"
                       checked={picked.has(c.chatId)}
                       onChange={() => togglePick(c.chatId)}
                     />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs">
+                    <div className="flex-1 min-w-0 text-center">
+                      <div dir="auto" className="text-sm truncate">
                         {c.name || `چت ${c.chatId}`}
                       </div>
-                      <div className="text-[10px] text-[var(--color-text-dim)]">
+                      <div className="text-xs text-[var(--color-text-dim)] truncate">
                         {c.chatType} · {c.chatId}
                       </div>
                     </div>
@@ -192,59 +207,68 @@ export default function ProfileChatsPage({
             </ul>
           </div>
         )}
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-[var(--color-text-dim)] mr-auto">
-            {picked.size > 0 && `${picked.size} انتخاب شده`}
-          </span>
-          <button
-            onClick={addPicked}
-            disabled={busy || picked.size === 0}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-          >
-            + اضافه کن ({picked.size})
-          </button>
+        <div className="mt-3 flex flex-col gap-2">
+          {picked.size > 0 && (
+            <span className="text-xs text-[var(--color-text-dim)]">{fa(picked.size)} انتخاب شده</span>
+          )}
+          <div className="flex">
+            <button onClick={addPicked} disabled={busy || picked.size === 0} className={BTN_PRIMARY}>
+              + اضافه کن ({fa(picked.size)})
+            </button>
+          </div>
         </div>
       </Card>
 
       <Card>
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="text-xs font-medium">
-            👥 اعضای فعلی ({members.length})
-          </div>
+        <div className="text-sm font-medium mb-3">
+          👥 اعضای فعلی ({fa(members.length)})
+        </div>
+        {members.length > 0 && (
           <input
-            type="text"
+            type="search"
+            dir="auto"
             value={memberFilter}
             onChange={(e) => setMemberFilter(e.target.value)}
+            aria-label="فیلتر اعضا"
             placeholder="🔍 فیلتر"
-            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 w-40"
+            className={`${FIELD} mb-3`}
           />
-        </div>
-        {loading ? (
-          <div className="text-xs text-[var(--color-text-dim)]">...</div>
-        ) : filteredMembers.length === 0 ? (
-          <div className="text-xs text-[var(--color-text-dim)] italic">
-            هیچ چتی نیست.
+        )}
+        {loadErr ? (
+          <div>
+            <p className="text-sm text-red-300">خطا در بارگذاری چت‌ها: {loadErr}</p>
+            <div className="mt-3 flex">
+              <button onClick={() => void load()} className={BTN_PRIMARY}>تلاش دوباره</button>
+            </div>
           </div>
+        ) : loading ? (
+          <div className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری…</div>
+        ) : filteredMembers.length === 0 ? (
+          <EmptyState
+            icon="👥"
+            title={members.length === 0 ? "هیچ چتی در این پروفایل نیست." : "چتی با این فیلتر پیدا نشد."}
+            hint={members.length === 0 ? "از بخش «اضافه کردن چت» بالا چت اضافه کن." : undefined}
+          />
         ) : (
-          <ul className="divide-y divide-[var(--color-border)]">
+          <ul className="flex flex-col gap-2">
             {filteredMembers.map((c) => (
               <li
                 key={c.chatId}
-                className="flex items-center gap-2 py-2 text-xs"
+                className="flex items-center gap-2 min-h-14 px-3 py-2 rounded-xl border border-[var(--color-border)]"
               >
                 <Link
                   href={`/chats/${c.chatId}`}
-                  className="flex-1 min-w-0 hover:text-[var(--color-accent)]"
+                  className="flex-1 min-w-0 self-stretch flex flex-col justify-center text-center hover:text-[var(--color-accent)]"
                 >
-                  <div>{c.name || `چت ${c.chatId}`}</div>
-                  <div className="text-[10px] text-[var(--color-text-dim)]">
+                  <div dir="auto" className="text-sm font-medium truncate">{c.name || `چت ${c.chatId}`}</div>
+                  <div className="text-xs text-[var(--color-text-dim)] truncate">
                     {c.chatType} · {c.chatId}
                   </div>
                 </Link>
                 <button
                   onClick={() => remove(c.chatId)}
                   disabled={busy}
-                  className="text-[10px] px-2 py-1 rounded-md bg-rose-500/10 border border-rose-500/30 text-rose-200 hover:bg-rose-500/20 disabled:opacity-50"
+                  className={`${BTN} !px-3 bg-rose-500/10 border border-rose-500/30 text-rose-200 hover:bg-rose-500/20`}
                   title="منتقل کن به پروفایل پیش‌فرض"
                 >
                   حذف

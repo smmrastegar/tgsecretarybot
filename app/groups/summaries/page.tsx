@@ -3,8 +3,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Shell from "@/components/Shell";
-import { Card, PageTitle, Badge } from "@/components/Card";
+import { Card, PageTitle } from "@/components/Card";
+import EmptyState from "@/components/ui/EmptyState";
 import { relTime } from "@/lib/format";
+
+const fa = (n: number | string) => String(n).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+
+const BTN = "min-h-11 px-4 rounded-xl text-sm font-medium inline-flex items-center justify-center gap-1.5 disabled:opacity-50";
+const BTN_PRIMARY = `${BTN} bg-[var(--color-accent)] text-white`;
+const BTN_PLAIN = `${BTN} border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]`;
+// Action row: buttons sit on the physical left.
+const ACTIONS = "flex flex-wrap gap-2 w-full justify-[left]";
+
+function Chip({ tone = "neutral", children }: { tone?: "neutral" | "info" | "warn"; children: React.ReactNode }) {
+  const c = { neutral: "bg-[var(--color-surface-2)] text-[var(--color-text-dim)]", info: "bg-blue-500/15 text-blue-300", warn: "bg-amber-500/15 text-amber-200" }[tone];
+  return <span dir="auto" className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs leading-5 max-w-full ${c}`}>{children}</span>;
+}
 
 type Summary = {
   id: number;
@@ -116,6 +130,7 @@ function consolidate(summaries: Summary[]): Consolidated[] {
 export default function GroupsPage() {
   const [summaries, setSummaries] = useState<Summary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [windowKey, setWindowKey] = useState<WindowKey>("7");
@@ -129,10 +144,17 @@ export default function GroupsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await fetch("/api/groups");
-    const j = (await r.json()) as { summaries: Summary[] };
-    setSummaries(j.summaries);
-    setLoading(false);
+    setLoadErr(null);
+    try {
+      const r = await fetch("/api/groups");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as { summaries: Summary[] };
+      setSummaries(j.summaries ?? []);
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -153,7 +175,7 @@ export default function GroupsPage() {
         error?: string;
       };
       if (!r.ok) throw new Error(j.error ?? "failed");
-      setMsg(`✅ ${j.summarized ?? 0} از ${j.chats ?? 0} گروه خلاصه شد.`);
+      setMsg(`✅ ${fa(j.summarized ?? 0)} از ${fa(j.chats ?? 0)} گروه خلاصه شد.`);
       load();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : String(err));
@@ -248,29 +270,28 @@ export default function GroupsPage() {
         title="📝 خلاصه‌های روزانه"
         subtitle="خلاصه‌های AI گروه‌ها — همه‌ی خلاصه‌های یک گروه روی هم ادغام می‌شن. برای مدیریتِ خودِ گروه‌ها به «گروه‌ها» برو."
         actions={
-          <button
-            disabled={running}
-            onClick={runNow}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
-          >
-            {running ? "..." : "▶ خلاصه‌گیری الان (۲۴h)"}
-          </button>
+          <div className={ACTIONS}>
+            <button disabled={running} onClick={runNow} className={BTN_PRIMARY}>
+              {running ? "در حال خلاصه‌گیری…" : "▶ خلاصه‌گیری الان (۲۴h)"}
+            </button>
+          </div>
         }
       />
 
       {msg && (
-        <Card className="mb-3">
-          <p className="text-xs text-[var(--color-text-dim)]">{msg}</p>
-        </Card>
+        <div className="mb-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm leading-6 text-center">
+          {msg}
+        </div>
       )}
 
       <Card className="mb-3">
-        <div className="flex flex-wrap items-center gap-2 mb-2">
+        <div className="flex flex-wrap justify-center gap-2 mb-3">
           {WINDOWS.map((w) => (
             <button
               key={w.key}
               onClick={() => setWindowKey(w.key)}
-              className={`text-[11px] px-2 py-1 rounded-md border ${
+              aria-pressed={windowKey === w.key}
+              className={`min-h-11 px-3.5 rounded-xl text-sm border ${
                 windowKey === w.key
                   ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
                   : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
@@ -279,37 +300,48 @@ export default function GroupsPage() {
               {w.label}
             </button>
           ))}
-          <span className="text-[10px] text-[var(--color-text-dim)] mr-auto">
-            {filtered.length} گروه · {windowed.length} خلاصه روزانه
+        </div>
+        <input
+          type="search"
+          dir="auto"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="جستجو"
+          placeholder="🔍 جستجو در گروه‌ها و خلاصه‌ها"
+          className="w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3"
+        />
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs text-[var(--color-text-dim)]">
+            {fa(filtered.length)} گروه · {fa(windowed.length)} خلاصه روزانه
           </span>
-          <button
-            onClick={exportText}
-            disabled={filtered.length === 0}
-            className="text-[11px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
-          >
+          <button onClick={exportText} disabled={filtered.length === 0} className={BTN_PLAIN}>
             📤 خروجی متنی
           </button>
         </div>
-        <input
-          type="text"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="🔍 جستجو در گروه‌ها، موضوعات، اقدامات، متن خلاصه"
-          className="w-full text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-        />
       </Card>
 
-      {loading ? (
+      {loadErr ? (
         <Card>
-          <div className="text-xs text-[var(--color-text-dim)]">...</div>
+          <p className="text-sm text-red-300">خطا در بارگذاری خلاصه‌ها: {loadErr}</p>
+          <div className="mt-3 flex">
+            <button onClick={() => void load()} className={BTN_PRIMARY}>تلاش دوباره</button>
+          </div>
+        </Card>
+      ) : loading ? (
+        <Card>
+          <p className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری خلاصه‌ها…</p>
         </Card>
       ) : filtered.length === 0 ? (
-        <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">
-            هیچ خلاصه‌ای توی این بازه نیست. کرون روزانه ساعت ۰۳:۰۰ UTC اجرا
-            می‌شه، یا دکمه «▶ خلاصه‌گیری الان» رو بزن.
-          </p>
-        </Card>
+        <EmptyState
+          icon="📝"
+          title="هیچ خلاصه‌ای توی این بازه نیست."
+          hint="کرون روزانه ساعت ۰۳:۰۰ UTC اجرا می‌شه، یا دکمه «▶ خلاصه‌گیری الان» رو بزن."
+          action={
+            <button onClick={runNow} disabled={running} className={BTN_PRIMARY}>
+              {running ? "…" : "▶ خلاصه‌گیری الان"}
+            </button>
+          }
+        />
       ) : (
         <div className="flex flex-col gap-3">
           {filtered.map((c) => {
@@ -317,56 +349,45 @@ export default function GroupsPage() {
             return (
               <Card key={c.chatId}>
                 {/* Header */}
-                <div className="flex items-start justify-between mb-2 gap-3">
-                  <div className="min-w-0">
-                    <Link
-                      href={`/groups/${c.chatId}`}
-                      className="font-medium hover:underline text-[var(--color-accent)]"
-                    >
-                      {c.chatTitle ?? `چت ${c.chatId}`}
-                    </Link>
-                    <div className="text-[10px] text-[var(--color-text-dim)] mt-0.5">
-                      {c.earliestPeriodStart.toLocaleDateString("fa-IR")} →{" "}
-                      {c.latestPeriodEnd.toLocaleDateString("fa-IR")} ·{" "}
-                      آپدیت {relTime(c.latestCreatedAt.toISOString())}
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <Badge tone="neutral">
-                      {c.totalMessages} پیام · {c.peakActiveSenders} نفر
-                    </Badge>
-                    <Badge tone="info">
-                      {c.summaryCount} خلاصه روزانه ادغام شده
-                    </Badge>
-                    {c.mentionsOwner && (
-                      <Badge tone="warn">اسمت برده شده</Badge>
-                    )}
-                  </div>
+                <Link
+                  href={`/groups/${c.chatId}`}
+                  dir="auto"
+                  className="flex items-center justify-center min-h-11 text-base font-semibold leading-7 text-[var(--color-accent)] hover:underline break-words"
+                >
+                  {c.chatTitle ?? `چت ${c.chatId}`}
+                </Link>
+                <div className="text-xs text-[var(--color-text-dim)] mt-1 leading-5">
+                  {c.earliestPeriodStart.toLocaleDateString("fa-IR")} →{" "}
+                  {c.latestPeriodEnd.toLocaleDateString("fa-IR")} · آپدیت{" "}
+                  {relTime(c.latestCreatedAt.toISOString())}
+                </div>
+                <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                  <Chip>
+                    {fa(c.totalMessages)} پیام · {fa(c.peakActiveSenders)} نفر
+                  </Chip>
+                  <Chip tone="info">{fa(c.summaryCount)} خلاصه روزانه ادغام شده</Chip>
+                  {c.mentionsOwner && <Chip tone="warn">اسمت برده شده</Chip>}
                 </div>
 
                 {/* Latest summary text */}
-                <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
-                  📝 خلاصه (آخرین)
-                </div>
-                <p className="text-sm leading-relaxed mb-3 whitespace-pre-wrap">
+                <div className="mt-4 text-xs text-[var(--color-text-dim)] mb-1">📝 خلاصه (آخرین)</div>
+                <p className="text-sm leading-7 whitespace-pre-wrap">
                   {c.latestSummaryText || (
-                    <span className="text-[var(--color-text-dim)]">
-                      خلاصه‌ای نیست.
-                    </span>
+                    <span className="text-[var(--color-text-dim)]">خلاصه‌ای نیست.</span>
                   )}
                 </p>
 
                 {/* Merged topics */}
                 {c.topics.length > 0 && (
-                  <div className="mb-2">
-                    <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
-                      🏷 موضوعات (ادغام‌شده · {c.topics.length})
+                  <div className="mt-4">
+                    <div className="text-xs text-[var(--color-text-dim)] mb-1.5">
+                      🏷 موضوعات (ادغام‌شده · {fa(c.topics.length)})
                     </div>
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap justify-center gap-1.5">
                       {c.topics.map((t, i) => (
-                        <Badge key={i} tone="info">
+                        <Chip key={i} tone="info">
                           {t.length > 60 ? t.slice(0, 60) + "…" : t}
-                        </Badge>
+                        </Chip>
                       ))}
                     </div>
                   </div>
@@ -374,13 +395,15 @@ export default function GroupsPage() {
 
                 {/* Merged action items */}
                 {c.actionItems.length > 0 && (
-                  <div className="mb-2">
-                    <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
-                      ✅ اقدامات (ادغام‌شده · {c.actionItems.length})
+                  <div className="mt-4">
+                    <div className="text-xs text-[var(--color-text-dim)] mb-1.5">
+                      ✅ اقدامات (ادغام‌شده · {fa(c.actionItems.length)})
                     </div>
-                    <ul className="text-sm list-disc pr-5 space-y-0.5">
+                    <ul className="flex flex-col gap-1.5">
                       {c.actionItems.map((a, i) => (
-                        <li key={i}>{a}</li>
+                        <li key={i} className="rounded-xl bg-[var(--color-surface-2)] px-3 py-2 text-sm leading-6">
+                          {a}
+                        </li>
                       ))}
                     </ul>
                   </div>
@@ -388,34 +411,30 @@ export default function GroupsPage() {
 
                 {/* Expandable daily breakdown */}
                 {c.daily.length > 1 && (
-                  <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+                  <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
                     <button
                       onClick={() => toggleExpand(c.chatId)}
-                      className="text-[10px] text-[var(--color-text-dim)] hover:text-white"
+                      aria-expanded={isOpen}
+                      className="w-full min-h-11 rounded-xl text-sm text-[var(--color-text-dim)] hover:text-white hover:bg-[var(--color-surface-2)]"
                     >
                       {isOpen
                         ? `▴ بستن خلاصه‌های روزانه`
-                        : `▾ نمایش ${c.daily.length} خلاصه روزانه جدا`}
+                        : `▾ نمایش ${fa(c.daily.length)} خلاصه روزانه جدا`}
                     </button>
                     {isOpen && (
                       <div className="mt-2 flex flex-col gap-2">
                         {c.daily.map((d) => (
                           <div
                             key={d.id}
-                            className="text-[11px] p-2 rounded-md bg-[var(--color-surface-2)]/40 border border-[var(--color-border)]/40"
+                            className="text-sm p-3 rounded-xl bg-[var(--color-surface-2)]/60 border border-[var(--color-border)]"
                           >
-                            <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
-                              {new Date(d.periodStart).toLocaleString(
-                                "fa-IR",
-                              )}{" "}
-                              → {new Date(d.periodEnd).toLocaleString("fa-IR")}{" "}
-                              · {d.messageCount} پیام
+                            <div className="text-xs text-[var(--color-text-dim)] mb-1.5 leading-5">
+                              {new Date(d.periodStart).toLocaleString("fa-IR")} →{" "}
+                              {new Date(d.periodEnd).toLocaleString("fa-IR")} · {fa(d.messageCount)} پیام
                             </div>
-                            <div className="whitespace-pre-wrap leading-relaxed">
+                            <div className="whitespace-pre-wrap leading-7">
                               {d.summary || (
-                                <span className="text-[var(--color-text-dim)]">
-                                  (خالی)
-                                </span>
+                                <span className="text-[var(--color-text-dim)]">(خالی)</span>
                               )}
                             </div>
                           </div>
