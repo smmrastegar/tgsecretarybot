@@ -24,9 +24,12 @@ export async function GET(request: Request): Promise<Response> {
     // Every view (dashboard and all player links, by the owner's choice) says which Spotify account(s) each song came from.
     {
       const [src, accts] = await Promise.all([listTrackSources(), listSpotifyAccounts()]);
+      // A scoped link only learns about the accounts it is scoped to.
+      const scope = access.kind === "link" ? access.scope : null;
+      const keep = (id: number) => !scope || scope.ids.includes(id);
       return NextResponse.json({
-        tracks: tracks.map((t) => ({ ...t, sources: src.get(t.id) ?? [] })), playlists,
-        accounts: accts.map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })),
+        tracks: tracks.map((t) => ({ ...t, sources: (src.get(t.id) ?? []).filter(keep) })), playlists,
+        accounts: accts.filter((a) => keep(a.id)).map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })),
       });
     }
     return NextResponse.json({ tracks, playlists });

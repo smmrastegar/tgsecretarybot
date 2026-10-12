@@ -6,7 +6,8 @@ import Section from "./Section";
 // Player links: any number of private links, each with its own playlists.
 // Creating a link never touches the others; a link can only be switched off
 // (and on again), never deleted.
-type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; createdAt: string | null; lastUsedAt: string | null };
+type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; createdAt: string | null; lastUsedAt: string | null };
+type Acc = { id: number; name: string };
 type Pl = { id: number; name: string; smart: boolean; count: number };
 
 const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
@@ -15,6 +16,8 @@ const when = (iso: string | null) => (iso ? new Date(iso.replace(" ", "T").repla
 export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: string) => void; refreshKey: number }) {
   const [links, setLinks] = useState<Link[]>([]);
   const [pls, setPls] = useState<Pl[]>([]);
+  const [accts, setAccts] = useState<Acc[]>([]);
+  const [openAcc, setOpenAcc] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [pick, setPick] = useState<Set<number>>(new Set());
   const [open, setOpen] = useState<number | null>(null);
@@ -23,8 +26,8 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
   const load = useCallback(async () => {
     const r = await fetch("/api/music/links", { cache: "no-store" });
     if (!r.ok) return;
-    const j = (await r.json()) as { links: Link[]; playlists: Pl[] };
-    setLinks(j.links); setPls(j.playlists);
+    const j = (await r.json()) as { links: Link[]; playlists: Pl[]; accounts?: Acc[] };
+    setLinks(j.links); setPls(j.playlists); setAccts(j.accounts ?? []);
   }, []);
   useEffect(() => { void load(); }, [load, refreshKey]);
 
@@ -55,6 +58,7 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
               <span className="font-medium text-sm">{l.name}</span>
               <span className={`px-2 py-0.5 rounded-full ${l.active ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"}`}>{l.active ? "فعال" : "غیرفعال"}</span>
               <span className="text-[var(--color-text-dim)]">{l.playlistIds == null ? "همه‌ی آهنگ‌ها" : `${fa(l.playlistIds.length)} پلی‌لیست`}</span>
+              {(l.accountIds?.length ?? 0) > 0 && <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-200">فقط آهنگ‌های: {l.accountIds!.map((id) => accts.find((a) => a.id === id)?.name ?? id).join(l.accountsMode === "all" ? " ∩ " : " ∪ ")}</span>}
               <span className="ms-auto text-[var(--color-text-dim)]">آخرین استفاده: {when(l.lastUsedAt)}</span>
             </div>
             {!l.legacy && l.playlistIds && l.playlistIds.length === 0 && <div className="mt-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 px-3 py-2">هیچ پلی‌لیستی به این لینک داده نشده؛ پلیرش خالی است. روی «پلی‌لیست‌ها» بزن و حداقل یکی را انتخاب کن.</div>}
@@ -62,12 +66,28 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
             <div className="mt-2 flex gap-2 flex-wrap">
               <button onClick={() => { void navigator.clipboard.writeText(l.url); onMessage(`لینک «${l.name}» کپی شد`); }} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">کپی</button>
               <button onClick={() => window.open(l.url, "_blank", "noopener,noreferrer")} disabled={!l.active} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-40">باز کردن</button>
+              {accts.length > 0 && <button onClick={() => setOpenAcc(openAcc === l.id ? null : l.id)} title="این لینک فقط آهنگ‌های حساب‌های انتخابی را می‌بیند (در خود سرور اعمال می‌شود)" className={`px-3 py-1.5 rounded-md border ${(l.accountIds?.length ?? 0) > 0 ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>👤 آهنگ‌های چه کسی؟ {openAcc === l.id ? "▴" : "▾"}</button>}
               {!l.legacy && <button onClick={() => setOpen(open === l.id ? null : l.id)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">پلی‌لیست‌ها {open === l.id ? "▴" : "▾"}</button>}
               {!l.legacy && <button onClick={() => void patch(l.id, { canCreate: !(l.canCreate ?? true) })} title="اجازه‌ی ساخت پلی‌لیست هوشمند از روی یک آهنگ، داخل پلیر" className={`px-3 py-1.5 rounded-md border ${(l.canCreate ?? true) ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>✨ ساخت پلی‌لیست در پلیر: {(l.canCreate ?? true) ? "روشن" : "خاموش"}</button>}
               {!l.legacy && <button onClick={() => { const n = prompt("نام لینک:", l.name); if (n?.trim()) void patch(l.id, { name: n.trim() }); }} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">نام</button>}
               <button onClick={() => { if (l.active && !confirm(`«${l.name}» غیرفعال شود؟ هر که این لینک را دارد دیگر وارد نمی‌شود (هر وقت خواستی دوباره فعالش کن).`)) return; void patch(l.id, { active: !l.active }); }}
                 className={`px-3 py-1.5 rounded-md border ${l.active ? "border-rose-500/40 text-rose-200" : "border-emerald-500/40 text-emerald-200"}`}>{l.active ? "غیرفعال کردن" : "فعال کردن"}</button>
             </div>
+            {openAcc === l.id && (
+              <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                <div className="text-[var(--color-text-dim)] leading-6 mb-2">فقط آهنگ‌هایی که از حساب‌های انتخاب‌شده آمده‌اند به این لینک داده می‌شود؛ بقیه حتی از سرور هم خارج نمی‌شوند (نه در فهرست، نه جستجو، نه پخش). هیچ‌کدام انتخاب نشود = همه.</div>
+                <div className="flex flex-wrap gap-2 items-center">
+                  {accts.map((a) => {
+                    const cur = l.accountIds ?? [];
+                    const on = cur.includes(a.id);
+                    return <button key={a.id} onClick={() => void patch(l.id, { accountIds: on ? cur.filter((x) => x !== a.id) : [...cur, a.id], accountsMode: l.accountsMode ?? "any" })}
+                      className={`px-3 py-1.5 rounded-md border ${on ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>{on ? "✓ " : ""}{a.name}</button>;
+                  })}
+                  {(l.accountIds?.length ?? 0) > 1 && <button onClick={() => void patch(l.id, { accountIds: l.accountIds, accountsMode: l.accountsMode === "all" ? "any" : "all" })} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">{l.accountsMode === "all" ? "مشترکِ همه‌شان ⇄" : "هر کدام از آن‌ها ⇄"}</button>}
+                  {(l.accountIds?.length ?? 0) > 0 && <button onClick={() => void patch(l.id, { accountIds: [] })} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">همه</button>}
+                </div>
+              </div>
+            )}
             {open === l.id && l.playlistIds && (
               <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex flex-wrap gap-2">
                 {pls.length === 0 && <span className="text-[var(--color-text-dim)]">هنوز پلی‌لیستی نساخته‌ای.</span>}

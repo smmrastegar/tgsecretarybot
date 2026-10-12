@@ -430,6 +430,14 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS bot_in_main BOOLEAN NOT NULL DEFAULT FALSE`;
     },
   },
+  {
+    // A player link can be limited, at the data level, to the songs of chosen Spotify accounts.
+    id: "2026-10-12-002-link-accounts",
+    up: async (q) => {
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS account_ids BIGINT[] NOT NULL DEFAULT '{}'`;
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS accounts_mode TEXT NOT NULL DEFAULT 'any'`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

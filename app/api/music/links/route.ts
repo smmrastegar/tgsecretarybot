@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
-import { createPlayerLink, listPlayerLinks } from "@/lib/db";
-import { getLegacyToken, isLegacyActive, newLinkToken } from "@/lib/music-token";
+import { createPlayerLink, listPlayerLinks, listSpotifyAccounts } from "@/lib/db";
+import { getLegacyToken, getMainScope, isLegacyActive, newLinkToken } from "@/lib/music-token";
 import { resolvedPlaylists } from "@/lib/music-playlists";
 
 export const runtime = "nodejs";
@@ -14,12 +14,13 @@ const url = (t: string) => `${(process.env.PLAYER_APP_URL || "https://playlist.b
 export async function GET(): Promise<NextResponse> {
   const guard = await requireSessionOr401();
   if (guard) return guard;
-  const [links, pls] = await Promise.all([listPlayerLinks(), resolvedPlaylists()]);
+  const [links, pls, accts, mainScope] = await Promise.all([listPlayerLinks(), resolvedPlaylists(), listSpotifyAccounts(), getMainScope()]);
   return NextResponse.json({
     links: [
-      { id: 0, name: "Main link (everything)", url: url(await getLegacyToken()), active: await isLegacyActive(), playlistIds: null, legacy: true, canCreate: true, createdAt: null, lastUsedAt: null },
-      ...links.map((l) => ({ id: l.id, name: l.name, url: url(l.token), active: l.active, playlistIds: l.playlistIds, legacy: false, canCreate: l.canCreate, createdAt: l.createdAt, lastUsedAt: l.lastUsedAt })),
+      { id: 0, name: "Main link (everything)", url: url(await getLegacyToken()), active: await isLegacyActive(), playlistIds: null, legacy: true, canCreate: true, accountIds: mainScope?.ids ?? [], accountsMode: mainScope?.mode ?? "any", createdAt: null, lastUsedAt: null },
+      ...links.map((l) => ({ id: l.id, name: l.name, url: url(l.token), active: l.active, playlistIds: l.playlistIds, legacy: false, canCreate: l.canCreate, accountIds: l.accountIds, accountsMode: l.accountsMode, createdAt: l.createdAt, lastUsedAt: l.lastUsedAt })),
     ],
+    accounts: accts.map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })),
     playlists: pls.map((p) => ({ id: p.id, name: p.name, smart: p.smart, count: p.trackIds.length })),
   }, { headers: { "Cache-Control": "no-store" } });
 }
