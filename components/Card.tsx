@@ -27,14 +27,14 @@ export function StatCard({
 }) {
   return (
     <Card>
-      <div className="text-[10px] md:text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
+      <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
         {label}
       </div>
       <div className="text-2xl md:text-3xl font-semibold mt-1.5 md:mt-2">
         {value}
       </div>
       {hint && (
-        <div className="text-[11px] md:text-xs text-[var(--color-text-dim)] mt-1.5 md:mt-2">
+        <div className="text-xs text-[var(--color-text-dim)] mt-1.5 md:mt-2">
           {hint}
         </div>
       )}
@@ -82,7 +82,7 @@ export function Badge({
   }[tone];
   return (
     <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium ${toneClass}`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${toneClass}`}
     >
       {children}
     </span>

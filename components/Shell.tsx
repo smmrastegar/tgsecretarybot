@@ -141,7 +141,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
 
       <header className="md:hidden flex items-center justify-between h-14 px-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] sticky top-0 z-10">
         <div className="flex flex-col leading-tight">
-          <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)]">
+          <span className="text-xs uppercase tracking-wider text-[var(--color-text-dim)]">
             tgsecretarybot
           </span>
           <span className="text-sm">{display}</span>
@@ -149,7 +149,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         <button
           onClick={logout}
           aria-label="خروج"
-          className="p-2 -ml-2 rounded-md text-[var(--color-text-dim)] hover:text-white"
+          className="grid place-items-center w-10 h-10 -ml-2 rounded-md text-[var(--color-text-dim)] hover:text-white"
         >
           <LogOut size={18} />
         </button>
