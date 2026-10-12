@@ -1,10 +1,13 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "tgsecretarybot",
   description: "Telegram Business secretary bot dashboard",
 };
+
+// viewport-fit=cover lets the bottom navigation respect the iPhone home-indicator safe area.
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#09090b" };
 
 export default function RootLayout({
   children,

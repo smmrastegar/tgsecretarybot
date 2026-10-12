@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import RouteProgress from "./RouteProgress";
 import { DialogHost } from "./ui/Dialogs";
 import DebugTimings from "./DebugTimings";
-import { AlertOctagon, Bell, LayoutDashboard, LogOut, MessageSquare, NotebookText, Settings, Shield, Users2 } from "lucide-react";
+import { AlertOctagon, Bell, LayoutDashboard, LogOut, MessageSquare, NotebookText, Settings, Shield, Users2, LayoutGrid } from "lucide-react";
 
 type User = {
   userId: number;
@@ -25,6 +25,17 @@ const NAV = [
   { href: "/notes", label: "یادداشت‌ها", icon: NotebookText },
   { href: "/settings", label: "تنظیمات", icon: Settings },
 ] as const;
+
+// Phone bottom bar: five tabs (seven were too tight to read or hit). "بیشتر" opens the Settings hub, which
+// lists every other tool (کارها، یادداشت‌ها، ایمیل، قوانین، موسیقی …) with live status.
+const TABS = [
+  { href: "/", label: "نمای کلی", icon: LayoutDashboard },
+  { href: "/urgent", label: "فوری", icon: AlertOctagon },
+  { href: "/messages", label: "پیام‌ها", icon: MessageSquare },
+  { href: "/chats", label: "چت‌ها", icon: Users2 },
+  { href: "/more", label: "بیشتر", icon: LayoutGrid },
+] as const;
+const TAB_ROOTS = ["/", "/urgent", "/messages", "/chats"];
 
 function isActive(pathname: string, href: string): boolean {
   return href === "/"
@@ -63,6 +74,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       .catch(() => {});
   }, []);
 
+  // Anything that is not one of the four tabs (settings hub, reminders, notes, rules, emails…) lives under "بیشتر".
+  const moreActive = !TAB_ROOTS.some((h) => isActive(pathname, h));
   const navItems = isAdmin
     ? [...NAV, { href: "/admin", label: "مدیریت", icon: Shield }]
     : NAV;
@@ -142,7 +155,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </button>
       </header>
 
-      <main className="flex-1 min-w-0 w-full md:mx-auto p-4 md:p-8 md:max-w-6xl pb-24 md:pb-8">
+      <main className="flex-1 min-w-0 w-full md:mx-auto p-4 md:p-8 md:max-w-6xl pb-28 md:pb-8">
         {webhook && (!webhook.ok || webhook.missing.length > 0) && (
           <div className="mb-4 p-3 rounded-lg border border-amber-800 bg-amber-900/30 text-amber-100">
             <div className="text-sm font-medium">
@@ -173,25 +186,28 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[var(--color-surface)] border-t border-[var(--color-border)] flex justify-around items-stretch z-20">
-        {NAV.map((item) => {
-          const active = isActive(pathname, item.href);
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] ${
-                active
-                  ? "text-white"
-                  : "text-[var(--color-text-dim)] hover:text-white"
-              }`}
-            >
-              <Icon size={18} />
-              {item.label}
-            </Link>
-          );
-        })}
+      <nav aria-label="ناوبری اصلی" className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-[var(--color-surface)]/95 backdrop-blur border-t border-[var(--color-border)] pb-[env(safe-area-inset-bottom)]">
+        <div className="h-16 flex items-stretch justify-around max-w-xl mx-auto">
+          {TABS.map((item) => {
+            const active = item.href === "/more" ? moreActive : isActive(pathname, item.href);
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href === "/more" ? "/settings" : item.href}
+                aria-current={active ? "page" : undefined}
+                className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 text-[12px] leading-none transition-colors ${
+                  active ? "text-white font-semibold" : "text-[var(--color-text-dim)]"
+                }`}
+              >
+                <span className={`grid place-items-center h-8 w-14 rounded-full transition-colors ${active ? "bg-[var(--color-accent)]/25 text-[var(--color-accent)]" : ""}`}>
+                  <Icon size={22} strokeWidth={active ? 2.4 : 2} />
+                </span>
+                <span className="truncate max-w-full px-1">{item.label}</span>
+              </Link>
+            );
+          })}
+        </div>
       </nav>
     </div>
   );
