@@ -1,5 +1,6 @@
 // Split out of the former single lib/db.ts. Import from "@/lib/db" —
 // that barrel re-exports every module here.
+import { titleKey } from "../noise-filters";
 import { ensureSchema, hasDb, sql } from "./core";
 
 // --- Note watchlist ---
@@ -388,12 +389,18 @@ export async function saveExtractedItems(items: Array<{
   location?: string | null;
   participants?: string[] | null;
   sourceText?: string | null;
-}>): Promise<number> {
+}>, opts: { dedupe?: boolean } = {}): Promise<number> {
   if (!hasDb() || items.length === 0) return 0;
   await ensureSchema();
   let n = 0;
   const q = sql();
   for (const it of items) {
+    // Auto-extraction only: the same task in the same chat within a week is not saved again.
+    if (opts.dedupe && it.chatId != null) {
+      const key = titleKey(it.title);
+      const recent = (await q`SELECT title FROM extracted_items WHERE chat_id = ${it.chatId} AND created_at > NOW() - INTERVAL '7 days' ORDER BY id DESC LIMIT 200`) as Array<{ title: string }>;
+      if (recent.some((r) => titleKey(r.title) === key)) continue;
+    }
     await q`
       INSERT INTO extracted_items (
         message_id, tg_message_id, chat_id, chat_title, sender_name,
@@ -452,7 +459,7 @@ export async function listExtractedItems(opts: {
     ? await sql()`
         SELECT * FROM extracted_items
         WHERE done_at IS NULL
-          AND (due_at IS NULL OR due_at > NOW() - INTERVAL '1 day')
+          AND ((due_at IS NULL AND created_at > NOW() - INTERVAL '14 days') OR due_at > NOW() - INTERVAL '1 day')
           AND (${prio}::text IS NULL OR priority = ${prio})
         ORDER BY
           COALESCE(due_at, created_at + INTERVAL '100 years') ASC,

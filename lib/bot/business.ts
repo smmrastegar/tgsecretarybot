@@ -1,5 +1,6 @@
 // Split out of the former single lib/bot.ts. Import from "@/lib/bot" —
 // that barrel re-exports every module here.
+import { isAutomatedNoise, isRepeatAlert } from "../noise-filters";
 import { Bot, InlineKeyboard, InputFile } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "../config";
@@ -59,6 +60,7 @@ export async function autoExtractAndSave(args: {
     });
     const valid = items
       .filter((it) => it && typeof it.title === "string" && it.title.trim())
+      .filter((it) => !isAutomatedNoise({ title: it.title, sourceText: args.text }))
       .map((it) => ({
         messageId: null, // we don't have messages_log.id here; link via chat/message_id is enough
         tgMessageId: args.messageId,
@@ -79,7 +81,7 @@ export async function autoExtractAndSave(args: {
         sourceText: args.text.slice(0, 4000),
       }));
     if (valid.length > 0) {
-      await saveExtractedItems(valid);
+      await saveExtractedItems(valid, { dedupe: true });
       console.log(
         `[extract] auto-saved ${valid.length} item${valid.length === 1 ? "" : "s"} from chat=${args.chatId}`,
       );
@@ -1100,8 +1102,13 @@ export async function handleBusinessMessage(msg: Message, bot: Bot): Promise<voi
   }
 
   const threshold = Number(settings.importanceThreshold) || 7;
-  const shouldAlert =
+  let shouldAlert =
     verdict.urgent && verdict.concernsOwner && verdict.importance >= threshold;
+  // The same alert repeating within 3 h (a flapping monitor) is one alert; VIPs are never muted.
+  if (shouldAlert && !rule?.vip && isRepeatAlert(msg.chat.id, text)) {
+    shouldAlert = false;
+    verdict = { ...verdict, reason: `[تکراری — ۳ ساعت بی‌صدا] ${verdict.reason}` };
+  }
 
   console.log(
     `[classify] imp=${verdict.importance} urg=${verdict.urgent} owner=${verdict.concernsOwner} chat=${msg.chat.type}:${msg.chat.id} from=${senderName} alert=${shouldAlert} | ${verdict.reason}`,
