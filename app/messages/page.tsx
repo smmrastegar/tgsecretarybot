@@ -9,6 +9,7 @@ import MessageActions from "@/components/MessageActions";
 import MediaView from "@/components/MediaView";
 import OtpChip from "@/components/OtpChip";
 import EmptyState from "@/components/ui/EmptyState";
+import BotsView, { type BotSummary } from "@/components/messages/BotsView";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
 
 const fa = (v: number | string) =>
@@ -202,7 +203,20 @@ export default function MessagesPage() {
       .catch(() => {});
   }, []);
 
-  const PAGE = 15;
+  const PAGE = 30; // fewer round trips: each request costs ~0.3 s through the proxy
+  // Bots live in their own view (the main feed leaves unpinned bots out, server-side).
+  const [view, setView] = useState<"main" | "bots">("main");
+  const [bots, setBots] = useState<BotSummary[] | null>(null);
+  const [botChat, setBotChat] = useState<BotSummary | null>(null);
+  const loadBots = useCallback(async () => {
+    try {
+      const r = await fetch("/api/messages/bots", { cache: "no-store" });
+      if (r.ok) setBots(((await r.json()) as { bots: BotSummary[] }).bots);
+    } catch { /* the badge just stays empty */ }
+  }, []);
+  useEffect(() => { void loadBots(); }, [loadBots]);
+  const botParams = useCallback((p: URLSearchParams) => { if (botChat) { p.set("bots", "only"); p.set("chat_id", String(botChat.chatId)); } }, [botChat]);
+
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreErr, setMoreErr] = useState(false);
@@ -219,6 +233,7 @@ export default function MessagesPage() {
     if (urgentOnly) params.set("urgent", "1");
     if (search) params.set("q", search);
     if (kind !== "all") params.set("kind", kind);
+    botParams(params);
     try {
       const r = await fetch(`/api/messages?${params}`);
       if (!r.ok) throw new Error(`بارگذاری انجام نشد (${fa(r.status)})`);
@@ -230,7 +245,26 @@ export default function MessagesPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, urgentOnly, kind]);
+  }, [search, urgentOnly, kind, botParams]);
+
+  // After an action on ONE message (handled, transcript, reply…) refresh what is already on screen in place.
+  // The old code called load(), which blanked the whole list into the loading state and threw away every page
+  // the owner had scrolled through — buttons looked dead and the list restarted from the top.
+  const refresh = useCallback(async () => {
+    const params = new URLSearchParams();
+    params.set("limit", String(Math.min(Math.max(messages.length, PAGE), 150)));
+    params.set("offset", "0");
+    if (urgentOnly) params.set("urgent", "1");
+    if (search) params.set("q", search);
+    if (kind !== "all") params.set("kind", kind);
+    botParams(params);
+    try {
+      const r = await fetch(`/api/messages?${params}`);
+      if (!r.ok) return;
+      const j = (await r.json()) as { messages: Message[] };
+      setMessages(j.messages);
+    } catch { /* keep what is shown */ }
+  }, [messages.length, urgentOnly, search, kind, botParams]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || moreErr) return;
@@ -241,6 +275,7 @@ export default function MessagesPage() {
     if (urgentOnly) params.set("urgent", "1");
     if (search) params.set("q", search);
     if (kind !== "all") params.set("kind", kind);
+    botParams(params);
     try {
       const r = await fetch(`/api/messages?${params}`);
       if (!r.ok) throw new Error(String(r.status));
@@ -252,7 +287,7 @@ export default function MessagesPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, hasMore, moreErr, messages.length, urgentOnly, search, kind]);
+  }, [loadingMore, hasMore, moreErr, messages.length, urgentOnly, search, kind, botParams]);
 
   useEffect(() => {
     const id = setTimeout(load, 300);
@@ -269,7 +304,7 @@ export default function MessagesPage() {
       (entries) => {
         if (entries[0]?.isIntersecting) loadMore();
       },
-      { rootMargin: "300px" },
+      { rootMargin: "1500px" }, // start loading well before the bottom is reached
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -291,6 +326,28 @@ export default function MessagesPage() {
         subtitle="هر پیام دسته‌بندی‌شده‌ای که ربات دیده."
       />
 
+      <div role="tablist" className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-[var(--color-surface-2)] p-1">
+        <button role="tab" aria-selected={view === "main"} onClick={() => { setView("main"); setBotChat(null); }}
+          className={`min-h-11 rounded-lg text-sm ${view === "main" ? "bg-[var(--color-accent)] text-white font-medium" : "text-[var(--color-text-dim)]"}`}>پیام‌ها</button>
+        <button role="tab" aria-selected={view === "bots"} onClick={() => { setView("bots"); setBotChat(null); void loadBots(); }}
+          className={`min-h-11 rounded-lg text-sm ${view === "bots" ? "bg-[var(--color-accent)] text-white font-medium" : "text-[var(--color-text-dim)]"}`}>
+          🤖 ربات‌ها{bots && bots.length > 0 ? ` (${fa(bots.length)})` : ""}
+        </button>
+      </div>
+
+      {view === "bots" && !botChat && (
+        <BotsView bots={bots} onOpen={(b) => setBotChat(b)} onChanged={() => void loadBots()} />
+      )}
+
+      {botChat && (
+        <div className="mb-3 flex items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+          <button type="button" onClick={() => setBotChat(null)} className="min-h-11 px-3 rounded-xl border border-[var(--color-border)] text-sm">← ربات‌ها</button>
+          <span className="flex-1 min-w-0 truncate text-center text-sm font-medium" dir="auto">{botChat.name}</span>
+        </div>
+      )}
+
+      {(view === "main" || botChat) && (
+        <>
       <Card className="mb-3 !p-3">
         <div className="flex flex-col gap-2.5">
           <input
@@ -555,7 +612,7 @@ export default function MessagesPage() {
                     chatLabel: displaySender(target),
                   }}
                   secretaries={secretaries}
-                  onChange={load}
+                  onChange={refresh}
                   onTranscript={onTranscript}
                 />
               </div>
@@ -664,7 +721,7 @@ export default function MessagesPage() {
                   chatLabel: displaySender(m),
                 }}
                 secretaries={secretaries}
-                onChange={load}
+                onChange={refresh}
                 onTranscript={onTranscript}
               />
             </Card>
@@ -689,6 +746,8 @@ export default function MessagesPage() {
         <div className="text-center text-xs text-[var(--color-text-dim)] py-5">
           · پایان لیست ({fa(messages.length)} پیام) ·
         </div>
+      )}
+        </>
       )}
     </Shell>
   );

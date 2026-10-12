@@ -10,8 +10,8 @@ export async function GET(): Promise<NextResponse> {
   if (guard) return guard;
   const [stats, latestUrgent, latestAll, ai] = await Promise.all([
     overviewStats(),
-    listMessages({ urgentOnly: true, limit: 5 }),
-    listMessages({ limit: 8 }),
+    listMessages({ urgentOnly: true, bots: "exclude", limit: 5 }),
+    listMessages({ bots: "exclude", limit: 8 }),
     aiUsageOverview(),
   ]);
   return NextResponse.json({ stats, latestUrgent, latestAll, ai });

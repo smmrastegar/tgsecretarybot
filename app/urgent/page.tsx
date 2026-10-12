@@ -354,7 +354,7 @@ export default function UrgentPage() {
     <Shell>
       <PageTitle
         title="صندوق فوری"
-        subtitle="پیام‌هایی که AI به‌عنوان فوری و مربوط به تو علامت زده."
+        subtitle="پیام‌هایی که AI به‌عنوان فوری و مربوط به تو علامت زده. (پیام ربات‌ها اینجا نیست؛ در «پیام‌ها ← ربات‌ها» است.)"
       />
 
       {loading ? (

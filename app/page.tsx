@@ -19,8 +19,8 @@ export default async function OverviewPage() {
   const [stats, latestUrgent, latest, ai, connections, modes, reminders, dueCount] =
     await Promise.all([
       overviewStats().catch(() => null),
-      listMessages({ urgentOnly: true, limit: 5 }).catch(() => []),
-      listMessages({ limit: 8 }).catch(() => []),
+      listMessages({ urgentOnly: true, bots: "exclude", limit: 5 }).catch(() => []),
+      listMessages({ bots: "exclude", limit: 8 }).catch(() => []),
       aiUsageOverview().catch(() => null),
       listBusinessConnections().catch(() => []),
       chatModeCounts().catch(() => null),

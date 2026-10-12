@@ -422,6 +422,14 @@ export const MIGRATIONS: Migration[] = [
         ON CONFLICT DO NOTHING`;
     },
   },
+  {
+    // Bot chats are ~65 % of all logged messages and almost none matter day to day. They are kept out of the
+    // main message/urgent lists unless the owner pins a specific bot into the main feed.
+    id: "2026-10-12-001-bot-in-main",
+    up: async (q) => {
+      await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS bot_in_main BOOLEAN NOT NULL DEFAULT FALSE`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

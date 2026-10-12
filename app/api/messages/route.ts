@@ -22,7 +22,13 @@ export async function GET(request: Request): Promise<NextResponse> {
       ? kindRaw
       : undefined;
 
+  // The dashboard lists leave bot chats out unless the owner pinned that bot into the main feed;
+  // ?bots=only is the separate bots view, ?bots=include shows everything.
+  const botsRaw = url.searchParams.get("bots");
+  const bots = botsRaw === "only" || botsRaw === "include" ? botsRaw : "exclude";
+
   const rows = await listMessages({
+    bots,
     urgentOnly,
     unhandledOnly,
     chatId: Number.isFinite(chatId) ? chatId : undefined,

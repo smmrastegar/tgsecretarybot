@@ -261,17 +261,17 @@ export default function MessageActions({
         </div>
       )}
 
-      {!m.handledAt && draft === null && (
-        <button
-          onClick={suggest}
-          disabled={suggesting}
-          className="w-full min-h-11 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium active:opacity-80 disabled:opacity-50"
-        >
-          {suggesting ? "در حال پیشنهاد…" : "🤖 پیشنهاد AI"}
-        </button>
-      )}
-
-      <div className="grid grid-cols-2 gap-2">
+      {/* One compact row (a message card used to need a whole screen: tall stacks of buttons made the list slow to scroll) */}
+      <div className={`grid gap-2 ${!m.handledAt && draft === null ? "grid-cols-[1.4fr_1fr_auto]" : "grid-cols-[1fr_auto]"}`}>
+        {!m.handledAt && draft === null && (
+          <button
+            onClick={suggest}
+            disabled={suggesting}
+            className="min-h-11 px-2 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium active:opacity-80 disabled:opacity-50 truncate"
+          >
+            {suggesting ? "…" : "🤖 پیشنهاد AI"}
+          </button>
+        )}
         {m.handledAt ? (
           <button onClick={() => setHandled(false)} className={BTN}>
             برگردون به نرسیدگی
@@ -279,7 +279,7 @@ export default function MessageActions({
         ) : (
           <button
             onClick={() => setHandled(true)}
-            className="min-h-11 px-3 rounded-xl border border-emerald-700 text-emerald-300 text-sm active:bg-emerald-900/30"
+            className="min-h-11 px-2 rounded-xl border border-emerald-700 text-emerald-300 text-sm active:bg-emerald-900/30 truncate"
           >
             ✓ رسیدگی شد
           </button>
@@ -287,9 +287,10 @@ export default function MessageActions({
         <button
           onClick={() => setMore((o) => !o)}
           aria-expanded={more}
-          className={BTN}
+          aria-label={more ? "بستن اقدام‌های بیشتر" : "اقدام‌های بیشتر"}
+          className={`${BTN} px-4`}
         >
-          {more ? "بستن ▴" : "اقدام‌های بیشتر ▾"}
+          {more ? "▴" : "⋯"}
         </button>
       </div>
 

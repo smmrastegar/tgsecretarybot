@@ -620,6 +620,8 @@ export async function listMessages(opts: {
   chatId?: number;
   search?: string;
   kind?: "all" | "deleted" | "edited";
+  /** exclude (default for the dashboard lists): bot chats are hidden unless pinned into the main feed; only: just bot chats; include: everything */
+  bots?: "exclude" | "only" | "include";
   limit?: number;
   offset?: number;
 }): Promise<MessageRow[]> {
@@ -631,6 +633,7 @@ export async function listMessages(opts: {
   const kind = opts.kind ?? "all";
   const onlyDeleted = kind === "deleted";
   const onlyEdited = kind === "edited";
+  const bots = opts.bots ?? "include";
   const rows = await q`
     SELECT m.*, COALESCE(r.mode, 'secretary') AS chat_mode,
            r.first_name AS chat_rule_first_name,
@@ -640,6 +643,8 @@ export async function listMessages(opts: {
     FROM messages_log m
     LEFT JOIN chat_rules r ON r.chat_id = m.chat_id
     WHERE (${opts.urgentOnly ?? false}::boolean = FALSE OR m.urgent = TRUE)
+      AND (${bots}::text <> 'exclude' OR COALESCE(r.is_bot, FALSE) = FALSE OR COALESCE(r.bot_in_main, FALSE) = TRUE)
+      AND (${bots}::text <> 'only' OR COALESCE(r.is_bot, FALSE) = TRUE)
       AND (${opts.unhandledOnly ?? false}::boolean = FALSE OR m.handled_at IS NULL)
       AND (${opts.chatId ?? null}::bigint IS NULL OR m.chat_id = ${opts.chatId ?? null}::bigint)
       AND (${search}::text IS NULL OR m.message_text ILIKE ${search} OR m.sender_name ILIKE ${search})
@@ -651,6 +656,44 @@ export async function listMessages(opts: {
     ORDER BY m.created_at DESC
     LIMIT ${limit} OFFSET ${offset}`;
   return rows.map(rowToMessage);
+}
+
+export type BotSummary = { chatId: number; name: string; total: number; unhandled: number; urgentUnhandled: number; lastAt: string | null; inMain: boolean };
+
+/** Every bot chat with what it sent in the last 30 days (for the separate "ربات‌ها" view). */
+export async function listBotSummaries(): Promise<BotSummary[]> {
+  await ensureSchema();
+  const rows = (await sql()`
+    SELECT r.chat_id,
+           COALESCE(NULLIF(r.chat_title, ''), NULLIF(TRIM(CONCAT(r.first_name, ' ', r.last_name)), ''), MAX(m.sender_name), r.chat_id::text) AS name,
+           r.bot_in_main,
+           COUNT(m.id)::int AS total,
+           COUNT(*) FILTER (WHERE m.handled_at IS NULL)::int AS unhandled,
+           COUNT(*) FILTER (WHERE m.urgent AND m.handled_at IS NULL)::int AS urgent_unhandled,
+           MAX(m.created_at)::text AS last_at
+      FROM chat_rules r
+      JOIN messages_log m ON m.chat_id = r.chat_id AND m.created_at > NOW() - INTERVAL '30 days'
+     WHERE r.is_bot = TRUE
+     GROUP BY r.chat_id, r.chat_title, r.first_name, r.last_name, r.bot_in_main
+     ORDER BY MAX(m.created_at) DESC`) as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    chatId: Number(r.chat_id), name: String(r.name ?? ""), inMain: Boolean(r.bot_in_main),
+    total: Number(r.total), unhandled: Number(r.unhandled), urgentUnhandled: Number(r.urgent_unhandled),
+    lastAt: r.last_at ? String(r.last_at) : null,
+  }));
+}
+
+/** Pin a bot into the main feed (or take it out again). */
+export async function setBotInMain(chatId: number, inMain: boolean): Promise<void> {
+  await ensureSchema();
+  await sql()`UPDATE chat_rules SET bot_in_main = ${inMain} WHERE chat_id = ${chatId} AND is_bot = TRUE`;
+}
+
+/** Clear a bot's backlog: mark everything it sent as handled. Returns how many rows changed. */
+export async function markBotMessagesHandled(chatId: number, by: number): Promise<number> {
+  await ensureSchema();
+  const rows = (await sql()`UPDATE messages_log SET handled_at = NOW(), handled_by = ${by}, notes = COALESCE(notes, 'bot backlog cleared') WHERE chat_id = ${chatId} AND handled_at IS NULL RETURNING 1`) as unknown[];
+  return rows.length;
 }
 
 // --- Thread summaries ---
@@ -883,8 +926,8 @@ export async function overviewStats(): Promise<{
   const q = sql();
   const [tot, urgTot, urgPend, alerts24, replies24, conns, summ7] = await Promise.all([
     q`SELECT COUNT(*)::bigint AS n FROM messages_log`,
-    q`SELECT COUNT(*)::bigint AS n FROM messages_log WHERE urgent = TRUE`,
-    q`SELECT COUNT(*)::bigint AS n FROM messages_log WHERE urgent = TRUE AND handled_at IS NULL`,
+    q`SELECT COUNT(*)::bigint AS n FROM messages_log m LEFT JOIN chat_rules r ON r.chat_id = m.chat_id WHERE m.urgent = TRUE AND (COALESCE(r.is_bot, FALSE) = FALSE OR COALESCE(r.bot_in_main, FALSE) = TRUE)`,
+    q`SELECT COUNT(*)::bigint AS n FROM messages_log m LEFT JOIN chat_rules r ON r.chat_id = m.chat_id WHERE m.urgent = TRUE AND m.handled_at IS NULL AND (COALESCE(r.is_bot, FALSE) = FALSE OR COALESCE(r.bot_in_main, FALSE) = TRUE)`,
     q`SELECT COUNT(*)::bigint AS n FROM messages_log WHERE alerted = TRUE AND created_at > NOW() - INTERVAL '24 hours'`,
     q`SELECT COUNT(*)::bigint AS n FROM messages_log WHERE auto_replied = TRUE AND created_at > NOW() - INTERVAL '24 hours'`,
     q`SELECT COUNT(*)::bigint AS n FROM business_connections WHERE is_enabled = TRUE`,
