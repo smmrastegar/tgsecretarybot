@@ -64,6 +64,7 @@ export default function OtpBoard() {
   const [hours, setHours] = useState(24);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [notif, setNotif] = useState<NotificationPermission | "unsupported">("default");
   const [sound, setSound] = useState(true);
   const seen = useRef<Set<string> | null>(null);
@@ -113,6 +114,7 @@ export default function OtpBoard() {
       const j = (await r.json()) as { items: Item[] };
       const list = j.items ?? [];
       setItems(list);
+      setLoaded(true);
       setError(null);
       setNow(Date.now());
       if (seen.current == null) {
@@ -176,101 +178,127 @@ export default function OtpBoard() {
   const latest = items[0];
   const rest = items.slice(1);
 
+  // Touch-sized (>= 40 px) header controls; the page also runs as an installed app / menu-bar companion.
+  const ctl = "min-h-10 rounded-xl border border-slate-700 bg-slate-800 text-sm px-3";
+
   return (
     <div
       dir="rtl"
       style={{ background: "#0f172a", color: "#e2e8f0", minHeight: "100dvh", fontFamily: "Vazirmatn, -apple-system, system-ui, sans-serif" }}
       className="flex flex-col"
     >
-      <header className="flex items-center justify-between gap-2 px-4 py-3 text-xs text-slate-400 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <span className="text-base">🔑</span>
-          <span className="font-semibold text-slate-200">کدهای یک‌بارمصرف</span>
-          <span className="hidden sm:inline">· به‌روزرسانی هر ۴ ثانیه</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={hours}
-            onChange={(e) => {
-              const h = Number(e.target.value);
-              setHours(h);
-              try { localStorage.setItem("otp.hours", String(h)); } catch {}
-            }}
-            className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-xs"
-          >
-            <option value={1}>۱ ساعت</option>
-            <option value={6}>۶ ساعت</option>
-            <option value={24}>۲۴ ساعت</option>
-            <option value={72}>۳ روز</option>
-          </select>
-          <button
-            onClick={() => {
-              setSound((s) => {
-                try { localStorage.setItem("otp.sound", s ? "0" : "1"); } catch {}
-                return !s;
-              });
-            }}
-            className="px-2 py-1 rounded-md border border-slate-700 bg-slate-800"
-            title="صدای دریافت کد"
-          >
-            {sound ? "🔔" : "🔕"}
-          </button>
-          {notif === "default" && (
-            <button onClick={askNotif} className="px-2 py-1 rounded-md bg-amber-500 text-slate-900 font-medium">
-              فعال‌سازی اعلان
+      <header className="px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] border-b border-slate-800">
+        <div className="flex items-center justify-between gap-3 flex-wrap max-w-xl mx-auto w-full">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-xl" aria-hidden>🔑</span>
+              <h1 className="text-base font-semibold text-slate-100">کدهای یک‌بارمصرف</h1>
+            </div>
+            <div className="mt-0.5 text-xs text-slate-400 flex items-center gap-1.5">
+              <span aria-hidden className={`inline-block w-2 h-2 rounded-full ${error ? "bg-rose-400" : "bg-emerald-400"}`} />
+              {error ? "ارتباط قطع است" : "به‌روزرسانی هر ۴ ثانیه"}
+              {loaded && items.length > 0 && <span className="ms-2 text-slate-300">{fa(items.length)} کد</span>}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={hours}
+              aria-label="بازه‌ی زمانی"
+              onChange={(e) => {
+                const h = Number(e.target.value);
+                setHours(h);
+                try { localStorage.setItem("otp.hours", String(h)); } catch {}
+              }}
+              className={ctl}
+            >
+              <option value={1}>۱ ساعت</option>
+              <option value={6}>۶ ساعت</option>
+              <option value={24}>۲۴ ساعت</option>
+              <option value={72}>۳ روز</option>
+            </select>
+            <button
+              onClick={() => {
+                setSound((s) => {
+                  try { localStorage.setItem("otp.sound", s ? "0" : "1"); } catch {}
+                  return !s;
+                });
+              }}
+              className={`${ctl} min-w-10 !px-2`}
+              title="صدای دریافت کد"
+              aria-label={sound ? "خاموش کردن صدا" : "روشن کردن صدا"}
+              aria-pressed={sound}
+            >
+              {sound ? "🔔" : "🔕"}
             </button>
-          )}
-          {notif === "denied" && <span className="text-rose-300">اعلان‌ها مسدود شده</span>}
+            {notif === "default" && (
+              <button onClick={askNotif} className="min-h-10 px-3 rounded-xl bg-amber-500 text-slate-900 text-sm font-medium">
+                فعال‌سازی اعلان
+              </button>
+            )}
+            {notif === "denied" && <span className="text-xs text-rose-300">اعلان‌ها مسدود شده</span>}
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col items-center px-4 py-6 gap-6">
-        {error && <div className="text-rose-300 text-sm">{error}</div>}
-        {!latest ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-500 text-sm gap-2">
-            <div className="text-5xl">📭</div>
-            <div>در {fa(hours)} ساعت گذشته کدی نیامده.</div>
-            <div className="text-xs">این صفحه باز بمونه؛ اولین کد که بیاد همین‌جا درشت میاد و با یک کلیک کپی می‌شه.</div>
+      <main className="flex-1 flex flex-col items-center px-4 py-5 gap-5">
+        {error && (
+          <div role="alert" className="w-full max-w-xl rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-center">
+            <div className="text-sm text-rose-200">دریافت کدها ناموفق بود. خودکار دوباره تلاش می‌شود.</div>
+            <div className="mt-2 flex justify-center">
+              <button onClick={() => void load()} className="min-h-10 px-4 rounded-xl border border-rose-400/50 text-rose-100 text-sm">تلاش دوباره</button>
+            </div>
           </div>
+        )}
+        {!loaded && !error ? (
+          <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">در حال بارگذاری…</div>
+        ) : !latest ? (
+          !error && (
+            <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-400 text-sm gap-2 max-w-xs">
+              <div className="text-5xl" aria-hidden>📭</div>
+              <div className="font-medium text-slate-300">در {fa(hours)} ساعت گذشته کدی نیامده.</div>
+              <div className="text-xs leading-6 text-slate-500">این صفحه باز بمونه؛ اولین کد که بیاد همین‌جا درشت میاد و با یک کلیک کپی می‌شه.</div>
+            </div>
+          )
         ) : (
           <button
             onClick={() => void copy(latest.code)}
-            className="w-full max-w-xl rounded-3xl bg-slate-800/70 border border-slate-700 hover:border-amber-400 active:scale-[0.99] transition px-6 py-8 text-center shadow-xl"
+            className="w-full max-w-xl [container-type:inline-size] rounded-3xl bg-slate-800/70 border border-slate-700 hover:border-amber-400 active:scale-[0.99] transition px-4 py-7 text-center shadow-xl"
             title="کلیک = کپی"
           >
-            <div className="text-slate-400 text-sm mb-3">
+            <div className="text-slate-400 text-sm mb-4 leading-6">
               {latest.via ? <span className="text-amber-200">از {latest.via.replace(/^پیامک\s*/, "")} · </span> : null}
               {cleanSender(latest.sender) || "پیامک"} · {ago(latest.at, now)}
             </div>
             <div
               dir="ltr"
-              className="font-black tracking-[0.18em] text-amber-300 leading-none select-none"
-              style={{ fontSize: "clamp(56px, 14vw, 128px)", fontVariantNumeric: "tabular-nums" }}
+              className="font-black tracking-[0.14em] text-amber-300 leading-none select-none whitespace-nowrap"
+              // sized from the card's own width and the code length, so 4..8 digits always fit on one line
+              style={{ fontSize: `clamp(30px, ${(94 / (Math.max(latest.code.length, 4) * 0.9)).toFixed(1)}cqw, 120px)`, fontVariantNumeric: "tabular-nums" }}
             >
               {latest.code}
             </div>
-            <div className="text-slate-500 text-xs mt-4">کلیک یا Enter = کپی</div>
+            <div className="mt-5 inline-flex items-center min-h-10 px-4 rounded-full bg-amber-400/10 text-amber-200 text-sm">کلیک یا Enter = کپی</div>
             {latest.codes.length > 1 && (
-              <div className="text-slate-400 text-xs mt-2">کدهای دیگر همین پیام: {latest.codes.slice(1).join("، ")}</div>
+              <div className="text-slate-400 text-sm mt-3">کدهای دیگر همین پیام: <span dir="ltr">{latest.codes.slice(1).join("، ")}</span></div>
             )}
           </button>
         )}
 
         {rest.length > 0 && (
-          <div className="w-full max-w-xl grid gap-2 sm:grid-cols-2">
+          <div className="w-full max-w-xl grid grid-cols-1 gap-2 sm:grid-cols-2">
             {rest.map((it) => (
               <button
                 key={it.id}
                 onClick={() => void copy(it.code)}
-                className="text-right rounded-2xl bg-slate-800/40 border border-slate-800 hover:border-slate-600 px-4 py-3 transition"
+                className="min-h-[72px] text-center rounded-2xl bg-slate-800/40 border border-slate-800 hover:border-slate-600 active:bg-slate-800 px-4 py-3 transition"
                 title={it.text}
               >
-                <div dir="ltr" className="font-bold text-2xl tracking-widest text-slate-100 text-right" style={{ fontVariantNumeric: "tabular-nums" }}>
+                <div dir="ltr" className="font-bold text-2xl tracking-widest text-slate-100" style={{ fontVariantNumeric: "tabular-nums" }}>
                   {it.code}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-1 flex justify-between gap-2">
-                  <span className="truncate">{it.via ? `${it.via.replace(/^پیامک\s*/, "")} · ` : ""}{cleanSender(it.sender) || "پیامک"}</span>
-                  <span className="shrink-0">{ago(it.at, now)}</span>
+                <div className="text-xs text-slate-400 mt-1 leading-5">
+                  <span className="block truncate">{it.via ? `${it.via.replace(/^پیامک\s*/, "")} · ` : ""}{cleanSender(it.sender) || "پیامک"}</span>
+                  <span className="block">{ago(it.at, now)}</span>
                 </div>
               </button>
             ))}
@@ -278,12 +306,12 @@ export default function OtpBoard() {
         )}
       </main>
 
-      <footer className="px-4 py-2 text-[11px] text-slate-500 text-center border-t border-slate-800">
+      <footer className="px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-xs leading-6 text-slate-500 text-center border-t border-slate-800">
         نصب به‌عنوان اپ: Safari ← File ← Add to Dock · Chrome ← آیکون نصب در نوار آدرس
       </footer>
 
       {toast && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-emerald-500 text-slate-900 font-semibold px-4 py-2 rounded-full shadow-lg text-sm">
+        <div role="status" className="fixed bottom-[max(2rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 bg-emerald-500 text-slate-900 font-semibold px-5 py-2.5 rounded-full shadow-lg text-sm">
           ✓ {toast}
         </div>
       )}

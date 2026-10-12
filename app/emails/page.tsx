@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
-import { Card, PageTitle, Badge } from "@/components/Card";
+import { PageTitle, Badge } from "@/components/Card";
+import Section from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
+import { confirmDialog } from "@/components/ui/Dialogs";
+import { ErrorBox, Field, LoadingBox, Segmented, btnDanger, btnGhost, btnPrimary, cardCls, fa, inputCls } from "@/components/tool-pages/Controls";
 
 type Email = {
   id: number;
@@ -21,8 +25,8 @@ export default function EmailsPage() {
   const [tab, setTab] = useState<"in" | "out">("in");
   const [emails, setEmails] = useState<Email[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [compose, setCompose] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [origin, setOrigin] = useState("");
 
   useEffect(() => {
@@ -31,10 +35,17 @@ export default function EmailsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await fetch(`/api/emails?direction=${tab}`);
-    const j = (await r.json()) as { emails: Email[] };
-    setEmails(j.emails ?? []);
-    setLoading(false);
+    setError(false);
+    try {
+      const r = await fetch(`/api/emails?direction=${tab}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as { emails: Email[] };
+      setEmails(j.emails ?? []);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, [tab]);
   useEffect(() => {
     load();
@@ -42,77 +53,46 @@ export default function EmailsPage() {
 
   return (
     <Shell>
-      <div dir="rtl">
+      <div dir="rtl" className="max-w-2xl mx-auto">
         <PageTitle
           title="📧 Email (Resend)"
           subtitle="دریافت و ارسال ایمیل. ورودی‌ها توی کانال ایمیل هم پست می‌شن."
-          actions={
-            <div className="flex gap-2 flex-wrap">
-              <button onClick={() => setCompose(true)} className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white">
-                ✉️ ایمیل جدید
-              </button>
-              <button onClick={() => setShowSettings((v) => !v)} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
-                ⚙️ تنظیمات Resend
-              </button>
-            </div>
-          }
+          actions={<button onClick={() => setCompose(true)} className={btnPrimary}>✉️ ایمیل جدید</button>}
         />
 
-        {showSettings && (
-          <>
-            <AccountsManager origin={origin} />
-            <ResendSettings origin={origin} />
-          </>
-        )}
+        <Section icon="⚙️" title="تنظیمات Resend" summary="اکانت‌ها، API key و وب‌هوک ورودی">
+          <AccountsManager origin={origin} />
+          <ResendSettings origin={origin} />
+        </Section>
 
-        <div role="tablist" className="flex gap-1.5 mb-3">
-          {(["in", "out"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`text-xs px-3 py-1.5 rounded-md border ${
-                tab === t
-                  ? "bg-[var(--color-accent)] text-white border-transparent"
-                  : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-              }`}
-            >
-              {t === "in" ? "📥 دریافتی" : "📤 ارسالی"}
-            </button>
-          ))}
+        <div className="mb-3">
+          <Segmented value={tab} onChange={setTab} options={[{ id: "in", label: "📥 دریافتی" }, { id: "out", label: "📤 ارسالی" }]} />
         </div>
 
         {loading ? (
-          <Card><p className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری…</p></Card>
+          <LoadingBox />
+        ) : error ? (
+          <ErrorBox text="دریافت ایمیل‌ها ناموفق بود." onRetry={load} />
         ) : emails.length === 0 ? (
-          <Card><p className="text-sm text-[var(--color-text-dim)]">ایمیلی نیست.</p></Card>
+          <EmptyState icon={tab === "in" ? "📥" : "📤"} title="ایمیلی نیست." hint={tab === "in" ? "ایمیل‌های ورودی همین‌جا فهرست می‌شوند." : "هنوز ایمیلی نفرستاده‌ای."}
+            action={<button onClick={() => setCompose(true)} className={btnPrimary}>✉️ ایمیل جدید</button>} />
         ) : (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2.5">
             {emails.map((e) => (
-              <Link key={e.id} href={`/emails/${e.id}`}>
-                <Card className="!p-3 hover:bg-[var(--color-surface-2)]">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="font-medium text-sm truncate">
-                      {e.subject || "(بدون موضوع)"}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      {e.status === "failed" && <Badge tone="danger">ناموفق</Badge>}
-                      {e.status === "sent" && <Badge tone="success">ارسال شد</Badge>}
-                      <span className="text-[10px] text-[var(--color-text-dim)]">
-                        {new Date(e.createdAt).toLocaleString("fa-IR")}
-                      </span>
-                    </div>
-                  </div>
-                  <div dir="ltr" className="text-[11px] text-[var(--color-text-dim)] mt-1 text-left truncate">
-                    {e.direction === "in"
-                      ? `از: ${e.fromName ? e.fromName + " " : ""}${e.fromEmail ?? "?"}`
-                      : `به: ${e.toEmails ?? "?"}`}
-                  </div>
-                  {e.textBody && (
-                    <div dir="auto" className="text-[11px] text-[var(--color-text-dim)] mt-1 line-clamp-2">
-                      {e.textBody}
-                    </div>
-                  )}
-                </Card>
+              <Link key={e.id} href={`/emails/${e.id}`} className={`${cardCls} block min-h-[72px] !px-4 !py-3 active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)]`}>
+                <div dir="auto" className="font-semibold text-sm truncate">{e.subject || "(بدون موضوع)"}</div>
+                <div className="mt-0.5 text-xs text-[var(--color-text-dim)] truncate">
+                  {e.direction === "in" ? "از: " : "به: "}
+                  <bdi dir="ltr">{e.direction === "in" ? `${e.fromName ? e.fromName + " " : ""}${e.fromEmail ?? "?"}` : (e.toEmails ?? "?")}</bdi>
+                </div>
+                {e.textBody && (
+                  <div dir="auto" className="mt-1 text-xs leading-5 text-[var(--color-text-dim)] line-clamp-2">{e.textBody}</div>
+                )}
+                <div className="mt-1.5 flex items-center justify-center gap-2 flex-wrap">
+                  {e.status === "failed" && <Badge tone="danger">ناموفق</Badge>}
+                  {e.status === "sent" && <Badge tone="success">ارسال شد</Badge>}
+                  <span className="text-xs text-[var(--color-text-dim)]">{new Date(e.createdAt).toLocaleString("fa-IR")}</span>
+                </div>
               </Link>
             ))}
           </div>
@@ -136,13 +116,22 @@ type Account = {
   hasApiKey: boolean;
 };
 
+const BLANK_ACCOUNT = { name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "", publicUrl: "", inboundDomains: "" };
+
 function AccountsManager({ origin }: { origin: string }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [form, setForm] = useState({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "", publicUrl: "", inboundDomains: "" });
+  const [form, setForm] = useState({ ...BLANK_ACCOUNT });
+  const [failed, setFailed] = useState(false);
   const load = useCallback(async () => {
-    const r = await fetch("/api/email-accounts");
-    const j = (await r.json()) as { accounts: Account[] };
-    setAccounts(j.accounts ?? []);
+    setFailed(false);
+    try {
+      const r = await fetch("/api/email-accounts");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as { accounts: Account[] };
+      setAccounts(j.accounts ?? []);
+    } catch {
+      setFailed(true);
+    }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -150,7 +139,7 @@ function AccountsManager({ origin }: { origin: string }) {
   const create = async () => {
     if (!form.name) return;
     await fetch("/api/email-accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
-    setForm({ name: "", resendApiKey: "", fromEmail: "", inboundToken: "", tgChannelId: "", publicUrl: "", inboundDomains: "" });
+    setForm({ ...BLANK_ACCOUNT });
     await load();
   };
   const patch = async (id: number, body: Record<string, string>) => {
@@ -158,58 +147,67 @@ function AccountsManager({ origin }: { origin: string }) {
     await load();
   };
   const del = async (id: number) => {
-    if (!confirm("این اکانت حذف بشه؟")) return;
+    if (!(await confirmDialog("این اکانت حذف بشه؟", { danger: true, confirmLabel: "حذف" }))) return;
     await fetch(`/api/email-accounts/${id}`, { method: "DELETE" });
     await load();
   };
+  const set = (k: keyof typeof BLANK_ACCOUNT) => (e: React.ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   return (
-    <Card className="mb-4">
-      <div className="text-sm font-medium mb-2">📮 اکانت‌های ایمیل</div>
-      <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+    <Section icon="📮" title="اکانت‌های ایمیل" summary={`${fa(accounts.length)} اکانت`} className="!mb-3">
+      <p className="text-xs leading-6 text-[var(--color-text-dim)] mb-3 text-center">
         هر اکانت API key و آدرس و کانال تلگرام خودش رو داره. ایمیل ورودی هر اکانت توی کانال خودش پست می‌شه و از همونجا می‌تونی ریپلای بدی.
       </p>
+      {failed && <div className="mb-3"><ErrorBox text="دریافت اکانت‌ها ناموفق بود." onRetry={load} /></div>}
       {accounts.length > 0 && (
-        <div className="flex flex-col gap-1.5 mb-3">
+        <div className="flex flex-col gap-2.5 mb-3">
           {accounts.map((a) => (
-            <div key={a.id} className="flex items-center justify-between gap-2 p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
-              <div className="min-w-0">
-                <div className="text-sm font-medium flex items-center gap-1.5">
-                  {a.name}
-                  {a.enabled ? <Badge tone="success">فعال</Badge> : <Badge tone="neutral">خاموش</Badge>}
-                  {!a.hasApiKey && <Badge tone="warn">بدون API key</Badge>}
-                </div>
-                <div dir="ltr" className="text-[10px] text-[var(--color-text-dim)] text-left break-all">
-                  {a.fromEmail ?? "—"} · channel {a.tgChannelId ?? "—"}
-                </div>
-                {a.inboundToken && (
-                  <code dir="ltr" className="text-[9px] text-[var(--color-text-dim)] block break-all text-left mt-0.5">
-                    {origin}/api/email-webhook?token={a.inboundToken}
-                  </code>
-                )}
-                <InlineField label="🔗 دومین دکمه‌ها:" value={a.publicUrl} placeholder="rateklend.text.bz" onSave={(u) => patch(a.id, { publicUrl: u })} />
-                <InlineField label="📥 دومین‌های ورودی:" value={a.inboundDomains} placeholder="rateklend.ir, mail.rateklend.ir" onSave={(u) => patch(a.id, { inboundDomains: u })} />
-                <ResendCheck accountId={a.id} />
+            <div key={a.id} className="p-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 text-center">
+              <div className="text-sm font-semibold">{a.name}</div>
+              <div className="mt-1.5 flex flex-wrap justify-center gap-1.5">
+                {a.enabled ? <Badge tone="success">فعال</Badge> : <Badge tone="neutral">خاموش</Badge>}
+                {!a.hasApiKey && <Badge tone="warn">بدون API key</Badge>}
               </div>
-              <button onClick={() => del(a.id)} className="text-[11px] px-2 py-1 rounded-md border border-rose-500/40 text-rose-200 shrink-0">🗑</button>
+              <div dir="ltr" className="mt-2 text-xs text-[var(--color-text-dim)] break-all">
+                {a.fromEmail ?? "—"} · channel {a.tgChannelId ?? "—"}
+              </div>
+              {a.inboundToken && (
+                <code dir="ltr" className="mt-1.5 block text-xs text-[var(--color-text-dim)] break-all">
+                  {origin}/api/email-webhook?token={a.inboundToken}
+                </code>
+              )}
+              <div className="mt-3 flex flex-col gap-3">
+                <InlineField label="🔗 دومین دکمه‌ها" value={a.publicUrl} placeholder="rateklend.text.bz" onSave={(u) => patch(a.id, { publicUrl: u })} />
+                <InlineField label="📥 دومین‌های ورودی" value={a.inboundDomains} placeholder="rateklend.ir, mail.rateklend.ir" onSave={(u) => patch(a.id, { inboundDomains: u })} />
+              </div>
+              <ResendCheck accountId={a.id} />
+              <div className="mt-3 flex">
+                <button onClick={() => del(a.id)} className={btnDanger}>🗑 حذف اکانت</button>
+              </div>
             </div>
           ))}
         </div>
       )}
-      <div className="grid md:grid-cols-2 gap-2">
-        <input dir="ltr" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="نام اکانت (مثلاً Sales)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-        <input dir="ltr" value={form.fromEmail} onChange={(e) => setForm((f) => ({ ...f, fromEmail: e.target.value }))} placeholder="From: Sales <sales@domain.com>" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-        <input dir="ltr" value={form.resendApiKey} onChange={(e) => setForm((f) => ({ ...f, resendApiKey: e.target.value }))} placeholder="Resend API key (re_...)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-        <input dir="ltr" value={form.tgChannelId} onChange={(e) => setForm((f) => ({ ...f, tgChannelId: e.target.value }))} placeholder="Channel ID تلگرام (-100...)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-        <input dir="ltr" value={form.publicUrl} onChange={(e) => setForm((f) => ({ ...f, publicUrl: e.target.value }))} placeholder="دومین دکمه‌ها (مثلاً rateklend.text.bz)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-        <input dir="ltr" value={form.inboundDomains} onChange={(e) => setForm((f) => ({ ...f, inboundDomains: e.target.value }))} placeholder="دومین‌های ورودی (مثلاً rateklend.ir)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-        <div className="flex gap-1.5 md:col-span-2">
-          <input dir="ltr" value={form.inboundToken} onChange={(e) => setForm((f) => ({ ...f, inboundToken: e.target.value }))} placeholder="Inbound token (برای وب‌هوک ورودی)" className="flex-1 text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-          <button onClick={genToken} className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)]">🎲 ساخت</button>
+      <Section icon="➕" title="افزودن اکانت" defaultOpen={accounts.length === 0 && !failed} className="!mb-0">
+        <div className="flex flex-col gap-3 text-start">
+          <Field label="نام اکانت"><input dir="ltr" value={form.name} onChange={set("name")} placeholder="نام اکانت (مثلاً Sales)" className={inputCls} /></Field>
+          <Field label="From"><input dir="ltr" value={form.fromEmail} onChange={set("fromEmail")} placeholder="From: Sales <sales@domain.com>" className={inputCls} /></Field>
+          <Field label="Resend API key"><input dir="ltr" value={form.resendApiKey} onChange={set("resendApiKey")} placeholder="Resend API key (re_...)" className={inputCls} /></Field>
+          <Field label="Channel ID تلگرام"><input dir="ltr" value={form.tgChannelId} onChange={set("tgChannelId")} placeholder="Channel ID تلگرام (-100...)" className={inputCls} /></Field>
+          <Field label="دومین دکمه‌ها"><input dir="ltr" value={form.publicUrl} onChange={set("publicUrl")} placeholder="دومین دکمه‌ها (مثلاً rateklend.text.bz)" className={inputCls} /></Field>
+          <Field label="دومین‌های ورودی"><input dir="ltr" value={form.inboundDomains} onChange={set("inboundDomains")} placeholder="دومین‌های ورودی (مثلاً rateklend.ir)" className={inputCls} /></Field>
+          <Field label="Inbound token (برای وب‌هوک ورودی)">
+            <div className="flex gap-2">
+              <input dir="ltr" value={form.inboundToken} onChange={set("inboundToken")} placeholder="Inbound token (برای وب‌هوک ورودی)" className={`${inputCls} flex-1 min-w-0`} />
+              <button type="button" onClick={genToken} className={`${btnGhost} shrink-0`}>🎲 ساخت</button>
+            </div>
+          </Field>
+          <div className="flex">
+            <button onClick={create} disabled={!form.name} className={btnPrimary}>+ افزودن اکانت</button>
+          </div>
         </div>
-      </div>
-      <button onClick={create} disabled={!form.name} className="mt-2 text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-40">+ افزودن اکانت</button>
-    </Card>
+      </Section>
+    </Section>
   );
 }
 
@@ -223,21 +221,16 @@ function InlineField({ label, value, placeholder, onSave }: { label: string; val
     try { await onSave(v.trim()); } finally { setSaving(false); }
   };
   return (
-    <div className="flex items-center gap-1.5 mt-1">
-      <span className="text-[9px] text-[var(--color-text-dim)] shrink-0">{label}</span>
-      <input
-        dir="ltr"
-        value={v}
-        onChange={(e) => setV(e.target.value)}
-        placeholder={placeholder}
-        className="flex-1 min-w-0 text-[10px] px-1.5 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)]"
-      />
-      {dirty && (
-        <button onClick={save} disabled={saving} className="text-[10px] px-2 py-1 rounded border border-[var(--color-accent)] text-[var(--color-accent)] shrink-0 disabled:opacity-40">
-          {saving ? "…" : "ذخیره"}
-        </button>
-      )}
-    </div>
+    <Field label={label}>
+      <div className="flex gap-2">
+        <input dir="ltr" value={v} onChange={(e) => setV(e.target.value)} placeholder={placeholder} className={`${inputCls} flex-1 min-w-0`} />
+        {dirty && (
+          <button type="button" onClick={save} disabled={saving} className="min-h-11 px-4 rounded-xl border border-[var(--color-accent)] text-[var(--color-accent)] text-sm shrink-0 disabled:opacity-40">
+            {saving ? "…" : "ذخیره"}
+          </button>
+        )}
+      </div>
+    </Field>
   );
 }
 
@@ -268,29 +261,26 @@ function ResendSettings({ origin }: { origin: string }) {
   };
   const inboundUrl = `${origin}/api/email-webhook?token=${v.resendInboundSecret && v.resendInboundSecret !== "********" ? v.resendInboundSecret : "<INBOUND_SECRET>"}`;
   const field = (label: string, key: keyof typeof v, ph = "") => (
-    <label className="block">
-      <span className="text-[10px] text-[var(--color-text-dim)]">{label}</span>
-      <input dir="ltr" value={v[key]} onChange={(e) => setV((s) => ({ ...s, [key]: e.target.value }))} placeholder={ph}
-        className="w-full text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] mt-0.5" />
-    </label>
+    <Field label={label}>
+      <input dir="ltr" value={v[key]} onChange={(e) => setV((s) => ({ ...s, [key]: e.target.value }))} placeholder={ph} className={inputCls} />
+    </Field>
   );
   return (
-    <Card className="mb-4">
-      <div className="text-sm font-medium mb-2">⚙️ تنظیمات Resend</div>
-      <div className="grid md:grid-cols-2 gap-2">
+    <Section icon="🔑" title="تنظیمات سراسری Resend" summary="API key و وب‌هوک ورودی" className="!mb-0">
+      <div className="flex flex-col gap-3 text-start">
         {field("API Key (برای ارسال)", "resendApiKey", "re_...")}
         {field("From (آدرس تأییدشده)", "resendFromEmail", "Bot <mail@yourdomain.com>")}
         {field("Inbound Secret (توکن وب‌هوک ورودی)", "resendInboundSecret", "یه رشته تصادفی")}
         {field("Channel ID ایمیل ورودی (خالی = نقش email_inbox)", "emailChannelId", "-100...")}
+        <div className="text-xs leading-6 text-[var(--color-text-dim)]">
+          این URL رو توی Resend به‌عنوان Inbound Webhook بذار:
+          <code dir="ltr" className="block mt-1 break-all bg-[var(--color-surface-2)] p-2 rounded-xl">{inboundUrl}</code>
+        </div>
+        <div className="flex">
+          <button onClick={save} className={btnPrimary}>{saved ? "✓ ذخیره شد" : "ذخیره"}</button>
+        </div>
       </div>
-      <div className="mt-2 text-[10px] text-[var(--color-text-dim)]">
-        این URL رو توی Resend به‌عنوان Inbound Webhook بذار:
-        <code dir="ltr" className="block mt-1 break-all bg-[var(--color-surface-2)] p-1.5 rounded">{inboundUrl}</code>
-      </div>
-      <button onClick={save} className="mt-2 text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white">
-        {saved ? "✓ ذخیره شد" : "ذخیره"}
-      </button>
-    </Card>
+    </Section>
   );
 }
 
@@ -329,29 +319,33 @@ function ComposeModal({ onClose, onSent }: { onClose: () => void; onSent: () => 
       setSending(false);
     }
   };
+  // Bottom sheet on phones, centred dialog on desktop (same shape as the in-app confirm dialog).
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div dir="rtl" onClick={(e) => e.stopPropagation()} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 w-full max-w-lg">
-        <div className="text-sm font-medium mb-3">✉️ ایمیل جدید</div>
-        <div className="flex flex-col gap-2">
+    <div className="fixed inset-0 bg-black/60 flex items-end md:items-center justify-center z-[60]" onClick={onClose}>
+      <div dir="rtl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true"
+        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-t-3xl md:rounded-3xl p-4 pb-6 w-full md:max-w-lg max-h-[92dvh] overflow-y-auto">
+        <div className="text-base font-semibold mb-3 text-center">✉️ ایمیل جدید</div>
+        <div className="flex flex-col gap-3">
           {accounts.length > 0 && (
-            <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")} className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]">
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>{a.name} ({a.fromEmail ?? "?"})</option>
-              ))}
-            </select>
+            <Field label="از طرف اکانت">
+              <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")} className={inputCls}>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name} ({a.fromEmail ?? "?"})</option>
+                ))}
+              </select>
+            </Field>
           )}
-          <input dir="ltr" value={to} onChange={(e) => setTo(e.target.value)} placeholder="به: someone@example.com" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-          <input dir="ltr" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="cc (اختیاری)" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-          <input dir="auto" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="موضوع" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-          <textarea dir="auto" value={text} onChange={(e) => setText(e.target.value)} rows={7} placeholder="متن ایمیل…" className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
+          <Field label="به"><input dir="ltr" value={to} onChange={(e) => setTo(e.target.value)} placeholder="به: someone@example.com" className={inputCls} /></Field>
+          <Field label="cc (اختیاری)"><input dir="ltr" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="cc (اختیاری)" className={inputCls} /></Field>
+          <Field label="موضوع"><input dir="auto" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="موضوع" className={inputCls} /></Field>
+          <Field label="متن ایمیل"><textarea dir="auto" value={text} onChange={(e) => setText(e.target.value)} rows={7} placeholder="متن ایمیل…" className={inputCls} /></Field>
         </div>
-        {err && <p className="text-xs text-red-300 mt-2">{err}</p>}
-        <div className="mt-3 flex gap-2">
-          <button onClick={send} disabled={sending || !to || !subject} className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-40">
+        {err && <p role="alert" className="text-sm text-red-300 mt-3 text-center">{err}</p>}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button onClick={send} disabled={sending || !to || !subject} className={btnPrimary}>
             {sending ? "در حال ارسال…" : "ارسال"}
           </button>
-          <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">انصراف</button>
+          <button onClick={onClose} className={btnGhost}>انصراف</button>
         </div>
       </div>
     </div>
@@ -396,26 +390,28 @@ function ResendCheck({ accountId }: { accountId: number }) {
   }
   const ok = report && report.problems.length === 0;
   return (
-    <div className="mt-2 text-[11px]">
+    <div className="mt-3 text-xs">
       <div className="flex gap-2 flex-wrap items-center">
-        <button onClick={() => run(false)} disabled={busy} className="px-2 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-50">
+        <button onClick={() => run(false)} disabled={busy} className={btnGhost}>
           {busy ? "در حال بررسی…" : "🔧 بررسی Resend"}
         </button>
         {report && !report.webhook.found && (
-          <button onClick={() => run(true)} disabled={busy} className="px-2 py-1 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50">
+          <button onClick={() => run(true)} disabled={busy} className={`${btnPrimary} min-h-10`}>
             ساخت وب‌هوک email.received
           </button>
         )}
-        {report && (
-          <Badge tone={ok ? "success" : "warn"}>{ok ? "همه‌چیز درسته" : `${report.problems.length} مشکل`}</Badge>
-        )}
       </div>
-      {err && <div className="text-rose-300 mt-1">{err}</div>}
       {report && (
-        <div className="mt-2 space-y-1 text-[var(--color-text-dim)]">
+        <div className="mt-2 flex justify-center">
+          <Badge tone={ok ? "success" : "warn"}>{ok ? "همه‌چیز درسته" : `${fa(report.problems.length)} مشکل`}</Badge>
+        </div>
+      )}
+      {err && <div className="text-rose-300 mt-2 break-all">{err}</div>}
+      {report && (
+        <div className="mt-2 space-y-1 leading-6 text-[var(--color-text-dim)]">
           <div>
             دومین {report.domain.wanted ?? "—"}: {report.domain.found ? `${report.domain.status ?? "?"}${report.domain.region ? ` · ${report.domain.region}` : ""}` : "ثبت نشده"}
-            {report.domain.unverified > 0 && ` · ${report.domain.unverified} رکورد تأییدنشده`}
+            {report.domain.unverified > 0 && ` · ${fa(report.domain.unverified)} رکورد تأییدنشده`}
           </div>
           <div>
             وب‌هوک: {report.webhook.found ? `✅ ${report.webhook.created ? "ساخته شد" : "موجود"} (${(report.webhook.events ?? []).join(", ")})` : report.webhook.listed ? "❌ نیست" : `؟ ${report.webhook.error ?? ""}`}
@@ -425,7 +421,7 @@ function ResendCheck({ accountId }: { accountId: number }) {
             <div key={p} className="text-amber-300">⚠ {p}</div>
           ))}
           {report.domain.records.filter((r) => r.status && !/verified/i.test(r.status)).map((r) => (
-            <div key={`${r.type}-${r.name}`} dir="ltr" className="font-mono text-[10px] break-all">
+            <div key={`${r.type}-${r.name}`} dir="ltr" className="font-mono text-xs break-all">
               {r.type} {r.name} → {r.value.slice(0, 60)}{r.value.length > 60 ? "…" : ""} ({r.status})
             </div>
           ))}

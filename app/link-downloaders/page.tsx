@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Shell from "@/components/Shell";
-import { Card, PageTitle } from "@/components/Card";
+import { Badge, PageTitle } from "@/components/Card";
+import Section from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
+import { confirmDialog } from "@/components/ui/Dialogs";
+import { ErrorBox, Field, LoadingBox, Switch, SummaryBar, btnDanger, btnGhost, btnPrimary, cardCls, fa, inputCls } from "@/components/tool-pages/Controls";
 
 type DL = {
   id: number; label: string; kind: string;
@@ -15,10 +19,22 @@ export default function LinkDownloadersPage() {
   const [form, setForm] = useState<typeof BLANK>({ ...BLANK });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const formRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
-    const r = await fetch("/api/link-downloaders");
-    if (r.ok) setRows(((await r.json()) as { downloaders: DL[] }).downloaders);
+    setError(false);
+    try {
+      const r = await fetch("/api/link-downloaders");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setRows(((await r.json()) as { downloaders: DL[] }).downloaders);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -29,11 +45,11 @@ export default function LinkDownloadersPage() {
       body: JSON.stringify({ ...form, id: form.id || undefined }),
     }).catch(() => null);
     setBusy(false);
-    if (r && r.ok) { setForm({ ...BLANK }); setMsg("ذخیره شد ✓"); void load(); }
+    if (r && r.ok) { setForm({ ...BLANK }); setMsg("ذخیره شد ✓"); setFormOpen(false); void load(); }
     else setMsg(((await r?.json().catch(() => ({}))) as { error?: string })?.error ?? "خطا");
   }
   async function remove(id: number) {
-    if (!confirm("حذف شود؟ لینک‌های این سرویس دیگر فوروارد نمی‌شوند.")) return;
+    if (!(await confirmDialog("حذف شود؟ لینک‌های این سرویس دیگر فوروارد نمی‌شوند.", { danger: true, confirmLabel: "حذف" }))) return;
     await fetch(`/api/link-downloaders?id=${id}`, { method: "DELETE" }).catch(() => {});
     void load();
   }
@@ -44,90 +60,91 @@ export default function LinkDownloadersPage() {
     }).catch(() => {});
     void load();
   }
+  function startEdit(d: DL) {
+    setForm({ id: d.id, label: d.label, kind: d.kind, botId: String(d.botId), hosts: d.hosts.join(", "), enabled: d.enabled });
+    setMsg(null);
+    setFormOpen(true);
+    // the form sits above the list: bring it into view so the edit is visible
+    setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }
 
-  const inp = "w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm";
+  const active = rows.filter((d) => d.enabled).length;
 
   return (
     <Shell>
-      <PageTitle
-        title="🔗 دانلودرهای لینک"
-        subtitle="وقتی کسی در چت خصوصی لینکی از این سرویس‌ها بفرستد، لینک برای بات مربوطه ارسال و فایلِ برگشتی به خودش پس داده می‌شود."
-      />
+      <div className="max-w-2xl mx-auto">
+        <PageTitle
+          title="🔗 دانلودرهای لینک"
+          subtitle="وقتی کسی در چت خصوصی لینکی از این سرویس‌ها بفرستد، لینک برای بات مربوطه ارسال و فایلِ برگشتی به خودش پس داده می‌شود."
+        />
 
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-3">{form.id ? "ویرایش" : "سرویس جدید"}</div>
-        <div className="grid md:grid-cols-2 gap-3">
-          <div>
-            <div className="text-[11px] mb-1">نام</div>
-            <input className={inp} value={form.label}
-              onChange={(e) => setForm({ ...form, label: e.target.value })}
-              placeholder="مثلاً: YouTube" />
-          </div>
-          <div>
-            <div className="text-[11px] mb-1">آیدی عددی بات دانلودر</div>
-            <input className={inp} dir="ltr" value={form.botId}
-              onChange={(e) => setForm({ ...form, botId: e.target.value })}
-              placeholder="2010101852" />
-          </div>
-          <div className="md:col-span-2">
-            <div className="text-[11px] mb-1">
-              دامنه‌ها <span className="text-[var(--color-text-dim)]">(با کاما — زیردامنه‌ها خودکار پوشش داده می‌شوند)</span>
-            </div>
-            <input className={inp} dir="ltr" value={form.hosts}
-              onChange={(e) => setForm({ ...form, hosts: e.target.value })}
-              placeholder="instagram.com, instagr.am" />
-          </div>
-          <label className="flex items-center gap-2 text-[11px] cursor-pointer">
-            <input type="checkbox" checked={form.enabled}
-              onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
-            <span>فعال</span>
-          </label>
-        </div>
-        <div className="flex gap-2 items-center mt-4">
-          <button onClick={save} disabled={busy}
-            className="text-xs px-4 py-2 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50">
-            {busy ? "…" : form.id ? "ذخیره" : "افزودن"}
-          </button>
-          {form.id > 0 && (
-            <button onClick={() => setForm({ ...BLANK })}
-              className="text-xs px-3 py-2 rounded-md border border-[var(--color-border)]">انصراف</button>
-          )}
-          {msg && <span className="text-[11px] text-[var(--color-text-dim)]">{msg}</span>}
-        </div>
-      </Card>
-
-      {rows.map((d) => (
-        <Card key={d.id} className="mb-3">
-          <div className="flex justify-between items-start gap-3 flex-wrap">
-            <div className="min-w-0">
-              <div className="text-sm font-medium">
-                {d.label}{" "}
-                <span className={`text-[10px] px-2 py-0.5 rounded ${d.enabled ? "bg-emerald-900/40 text-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-dim)]"}`}>
-                  {d.enabled ? "فعال" : "غیرفعال"}
-                </span>
-              </div>
-              <div className="text-[11px] text-[var(--color-text-dim)] mt-1" dir="ltr">
-                bot {d.botId} · {d.hosts.join(", ")}
+        <div ref={formRef}>
+          <Section icon={form.id ? "✏️" : "➕"} title={form.id ? "ویرایش" : "سرویس جدید"} summary={form.id ? form.label : "نام، آیدی بات و دامنه‌ها"}
+            open={formOpen || (!loading && !error && rows.length === 0)} onOpenChange={setFormOpen}>
+            <div className="flex flex-col gap-3">
+              <Field label="نام">
+                <input className={inputCls} value={form.label}
+                  onChange={(e) => setForm({ ...form, label: e.target.value })}
+                  placeholder="مثلاً: YouTube" />
+              </Field>
+              <Field label="آیدی عددی بات دانلودر">
+                <input className={inputCls} dir="ltr" inputMode="numeric" value={form.botId}
+                  onChange={(e) => setForm({ ...form, botId: e.target.value })}
+                  placeholder="2010101852" />
+              </Field>
+              <Field label="دامنه‌ها" hint="با کاما — زیردامنه‌ها خودکار پوشش داده می‌شوند">
+                <input className={inputCls} dir="ltr" value={form.hosts}
+                  onChange={(e) => setForm({ ...form, hosts: e.target.value })}
+                  placeholder="instagram.com, instagr.am" />
+              </Field>
+              <Switch checked={form.enabled} onChange={(v) => setForm({ ...form, enabled: v })} label="فعال" />
+              <div className="flex flex-wrap gap-2">
+                <button onClick={save} disabled={busy} className={btnPrimary}>
+                  {busy ? "…" : form.id ? "ذخیره" : "افزودن"}
+                </button>
+                {form.id > 0 && (
+                  <button onClick={() => { setForm({ ...BLANK }); setMsg(null); }} className={btnGhost}>انصراف</button>
+                )}
               </div>
             </div>
-            <div className="flex gap-2 shrink-0">
-              <button onClick={() => toggle(d)}
-                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">
-                {d.enabled ? "غیرفعال کن" : "فعال کن"}
-              </button>
-              <button onClick={() => setForm({
-                  id: d.id, label: d.label, kind: d.kind,
-                  botId: String(d.botId), hosts: d.hosts.join(", "), enabled: d.enabled })}
-                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">ویرایش</button>
-              <button onClick={() => remove(d.id)}
-                className="text-xs px-3 py-1.5 rounded-md border border-red-900 text-red-300">حذف</button>
-            </div>
+          </Section>
+        </div>
+
+        {msg && <p role="status" className="mb-3 text-center text-sm text-[var(--color-text-dim)]">{msg}</p>}
+
+        {!loading && !error && rows.length > 0 && (
+          <SummaryBar items={[{ text: `${fa(rows.length)} سرویس` }, { text: `${fa(active)} فعال`, tone: "ok" }]} />
+        )}
+
+        {loading ? (
+          <LoadingBox />
+        ) : error ? (
+          <ErrorBox text="دریافت فهرست دانلودرها ناموفق بود." onRetry={load} />
+        ) : rows.length === 0 ? (
+          <EmptyState icon="🔗" title="هنوز سرویسی تعریف نشده" hint="فرم بالا را پر کن و «افزودن» را بزن." />
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {rows.map((d) => (
+              <div key={d.id} className={`${cardCls} ${form.id === d.id ? "!border-[var(--color-accent)]" : ""}`}>
+                <div className="text-sm font-semibold leading-6">{d.label}</div>
+                <div className="mt-1.5 flex flex-wrap justify-center gap-1.5">
+                  {d.enabled ? <Badge tone="success">فعال</Badge> : <Badge tone="neutral">غیرفعال</Badge>}
+                  {form.id === d.id && <Badge tone="info">در حال ویرایش</Badge>}
+                </div>
+                <div dir="ltr" className="mt-2 text-xs text-[var(--color-text-dim)]">bot {d.botId}</div>
+                <div dir="ltr" className="mt-2 flex flex-wrap justify-center gap-1.5">
+                  {d.hosts.map((h) => <span key={h} className="px-2.5 py-1 rounded-full text-xs bg-[var(--color-surface-2)] break-all">{h}</span>)}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button onClick={() => startEdit(d)} className={btnGhost}>ویرایش</button>
+                  <button onClick={() => toggle(d)} className={btnGhost}>{d.enabled ? "غیرفعال کن" : "فعال کن"}</button>
+                  <button onClick={() => remove(d.id)} className={btnDanger}>حذف</button>
+                </div>
+              </div>
+            ))}
           </div>
-        </Card>
-      ))}
-      {rows.length === 0 && (
-        <Card><p className="text-sm text-[var(--color-text-dim)]">هنوز سرویسی تعریف نشده.</p></Card>
-      )}
+        )}
+      </div>
     </Shell>
   );
 }
