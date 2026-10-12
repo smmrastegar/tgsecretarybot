@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
+import Section, { Pill } from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
 
 type ProfileSummary = {
   id: number;
@@ -13,6 +15,11 @@ type ProfileSummary = {
   isBuiltin: boolean;
   chatCount: number;
 };
+
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+
+const BTN_PRIMARY = "min-h-11 px-4 rounded-xl text-sm font-medium inline-flex items-center justify-center gap-1.5 bg-[var(--color-accent)] text-white disabled:opacity-50";
+const FIELD = "w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3";
 
 export default function ChatProfilesIndexPage() {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
@@ -72,70 +79,72 @@ export default function ChatProfilesIndexPage() {
         subtitle="هر پروفایل یه قالب کامل از تنظیمات چت هست. یکی رو کلیک کن تا واردش بشی و تنظیماتش رو ویرایش کنی."
       />
 
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-2">+ ساخت پروفایل جدید</div>
-        <div className="flex gap-2 items-center">
+      <Section icon="➕" title="ساخت پروفایل جدید" summary="اسم و ایموجی، بعد وارد تنظیماتش شو">
+        <div className="flex flex-col gap-2">
           <input
             type="text"
             value={newEmoji}
             onChange={(e) => setNewEmoji(e.target.value)}
-            placeholder="😀"
-            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 w-16 text-center"
+            placeholder="😀 ایموجی (اختیاری)"
+            aria-label="ایموجی"
+            className={`${FIELD} text-center`}
           />
           <input
             type="text"
+            dir="auto"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="اسم پروفایل (مثلاً «خانواده»)"
-            className="flex-1 text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+            aria-label="اسم پروفایل"
+            className={FIELD}
             onKeyDown={(e) => {
               if (e.key === "Enter") create();
             }}
           />
-          <button
-            onClick={create}
-            disabled={creating || !newName.trim()}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-          >
-            +
+          <button onClick={create} disabled={creating || !newName.trim()} className={`${BTN_PRIMARY} w-full`}>
+            {creating ? "…" : "+ ساخت پروفایل"}
           </button>
         </div>
-      </Card>
+      </Section>
 
-      {err && (
-        <Card className="mb-4">
-          <div className="text-xs text-red-300">خطا: {err}</div>
-        </Card>
-      )}
-
-      {loading && profiles.length === 0 ? (
+      {err ? (
         <Card>
-          <div className="text-xs text-[var(--color-text-dim)]">...</div>
+          <p className="text-sm text-red-300">خطا در بارگذاری پروفایل‌ها: {err}</p>
+          <div className="mt-3 flex">
+            <button onClick={() => void load()} className={BTN_PRIMARY}>تلاش دوباره</button>
+          </div>
         </Card>
+      ) : loading && profiles.length === 0 ? (
+        <Card>
+          <p className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری پروفایل‌ها…</p>
+        </Card>
+      ) : profiles.length === 0 ? (
+        <EmptyState
+          icon="👤"
+          title="هنوز پروفایلی نداری."
+          hint="از «ساخت پروفایل جدید» بالا اولین پروفایل را بساز."
+        />
       ) : (
-        <Card>
-          <ul className="divide-y divide-[var(--color-border)]">
-            {profiles.map((p) => (
-              <li key={p.id}>
-                <Link
-                  href={`/chat-profiles/${p.id}`}
-                  className="flex items-center gap-3 py-3 px-1 hover:bg-[var(--color-surface-2)]/40 rounded-md"
-                >
-                  <span className="text-xl">{p.emoji || "📋"}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium">{p.name}</div>
-                    <div className="text-[10px] text-[var(--color-text-dim)]">
-                      {p.chatCount} چت
-                      {p.isDefault && " · پیش‌فرض"}
-                      {p.isBuiltin && !p.isDefault && " · builtin"}
-                    </div>
-                  </div>
-                  <span className="text-[var(--color-text-dim)]">←</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
+        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+          {profiles.map((p) => (
+            <Link
+              key={p.id}
+              href={`/chat-profiles/${p.id}`}
+              className="flex items-center gap-3 px-4 min-h-16 py-2.5 border-t first:border-t-0 border-[var(--color-border)] active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)]"
+            >
+              <span aria-hidden className="grid place-items-center w-10 h-10 rounded-xl bg-[var(--color-surface-2)] text-xl shrink-0">{p.emoji || "📋"}</span>
+              <span className="min-w-0 flex-1 text-center">
+                <span dir="auto" className="block text-sm font-semibold truncate">{p.name}</span>
+                <span className="block text-xs text-[var(--color-text-dim)] truncate">
+                  {fa(p.chatCount)} چت
+                  {p.isBuiltin && !p.isDefault && " · builtin"}
+                </span>
+              </span>
+              {p.isDefault && <Pill tone="ok">پیش‌فرض</Pill>}
+              <span aria-hidden className="shrink-0 text-[var(--color-text-dim)]">‹</span>
+            </Link>
+          ))}
+        </div>
       )}
     </Shell>
   );
