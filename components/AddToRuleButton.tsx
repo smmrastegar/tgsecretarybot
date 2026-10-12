@@ -106,11 +106,14 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
     }
   }, [messageLogId, mode, name, desc, pickedRule]);
 
+  const field =
+    "w-full min-h-11 text-sm bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-3";
+
   if (!open) {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="text-[10px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] text-[var(--color-text-dim)]"
+        className="w-full min-h-11 px-3 rounded-xl border border-[var(--color-border)] text-sm text-[var(--color-text-dim)] active:bg-[var(--color-surface-2)]"
         title="این پیام رو به یه rule اضافه کن یا یه rule جدید با این به‌عنوان مثال بساز"
       >
         📐 به rule
@@ -119,38 +122,44 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
   }
 
   return (
-    <div className="w-full mt-2 p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]">
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-[11px] font-medium">📐 افزودن به rule</div>
+    <div className="w-full p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]">
+      <div className="flex items-center justify-between mb-2.5">
+        <span aria-hidden className="w-10" />
+        <div className="text-sm font-medium">📐 افزودن به rule</div>
         <button
           onClick={() => setOpen(false)}
-          className="text-[10px] text-[var(--color-text-dim)] hover:text-white"
+          aria-label="بستن"
+          className="w-10 min-h-10 rounded-xl text-[var(--color-text-dim)] active:bg-[var(--color-surface)]"
         >
           ✕
         </button>
       </div>
-      <div className="flex gap-2 mb-2">
-        <label className="flex items-center gap-1 text-[10px] cursor-pointer">
-          <input
-            type="radio"
-            checked={mode === "create"}
-            onChange={() => setMode("create")}
-          />
-          rule جدید
-        </label>
-        <label className="flex items-center gap-1 text-[10px] cursor-pointer">
-          <input
-            type="radio"
-            checked={mode === "add"}
-            onChange={() => setMode("add")}
-          />
-          اضافه به rule موجود
-        </label>
+      <div role="tablist" className="grid grid-cols-2 gap-2 mb-3">
+        {(
+          [
+            ["create", "rule جدید"],
+            ["add", "اضافه به rule موجود"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            role="tab"
+            aria-selected={mode === value}
+            onClick={() => setMode(value)}
+            className={`min-h-11 px-2 rounded-xl text-xs border ${
+              mode === value
+                ? "bg-[var(--color-accent)] text-white border-transparent"
+                : "border-[var(--color-border)] text-[var(--color-text-dim)]"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       {mode === "create" ? (
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between text-[10px] text-[var(--color-text-dim)]">
-            <span>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2 text-xs text-[var(--color-text-dim)]">
+            <span className="min-w-0 flex-1">
               {suggesting
                 ? "⏳ پیشنهاد AI…"
                 : suggested === "ok"
@@ -167,7 +176,7 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
                   setName("");
                   setDesc("");
                 }}
-                className="text-[10px] underline-offset-2 hover:underline"
+                className="shrink-0 min-h-10 px-2 rounded-lg text-xs underline underline-offset-2"
               >
                 دوباره پیشنهاد بده
               </button>
@@ -175,26 +184,28 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
           </div>
           <input
             type="text"
+            dir="auto"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={suggesting ? "…" : "اسم rule"}
-            className="text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-2 py-1"
+            className={field}
           />
           <textarea
+            dir="auto"
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
             placeholder={
               suggesting ? "…" : "توصیف: چه مدل پیام‌هایی match کنن؟"
             }
-            rows={2}
-            className="text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-2 py-1"
+            rows={3}
+            className={`${field} py-2 leading-7`}
           />
         </div>
       ) : (
         <select
           value={pickedRule}
           onChange={(e) => setPickedRule(e.target.value as "" | number)}
-          className="w-full text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-2 py-1"
+          className={field}
         >
           <option value="">— rule رو انتخاب کن —</option>
           {rules.map((r) => (
@@ -204,20 +215,18 @@ export default function AddToRuleButton({ messageLogId }: { messageLogId: number
           ))}
         </select>
       )}
-      <div className="flex items-center gap-2 mt-2">
-        <button
-          onClick={submit}
-          disabled={busy}
-          className="text-[11px] px-3 py-1 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-        >
-          {busy ? "…" : mode === "create" ? "بساز" : "اضافه کن"}
-        </button>
-        {status && (
-          <span className="text-[10px] text-[var(--color-text-dim)]">
-            {status}
-          </span>
-        )}
-      </div>
+      <button
+        onClick={submit}
+        disabled={busy}
+        className="mt-3 w-full min-h-11 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium disabled:opacity-50"
+      >
+        {busy ? "…" : mode === "create" ? "بساز" : "اضافه کن"}
+      </button>
+      {status && (
+        <div role="status" className="mt-2 text-xs text-[var(--color-text-dim)]">
+          {status}
+        </div>
+      )}
     </div>
   );
 }

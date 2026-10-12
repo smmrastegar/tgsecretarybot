@@ -3,11 +3,20 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Shell from "@/components/Shell";
-import { Card, PageTitle, Badge } from "@/components/Card";
+import { Card, PageTitle } from "@/components/Card";
+import Chip, { type ChipTone } from "@/components/dash/Chip";
 import MessageActions from "@/components/MessageActions";
 import MediaView from "@/components/MediaView";
 import OtpChip from "@/components/OtpChip";
+import EmptyState from "@/components/ui/EmptyState";
 import { chatTypeLabel, relTime, truncate } from "@/lib/format";
+
+const fa = (v: number | string) =>
+  String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+
+// Secondary button: 44px, outlined.
+const BTN =
+  "min-h-11 px-4 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)] disabled:opacity-50";
 
 function groupByChat(messages: Message[]): Array<{
   chatId: number;
@@ -35,9 +44,9 @@ function groupByChat(messages: Message[]): Array<{
     );
 }
 
-const SOURCE_LABEL: Record<string, { label: string; tone: "info" | "success" | "warn" | "neutral" }> = {
-  ai_chat: { label: "AI (خودکار)", tone: "success" },
-  ai_dashboard: { label: "AI (دستی)", tone: "success" },
+const SOURCE_LABEL: Record<string, { label: string; tone: ChipTone }> = {
+  ai_chat: { label: "AI (خودکار)", tone: "ok" },
+  ai_dashboard: { label: "AI (دستی)", tone: "ok" },
   friendly_reply: { label: "صمیمی", tone: "info" },
   auto_reply: { label: "پاسخ خودکار", tone: "info" },
   owner_dashboard: { label: "داشبورد", tone: "neutral" },
@@ -161,7 +170,7 @@ export default function MessagesPage() {
       } else {
         setTranscribeMsg((m) => ({
           ...m,
-          [chatId]: `${j.done ?? 0} ترانسکریپت شد${j.failed ? ` (${j.failed} ناموفق)` : ""}`,
+          [chatId]: `${fa(j.done ?? 0)} ترانسکریپت شد${j.failed ? ` (${fa(j.failed)} ناموفق)` : ""}`,
         }));
         await load();
       }
@@ -196,24 +205,35 @@ export default function MessagesPage() {
   const PAGE = 15;
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [moreErr, setMoreErr] = useState(false);
+
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadErr(null);
+    setMoreErr(false);
     const params = new URLSearchParams();
     params.set("limit", String(PAGE));
     params.set("offset", "0");
     if (urgentOnly) params.set("urgent", "1");
     if (search) params.set("q", search);
     if (kind !== "all") params.set("kind", kind);
-    const r = await fetch(`/api/messages?${params}`);
-    const j = (await r.json()) as { messages: Message[] };
-    setMessages(j.messages);
-    setHasMore(j.messages.length === PAGE);
-    setLoading(false);
+    try {
+      const r = await fetch(`/api/messages?${params}`);
+      if (!r.ok) throw new Error(`بارگذاری انجام نشد (${fa(r.status)})`);
+      const j = (await r.json()) as { messages: Message[] };
+      setMessages(j.messages);
+      setHasMore(j.messages.length === PAGE);
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : "ارتباط با سرور برقرار نشد");
+    } finally {
+      setLoading(false);
+    }
   }, [search, urgentOnly, kind]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore) return;
+    if (loadingMore || !hasMore || moreErr) return;
     setLoadingMore(true);
     const params = new URLSearchParams();
     params.set("limit", String(PAGE));
@@ -221,12 +241,18 @@ export default function MessagesPage() {
     if (urgentOnly) params.set("urgent", "1");
     if (search) params.set("q", search);
     if (kind !== "all") params.set("kind", kind);
-    const r = await fetch(`/api/messages?${params}`);
-    const j = (await r.json()) as { messages: Message[] };
-    setMessages((prev) => [...prev, ...j.messages]);
-    setHasMore(j.messages.length === PAGE);
-    setLoadingMore(false);
-  }, [loadingMore, hasMore, messages.length, urgentOnly, search, kind]);
+    try {
+      const r = await fetch(`/api/messages?${params}`);
+      if (!r.ok) throw new Error(String(r.status));
+      const j = (await r.json()) as { messages: Message[] };
+      setMessages((prev) => [...prev, ...j.messages]);
+      setHasMore(j.messages.length === PAGE);
+    } catch {
+      setMoreErr(true); // no auto-retry (the scroll sentinel would loop); the button below retries
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, moreErr, messages.length, urgentOnly, search, kind]);
 
   useEffect(() => {
     const id = setTimeout(load, 300);
@@ -249,6 +275,15 @@ export default function MessagesPage() {
     return () => observer.disconnect();
   }, [loadMore]);
 
+  const onTranscript = (id: number, txt: string) =>
+    setMessages((ms) =>
+      ms.map((mm) =>
+        mm.id === id
+          ? { ...mm, transcript: txt, transcriptAt: new Date().toISOString() }
+          : mm,
+      ),
+    );
+
   return (
     <Shell>
       <PageTitle
@@ -256,112 +291,138 @@ export default function MessagesPage() {
         subtitle="هر پیام دسته‌بندی‌شده‌ای که ربات دیده."
       />
 
-      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mb-4 sm:items-center">
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="جستجو در متن یا فرستنده…"
-          className="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm placeholder:text-[var(--color-text-dim)]"
-        />
-        <div
-          role="tablist"
-          className="flex border border-[var(--color-border)] rounded-md overflow-hidden text-xs"
-        >
-          {(
-            [
-              ["deleted", "🗑 پاک‌شده"],
-              ["all", "همه"],
-              ["edited", "✎ ویرایش‌شده"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              role="tab"
-              aria-selected={kind === value}
-              onClick={() => setKind(value)}
-              className={`px-3 py-2 ${
-                kind === value
-                  ? "bg-[var(--color-accent)] text-white"
-                  : "bg-[var(--color-surface)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+      <Card className="mb-3 !p-3">
+        <div className="flex flex-col gap-2.5">
+          <input
+            dir="auto"
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="جستجو"
+            placeholder="جستجو در متن یا فرستنده…"
+            className="w-full min-h-11 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3 text-sm text-center placeholder:text-[var(--color-text-dim)]"
+          />
+          <div
+            role="tablist"
+            className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-[var(--color-surface-2)]"
+          >
+            {(
+              [
+                ["deleted", "🗑 پاک‌شده"],
+                ["all", "همه"],
+                ["edited", "✎ ویرایش‌شده"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                role="tab"
+                aria-selected={kind === value}
+                onClick={() => setKind(value)}
+                className={`min-h-10 px-1 min-[360px]:px-2 rounded-lg text-xs min-[360px]:text-sm whitespace-nowrap ${
+                  kind === value
+                    ? "bg-[var(--color-accent)] text-white font-medium"
+                    : "text-[var(--color-text-dim)] active:bg-[var(--color-surface)]"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="min-h-11 flex items-center justify-center gap-2 px-2 text-sm rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={urgentOnly}
+                onChange={(e) => setUrgentOnly(e.target.checked)}
+              />
+              فقط فوری‌ها
+            </label>
+            <label className="min-h-11 flex items-center justify-center gap-2 px-2 text-sm rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={threaded}
+                onChange={(e) => setThreaded(e.target.checked)}
+              />
+              به تفکیک چت
+            </label>
+          </div>
         </div>
-        <label className="text-xs text-[var(--color-text-dim)] flex items-center gap-2 px-3 py-2 border border-[var(--color-border)] rounded-md cursor-pointer hover:bg-[var(--color-surface-2)]">
-          <input
-            type="checkbox"
-            checked={urgentOnly}
-            onChange={(e) => setUrgentOnly(e.target.checked)}
-          />
-          فقط فوری‌ها
-        </label>
-        <label className="text-xs text-[var(--color-text-dim)] flex items-center gap-2 px-3 py-2 border border-[var(--color-border)] rounded-md cursor-pointer hover:bg-[var(--color-surface-2)]">
-          <input
-            type="checkbox"
-            checked={threaded}
-            onChange={(e) => setThreaded(e.target.checked)}
-          />
-          گروه‌بندی بر اساس چت
-        </label>
-      </div>
+      </Card>
 
       {loading ? (
         <Card>
           <p className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری…</p>
         </Card>
-      ) : messages.length === 0 ? (
+      ) : loadErr ? (
         <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">
-            هیچ پیامی مطابقت نداره.
-          </p>
+          <p role="alert" className="text-sm text-rose-300">{loadErr}</p>
+          <div className="mt-3 flex">
+            <button onClick={() => void load()} className={BTN}>تلاش دوباره</button>
+          </div>
         </Card>
+      ) : messages.length === 0 ? (
+        <EmptyState
+          icon="💬"
+          title="هیچ پیامی مطابقت نداره."
+          hint="فیلتر یا عبارت جستجو را عوض کن."
+          action={
+            (search || urgentOnly || kind !== "all") ? (
+              <button
+                onClick={() => { setSearch(""); setUrgentOnly(false); setKind("all"); }}
+                className={BTN}
+              >
+                پاک کردن فیلترها
+              </button>
+            ) : undefined
+          }
+        />
       ) : threaded ? (
-        <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
           {groupByChat(messages).map((group) => {
             // The most recent non-owner message in this group is what the
             // owner would act on next (suggest reply, forward, AI, transcribe).
             const target = group.messages.find((m) => !m.fromOwner) ?? group.messages[0]!;
             return (
             <Card key={group.chatId} className="!p-3 md:!p-4 overflow-hidden min-w-0">
-              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap min-w-0">
+              <div className="min-w-0">
                 <Link
                   href={`/chats/${group.chatId}`}
-                  className="font-medium text-sm hover:underline truncate min-w-0 max-w-full"
+                  dir="auto"
+                  className="flex items-center justify-center min-h-10 text-sm font-semibold hover:underline"
                 >
-                  {group.chatTitle ?? group.senderName}
+                  <span className="truncate">{group.chatTitle ?? group.senderName}</span>
                 </Link>
-                <div className="flex gap-1 flex-wrap items-center text-[10px]">
-                  <Badge tone="neutral">{group.messages.length} پیام</Badge>
-                  <Badge tone="neutral">
-                    آخرین {relTime(group.messages[0]!.createdAt)}
-                  </Badge>
-                  {group.messages.some(
-                    (m) =>
-                      !m.transcript &&
-                      m.mediaKind &&
-                      ["voice", "audio", "video_note"].includes(m.mediaKind),
-                  ) && (
-                    <button
-                      onClick={() => transcribeAllInChat(group.chatId)}
-                      disabled={transcribing.has(group.chatId)}
-                      className="text-[11px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                    >
-                      {transcribing.has(group.chatId)
-                        ? "در حال..."
-                        : "🎙 رونویسی همه"}
-                    </button>
-                  )}
+                <div className="mt-1.5 flex gap-1.5 flex-wrap items-center justify-center">
+                  <Chip>{fa(group.messages.length)} پیام</Chip>
+                  <Chip>آخرین {relTime(group.messages[0]!.createdAt)}</Chip>
                 </div>
               </div>
+              {group.messages.some(
+                (m) =>
+                  !m.transcript &&
+                  m.mediaKind &&
+                  ["voice", "audio", "video_note"].includes(m.mediaKind),
+              ) && (
+                <div className="mt-2 flex">
+                  <button
+                    onClick={() => transcribeAllInChat(group.chatId)}
+                    disabled={transcribing.has(group.chatId)}
+                    className={BTN}
+                  >
+                    {transcribing.has(group.chatId)
+                      ? "در حال..."
+                      : "🎙 رونویسی همه"}
+                  </button>
+                </div>
+              )}
               {transcribeMsg[group.chatId] && (
-                <div className="text-[11px] text-[var(--color-text-dim)] mb-2">
+                <div role="status" className="mt-2 text-xs text-[var(--color-text-dim)]">
                   {transcribeMsg[group.chatId]}
                 </div>
               )}
-              <div className="flex flex-col gap-1 min-w-0">
+              {/* A conversation: bubbles are start/end aligned like in Telegram itself (the one place a
+                  card's content is not centred, because the side tells who wrote it). */}
+              <div className="mt-3 flex flex-col gap-2 min-w-0">
                 {/* Show the newest 5 BUT in chronological order — oldest
                     near the top, newest near the bottom (right above
                     "REPLY TO LAST MESSAGE"), like a real Telegram
@@ -386,17 +447,17 @@ export default function MessagesPage() {
                   return (
                   <div
                     key={m.id}
-                    className={`flex flex-col gap-0.5 max-w-[88%] min-w-0 ${
+                    className={`flex flex-col gap-1 max-w-[90%] min-w-0 ${
                       m.fromOwner ? "self-end items-end" : "self-start items-start"
                     }`}
                   >
-                    <div className="text-[10px] text-[var(--color-text-dim)] flex items-center gap-1.5 flex-wrap">
+                    <div className="text-xs text-[var(--color-text-dim)] flex items-center gap-1.5 flex-wrap">
                       <span>
                         {m.fromOwner ? "شما" : displaySender(m)} ·{" "}
                         {relTime(m.createdAt)}
                       </span>
                       {m.mediaKind && (
-                        <span className="text-[var(--color-text-dim)]">
+                        <span>
                           [{m.mediaKind}
                           {m.transcript ? " · 📝" : ""}
                           {m.mediaDescription ? " · 🖼" : ""}
@@ -404,14 +465,14 @@ export default function MessagesPage() {
                         </span>
                       )}
                       {m.deletedAt && (
-                        <Badge tone="danger">
+                        <Chip tone="danger">
                           🗑 پاک‌شده {relTime(m.deletedAt)}
-                        </Badge>
+                        </Chip>
                       )}
                       {m.editCount > 0 && (
-                        <Badge tone="warn">
-                          ✎ ویرایش‌شده ({m.editCount})
-                        </Badge>
+                        <Chip tone="warn">
+                          ✎ ویرایش‌شده ({fa(m.editCount)})
+                        </Chip>
                       )}
                     </div>
                     <div
@@ -425,7 +486,7 @@ export default function MessagesPage() {
                         unicodeBidi: "plaintext",
                         textAlign: "start",
                       }}
-                      className={`px-2.5 py-1.5 rounded-2xl text-xs whitespace-pre-wrap max-w-full ${
+                      className={`px-3 py-2 rounded-2xl text-sm leading-6 whitespace-pre-wrap max-w-full ${
                         m.deletedAt
                           ? "bg-red-900/20 border border-red-900/40 text-[var(--color-text-dim)] rounded-md"
                           : m.fromOwner
@@ -441,14 +502,12 @@ export default function MessagesPage() {
                       {truncate(visibleText, 200)}
                     </div>
                     {m.inlineButtons && m.inlineButtons.length > 0 && (
-                      <div className="flex justify-end">
-                        <Link
-                          href={`/messages/${m.id}/email`}
-                          className="text-[10px] px-2 py-0.5 rounded-md bg-[var(--color-accent)] text-white"
-                        >
-                          📧 HTML
-                        </Link>
-                      </div>
+                      <Link
+                        href={`/messages/${m.id}/email`}
+                        className="min-h-10 inline-flex items-center px-3 rounded-xl text-xs bg-[var(--color-accent)] text-white"
+                      >
+                        📧 HTML
+                      </Link>
                     )}
                     {m.mediaKind && !m.deletedAt && (
                       <div className="flex justify-center">
@@ -462,7 +521,7 @@ export default function MessagesPage() {
                           unicodeBidi: "plaintext",
                           textAlign: "start",
                         }}
-                        className="text-[10px] text-[var(--color-text-dim)] max-w-full whitespace-pre-wrap break-words border-l-2 border-[var(--color-border)] pl-2"
+                        className="text-xs leading-6 text-[var(--color-text-dim)] max-w-full whitespace-pre-wrap break-words border-s-2 border-[var(--color-border)] ps-2"
                       >
                         🖼 {truncate(m.mediaDescription, 200)}
                       </div>
@@ -474,13 +533,13 @@ export default function MessagesPage() {
               {group.messages.length > 5 && (
                 <Link
                   href={`/chats/${group.chatId}`}
-                  className="block mt-2 text-[11px] text-[var(--color-text-dim)] hover:text-white"
+                  className="mt-3 flex min-h-11 items-center justify-center rounded-xl border border-[var(--color-border)] text-sm text-[var(--color-text-dim)] hover:text-white"
                 >
-                  دیدن همه {group.messages.length} پیام →
+                  دیدن همه {fa(group.messages.length)} پیام ‹
                 </Link>
               )}
               <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-                <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
+                <div className="text-xs text-[var(--color-text-dim)]">
                   پاسخ به آخرین پیام از{" "}
                   {target.fromOwner ? "شما" : displaySender(target)}
                 </div>
@@ -496,19 +555,7 @@ export default function MessagesPage() {
                   }}
                   secretaries={secretaries}
                   onChange={load}
-                  onTranscript={(id, txt) =>
-                    setMessages((ms) =>
-                      ms.map((mm) =>
-                        mm.id === id
-                          ? {
-                              ...mm,
-                              transcript: txt,
-                              transcriptAt: new Date().toISOString(),
-                            }
-                          : mm,
-                      ),
-                    )
-                  }
+                  onTranscript={onTranscript}
                 />
               </div>
             </Card>
@@ -516,45 +563,33 @@ export default function MessagesPage() {
           })}
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
           {messages.map((m) => {
             const srcInfo = m.source ? SOURCE_LABEL[m.source] : null;
             return (
-            <Card key={m.id} className="!p-3 md:!p-4">
-              <div className="flex items-start justify-between gap-3 flex-wrap">
-                <div className="text-xs text-[var(--color-text-dim)] flex items-center gap-2 flex-wrap min-w-0">
-                  <Link
-                    href={`/chats/${m.chatId}`}
-                    className="hover:underline font-medium text-[var(--color-text)]"
-                  >
-                    {displaySender(m)}
-                  </Link>
-                  {m.fromOwner && <Badge tone="info">شما</Badge>}
-                  <span>·</span>
-                  <Link
-                    href={`/chats/${m.chatId}`}
-                    className="hover:underline"
-                  >
-                    {chatTypeLabel(m.chatType)}
-                    {m.chatTitle && ` · ${truncate(m.chatTitle, 28)}`}
-                  </Link>
-                  <span>·</span>
-                  <span>{relTime(m.createdAt)}</span>
-                </div>
-                <div className="flex gap-1 flex-wrap text-[10px]">
-                  {!m.fromOwner && (
-                    <span className="text-[var(--color-text-dim)]">
-                      اهمیت {m.importance}
-                    </span>
-                  )}
-                  {srcInfo && <Badge tone={srcInfo.tone}>{srcInfo.label}</Badge>}
-                  {m.urgent && <Badge tone="danger">فوری</Badge>}
-                  {m.alerted && <Badge tone="warn">هشدار</Badge>}
-                  {m.autoReplied && <Badge tone="info">پاسخ داده شد</Badge>}
-                  {m.mediaKind && (
-                    <Badge tone="neutral">{m.mediaKind}</Badge>
-                  )}
-                </div>
+            <Card key={m.id} className="!p-3 md:!p-4 min-w-0">
+              <Link
+                href={`/chats/${m.chatId}`}
+                className="block min-w-0 min-h-11 py-0.5 hover:underline"
+              >
+                <span dir="auto" className="block text-sm font-semibold truncate">
+                  {displaySender(m)}
+                </span>
+                <span className="block text-xs text-[var(--color-text-dim)] truncate">
+                  {relTime(m.createdAt)} · {chatTypeLabel(m.chatType)}
+                  {m.chatTitle && ` · ${m.chatTitle}`}
+                </span>
+              </Link>
+              <div className="mt-2 flex gap-1.5 flex-wrap items-center justify-center">
+                {m.fromOwner && <Chip tone="info">شما</Chip>}
+                {!m.fromOwner && <Chip>اهمیت {fa(m.importance)}</Chip>}
+                {srcInfo && <Chip tone={srcInfo.tone}>{srcInfo.label}</Chip>}
+                {m.urgent && <Chip tone="danger">فوری</Chip>}
+                {m.alerted && <Chip tone="warn">هشدار</Chip>}
+                {m.autoReplied && <Chip tone="info">پاسخ داده شد</Chip>}
+                {m.mediaKind && <Chip>{m.mediaKind}</Chip>}
+                {m.deletedAt && <Chip tone="danger">🗑 پاک‌شده</Chip>}
+                {m.editCount > 0 && <Chip tone="warn">✎ ویرایش‌شده ({fa(m.editCount)})</Chip>}
               </div>
               {m.otpCode && (
                 <div className="mt-2">
@@ -562,10 +597,10 @@ export default function MessagesPage() {
                 </div>
               )}
               {m.inlineButtons && m.inlineButtons.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
+                <div className="mt-2 flex flex-wrap gap-2 [justify-content:left]">
                   <Link
                     href={`/messages/${m.id}/email`}
-                    className="text-[11px] px-2.5 py-1 rounded-md bg-[var(--color-accent)] text-white"
+                    className="min-h-11 inline-flex items-center px-3 rounded-xl text-sm bg-[var(--color-accent)] text-white"
                   >
                     📧 نمایش HTML
                   </Link>
@@ -575,37 +610,37 @@ export default function MessagesPage() {
                       href={b.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-[11px] px-2.5 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                      className="min-h-11 inline-flex items-center px-3 rounded-xl text-sm border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] max-w-full"
                     >
-                      {b.label} ↗
+                      <span className="truncate">{b.label} ↗</span>
                     </a>
                   ))}
                 </div>
               )}
               <PrivateBody msg={m} />
               {m.transcript && (
-                <div className="mt-2 p-2 rounded-md bg-[var(--color-surface-2)] text-sm">
-                  <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
+                <div className="mt-2 p-2.5 rounded-xl bg-[var(--color-surface-2)] text-sm">
+                  <div className="text-xs text-[var(--color-text-dim)] mb-1">
                     رونویسی
                   </div>
                   <div
                     dir="auto"
-                    style={{ unicodeBidi: "plaintext", textAlign: "start" }}
-                    className="whitespace-pre-wrap break-words"
+                    style={{ unicodeBidi: "plaintext" }}
+                    className="whitespace-pre-wrap break-words leading-7"
                   >
                     {m.transcript}
                   </div>
                 </div>
               )}
               {m.mediaDescription && (
-                <div className="mt-2 p-2 rounded-md bg-[var(--color-surface-2)] text-sm">
-                  <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] mb-1">
+                <div className="mt-2 p-2.5 rounded-xl bg-[var(--color-surface-2)] text-sm">
+                  <div className="text-xs text-[var(--color-text-dim)] mb-1">
                     🖼 تفسیر AI
                   </div>
                   <div
                     dir="auto"
-                    style={{ unicodeBidi: "plaintext", textAlign: "start" }}
-                    className="whitespace-pre-wrap break-words"
+                    style={{ unicodeBidi: "plaintext" }}
+                    className="whitespace-pre-wrap break-words leading-7"
                   >
                     {m.mediaDescription}
                   </div>
@@ -628,19 +663,7 @@ export default function MessagesPage() {
                 }}
                 secretaries={secretaries}
                 onChange={load}
-                onTranscript={(id, txt) =>
-                  setMessages((ms) =>
-                    ms.map((mm) =>
-                      mm.id === id
-                        ? {
-                            ...mm,
-                            transcript: txt,
-                            transcriptAt: new Date().toISOString(),
-                          }
-                        : mm,
-                    ),
-                  )
-                }
+                onTranscript={onTranscript}
               />
             </Card>
             );
@@ -650,14 +673,19 @@ export default function MessagesPage() {
       {messages.length > 0 && hasMore && (
         <div
           ref={sentinelRef}
-          className="text-center text-[11px] text-[var(--color-text-dim)] py-4"
+          className="text-center text-xs text-[var(--color-text-dim)] py-5"
         >
-          {loadingMore ? "در حال بارگذاری بیشتر…" : "اسکرول کن تا بقیه بیاد"}
+          {moreErr ? (
+            <>
+              <p role="alert" className="text-rose-300">بارگذاری ادامه انجام نشد.</p>
+              <button onClick={() => setMoreErr(false)} className={`${BTN} mt-2`}>تلاش دوباره</button>
+            </>
+          ) : loadingMore ? "در حال بارگذاری بیشتر…" : "اسکرول کن تا بقیه بیاد"}
         </div>
       )}
       {messages.length > 0 && !hasMore && (
-        <div className="text-center text-[10px] text-[var(--color-text-dim)] py-4">
-          · پایان لیست ({messages.length} پیام) ·
+        <div className="text-center text-xs text-[var(--color-text-dim)] py-5">
+          · پایان لیست ({fa(messages.length)} پیام) ·
         </div>
       )}
     </Shell>
@@ -738,22 +766,22 @@ function PrivateBody({ msg }: { msg: Message }) {
 
   if (hidden) {
     return (
-      <div className="mt-2 p-2 rounded-md bg-amber-500/5 border border-amber-500/30">
-        <div className="text-[10px] text-amber-200 mb-2">
+      <div className="mt-3 p-3 rounded-xl bg-amber-500/5 border border-amber-500/30">
+        <div className="text-xs leading-6 text-amber-200 mb-2">
           🔒 پیام خصوصی — متن نمایش داده نمی‌شه تا روش کلیک نکنی
         </div>
-        <div className="flex gap-1.5 flex-wrap">
+        <div className="grid grid-cols-2 gap-2">
           <button
             onClick={reveal}
             disabled={loading}
-            className="text-xs px-2 py-1 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-200 hover:bg-amber-500/25 disabled:opacity-50"
+            className="min-h-11 px-2 text-sm rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-200 active:bg-amber-500/25 disabled:opacity-50"
           >
             {loading ? "..." : "👁 نمایش متن"}
           </button>
           <button
             onClick={togglePrivate}
             disabled={loading}
-            className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)] disabled:opacity-50"
+            className={BTN}
             title="خصوصی نیست — همیشه باز نشون بده"
           >
             🔓 خصوصی نیست
@@ -766,17 +794,17 @@ function PrivateBody({ msg }: { msg: Message }) {
     <>
       <div
         dir="auto"
-        style={{ unicodeBidi: "plaintext", textAlign: "start" }}
-        className="mt-2 text-sm break-words whitespace-pre-wrap"
+        style={{ unicodeBidi: "plaintext" }}
+        className="mt-3 text-sm leading-7 break-words whitespace-pre-wrap"
       >
         {body || msg.messageText}
       </div>
-      <div className="mt-1 flex gap-1.5">
+      <div className="mt-1 flex">
         {isPrivate && hasRevealed ? (
           <button
             onClick={rehide}
             disabled={loading}
-            className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+            className="min-h-10 px-3 text-xs rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 active:bg-amber-500/20 disabled:opacity-50"
             title="دوباره مخفی کن — تا کلیک بعدی روی «نمایش متن» متن دیده نمی‌شه"
           >
             🙈 دوباره مخفی کن
@@ -785,7 +813,7 @@ function PrivateBody({ msg }: { msg: Message }) {
           <button
             onClick={togglePrivate}
             disabled={loading}
-            className="text-[10px] px-2 py-0.5 rounded-md text-[var(--color-text-dim)] hover:text-amber-200 hover:bg-amber-500/10"
+            className="min-h-10 px-3 text-xs rounded-xl text-[var(--color-text-dim)] active:bg-amber-500/10"
             title="این پیام رو خصوصی علامت بزن — متن مخفی می‌شه تا کلیک کنی"
           >
             🔒 خصوصی کن
