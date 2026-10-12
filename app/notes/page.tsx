@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
+import EmptyState from "@/components/ui/EmptyState";
+import Section, { Pill } from "@/components/ui/Section";
+import { confirmDialog } from "@/components/ui/Dialogs";
 import { relTime } from "@/lib/format";
 import WatchlistPanel from "@/components/WatchlistPanel";
 
@@ -20,6 +23,8 @@ type Note = {
   createdAt: string;
 };
 
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+
 const KIND_EMOJI: Record<string, string> = {
   address: "🏠",
   location: "📍",
@@ -31,6 +36,22 @@ const KIND_EMOJI: Record<string, string> = {
   watchlist: "🕵️",
 };
 
+const CHIP = "min-h-10 px-3 rounded-full border text-xs font-medium";
+const chipOn = "bg-[var(--color-accent)] text-white border-[var(--color-accent)]";
+const chipOff = "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-dim)]";
+const INPUT = "w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-4";
+
+function ErrorBox({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div role="alert" className="mb-3 rounded-2xl border border-rose-400/50 bg-rose-500/10 px-4 py-3 text-center">
+      <p className="text-sm text-rose-200 leading-6">خطا: {message}</p>
+      <div className="mt-2 flex">
+        <button type="button" onClick={onRetry} className="min-h-10 px-4 rounded-xl border border-rose-400/50 text-sm text-rose-100">تلاش دوباره</button>
+      </div>
+    </div>
+  );
+}
+
 type Tab = "notes" | "concepts" | "settings";
 
 export default function NotesPage() {
@@ -39,46 +60,53 @@ export default function NotesPage() {
   // Persist the active tab in localStorage so a refresh stays put.
   const setTab = useCallback((next: Tab) => {
     setTabState(next);
-    if (typeof window !== "undefined") {
+    try {
       window.localStorage.setItem("notes.tab", next);
+    } catch {
+      // private mode / blocked storage: the tab just isn't remembered
     }
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem("notes.tab");
-    if (stored === "notes" || stored === "concepts" || stored === "settings") {
-      setTabState(stored);
+    try {
+      const stored = window.localStorage.getItem("notes.tab");
+      if (stored === "notes" || stored === "concepts" || stored === "settings") {
+        setTabState(stored);
+      }
+    } catch {
+      // see setTab
     }
   }, []);
 
   return (
     <Shell>
-      <PageTitle
-        title="📒 یادداشت‌ها"
-        subtitle="نکات استخراج‌شده + مفاهیم Watchlist + تنظیمات پیشرفته‌ی همه‌ی پیام‌ها."
-      />
-      <div className="flex gap-2 mb-4 flex-wrap" role="tablist">
-        <TabButton
-          active={tab === "notes"}
-          onClick={() => setTab("notes")}
-          label="📚 یادداشت‌ها"
+      <div className="md:max-w-3xl md:mx-auto">
+        <PageTitle
+          title="📒 یادداشت‌ها"
+          subtitle="نکات استخراج‌شده + مفاهیم Watchlist + تنظیمات پیشرفته‌ی همه‌ی پیام‌ها."
         />
-        <TabButton
-          active={tab === "concepts"}
-          onClick={() => setTab("concepts")}
-          label="🕵️ مفاهیم Watchlist"
-        />
-        <TabButton
-          active={tab === "settings"}
-          onClick={() => setTab("settings")}
-          label="⚙️ تنظیمات"
-        />
-      </div>
+        <div className="grid grid-cols-3 gap-1 p-1 mb-4 rounded-xl bg-[var(--color-surface-2)]" role="tablist">
+          <TabButton
+            active={tab === "notes"}
+            onClick={() => setTab("notes")}
+            label="📚 یادداشت‌ها"
+          />
+          <TabButton
+            active={tab === "concepts"}
+            onClick={() => setTab("concepts")}
+            label="🕵️ مفاهیم Watchlist"
+          />
+          <TabButton
+            active={tab === "settings"}
+            onClick={() => setTab("settings")}
+            label="⚙️ تنظیمات"
+          />
+        </div>
 
-      {tab === "notes" && <NotesViewerTab />}
-      {tab === "concepts" && <WatchlistPanel />}
-      {tab === "settings" && <SettingsTab />}
+        {tab === "notes" && <NotesViewerTab />}
+        {tab === "concepts" && <WatchlistPanel />}
+        {tab === "settings" && <SettingsTab />}
+      </div>
     </Shell>
   );
 }
@@ -94,11 +122,12 @@ function TabButton({
 }) {
   return (
     <button
+      type="button"
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
-      className={`text-xs px-3 py-1.5 rounded-md border ${
-        active
-          ? "bg-[var(--color-accent)] text-white border-transparent"
-          : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+      className={`min-h-11 px-1 rounded-lg text-xs font-medium leading-5 ${
+        active ? "bg-[var(--color-accent)] text-white" : "text-[var(--color-text-dim)]"
       }`}
     >
       {label}
@@ -114,6 +143,7 @@ function NotesViewerTab() {
   const [chatIdFilter, setChatIdFilter] = useState("");
   const [sinceDays, setSinceDays] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const PAGE = 100;
   const [hasMore, setHasMore] = useState(true);
@@ -133,18 +163,20 @@ function NotesViewerTab() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const r = await fetch(`/api/notes?${buildQuery(0)}`);
-      if (r.ok) {
-        const j = (await r.json()) as {
-          notes: Note[];
-          kinds: Array<{ kind: string; count: number }>;
-        };
-        setNotes(j.notes);
-        setKinds(j.kinds ?? []);
-        setHasMore(j.notes.length === PAGE);
-        setOffset(j.notes.length);
-      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as {
+        notes: Note[];
+        kinds: Array<{ kind: string; count: number }>;
+      };
+      setNotes(j.notes);
+      setKinds(j.kinds ?? []);
+      setHasMore(j.notes.length === PAGE);
+      setOffset(j.notes.length);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -153,14 +185,16 @@ function NotesViewerTab() {
   const loadMore = useCallback(async () => {
     if (!hasMore || loading) return;
     setLoading(true);
+    setError(null);
     try {
       const r = await fetch(`/api/notes?${buildQuery(offset)}`);
-      if (r.ok) {
-        const j = (await r.json()) as { notes: Note[] };
-        setNotes((cur) => [...cur, ...j.notes]);
-        setHasMore(j.notes.length === PAGE);
-        setOffset((cur) => cur + j.notes.length);
-      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as { notes: Note[] };
+      setNotes((cur) => [...cur, ...j.notes]);
+      setHasMore(j.notes.length === PAGE);
+      setOffset((cur) => cur + j.notes.length);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -174,74 +208,83 @@ function NotesViewerTab() {
   }, [activeKind, q, chatIdFilter, sinceDays]);
 
   async function deleteNote(id: number) {
-    if (!confirm("این note حذف بشه؟")) return;
+    if (!(await confirmDialog("این note حذف بشه؟", { danger: true, confirmLabel: "حذف" }))) return;
     const r = await fetch(`/api/notes/${id}`, { method: "DELETE" });
     if (r.ok) await load();
+    else setError(`حذف نشد (HTTP ${r.status})`);
   }
 
   const total = kinds.reduce((a, k) => a + k.count, 0);
+  const advancedOn = Boolean(chatIdFilter.trim() || sinceDays);
 
   return (
     <>
-      <Card className="mb-3">
-        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-          <div className="text-xs text-[var(--color-text-dim)]">
-            {total} نوت کل · {notes.length} نمایش
-          </div>
+      <div className="mb-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-center">
+        <div className="flex items-center gap-2">
+          <input
+            type="search"
+            dir="auto"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="🔍 جستجو در متن / عنوان / فرستنده"
+            aria-label="جستجو در یادداشت‌ها"
+            className={`${INPUT} min-w-0 flex-1`}
+          />
           <button
+            type="button"
             onClick={load}
             disabled={loading}
-            className="text-xs px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
+            aria-label="بروزرسانی"
+            title="بروزرسانی"
+            className="shrink-0 w-11 h-11 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] disabled:opacity-50"
           >
             🔄
           </button>
         </div>
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          <button
-            onClick={() => setActiveKind(null)}
-            className={`text-[11px] px-2 py-1 rounded-md border ${
-              activeKind == null
-                ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
-                : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
-            }`}
-          >
-            همه ({total})
+        <div className="mt-2 text-xs text-[var(--color-text-dim)]">
+          {fa(total)} نوت کل، {fa(notes.length)} نمایش
+        </div>
+        <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+          <button type="button" onClick={() => setActiveKind(null)} className={`${CHIP} ${activeKind == null ? chipOn : chipOff}`}>
+            همه {fa(total)}
           </button>
           {kinds.map((k) => (
             <button
               key={k.kind}
+              type="button"
               onClick={() => setActiveKind(k.kind)}
-              className={`text-[11px] px-2 py-1 rounded-md border ${
-                activeKind === k.kind
-                  ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
-                  : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
-              }`}
+              className={`${CHIP} ${activeKind === k.kind ? chipOn : chipOff}`}
             >
-              {KIND_EMOJI[k.kind] ?? "📝"} {k.kind} · {k.count}
+              {KIND_EMOJI[k.kind] ?? "📝"} {k.kind} {fa(k.count)}
             </button>
           ))}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+      </div>
+
+      <Section
+        icon="🎚"
+        title="فیلتر چت و بازه"
+        summary="محدود کردن به یک چت یا چند روز اخیر"
+        badge={advancedOn ? <Pill tone="warn">فعال</Pill> : undefined}
+      >
+        <div className="flex flex-col gap-2">
           <input
             type="text"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="🔍 جستجو در متن / عنوان / فرستنده"
-            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-          />
-          <input
-            type="text"
+            inputMode="numeric"
+            dir="ltr"
             value={chatIdFilter}
             onChange={(e) => setChatIdFilter(e.target.value)}
             placeholder="فیلتر chat ID"
-            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+            aria-label="فیلتر chat ID"
+            className={`${INPUT} text-center`}
           />
           <select
             value={sinceDays ?? ""}
             onChange={(e) =>
               setSinceDays(e.target.value === "" ? null : Number(e.target.value))
             }
-            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+            aria-label="بازه‌ی زمانی"
+            className={INPUT}
           >
             <option value="">از همیشه</option>
             <option value="1">۲۴ ساعت اخیر</option>
@@ -251,90 +294,98 @@ function NotesViewerTab() {
             <option value="90">۹۰ روز اخیر</option>
           </select>
         </div>
-      </Card>
+      </Section>
+
+      {error && <ErrorBox message={error} onRetry={load} />}
 
       {loading && notes.length === 0 ? (
         <Card>
-          <div className="text-xs text-[var(--color-text-dim)]">...</div>
+          <div className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری…</div>
         </Card>
       ) : notes.length === 0 ? (
-        <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">
-            هیچ نوتی با این فیلتر نیست. می‌تونی توی تب «مفاهیم Watchlist»
-            concept تعریف کنی، یا توی هر چت «📒 auto-extract notes» رو روشن کنی.
-          </p>
-        </Card>
+        error ? null : (
+          <EmptyState
+            icon="📒"
+            title="هیچ نوتی با این فیلتر نیست"
+            hint="می‌تونی توی تب «مفاهیم Watchlist» concept تعریف کنی، یا توی هر چت «📒 auto-extract notes» رو روشن کنی."
+          />
+        )
       ) : (
         <div className="flex flex-col gap-2">
           {notes.map((n) => {
             const gmaps = (n.metadata?.gmaps as string | undefined) ?? null;
             const url = (n.metadata?.url as string | undefined) ?? null;
             return (
-              <Card key={n.id} className="p-3">
-                <div className="flex items-center gap-2 flex-wrap mb-1.5">
+              <Card key={n.id} className="!p-3">
+                <div className="flex items-center justify-center gap-1.5 flex-wrap">
                   <Badge tone="info">
                     {KIND_EMOJI[n.kind] ?? "📝"} {n.kind}
                   </Badge>
-                  {n.title && (
-                    <span className="text-xs font-medium">{n.title}</span>
-                  )}
-                  <Link
-                    href={`/chats/${n.chatId}`}
-                    className="text-[10px] text-[var(--color-accent)] hover:underline"
-                  >
-                    chat {n.chatId}
-                  </Link>
-                  <span className="text-[10px] text-[var(--color-text-dim)] mr-auto">
+                  <span className="text-xs text-[var(--color-text-dim)]">
                     {relTime(n.createdAt)}
                     {n.senderName ? ` · ${n.senderName}` : ""}
                   </span>
+                </div>
+                {n.title && (
+                  <div dir="auto" className="mt-2 text-sm font-medium leading-6 break-words">
+                    {n.title}
+                  </div>
+                )}
+                <div
+                  dir="auto"
+                  className="mt-1.5 text-sm leading-7 whitespace-pre-wrap break-words"
+                >
+                  {n.content}
+                </div>
+                {url && (
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    dir="ltr"
+                    className="mt-2 flex min-h-10 items-center justify-center text-xs text-blue-400 underline break-all"
+                  >
+                    {url}
+                  </a>
+                )}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link
+                    href={`/chats/${n.chatId}`}
+                    className="min-h-10 inline-flex items-center px-3 rounded-xl border border-[var(--color-border)] text-xs text-[var(--color-accent)]"
+                  >
+                    chat {n.chatId}
+                  </Link>
+                  {gmaps && (
+                    <a
+                      href={gmaps}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="min-h-10 inline-flex items-center px-3 rounded-xl border border-[var(--color-border)] text-xs text-blue-400"
+                    >
+                      🗺 Google Maps
+                    </a>
+                  )}
                   <button
+                    type="button"
                     onClick={() => deleteNote(n.id)}
-                    className="text-[10px] px-1.5 py-0.5 rounded-md border border-red-700 text-red-300 hover:bg-red-900/30"
+                    aria-label="حذف نوت"
+                    title="حذف"
+                    className="min-h-10 min-w-10 px-3 rounded-xl border border-red-700 text-red-300 active:bg-red-900/30"
                   >
                     🗑
                   </button>
                 </div>
-                <div
-                  dir="auto"
-                  className="text-xs whitespace-pre-wrap break-words"
-                >
-                  {n.content}
-                </div>
-                {(gmaps || url) && (
-                  <div className="flex items-center gap-2 mt-1.5 flex-wrap text-[10px]">
-                    {gmaps && (
-                      <a
-                        href={gmaps}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-400 underline"
-                      >
-                        🗺 Google Maps
-                      </a>
-                    )}
-                    {url && (
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-400 underline break-all"
-                      >
-                        {url}
-                      </a>
-                    )}
-                  </div>
-                )}
               </Card>
             );
           })}
           {hasMore && (
             <button
+              type="button"
               onClick={loadMore}
               disabled={loading}
-              className="text-xs px-3 py-2 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
+              className="min-h-11 text-sm px-3 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
             >
-              {loading ? "..." : `📜 نمایش ${PAGE} مورد بعدی`}
+              {loading ? "در حال بارگذاری…" : `📜 نمایش ${fa(PAGE)} مورد بعدی`}
             </button>
           )}
         </div>
@@ -356,17 +407,20 @@ type NotesSettings = {
 function SettingsTab() {
   const [s, setS] = useState<NotesSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [archiveDays, setArchiveDays] = useState(60);
   const [maintMsg, setMaintMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const r = await fetch("/api/notes-settings");
-      if (r.ok) {
-        const j = (await r.json()) as { settings: NotesSettings };
-        setS(j.settings);
-      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as { settings: NotesSettings };
+      setS(j.settings);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -394,20 +448,20 @@ function SettingsTab() {
     });
     if (r.ok) {
       const j = (await r.json()) as { archived: number; days: number };
-      setMaintMsg(`${j.archived} note قدیمی‌تر از ${j.days} روز archive شد.`);
+      setMaintMsg(`${fa(j.archived)} note قدیمی‌تر از ${fa(j.days)} روز archive شد.`);
     } else {
       setMaintMsg("خطا در اجرا");
     }
   };
 
+  if (error) return <ErrorBox message={error} onRetry={load} />;
   if (loading || !s) return <Card>در حال بارگذاری…</Card>;
 
   const asBool = (v: string) => v.toLowerCase() !== "false" && v !== "";
 
   return (
-    <div className="flex flex-col gap-4">
-      <Card>
-        <div className="text-sm font-medium mb-3">🕵️ AI Watchlist</div>
+    <div>
+      <Section icon="🕵️" title="AI Watchlist" summary={asBool(s.notesWatchlistEnabled) ? "سکنر روشن است" : "سکنر خاموش است"} defaultOpen>
         <ToggleRow
           label="فعال بودن سکنر"
           help="با خاموش شدن، هیچ پیامی برای match با مفاهیم اسکن نمی‌شه (هیچ هزینه‌ی AI هم نمی‌ره)."
@@ -440,10 +494,9 @@ function SettingsTab() {
           min={0}
           max={500}
         />
-      </Card>
+      </Section>
 
-      <Card>
-        <div className="text-sm font-medium mb-3">🧹 نگهداری</div>
+      <Section icon="🧹" title="نگهداری" summary="archive خودکار و پاک‌سازی دستی">
         <NumberRow
           label="archive خودکار note های قدیمی‌تر از (روز)"
           help="0 یعنی هرگز archive نکن. اگه عددی بذاری، یه sweep خودکار به‌مرور note ها رو archive می‌کنه."
@@ -453,36 +506,38 @@ function SettingsTab() {
           max={3650}
         />
         <div className="border-t border-[var(--color-border)] mt-3 pt-3">
-          <div className="text-xs text-[var(--color-text-dim)] mb-2">
+          <div className="text-xs leading-6 text-[var(--color-text-dim)] mb-2">
             پاک‌سازی دستی الان — هر note مهم‌تر از این تعداد روز archive می‌شه.
           </div>
           <div className="flex gap-2 items-center flex-wrap">
             <input
               type="number"
+              inputMode="numeric"
               value={archiveDays}
               onChange={(e) => setArchiveDays(Number(e.target.value) || 0)}
               min={1}
               max={3650}
-              className="w-24 text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+              aria-label="تعداد روز"
+              className="w-24 min-h-11 text-sm text-center bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-2"
             />
-            <span className="text-[10px] text-[var(--color-text-dim)]">روز</span>
+            <span className="text-xs text-[var(--color-text-dim)]">روز</span>
             <button
+              type="button"
               onClick={runMaint}
-              className="text-xs px-3 py-1 rounded-md bg-[var(--color-accent)] text-white"
+              className="min-h-11 text-sm px-4 rounded-xl bg-[var(--color-accent)] text-white"
             >
               پاک‌سازی الان
             </button>
-            {maintMsg && (
-              <span className="text-[11px] text-[var(--color-text-dim)]">
-                {maintMsg}
-              </span>
-            )}
           </div>
+          {maintMsg && (
+            <p role="status" className="mt-2 text-xs leading-6 text-[var(--color-text-dim)]">
+              {maintMsg}
+            </p>
+          )}
         </div>
-      </Card>
+      </Section>
 
-      <Card>
-        <div className="text-sm font-medium mb-3">📨 خلاصه‌ی روزانه</div>
+      <Section icon="📨" title="خلاصه‌ی روزانه" summary={asBool(s.notesDailyDigestEnabled) ? "روشن است" : "خاموش است"}>
         <ToggleRow
           label="ارسال خلاصه‌ی روزانه‌ی Watchlist به notes_inbox"
           help="هر روز یه دایجست از match های ۲۴ ساعت اخیر به notes_inbox ارسال می‌شه."
@@ -497,11 +552,12 @@ function SettingsTab() {
           min={0}
           max={23}
         />
-      </Card>
+      </Section>
     </div>
   );
 }
 
+// A settings row is one tappable strip (≥56px): label + help centred, the control at the end of the row.
 function ToggleRow({
   label,
   help,
@@ -514,17 +570,17 @@ function ToggleRow({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <label className="flex items-start gap-3 cursor-pointer py-2 border-b border-[var(--color-border)] last:border-0">
+    <label className="flex items-center gap-3 cursor-pointer min-h-14 py-2 border-b border-[var(--color-border)] last:border-0">
       <input
         type="checkbox"
         checked={value}
         onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5"
+        className="shrink-0"
       />
       <div className="flex-1 min-w-0">
-        <div className="text-xs font-medium">{label}</div>
+        <div className="text-sm font-medium leading-6">{label}</div>
         {help && (
-          <div className="text-[10px] text-[var(--color-text-dim)] mt-0.5">
+          <div className="text-xs leading-5 text-[var(--color-text-dim)] mt-0.5">
             {help}
           </div>
         )}
@@ -549,24 +605,26 @@ function NumberRow({
   max?: number;
 }) {
   return (
-    <div className="flex items-start gap-3 py-2 border-b border-[var(--color-border)] last:border-0">
+    <div className="flex items-center gap-3 min-h-14 py-2 border-b border-[var(--color-border)] last:border-0">
       <div className="flex-1 min-w-0">
-        <div className="text-xs font-medium">{label}</div>
+        <div className="text-sm font-medium leading-6">{label}</div>
         {help && (
-          <div className="text-[10px] text-[var(--color-text-dim)] mt-0.5">
+          <div className="text-xs leading-5 text-[var(--color-text-dim)] mt-0.5">
             {help}
           </div>
         )}
       </div>
       <input
         type="number"
+        inputMode="numeric"
         defaultValue={value}
         min={min}
         max={max}
+        aria-label={label}
         onBlur={(e) => {
           if (e.target.value !== value) onChange(e.target.value);
         }}
-        className="w-24 text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
+        className="w-20 shrink-0 min-h-11 text-sm text-center bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-2"
       />
     </div>
   );
