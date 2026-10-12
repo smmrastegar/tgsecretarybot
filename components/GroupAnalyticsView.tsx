@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { normalizeEvidence } from "@/lib/evidence";
-import { Badge, Card, StatCard } from "@/components/Card";
+import { Card } from "@/components/Card";
+import Section from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
 import { relTime } from "@/lib/format";
 
 export type TaskStatus = "announced" | "in_progress" | "done" | "stalled";
@@ -93,6 +95,8 @@ export type Analysis = {
   };
 };
 
+type Tone = "neutral" | "info" | "ok" | "warn" | "bad";
+
 const STATUS_LABELS: Record<TaskStatus, string> = {
   announced: "اعلام‌شده",
   in_progress: "در حال انجام",
@@ -100,11 +104,19 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   stalled: "متوقف",
 };
 
-const STATUS_TONES: Record<TaskStatus, "neutral" | "info" | "success" | "warn"> = {
+const STATUS_TONES: Record<TaskStatus, Tone> = {
   announced: "info",
   in_progress: "warn",
-  done: "success",
-  stalled: "neutral",
+  done: "ok",
+  stalled: "bad",
+};
+
+// Left-edge accent of a task row: one glance tells the state apart.
+const STATUS_ACCENT: Record<TaskStatus, string> = {
+  announced: "border-s-sky-400/70",
+  in_progress: "border-s-amber-400/70",
+  done: "border-s-emerald-400/70",
+  stalled: "border-s-rose-400/70",
 };
 
 const ROLE_LABELS: Record<PersonRoleLabel, string> = {
@@ -117,11 +129,8 @@ const ROLE_LABELS: Record<PersonRoleLabel, string> = {
   other: "سایر",
 };
 
-const ROLE_TONES: Record<
-  PersonRoleLabel,
-  "info" | "success" | "warn" | "danger" | "neutral"
-> = {
-  executor: "success",
+const ROLE_TONES: Record<PersonRoleLabel, Tone> = {
+  executor: "ok",
   reporter: "info",
   supervisor: "warn",
   designer: "info",
@@ -138,15 +147,20 @@ const HIGHLIGHT_LABELS: Record<Highlight["kind"], string> = {
   conflict: "⚔️ بحث/دعوا",
 };
 
-const HIGHLIGHT_TONES: Record<
-  Highlight["kind"],
-  "danger" | "warn" | "info" | "success"
-> = {
-  overdue: "danger",
+const HIGHLIGHT_TONES: Record<Highlight["kind"], Tone> = {
+  overdue: "bad",
   stalled: "warn",
   risk: "warn",
-  win: "success",
-  conflict: "danger",
+  win: "ok",
+  conflict: "bad",
+};
+
+const HIGHLIGHT_ACCENT: Record<Highlight["kind"], string> = {
+  overdue: "border-s-rose-400/70",
+  stalled: "border-s-amber-400/70",
+  risk: "border-s-amber-400/70",
+  win: "border-s-emerald-400/70",
+  conflict: "border-s-rose-400/70",
 };
 
 const CRITICAL_LABELS: Record<CriticalItem["kind"], string> = {
@@ -156,22 +170,37 @@ const CRITICAL_LABELS: Record<CriticalItem["kind"], string> = {
   escalation: "📣 درخواست رسیدگی",
 };
 
-const CRITICAL_TONES: Record<CriticalItem["kind"], "danger" | "warn"> = {
-  overdue: "danger",
-  conflict: "danger",
+const CRITICAL_TONES: Record<CriticalItem["kind"], Tone> = {
+  overdue: "bad",
+  conflict: "bad",
   stuck: "warn",
   escalation: "warn",
 };
+
+const TONE_CLASS: Record<Tone, string> = {
+  neutral: "bg-[var(--color-surface-2)] text-[var(--color-text-dim)]",
+  info: "bg-sky-500/15 text-sky-300",
+  ok: "bg-emerald-500/15 text-emerald-300",
+  warn: "bg-amber-500/15 text-amber-200",
+  bad: "bg-rose-500/15 text-rose-300",
+};
+
+// Persian digits everywhere (counts, percentages, durations).
+const fa = (n: number, maxFraction = 0) =>
+  n.toLocaleString("fa-IR", { maximumFractionDigits: maxFraction });
+
+// Show a long list in pages instead of hundreds of rows at once.
+const PAGE = 20;
 
 export function formatDuration(hours: number | null): string {
   if (hours === null || !Number.isFinite(hours)) return "—";
   if (hours < 1) {
     const mins = Math.round(hours * 60);
-    return `${mins} دقیقه`;
+    return `${fa(mins)} دقیقه`;
   }
-  if (hours < 48) return `${hours.toFixed(1)} ساعت`;
+  if (hours < 48) return `${fa(hours, 1)} ساعت`;
   const days = hours / 24;
-  return `${days.toFixed(1)} روز`;
+  return `${fa(days, 1)} روز`;
 }
 
 export function formatTime(iso: string | null): string {
@@ -181,7 +210,8 @@ export function formatTime(iso: string | null): string {
   // Pre-2000 values are "from the beginning" sentinels (epoch), not real
   // timestamps — showing «۱۹۷۰» to a reader is worse than showing nothing.
   if (d.getTime() < Date.UTC(2000, 0, 1)) return "—";
-  return d.toLocaleString("fa-IR");
+  // A month name keeps the date from being scrambled by bidi around "/" and ":".
+  return d.toLocaleString("fa-IR", { dateStyle: "medium", timeStyle: "short" });
 }
 
 export type CurrentTopic = {
@@ -189,6 +219,86 @@ export type CurrentTopic = {
   messageThreadId: number;
   archived: boolean;
 };
+
+function Chip({ tone = "neutral", children }: { tone?: Tone; children: ReactNode }) {
+  return (
+    <span
+      className={`inline-flex items-center max-w-full px-2 py-0.5 rounded-full text-xs font-medium tabular-nums ${TONE_CLASS[tone]}`}
+    >
+      <span className="truncate">{children}</span>
+    </span>
+  );
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      aria-hidden
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`shrink-0 text-[var(--color-text-dim)] transition-transform ${open ? "rotate-180" : ""}`}
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function Tile({
+  label,
+  value,
+  hint,
+  tone,
+  wide,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: string;
+  wide?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-3 text-center min-h-[5.25rem] flex flex-col items-center justify-center ${
+        wide ? "col-span-full" : ""
+      }`}
+    >
+      <div className="text-xs text-[var(--color-text-dim)] leading-5">{label}</div>
+      <div className={`mt-0.5 text-2xl font-semibold tabular-nums leading-8 ${tone ?? ""}`}>{value}</div>
+      {hint && <div className="text-xs text-[var(--color-text-dim)] leading-5">{hint}</div>}
+    </div>
+  );
+}
+
+// Quoted messages behind a finding. One quote per line, speaker on top.
+function Quotes({ items, max }: { items: string[]; max: number }) {
+  const list = normalizeEvidence(items).slice(0, max);
+  if (list.length === 0) return null;
+  return (
+    <ul className="flex flex-col gap-1.5">
+      {list.map((q, i) => (
+        <li
+          key={i}
+          className="rounded-lg bg-[var(--color-surface)] px-3 py-2 text-xs leading-6 text-[var(--color-text-dim)] text-center [overflow-wrap:anywhere]"
+        >
+          {q.speaker && (
+            <b dir="auto" className="block text-[var(--color-text)]">
+              {q.speaker}
+            </b>
+          )}
+          <span dir="auto" className="block">
+            «{q.text}»
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default function GroupAnalyticsView({
   analysis,
@@ -242,100 +352,90 @@ export default function GroupAnalyticsView({
       topicName: renameMap.get(tb.topicName) ?? tb.topicName,
     }));
 
+  const since = (() => {
+    if (!sinceIso) return null;
+    const d = new Date(sinceIso);
+    // Skip epoch sentinels — "از ۱۹۷۰ تا الان" is meaningless.
+    if (!Number.isFinite(d.getTime()) || d.getTime() < Date.UTC(2000, 0, 1)) {
+      return null;
+    }
+    return d.toLocaleDateString("fa-IR", { year: "numeric", month: "long", day: "numeric" });
+  })();
+
+  const st = analysis.stats;
+  const donePct = st.totalTasks > 0 ? Math.round((st.done / st.totalTasks) * 100) : 0;
+  const highlights = analysis.highlights ?? [];
+  const critical = analysis.criticalForInbox ?? [];
+  const topicMessages = visibleTopicBreakdown.reduce((n, t) => n + t.messageCount, 0);
+
   return (
     <div dir="rtl">
       {analysis.overview && (
-        <Card className="mb-4">
-          <div className="text-xs text-[var(--color-text-dim)] mb-2">
-            خلاصه‌ی وضعیت
-          </div>
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">
+        <Card className="mb-3">
+          <div className="text-xs text-[var(--color-text-dim)]">خلاصه‌ی وضعیت</div>
+          <p className="mt-2 text-sm leading-7 whitespace-pre-wrap [overflow-wrap:anywhere]">
             {analysis.overview}
           </p>
-          <div className="text-[11px] text-[var(--color-text-dim)] mt-3">
-            {messageCount.toLocaleString("fa-IR")} پیام
-            {(() => {
-              if (!sinceIso) return null;
-              const d = new Date(sinceIso);
-              // Skip epoch sentinels — "از ۱۹۷۰ تا الان" is meaningless.
-              if (!Number.isFinite(d.getTime()) || d.getTime() < Date.UTC(2000, 0, 1)) {
-                return null;
-              }
-              return <> · از {d.toLocaleDateString("fa-IR")} تا الان</>;
-            })()}
+          <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+            <Chip>{fa(messageCount)} پیام</Chip>
+            {since && <Chip>از {since} تا الان</Chip>}
           </div>
         </Card>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-7 gap-3 mb-6">
-        <StatCard label="کل کارها" value={analysis.stats.totalTasks} />
-        <StatCard
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
+        <Tile label="کل کارها" value={fa(st.totalTasks)} />
+        <Tile
           label="تموم"
-          value={analysis.stats.done}
-          hint={
-            analysis.stats.totalTasks > 0
-              ? `${Math.round((analysis.stats.done / analysis.stats.totalTasks) * 100)}%`
-              : undefined
-          }
+          value={fa(st.done)}
+          tone="text-emerald-300"
+          hint={st.totalTasks > 0 ? `${fa(donePct)}٪` : undefined}
         />
-        <StatCard
-          label="در حال انجام"
-          value={analysis.stats.inProgress}
-        />
-        <StatCard label="اعلام‌شده" value={analysis.stats.announced} />
-        <StatCard label="معوق / متوقف" value={analysis.stats.overdue + analysis.stats.stalled} />
-        <StatCard label="بحث/دعوا" value={analysis.stats.conflicts ?? 0} />
-        <StatCard
+        <Tile label="در حال انجام" value={fa(st.inProgress)} tone="text-amber-200" />
+        <Tile label="اعلام‌شده" value={fa(st.announced)} tone="text-sky-300" />
+        <Tile label="معوق / متوقف" value={fa(st.overdue + st.stalled)} tone="text-rose-300" />
+        <Tile label="بحث/دعوا" value={fa(st.conflicts ?? 0)} />
+        <Tile
+          wide
           label="میانگین زمان انجام"
-          value={formatDuration(analysis.stats.avgCompletionHours)}
+          value={formatDuration(st.avgCompletionHours)}
           hint="از زمان اعلام تا تموم"
         />
       </div>
 
-      {analysis.criticalForInbox && analysis.criticalForInbox.length > 0 && (
-        <Card className="mb-4 border-red-700">
-          <div className="text-sm font-medium mb-3 text-red-300">
-            🆘 موارد بحرانی — نیاز به رسیدگی مستقیم شما
-          </div>
-          <div className="text-[11px] text-[var(--color-text-dim)] mb-3">
+      {critical.length > 0 && (
+        <Card className="mb-3 border-rose-500/50">
+          <div className="text-sm font-semibold text-rose-300">🆘 موارد بحرانی — نیاز به رسیدگی مستقیم شما</div>
+          <div className="mt-1 text-xs leading-5 text-[var(--color-text-dim)]">
             این موارد به کانال notes_inbox هم ارسال شدن.
           </div>
-          <div className="flex flex-col gap-3">
-            {analysis.criticalForInbox.map((c, i) => (
+          <div className="mt-3 flex flex-col gap-2.5">
+            {critical.map((c, i) => (
               <div
                 key={i}
-                className="border-b border-[var(--color-border)] last:border-0 pb-3 last:pb-0"
+                className="rounded-xl border border-rose-500/20 bg-rose-500/5 px-3 py-3 flex flex-col items-center gap-2 min-w-0"
               >
-                <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                  <Badge tone={CRITICAL_TONES[c.kind]}>
-                    {CRITICAL_LABELS[c.kind]}
-                  </Badge>
-                  <span className="font-medium">{c.title}</span>
-                  {c.topicName && (
-                    <span className="text-[10px] text-[var(--color-text-dim)]">
-                      🧵 {c.topicName}
-                    </span>
-                  )}
+                <div className="flex flex-wrap justify-center gap-1.5">
+                  <Chip tone={CRITICAL_TONES[c.kind]}>{CRITICAL_LABELS[c.kind]}</Chip>
+                  {c.topicName && <Chip>🧵 {c.topicName}</Chip>}
+                </div>
+                <div dir="auto" className="text-sm font-medium leading-6 [overflow-wrap:anywhere]">
+                  {c.title}
                 </div>
                 {c.details && (
-                  <p className="text-sm leading-relaxed">{c.details}</p>
+                  <p dir="auto" className="text-sm leading-7 text-[var(--color-text-dim)] [overflow-wrap:anywhere]">
+                    {c.details}
+                  </p>
                 )}
                 {c.people.length > 0 && (
-                  <div className="text-[11px] text-[var(--color-text-dim)] mt-1">
+                  <div className="text-xs leading-5 text-[var(--color-text-dim)] [overflow-wrap:anywhere]">
                     👥 {c.people.join(" / ")}
                   </div>
                 )}
                 {c.evidence.length > 0 && (
-                  <ul className="mt-1.5 text-[11px] text-[var(--color-text-dim)] list-disc pr-5 space-y-0.5">
-                    {normalizeEvidence(c.evidence).slice(0, 3).map((q, j) => (
-                      <li key={j} className="break-words">
-                        {q.speaker && (
-                          <b className="text-[var(--color-text)]">{q.speaker}: </b>
-                        )}
-                        «{q.text}»
-                      </li>
-                    ))}
-                  </ul>
+                  <div className="w-full">
+                    <Quotes items={c.evidence} max={3} />
+                  </div>
                 )}
               </div>
             ))}
@@ -343,35 +443,43 @@ export default function GroupAnalyticsView({
         </Card>
       )}
 
-      {analysis.highlights.length > 0 && (
-        <Card className="mb-4 border-amber-800">
-          <div className="text-sm font-medium mb-3">🚨 نکات کلیدی</div>
+      {highlights.length > 0 && (
+        <Section
+          icon="🚨"
+          title="نکات کلیدی"
+          summary={`${fa(highlights.length)} مورد · ${highlights[0]?.title ?? ""}`}
+          defaultOpen
+        >
           <div className="flex flex-col gap-2">
-            {analysis.highlights.map((h, i) => (
+            {highlights.map((h, i) => (
               <div
                 key={i}
-                className="flex items-start gap-2 border-b border-[var(--color-border)] last:border-0 pb-2 last:pb-0"
+                className={`rounded-xl border border-[var(--color-border)] border-s-[3px] ${HIGHLIGHT_ACCENT[h.kind]} bg-[var(--color-surface-2)]/40 px-3 py-3 flex flex-col items-center gap-1.5 min-w-0`}
               >
-                <Badge tone={HIGHLIGHT_TONES[h.kind]}>
-                  {HIGHLIGHT_LABELS[h.kind]}
-                </Badge>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium">{h.title}</div>
-                  {h.details && (
-                    <div className="text-xs text-[var(--color-text-dim)] mt-0.5">
-                      {h.details}
-                    </div>
-                  )}
+                <div className="flex flex-wrap justify-center gap-1.5">
+                  <Chip tone={HIGHLIGHT_TONES[h.kind]}>{HIGHLIGHT_LABELS[h.kind]}</Chip>
+                  {h.topicName && <Chip>🧵 {h.topicName}</Chip>}
                 </div>
+                <div dir="auto" className="text-sm font-medium leading-6 [overflow-wrap:anywhere]">
+                  {h.title}
+                </div>
+                {h.details && (
+                  <div dir="auto" className="text-xs leading-6 text-[var(--color-text-dim)] [overflow-wrap:anywhere]">
+                    {h.details}
+                  </div>
+                )}
               </div>
             ))}
           </div>
-        </Card>
+        </Section>
       )}
 
       {visibleTopicBreakdown.length > 1 && (
-        <Card className="mb-4">
-          <div className="text-sm font-medium mb-3">🧵 تفکیک بر اساس تاپیک</div>
+        <Section
+          icon="🧵"
+          title="تفکیک بر اساس تاپیک"
+          summary={`${fa(visibleTopicBreakdown.length)} تاپیک · ${fa(topicMessages)} پیام`}
+        >
           <div className="flex flex-col gap-2">
             {visibleTopicBreakdown.map((t, i) => (
               <TopicBreakdownRow
@@ -384,180 +492,214 @@ export default function GroupAnalyticsView({
               />
             ))}
           </div>
-        </Card>
+        </Section>
       )}
 
       {overdueTasks.length > 0 && (
-        <Card className="mb-4 border-red-800">
-          <div className="text-sm font-medium mb-3 text-red-300">
-            ⏰ کارهای معوق و متوقف ({overdueTasks.length})
-          </div>
-          <div className="flex flex-col gap-3">
-            {overdueTasks.map((t, i) => (
-              <TaskRow key={`overdue-${i}`} task={t} emphasize />
-            ))}
-          </div>
-        </Card>
+        <Section
+          icon="⏰"
+          title="کارهای معوق و متوقف"
+          summary="نیازمند پیگیری"
+          badge={<Chip tone="bad">{fa(overdueTasks.length)}</Chip>}
+          defaultOpen
+        >
+          <TaskList tasks={overdueTasks} keyPrefix="overdue" emphasize />
+        </Section>
       )}
 
       {activeTasks.length > 0 && (
-        <Card className="mb-4">
-          <div className="text-sm font-medium mb-3">📋 کارهای فعال</div>
-          <div className="flex flex-col gap-3">
-            {activeTasks.map((t, i) => (
-              <TaskRow key={`active-${i}`} task={t} />
-            ))}
-          </div>
-        </Card>
+        <Section
+          icon="📋"
+          title="کارهای فعال"
+          summary="اعلام‌شده و در حال انجام"
+          badge={<Chip tone="info">{fa(activeTasks.length)}</Chip>}
+        >
+          <TaskList tasks={activeTasks} keyPrefix="active" />
+        </Section>
       )}
 
       {doneTasks.length > 0 && (
-        <Card className="mb-4">
-          <div className="text-sm font-medium mb-3">✅ کارهای تموم‌شده</div>
-          <div className="flex flex-col gap-3">
-            {doneTasks.map((t, i) => (
-              <TaskRow key={`done-${i}`} task={t} />
-            ))}
-          </div>
-        </Card>
+        <Section
+          icon="✅"
+          title="کارهای تموم‌شده"
+          summary={
+            st.avgCompletionHours != null
+              ? `میانگین زمان انجام ${formatDuration(st.avgCompletionHours)}`
+              : "انجام‌شده در این بازه"
+          }
+          badge={<Chip tone="ok">{fa(doneTasks.length)}</Chip>}
+        >
+          <TaskList tasks={doneTasks} keyPrefix="done" />
+        </Section>
       )}
 
       {analysis.people.length > 0 && (
-        <Card>
-          <div className="text-sm font-medium mb-3">👥 افراد و نقش‌ها</div>
-          <div className="flex flex-col gap-3">
+        <Section
+          icon="👥"
+          title="افراد و نقش‌ها"
+          summary={`${fa(analysis.people.length)} نفر`}
+        >
+          <div className="flex flex-col gap-2">
             {analysis.people.map((p, i) => (
               <div
                 key={`${p.name}-${i}`}
-                className="border-b border-[var(--color-border)] last:border-0 pb-3 last:pb-0"
+                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-3 flex flex-col items-center gap-1.5 min-w-0"
               >
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium">{p.name}</span>
-                    <Badge tone={ROLE_TONES[p.roleLabel]}>
-                      {ROLE_LABELS[p.roleLabel]}
-                    </Badge>
-                  </div>
-                  <div className="flex gap-1.5">
-                    <Badge tone="info">{p.tasksAnnounced} اعلام</Badge>
-                    <Badge tone="success">{p.tasksCompleted} تموم</Badge>
-                    {p.onTimeRate !== null && (
-                      <Badge
-                        tone={
-                          p.onTimeRate >= 0.8
-                            ? "success"
-                            : p.onTimeRate >= 0.5
-                              ? "warn"
-                              : "danger"
-                        }
-                      >
-                        {Math.round(p.onTimeRate * 100)}% به‌موقع
-                      </Badge>
-                    )}
-                  </div>
+                <div dir="auto" className="text-sm font-medium leading-6 [overflow-wrap:anywhere]">
+                  {p.name}
+                </div>
+                <div className="flex flex-wrap justify-center gap-1.5">
+                  <Chip tone={ROLE_TONES[p.roleLabel]}>{ROLE_LABELS[p.roleLabel]}</Chip>
+                  <Chip tone="info">{fa(p.tasksAnnounced)} اعلام</Chip>
+                  <Chip tone="ok">{fa(p.tasksCompleted)} تموم</Chip>
+                  {p.onTimeRate !== null && (
+                    <Chip tone={p.onTimeRate >= 0.8 ? "ok" : p.onTimeRate >= 0.5 ? "warn" : "bad"}>
+                      {fa(Math.round(p.onTimeRate * 100))}٪ به‌موقع
+                    </Chip>
+                  )}
                 </div>
                 {p.roleDescription && (
-                  <p className="text-xs text-[var(--color-text-dim)] mt-1">
+                  <p dir="auto" className="text-xs leading-6 text-[var(--color-text-dim)] [overflow-wrap:anywhere]">
                     {p.roleDescription}
                   </p>
                 )}
               </div>
             ))}
           </div>
-        </Card>
+        </Section>
       )}
 
       {analysis.tasks.length === 0 && (
-        <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">
-            کار مشخصی در این بازه پیدا نشد.
-          </p>
-        </Card>
+        <EmptyState
+          icon="📋"
+          title="کار مشخصی در این بازه پیدا نشد."
+          hint="بازه‌ی بزرگ‌تری مثل «از ابتدا» را امتحان کن یا پردازش مجدد بزن."
+        />
       )}
     </div>
   );
 }
 
+// A page of task rows with a "show more" button for long lists.
+function TaskList({
+  tasks,
+  keyPrefix,
+  emphasize,
+}: {
+  tasks: Task[];
+  keyPrefix: string;
+  emphasize?: boolean;
+}) {
+  const [limit, setLimit] = useState(PAGE);
+  return (
+    <div className="flex flex-col gap-2">
+      {tasks.slice(0, limit).map((t, i) => (
+        <TaskRow key={`${keyPrefix}-${i}`} task={t} emphasize={emphasize} />
+      ))}
+      {tasks.length > limit && (
+        <button
+          type="button"
+          onClick={() => setLimit((l) => l + PAGE)}
+          className="w-full min-h-11 rounded-xl border border-dashed border-[var(--color-border)] text-sm text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
+        >
+          نمایش بیشتر ({fa(tasks.length - limit)} مورد دیگر)
+        </button>
+      )}
+    </div>
+  );
+}
+
+// One task: a tappable row (title, status chips, one meta line) that opens to its dates and quotes.
 function TaskRow({ task, emphasize }: { task: Task; emphasize?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const hot = emphasize ?? (task.isOverdue || task.status === "stalled");
+  const who = task.owner ?? task.announcedBy;
+  const details: Array<[string, ReactNode]> = [];
+  if (task.announcedBy) details.push(["اعلام‌کننده", task.announcedBy]);
+  if (task.owner && task.owner !== task.announcedBy) details.push(["مسئول", task.owner]);
+  details.push(["زمان اعلام", formatTime(task.announcedAt)]);
+  if (task.dueAt) details.push(["مهلت", formatTime(task.dueAt)]);
+  if (task.status === "done") {
+    details.push(["انجام", formatTime(task.completedAt)]);
+    details.push([
+      "مدت انجام",
+      <span key="d" className="text-emerald-300">
+        {formatDuration(task.durationHours)}
+      </span>,
+    ]);
+    if (task.completedOnTime === false) {
+      details.push([
+        "تأخیر",
+        <span key="l" className="text-rose-300">
+          {formatDuration(task.delayHours)}
+        </span>,
+      ]);
+    }
+  }
+  if (task.staleDays !== null && task.staleDays > 1 && task.status !== "done") {
+    details.push([
+      "بدون فعالیت",
+      <span key="s" className="text-amber-300">
+        {fa(Math.round(task.staleDays))} روز
+      </span>,
+    ]);
+  }
+
   return (
     <div
-      className={`border-b border-[var(--color-border)] last:border-0 pb-3 last:pb-0 ${
-        emphasize ? "bg-red-950/20 -mx-2 px-2 rounded" : ""
-      }`}
+      className={`rounded-xl border border-[var(--color-border)] border-s-[3px] ${
+        hot ? "border-s-rose-400/70 bg-rose-500/5" : `${STATUS_ACCENT[task.status]} bg-[var(--color-surface-2)]/40`
+      } overflow-hidden min-w-0`}
     >
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="font-medium flex-1 min-w-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="w-full min-h-14 px-3 py-2.5 flex flex-col items-center gap-1.5 text-center active:bg-[var(--color-surface-2)]"
+      >
+        <span
+          dir="auto"
+          className={`block w-full text-sm font-medium leading-6 [overflow-wrap:anywhere] ${open ? "" : "line-clamp-2"}`}
+        >
           {task.title}
-          {task.topicName && (
-            <span className="text-[10px] text-[var(--color-text-dim)] mr-2 ms-2">
-              🧵 {task.topicName}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1 flex-wrap">
-          {task.priority === "high" && (
-            <Badge tone="danger">🔥 اولویت بالا</Badge>
-          )}
-          {task.priority === "low" && <Badge tone="neutral">🟢 کم‌اولویت</Badge>}
-          {task.isOverdue && <Badge tone="danger">⏰ معوق</Badge>}
-          <Badge tone={STATUS_TONES[task.status]}>
-            {STATUS_LABELS[task.status]}
-          </Badge>
-        </div>
-      </div>
-
-      <div className="text-xs text-[var(--color-text-dim)] mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
-        <span>
-          اعلام: <span className="text-white">{task.announcedBy}</span> ·{" "}
-          {relTime(task.announcedAt)}
         </span>
-        {task.owner && task.owner !== task.announcedBy && (
-          <span>
-            مسئول: <span className="text-white">{task.owner}</span>
+        <span className="flex flex-wrap justify-center gap-1.5 max-w-full">
+          <Chip tone={STATUS_TONES[task.status]}>{STATUS_LABELS[task.status]}</Chip>
+          {task.isOverdue && <Chip tone="bad">⏰ معوق</Chip>}
+          {task.priority === "high" && <Chip tone="bad">🔥 اولویت بالا</Chip>}
+          {task.priority === "low" && <Chip>🟢 کم‌اولویت</Chip>}
+          {task.topicName && <Chip>🧵 {task.topicName}</Chip>}
+        </span>
+        <span className="flex items-center justify-center gap-1 max-w-full text-xs leading-5 text-[var(--color-text-dim)]">
+          <span className="truncate">
+            {who} · {relTime(task.announcedAt)}
           </span>
-        )}
-        {task.dueAt && (
-          <span>
-            مهلت: <span className="text-white">{formatTime(task.dueAt)}</span>
-          </span>
-        )}
-        {task.status === "done" && (
-          <span>
-            انجام: {formatTime(task.completedAt)} ·{" "}
-            <span className="text-emerald-300">
-              {formatDuration(task.durationHours)}
-            </span>
-            {task.completedOnTime === false && (
-              <span className="text-red-300 mr-2 ms-2">
-                با تأخیر {formatDuration(task.delayHours)}
-              </span>
-            )}
-          </span>
-        )}
-        {task.staleDays !== null && task.staleDays > 1 && task.status !== "done" && (
-          <span className="text-amber-300">
-            {Math.round(task.staleDays)} روز بدون فعالیت
-          </span>
-        )}
-      </div>
+          <Chevron open={open} />
+        </span>
+      </button>
 
-      {task.blockedReason && (
-        <div className="text-xs text-amber-300 mt-1.5">
-          🚧 {task.blockedReason}
+      {open && (
+        <div className="border-t border-[var(--color-border)] px-3 py-3 flex flex-col gap-3 text-center">
+          <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 [&>div:last-child:nth-child(odd)]:col-span-2 sm:[&>div:last-child:nth-child(odd)]:col-span-1">
+            {details.map(([k, v], i) => (
+              <div
+                key={i}
+                className="rounded-lg bg-[var(--color-surface)] px-2 py-1.5 min-w-0"
+              >
+                <dt className="text-xs leading-5 text-[var(--color-text-dim)]">{k}</dt>
+                <dd dir="auto" className="text-sm leading-6 [overflow-wrap:anywhere]">
+                  {v}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          {task.blockedReason && (
+            <div dir="auto" className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-6 text-amber-200 [overflow-wrap:anywhere]">
+              🚧 {task.blockedReason}
+            </div>
+          )}
+          {task.evidence.length > 0 && <Quotes items={task.evidence} max={4} />}
         </div>
-      )}
-
-      {task.evidence.length > 0 && (
-        <ul className="mt-2 text-xs text-[var(--color-text-dim)] list-disc pr-5 space-y-0.5">
-          {normalizeEvidence(task.evidence).slice(0, 4).map((e, i) => (
-            <li key={i} className="break-words">
-              {e.speaker && (
-                <b className="text-[var(--color-text)]">{e.speaker}: </b>
-              )}
-              «{e.text}»
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );
@@ -599,70 +741,72 @@ function TopicBreakdownRow({
   });
 
   return (
-    <div className="border border-[var(--color-border)] rounded-md overflow-hidden">
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 overflow-hidden min-w-0">
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-2 p-3 hover:bg-[var(--color-surface-2)] text-right"
+        aria-expanded={open}
+        className="w-full min-h-14 px-3 py-2.5 flex flex-col items-center gap-1.5 text-center active:bg-[var(--color-surface-2)]"
       >
-        <div className="flex items-center gap-2 flex-wrap min-w-0">
-          <span className="text-xs text-[var(--color-text-dim)] shrink-0">
-            {open ? "▾" : "▸"}
+        <span className="flex items-center justify-center gap-1.5 max-w-full">
+          <span dir="auto" className="truncate text-sm font-medium">
+            {topic.topicName}
           </span>
-          <span className="font-medium truncate">{topic.topicName}</span>
-        </div>
-        <div className="flex gap-1.5 flex-wrap items-center shrink-0">
-          <Badge tone="neutral">
-            {topic.messageCount} پیام · {topic.activeSenders} نفر
-          </Badge>
-          {topic.openTasks > 0 && (
-            <Badge tone="info">{topic.openTasks} باز</Badge>
-          )}
-          {topic.overdueTasks > 0 && (
-            <Badge tone="danger">{topic.overdueTasks} معوق</Badge>
-          )}
-        </div>
+          <Chevron open={open} />
+        </span>
+        <span className="flex flex-wrap justify-center gap-1.5 max-w-full">
+          <Chip>
+            {fa(topic.messageCount)} پیام · {fa(topic.activeSenders)} نفر
+          </Chip>
+          {topic.openTasks > 0 && <Chip tone="info">{fa(topic.openTasks)} باز</Chip>}
+          {topic.overdueTasks > 0 && <Chip tone="bad">{fa(topic.overdueTasks)} معوق</Chip>}
+        </span>
       </button>
 
       {open && (
-        <div className="border-t border-[var(--color-border)] p-3 bg-[var(--color-surface-2)]/30">
+        <div className="border-t border-[var(--color-border)] px-3 py-3 flex flex-col gap-3 text-center">
           {topic.summary && (
-            <p className="text-xs leading-relaxed mb-3 whitespace-pre-wrap">
+            <p dir="auto" className="text-sm leading-7 whitespace-pre-wrap [overflow-wrap:anywhere]">
               {topic.summary}
             </p>
           )}
 
           {tasks.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+            <div className="grid grid-cols-2 gap-2">
               {(
                 [
-                  ["announced", byStatus.announced, "info"],
-                  ["in_progress", byStatus.in_progress, "warn"],
-                  ["done", byStatus.done, "success"],
-                  ["stalled", byStatus.stalled, "neutral"],
+                  ["announced", byStatus.announced],
+                  ["in_progress", byStatus.in_progress],
+                  ["done", byStatus.done],
+                  ["stalled", byStatus.stalled],
                 ] as const
-              ).map(([k, n, tone]) => (
+              ).map(([k, n]) => (
                 <div
                   key={k}
-                  className="border border-[var(--color-border)] rounded-md px-2 py-1.5 flex items-center justify-between bg-[var(--color-surface)]"
+                  className="rounded-lg bg-[var(--color-surface)] px-2 py-2 flex flex-col items-center gap-1"
                 >
-                  <Badge tone={tone}>{STATUS_LABELS[k]}</Badge>
-                  <span className="text-sm font-semibold">{n}</span>
+                  <Chip tone={STATUS_TONES[k]}>{STATUS_LABELS[k]}</Chip>
+                  <span className="text-lg font-semibold tabular-nums leading-6">{fa(n)}</span>
                 </div>
               ))}
             </div>
           )}
 
           {people.length > 0 && (
-            <div className="mb-3 text-[11px] text-[var(--color-text-dim)]">
-              <span className="opacity-70">👥 افراد فعال: </span>
-              <span className="text-white">{people.join(" · ")}</span>
+            <div className="text-xs leading-6 text-[var(--color-text-dim)] [overflow-wrap:anywhere]">
+              <div>👥 افراد فعال</div>
+              <div className="text-[var(--color-text)]">{people.join(" · ")}</div>
             </div>
           )}
 
           {topic.keyPoints.length > 0 && (
-            <ul className="text-[11px] text-[var(--color-text-dim)] list-disc pr-5 space-y-0.5 mb-3">
+            <ul className="flex flex-col gap-1.5">
               {topic.keyPoints.slice(0, 6).map((p, j) => (
-                <li key={j} className="break-words">
+                <li
+                  key={j}
+                  dir="auto"
+                  className="rounded-lg bg-[var(--color-surface)] px-3 py-2 text-xs leading-6 text-[var(--color-text-dim)] [overflow-wrap:anywhere]"
+                >
                   {p}
                 </li>
               ))}
@@ -670,19 +814,14 @@ function TopicBreakdownRow({
           )}
 
           {sortedTasks.length === 0 ? (
-            <p className="text-[11px] text-[var(--color-text-dim)]">
+            <p className="text-xs leading-6 text-[var(--color-text-dim)]">
               توی این تاپیک هیچ task شناسایی نشد.
             </p>
           ) : (
-            <div className="flex flex-col gap-3">
-              {sortedTasks.map((t, i) => (
-                <TaskRow
-                  key={`${topic.topicName}-task-${i}`}
-                  task={t}
-                  emphasize={t.isOverdue || t.status === "stalled"}
-                />
-              ))}
-            </div>
+            <TaskList
+              tasks={sortedTasks}
+              keyPrefix={`${topic.topicName}-task`}
+            />
           )}
         </div>
       )}
