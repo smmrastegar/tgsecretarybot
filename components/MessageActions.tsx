@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import AddToRuleButton from "./AddToRuleButton";
+import { confirmDialog } from "./ui/Dialogs";
 import Chip, { type ChipTone } from "@/components/dash/Chip";
 
 type Secretary = { userId: number; name: string };
@@ -31,6 +32,8 @@ type MessageLike = {
   transcript: string | null;
   handledAt: string | null;
   chatMode?: ChatMode;
+  /** Shown in the hand-over confirmation ("«name» به AI سپرده شود؟"). */
+  chatLabel?: string | null;
 };
 
 type Props = {
@@ -140,6 +143,16 @@ export default function MessageActions({
   }
 
   async function handOverToAi() {
+    // Persistent + outward-facing: from now on the AI answers this person as the owner, unprompted.
+    // Never do that on a stray click (the same confirmation /urgent asks).
+    const label = m.chatLabel || "این چت";
+    const ok = await confirmDialog(
+      `«${label}» به AI سپرده شود؟\n\n` +
+        "AI همین حالا جواب می‌دهد و از این پس پیام‌های بعدی این چت را هم خودش به‌جای تو پاسخ می‌دهد.\n\n" +
+        "برای پاسخ یک‌باره، به‌جای این از «پیشنهاد AI» استفاده کن.",
+      { title: "سپردن چت به AI", confirmLabel: "بسپار به AI" },
+    );
+    if (!ok) return;
     setHanding(true);
     try {
       const r = await fetch(`/api/messages/${m.id}/ai-handle`, {

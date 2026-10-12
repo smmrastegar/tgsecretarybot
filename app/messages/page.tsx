@@ -552,6 +552,7 @@ export default function MessagesPage() {
                     transcript: target.transcript,
                     handledAt: target.handledAt,
                     chatMode: target.chatMode,
+                    chatLabel: displaySender(target),
                   }}
                   secretaries={secretaries}
                   onChange={load}
@@ -660,6 +661,7 @@ export default function MessagesPage() {
                   transcript: m.transcript,
                   handledAt: m.handledAt,
                   chatMode: m.chatMode,
+                  chatLabel: displaySender(m),
                 }}
                 secretaries={secretaries}
                 onChange={load}
