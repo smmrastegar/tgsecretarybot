@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, StatCard, Badge } from "@/components/Card";
+import Section from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
 
 type Overview = {
   totalCostUsd: number;
@@ -46,6 +48,15 @@ const PURPOSE_LABEL: Record<string, string> = {
   describe_media: "توضیح عکس / گیف / استیکر",
 };
 
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+// Money keeps Latin digits (it is a $ amount) but is isolated so it does not scramble inside Persian text.
+const usd = (n: number, d = 2) => <bdi dir="ltr">${n.toFixed(d)}</bdi>;
+
+// Controls are >= 40 px tall; fields 44 px.
+const btn = "min-h-10 px-4 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
+const btnPrimary = "min-h-11 px-5 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50";
+const field = "w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3 py-2 tabular-nums";
+
 export default function CostsPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [byPurpose, setByPurpose] = useState<Row[]>([]);
@@ -54,6 +65,7 @@ export default function CostsPage() {
   const [predictN, setPredictN] = useState(1000);
   const [days, setDays] = useState(30);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [budget, setBudget] = useState<BudgetState | null>(null);
   const [credits, setCredits] = useState<Credits | null>(null);
   const [creditsError, setCreditsError] = useState<string | null>(null);
@@ -61,18 +73,25 @@ export default function CostsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await fetch(`/api/ai-usage?days=${days}`);
-    const j = (await r.json()) as {
-      overview: Overview | null;
-      byPurpose: Row[];
-      byModel: Row[];
-      byDay: DayRow[];
-    };
-    setOverview(j.overview);
-    setByPurpose(j.byPurpose);
-    setByModel(j.byModel);
-    setByDay(j.byDay);
-    setLoading(false);
+    setError(null);
+    try {
+      const r = await fetch(`/api/ai-usage?days=${days}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as {
+        overview: Overview | null;
+        byPurpose: Row[];
+        byModel: Row[];
+        byDay: DayRow[];
+      };
+      setOverview(j.overview);
+      setByPurpose(j.byPurpose);
+      setByModel(j.byModel);
+      setByDay(j.byDay);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }, [days]);
 
   const loadBudget = useCallback(async () => {
@@ -152,6 +171,17 @@ export default function CostsPage() {
 
   const maxDayCost = byDay.reduce((m, d) => Math.max(m, d.totalCostUsd), 0.0001);
 
+  // One row of a ranked list: name + call count in the middle, cost at the end.
+  const listRow = (key: string, name: ReactNode, calls: number, cost: number, ltr = false) => (
+    <div key={key} className="flex items-center gap-3 min-h-14 px-4 py-2 border-t first:border-t-0 border-[var(--color-border)]">
+      <div className="min-w-0 flex-1 text-center">
+        <div dir={ltr ? "ltr" : undefined} className="text-sm [overflow-wrap:anywhere]">{name}</div>
+        <div className="text-xs text-[var(--color-text-dim)]">{fa(calls)} call</div>
+      </div>
+      <div className="shrink-0 text-sm font-semibold tabular-nums">{usd(cost, 4)}</div>
+    </div>
+  );
+
   return (
     <Shell>
       <PageTitle
@@ -161,7 +191,8 @@ export default function CostsPage() {
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
-            className="text-xs px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
+            aria-label="بازه‌ی زمانی"
+            className="min-h-11 px-3 rounded-xl text-sm border border-[var(--color-border)] bg-[var(--color-surface)]"
           >
             <option value={7}>۷ روز اخیر</option>
             <option value={30}>۳۰ روز اخیر</option>
@@ -170,12 +201,20 @@ export default function CostsPage() {
         }
       />
 
+      {error && (
+        <Card className="mb-4 !border-red-800 !bg-red-900/20">
+          <p className="text-sm text-red-200">بارگذاری هزینه‌ها ناموفق بود ({error})</p>
+          <button onClick={load} className={`${btn} mt-3`}>تلاش دوباره</button>
+        </Card>
+      )}
+      {loading && !overview && !error && <Card className="mb-4">بارگذاری…</Card>}
+
       {overview && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-4">
           <StatCard
             label="هزینه کل"
             value={`$${overview.totalCostUsd.toFixed(4)}`}
-            hint={`${overview.totalCalls} call در کل`}
+            hint={`${fa(overview.totalCalls)} call در کل`}
           />
           <StatCard
             label="۲۴ ساعت اخیر"
@@ -187,14 +226,14 @@ export default function CostsPage() {
           />
           <StatCard
             label="توکن (بازه)"
-            value={`${(byPurpose.reduce((s, r) => s + r.totalTokens, 0) / 1000).toFixed(1)}k`}
+            value={`${fa((byPurpose.reduce((s, r) => s + r.totalTokens, 0) / 1000).toFixed(1))}k`}
           />
         </div>
       )}
 
       {budget && (
         <Card
-          className={`mb-4 !p-3 ${
+          className={`mb-4 ${
             budget.budgetExceeded
               ? "!border-red-700 !bg-red-900/20"
               : budget.needsApproval
@@ -202,63 +241,30 @@ export default function CostsPage() {
                 : ""
           }`}
         >
-          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-            <div className="text-sm font-medium">
-              {budget.budgetExceeded
-                ? "🛑 سقف بودجه OpenRouter تمام شد"
-                : budget.needsApproval
-                  ? "⏸ نیاز به تایید برای ادامه‌ی هزینه"
-                  : "💳 بودجه OpenRouter"}
-            </div>
-            <div className="flex items-center gap-2">
-              {budget.tenantName && (
-                <span className="text-[10px] text-[var(--color-text-dim)]">
-                  tenant: {budget.tenantName}
-                </span>
-              )}
-              <button
-                onClick={() => setBudgetDialog(true)}
-                className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-              >
-                ⚙️ تنظیمات
-              </button>
-              <button
-                onClick={loadBudget}
-                className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-              >
-                🔄
-              </button>
-            </div>
+          <div className="text-sm font-semibold leading-6">
+            {budget.budgetExceeded
+              ? "🛑 سقف بودجه OpenRouter تمام شد"
+              : budget.needsApproval
+                ? "⏸ نیاز به تایید برای ادامه‌ی هزینه"
+                : "💳 بودجه OpenRouter"}
           </div>
-          <div className="flex items-center gap-3 flex-wrap text-[11px] mb-2">
-            <span>
-              <span className="text-[var(--color-text-dim)]">خرج‌شده:</span>{" "}
-              <strong>${budget.spentUsd.toFixed(4)}</strong>
-            </span>
-            <span>
-              <span className="text-[var(--color-text-dim)]">مجاز تا:</span>{" "}
-              <strong>${budget.approvedUsd.toFixed(2)}</strong>
-            </span>
-            <span>
-              <span className="text-[var(--color-text-dim)]">سقف کلی:</span>{" "}
-              <strong>${budget.budgetUsd.toFixed(2)}</strong>
-            </span>
-            <span className="text-[var(--color-text-dim)]">
-              · step ${budget.stepUsd.toFixed(2)}
-            </span>
-            {credits && (
-              <span className="text-[var(--color-text-dim)]">
-                · موجودی واقعی OpenRouter:{" "}
-                <strong className="text-emerald-300">
-                  ${credits.remaining.toFixed(2)}
-                </strong>
-              </span>
-            )}
-            {creditsError && !credits && (
-              <span className="text-red-300 text-[10px]">
-                ({creditsError.slice(0, 40)})
-              </span>
-            )}
+          {budget.tenantName && (
+            <div className="text-xs text-[var(--color-text-dim)]">tenant: {budget.tenantName}</div>
+          )}
+
+          <div className="grid grid-cols-3 gap-2 mt-3 mb-2">
+            <div>
+              <div className="text-xs text-[var(--color-text-dim)]">خرج‌شده</div>
+              <div className="text-sm font-semibold tabular-nums">{usd(budget.spentUsd, 4)}</div>
+            </div>
+            <div>
+              <div className="text-xs text-[var(--color-text-dim)]">مجاز تا</div>
+              <div className="text-sm font-semibold tabular-nums">{usd(budget.approvedUsd)}</div>
+            </div>
+            <div>
+              <div className="text-xs text-[var(--color-text-dim)]">سقف کلی</div>
+              <div className="text-sm font-semibold tabular-nums">{usd(budget.budgetUsd)}</div>
+            </div>
           </div>
           {/* Two-tier progress bar: approved layer (green) + spent layer
               (accent/amber/red depending on state). */}
@@ -290,83 +296,104 @@ export default function CostsPage() {
               title={`خرج: $${budget.spentUsd.toFixed(2)}`}
             />
           </div>
+          <div className="text-xs leading-6 text-[var(--color-text-dim)]">
+            step {usd(budget.stepUsd)}
+            {credits && (
+              <>
+                {" · "}موجودی واقعی OpenRouter:{" "}
+                <strong className="text-emerald-300">{usd(credits.remaining)}</strong>
+              </>
+            )}
+            {creditsError && !credits && (
+              <span className="text-red-300"> ({creditsError.slice(0, 40)})</span>
+            )}
+          </div>
           {(budget.needsApproval || budget.budgetExceeded) && (
-            <div className="text-[11px] text-amber-200 mb-2">
+            <div className="text-xs leading-6 text-amber-200 mt-2">
               {budget.budgetExceeded
                 ? `سقف کل $${budget.budgetUsd.toFixed(2)} پر شد. AI call‌ها قفلن — با دکمه «🔓 +$${budget.stepUsd.toFixed(2)} + سقف» یه slice دیگه باز کن.`
                 : `خرج رسید به سقف مجاز $${budget.approvedUsd.toFixed(2)}. تا تخصیص ندی، call‌ها bunda می‌شن.`}
             </div>
           )}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] text-[var(--color-text-dim)]">
-              ⚡ تخصیص:
-            </span>
-            {/* Always-available +step button. */}
-            <button
-              onClick={() => approveNext()}
-              disabled={
-                approving ||
-                budget.approvedUsd + 0.0001 >= budget.budgetUsd
-              }
-              className="text-[11px] px-2.5 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-40"
-              title={`الان مجاز تا $${budget.approvedUsd.toFixed(2)} — بزن می‌ره +$${budget.stepUsd.toFixed(2)}`}
-            >
-              + ${budget.stepUsd.toFixed(2)} تخصیص
-            </button>
-            {/* Multi-step jumps up to cap. */}
-            {(() => {
-              const jumps: number[] = [];
-              for (
-                let n = 2;
-                n <= 5 &&
-                budget.approvedUsd + budget.stepUsd * n <= budget.budgetUsd + 0.0001;
-                n++
-              ) {
-                jumps.push(n);
-              }
-              return jumps.map((n) => (
-                <button
-                  key={n}
-                  onClick={() =>
-                    approveNext({
-                      absolute: Math.min(
-                        budget.budgetUsd,
-                        budget.approvedUsd + budget.stepUsd * n,
-                      ),
-                    })
-                  }
-                  disabled={approving}
-                  className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
-                  title={`بپر تا $${(budget.approvedUsd + budget.stepUsd * n).toFixed(2)}`}
-                >
-                  +{n}×
-                </button>
-              ));
-            })()}
-            {/* Jump straight to cap. */}
-            {budget.approvedUsd + 0.0001 < budget.budgetUsd && (
+
+          <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
+            <div className="text-xs text-[var(--color-text-dim)] mb-2">⚡ تخصیص</div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Always-available +step button. */}
               <button
-                onClick={() => approveNext({ absolute: budget.budgetUsd })}
-                disabled={approving}
-                className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
-                title={`تا سقف کل $${budget.budgetUsd.toFixed(2)}`}
+                onClick={() => approveNext()}
+                disabled={
+                  approving ||
+                  budget.approvedUsd + 0.0001 >= budget.budgetUsd
+                }
+                className="min-h-11 px-4 rounded-xl border border-emerald-700 bg-emerald-500/10 text-emerald-300 text-sm font-medium hover:bg-emerald-900/30 disabled:opacity-40"
+                title={`الان مجاز تا $${budget.approvedUsd.toFixed(2)} — بزن می‌ره +$${budget.stepUsd.toFixed(2)}`}
               >
-                ⬆ سقف
+                + ${budget.stepUsd.toFixed(2)} تخصیص
               </button>
-            )}
-            {/* Extend cap by step + approve to there. */}
-            <button
-              onClick={() =>
-                approveNext({
-                  extendBudget: true,
-                  absolute: budget.budgetUsd + budget.stepUsd,
-                })
-              }
-              disabled={approving}
-              className="text-[11px] px-2.5 py-1 rounded-md border border-amber-600 bg-amber-500/15 text-amber-200 hover:bg-amber-500/30"
-              title={`سقف رو $${budget.stepUsd.toFixed(2)} بالا ببر + تخصیص رو هم تا اونجا ببر`}
-            >
-              🔓 +${budget.stepUsd.toFixed(2)} + سقف
+              {/* Multi-step jumps up to cap. */}
+              {(() => {
+                const jumps: number[] = [];
+                for (
+                  let n = 2;
+                  n <= 5 &&
+                  budget.approvedUsd + budget.stepUsd * n <= budget.budgetUsd + 0.0001;
+                  n++
+                ) {
+                  jumps.push(n);
+                }
+                return jumps.map((n) => (
+                  <button
+                    key={n}
+                    onClick={() =>
+                      approveNext({
+                        absolute: Math.min(
+                          budget.budgetUsd,
+                          budget.approvedUsd + budget.stepUsd * n,
+                        ),
+                      })
+                    }
+                    disabled={approving}
+                    className={`${btn} text-[var(--color-text-dim)]`}
+                    title={`بپر تا $${(budget.approvedUsd + budget.stepUsd * n).toFixed(2)}`}
+                  >
+                    +{fa(n)}×
+                  </button>
+                ));
+              })()}
+              {/* Jump straight to cap. */}
+              {budget.approvedUsd + 0.0001 < budget.budgetUsd && (
+                <button
+                  onClick={() => approveNext({ absolute: budget.budgetUsd })}
+                  disabled={approving}
+                  className={`${btn} text-[var(--color-text-dim)]`}
+                  title={`تا سقف کل $${budget.budgetUsd.toFixed(2)}`}
+                >
+                  ⬆ سقف
+                </button>
+              )}
+              {/* Extend cap by step + approve to there. */}
+              <button
+                onClick={() =>
+                  approveNext({
+                    extendBudget: true,
+                    absolute: budget.budgetUsd + budget.stepUsd,
+                  })
+                }
+                disabled={approving}
+                className="min-h-11 px-4 rounded-xl border border-amber-600 bg-amber-500/15 text-amber-200 text-sm hover:bg-amber-500/30 disabled:opacity-40"
+                title={`سقف رو $${budget.stepUsd.toFixed(2)} بالا ببر + تخصیص رو هم تا اونجا ببر`}
+              >
+                🔓 +${budget.stepUsd.toFixed(2)} + سقف
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <button onClick={() => setBudgetDialog(true)} className={btn}>
+              ⚙️ تنظیمات
+            </button>
+            <button onClick={loadBudget} className={btn} aria-label="بارگذاری دوباره‌ی بودجه">
+              🔄
             </button>
           </div>
         </Card>
@@ -387,135 +414,88 @@ export default function CostsPage() {
         />
       )}
 
-      {loading && <Card className="mb-4">بارگذاری…</Card>}
+      {!error && (
+        <>
+          <Section icon="🔮" title="پیش‌بینی هزینه" summary={`${fa(predictN)} پیام ← تخمین $${predictedCost.toFixed(4)}`}>
+            <label className="block text-sm mb-2" htmlFor="predict-n">اگه این‌قدر پیام ورودی دیگه بیاد:</label>
+            <input
+              id="predict-n"
+              type="number"
+              min={1}
+              max={1_000_000}
+              dir="ltr"
+              value={predictN}
+              onChange={(e) =>
+                setPredictN(Math.max(1, Number(e.target.value) || 0))
+              }
+              className={`${field} text-center`}
+            />
+            <div className="mt-3">
+              <Badge tone="info">
+                تخمین {usd(predictedCost, 4)}
+              </Badge>
+            </div>
+            <p className="text-xs leading-6 text-[var(--color-text-dim)] mt-3">
+              از میانگین هر call در بازه‌ی انتخاب‌شده استفاده می‌کنه (هزینه‌ی
+              دسته‌بندی هر پیام × N، به‌علاوه‌ی سهم پاسخ AI × N × میانگین هزینه‌ی
+              پاسخ AI).
+            </p>
+          </Section>
 
-      <Card className="mb-4">
-        <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
-          پیش‌بینی هزینه
-        </div>
-        <div className="flex items-center gap-2 flex-wrap text-sm">
-          <span>اگه</span>
-          <input
-            type="number"
-            min={1}
-            max={1_000_000}
-            value={predictN}
-            onChange={(e) =>
-              setPredictN(Math.max(1, Number(e.target.value) || 0))
-            }
-            className="w-24 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
-          />
-          <span>پیام ورودی دیگه بیاد →</span>
-          <Badge tone="info">
-            تخمین ${predictedCost.toFixed(4)}
-          </Badge>
-        </div>
-        <p className="text-xs text-[var(--color-text-dim)] mt-2">
-          از میانگین هر call در بازه‌ی انتخاب‌شده استفاده می‌کنه (هزینه‌ی
-          دسته‌بندی هر پیام × N، به‌علاوه‌ی سهم پاسخ AI × N × میانگین هزینه‌ی
-          پاسخ AI).
-        </p>
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <Card>
-          <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
-            بر اساس هدف
-          </div>
-          {byPurpose.length === 0 ? (
-            <p className="text-sm text-[var(--color-text-dim)]">هنوز مصرفی نیست.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <tbody>
-                {byPurpose.map((r) => (
-                  <tr
-                    key={r.purpose}
-                    className="border-b border-[var(--color-border)] last:border-0"
-                  >
-                    <td className="py-2 pr-2">
-                      {PURPOSE_LABEL[r.purpose ?? ""] ?? r.purpose}
-                    </td>
-                    <td className="py-2 pr-2 text-right text-xs text-[var(--color-text-dim)]">
-                      {r.calls} calls
-                    </td>
-                    <td className="py-2 text-right">
-                      ${r.totalCostUsd.toFixed(4)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
-
-        <Card>
-          <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
-            بر اساس مدل
-          </div>
-          {byModel.length === 0 ? (
-            <p className="text-sm text-[var(--color-text-dim)]">هنوز مصرفی نیست.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <tbody>
-                {byModel.map((r) => (
-                  <tr
-                    key={r.model}
-                    className="border-b border-[var(--color-border)] last:border-0"
-                  >
-                    <td className="py-2 pr-2 break-all text-xs">
-                      {r.model}
-                    </td>
-                    <td className="py-2 pr-2 text-right text-xs text-[var(--color-text-dim)]">
-                      {r.calls}
-                    </td>
-                    <td className="py-2 text-right">
-                      ${r.totalCostUsd.toFixed(4)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Card>
-      </div>
-
-      <Card>
-        <div className="text-xs uppercase tracking-wider text-[var(--color-text-dim)] mb-3">
-          خرج روزانه
-        </div>
-        {byDay.length === 0 ? (
-          <p className="text-sm text-[var(--color-text-dim)]">هنوز مصرفی نیست.</p>
-        ) : (
-          <div className="flex flex-col gap-1">
-            {byDay.map((d) => (
-              <div key={d.day} className="flex items-center gap-2 text-xs">
-                <span className="w-24 text-[var(--color-text-dim)] shrink-0">
-                  {d.day}
-                </span>
-                <div className="flex-1 h-3 bg-[var(--color-surface-2)] rounded">
-                  <div
-                    className="h-full bg-[var(--color-accent)] rounded"
-                    style={{
-                      width: `${(d.totalCostUsd / maxDayCost) * 100}%`,
-                    }}
-                  />
-                </div>
-                <span className="w-20 text-right tabular-nums">
-                  ${d.totalCostUsd.toFixed(4)}
-                </span>
-                <span className="w-16 text-right text-[var(--color-text-dim)]">
-                  {d.calls}
-                </span>
+          <Section icon="🎯" title="بر اساس هدف" summary={byPurpose.length ? `${fa(byPurpose.length)} هدف · ${fa(totalCalls)} call` : "هنوز مصرفی نیست"} defaultOpen>
+            {byPurpose.length === 0 ? (
+              <EmptyState icon="🎯" title="هنوز مصرفی نیست" hint="بعد از اولین call به AI اینجا می‌بینی خرج کجا می‌ره." />
+            ) : (
+              <div className="-mx-4 -mb-4">
+                {byPurpose.map((r) => listRow(r.purpose ?? "?", PURPOSE_LABEL[r.purpose ?? ""] ?? r.purpose, r.calls, r.totalCostUsd))}
               </div>
-            ))}
-          </div>
-        )}
-      </Card>
+            )}
+          </Section>
+
+          <Section icon="🤖" title="بر اساس مدل" summary={byModel.length ? `${fa(byModel.length)} مدل` : "هنوز مصرفی نیست"} defaultOpen>
+            {byModel.length === 0 ? (
+              <EmptyState icon="🤖" title="هنوز مصرفی نیست" hint="بعد از اولین call به AI اینجا می‌بینی خرج کجا می‌ره." />
+            ) : (
+              <div className="-mx-4 -mb-4">
+                {byModel.map((r) => listRow(r.model ?? "?", r.model, r.calls, r.totalCostUsd, true))}
+              </div>
+            )}
+          </Section>
+
+          <Section icon="📅" title="خرج روزانه" summary={byDay.length ? `${fa(byDay.length)} روز` : "هنوز مصرفی نیست"}>
+            {byDay.length === 0 ? (
+              <EmptyState icon="📅" title="هنوز مصرفی نیست" hint="بعد از اولین call به AI اینجا می‌بینی خرج کجا می‌ره." />
+            ) : (
+              <div className="flex flex-col gap-3">
+                {byDay.map((d) => (
+                  <div key={d.day}>
+                    <div className="flex items-center justify-between gap-2 text-xs tabular-nums mb-1">
+                      <span dir="ltr" className="text-[var(--color-text-dim)]">{d.day}</span>
+                      <span>
+                        {usd(d.totalCostUsd, 4)}
+                        <span className="text-[var(--color-text-dim)]"> · {fa(d.calls)} call</span>
+                      </span>
+                    </div>
+                    <div dir="ltr" className="h-3 bg-[var(--color-surface-2)] rounded">
+                      <div
+                        className="h-full bg-[var(--color-accent)] rounded"
+                        style={{
+                          width: `${(d.totalCostUsd / maxDayCost) * 100}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+        </>
+      )}
     </Shell>
   );
 }
 
-// Modal for editing the budget cap + approval step. Mirrors the
+// Sheet for editing the budget cap + approval step. Mirrors the
 // Instagram budget dialog — two inputs and a single save button that
 // PUTs through the approve endpoint with the current approvedUsd
 // unchanged (so we don't accidentally bump allocation).
@@ -532,11 +512,12 @@ function OpenrouterBudgetDialog({
   const [step, setStep] = useState(String(budget.stepUsd));
   const [saving, setSaving] = useState(false);
 
+  const capN = Number(cap);
+  const stepN = Number(step);
+  const valid = Number.isFinite(capN) && capN > 0 && Number.isFinite(stepN) && stepN > 0;
+
   const save = async () => {
-    const capN = Number(cap);
-    const stepN = Number(step);
-    if (!Number.isFinite(capN) || capN <= 0) return;
-    if (!Number.isFinite(stepN) || stepN <= 0) return;
+    if (!valid) return;
     setSaving(true);
     try {
       await onSave(capN, stepN);
@@ -547,67 +528,59 @@ function OpenrouterBudgetDialog({
 
   return (
     <div
-      className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       <div
-        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4 max-w-md w-full"
-        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="تنظیمات بودجه OpenRouter"
+        className="w-full md:max-w-md rounded-t-3xl md:rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 pb-6 text-center shadow-2xl"
       >
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold">⚙️ تنظیمات بودجه OpenRouter</h3>
-          <button
-            onClick={onClose}
-            className="text-[var(--color-text-dim)] hover:text-white"
-          >
-            ✕
-          </button>
-        </div>
-        <div className="space-y-3">
+        <h3 className="text-base font-semibold mb-4">⚙️ تنظیمات بودجه OpenRouter</h3>
+        <div className="space-y-4">
           <div>
-            <label className="text-[11px] text-[var(--color-text-dim)] block mb-1">
+            <label htmlFor="cap" className="text-sm leading-6 block mb-1.5">
               💰 سقف کلی بودجه (USD) — حداکثری که اجازه می‌دی خرج بشه
             </label>
             <input
+              id="cap"
               type="number"
+              dir="ltr"
               min="0"
               step="0.01"
               value={cap}
               onChange={(e) => setCap(e.target.value)}
-              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 tabular-nums"
+              className={field}
             />
           </div>
           <div>
-            <label className="text-[11px] text-[var(--color-text-dim)] block mb-1">
+            <label htmlFor="step" className="text-sm leading-6 block mb-1.5">
               ⚡ مقدار هر تخصیص (USD) — هر بار «تایید» می‌زنی این‌قدر اضافه می‌شه
             </label>
             <input
+              id="step"
               type="number"
+              dir="ltr"
               min="0.01"
               step="0.01"
               value={step}
               onChange={(e) => setStep(e.target.value)}
-              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 tabular-nums"
+              className={field}
             />
           </div>
-          <div className="text-[10px] text-[var(--color-text-dim)] pt-1">
-            خرج فعلی: ${budget.spentUsd.toFixed(4)} · مجاز فعلی: $
-            {budget.approvedUsd.toFixed(2)}
+          <div className="text-xs leading-6 text-[var(--color-text-dim)]">
+            خرج فعلی: {usd(budget.spentUsd, 4)} · مجاز فعلی: {usd(budget.approvedUsd)}
           </div>
         </div>
-        <div className="flex justify-end gap-2 mt-4">
-          <button
-            onClick={onClose}
-            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-          >
-            انصراف
-          </button>
-          <button
-            onClick={save}
-            disabled={saving}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
-          >
+        <div className="flex gap-2 mt-5">
+          <button onClick={save} disabled={saving || !valid} className={btnPrimary}>
             {saving ? "ذخیره…" : "ذخیره"}
+          </button>
+          <button onClick={onClose} className={btn}>
+            انصراف
           </button>
         </div>
       </div>

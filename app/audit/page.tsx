@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
+import Section from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
 import { relTime } from "@/lib/format";
 
 type AuditRow = {
@@ -45,12 +47,28 @@ const ACTION_TONE: Record<
 
 type Tab = "errors" | "audit";
 
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+
+// Controls are >= 40 px tall; fields 44 px.
+const btn = "min-h-10 px-4 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const chip = (on: boolean) =>
+  `min-h-10 px-3 rounded-xl border text-sm ${
+    on
+      ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+      : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
+  }`;
+const field = "w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3 py-2";
+// Log text (messages, stacks, JSON) is code-like and mixed-direction, so it stays start-aligned inside the centred cards.
+const pre = "mt-1 text-start text-xs bg-[var(--color-surface-2)] rounded-xl p-3 overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono";
+const summaryCls = "min-h-10 flex items-center justify-center text-xs text-[var(--color-text-dim)] cursor-pointer hover:text-white";
+
 export default function SystemLogPage() {
   const [tab, setTab] = useState<Tab>("errors");
   const [audit, setAudit] = useState<AuditRow[]>([]);
   const [errors, setErrors] = useState<ErrorRow[]>([]);
   const [sources, setSources] = useState<SourceCount[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Error filters
   const [level, setLevel] = useState<"" | "error" | "warn" | "info">("");
@@ -62,6 +80,7 @@ export default function SystemLogPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const p = new URLSearchParams({ kind: "both", limit: "300" });
       if (level) p.set("level", level);
@@ -69,16 +88,17 @@ export default function SystemLogPage() {
       if (q.trim()) p.set("q", q.trim());
       if (sinceDays) p.set("days", String(sinceDays));
       const r = await fetch(`/api/audit?${p}`);
-      if (r.ok) {
-        const j = (await r.json()) as {
-          rows: AuditRow[];
-          errors: ErrorRow[];
-          sources: SourceCount[];
-        };
-        setAudit(j.rows ?? []);
-        setErrors(j.errors ?? []);
-        setSources(j.sources ?? []);
-      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as {
+        rows: AuditRow[];
+        errors: ErrorRow[];
+        sources: SourceCount[];
+      };
+      setAudit(j.rows ?? []);
+      setErrors(j.errors ?? []);
+      setSources(j.sources ?? []);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -124,198 +144,181 @@ export default function SystemLogPage() {
     }
   }
 
+  const activeFilters = [source ? `subsystem: ${source}` : "", sinceDays ? `${fa(sinceDays)} روز` : ""].filter(Boolean);
+
   return (
     <Shell>
       <PageTitle
         title="🪵 لاگ سیستم"
         subtitle="هم تغییرات audit (هرچی از طریق dashboard یا cron انجام شد) هم خطاهای سیستم — با فیلتر، جستجو، و دکمه کپی برای هر خطا."
         actions={
-          <button
-            onClick={load}
-            disabled={loading}
-            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-          >
+          <button onClick={load} disabled={loading} className={btn}>
             {loading ? "..." : "🔄 رفرش"}
           </button>
         }
       />
 
-      <div className="flex gap-2 mb-3 flex-wrap" role="tablist">
+      <div className="grid grid-cols-2 gap-2 mb-4" role="tablist">
         <button
+          role="tab"
+          aria-selected={tab === "errors"}
           onClick={() => setTab("errors")}
-          className={`text-xs px-3 py-1.5 rounded-md border ${
+          className={`min-h-12 px-2 rounded-xl border text-sm ${
             tab === "errors"
               ? "bg-rose-500/10 border-rose-500/40 text-rose-200"
               : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
           }`}
         >
-          ⚠️ خطاهای سیستم ({totalErrors})
+          ⚠️ خطاهای سیستم ({fa(totalErrors)})
         </button>
         <button
+          role="tab"
+          aria-selected={tab === "audit"}
           onClick={() => setTab("audit")}
-          className={`text-xs px-3 py-1.5 rounded-md border ${
+          className={`min-h-12 px-2 rounded-xl border text-sm ${
             tab === "audit"
               ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
               : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
           }`}
         >
-          📋 Audit ({audit.length})
+          📋 Audit ({fa(audit.length)})
         </button>
       </div>
+
+      {loadError && (
+        <Card className="mb-3 !border-red-800 !bg-red-900/20">
+          <p className="text-sm text-red-200">بارگذاری لاگ ناموفق بود ({loadError})</p>
+          <button onClick={load} className={`${btn} mt-3`}>تلاش دوباره</button>
+        </Card>
+      )}
 
       {tab === "errors" && (
         <>
           <Card className="mb-3">
-            <div className="flex flex-wrap gap-1.5 mb-2">
+            <div className="flex flex-wrap justify-center gap-2 mb-3">
               {(
                 [
-                  ["", `همه (${totalErrors})`],
-                  ["error", `❌ error (${errorOnly})`],
-                  ["warn", `⚠ warn (${warnOnly})`],
+                  ["", `همه (${fa(totalErrors)})`],
+                  ["error", `❌ error (${fa(errorOnly)})`],
+                  ["warn", `⚠ warn (${fa(warnOnly)})`],
                   ["info", "ℹ info"],
                 ] as const
               ).map(([v, label]) => (
                 <button
                   key={v}
                   onClick={() => setLevel(v as "" | "error" | "warn" | "info")}
-                  className={`text-[11px] px-2 py-1 rounded-md border ${
-                    level === v
-                      ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
-                      : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
-                  }`}
+                  className={chip(level === v)}
                 >
                   {label}
                 </button>
               ))}
             </div>
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              <button
-                onClick={() => setSource("")}
-                className={`text-[11px] px-2 py-1 rounded-md border ${
-                  source === ""
-                    ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
-                    : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
-                }`}
-              >
-                همه‌ی subsystemها
-              </button>
-              {sources.map((s) => (
-                <button
-                  key={s.source}
-                  onClick={() => setSource(s.source)}
-                  className={`text-[10px] px-2 py-1 rounded-md border font-mono ${
-                    source === s.source
-                      ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
-                      : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
-                  }`}
+            <input
+              type="search"
+              dir="auto"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="🔍 جستجو در message / stack / scope"
+              aria-label="جستجو در message / stack / scope"
+              className={field}
+            />
+            <div className="mt-3">
+              <Section icon="🎚" title="فیلتر بیشتر" summary={activeFilters.length ? activeFilters.join(" · ") : "subsystem و بازه‌ی زمانی"} className="!mb-0">
+                <div className="text-sm mb-2">زیرسیستم</div>
+                <div className="flex flex-wrap justify-center gap-2 mb-4">
+                  <button onClick={() => setSource("")} className={chip(source === "")}>
+                    همه‌ی subsystemها
+                  </button>
+                  {sources.map((s) => (
+                    <button
+                      key={s.source}
+                      onClick={() => setSource(s.source)}
+                      className={`${chip(source === s.source)} font-mono max-w-full break-all`}
+                    >
+                      {s.source} · {fa(s.count)}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-sm mb-2">بازه‌ی زمانی</div>
+                <select
+                  value={sinceDays ?? ""}
+                  aria-label="بازه‌ی زمانی"
+                  onChange={(e) =>
+                    setSinceDays(
+                      e.target.value === "" ? null : Number(e.target.value),
+                    )
+                  }
+                  className={field}
                 >
-                  {s.source} · {s.count}
-                </button>
-              ))}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <input
-                type="text"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="🔍 جستجو در message / stack / scope"
-                className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-              />
-              <select
-                value={sinceDays ?? ""}
-                onChange={(e) =>
-                  setSinceDays(
-                    e.target.value === "" ? null : Number(e.target.value),
-                  )
-                }
-                className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-              >
-                <option value="">از همیشه</option>
-                <option value="1">۲۴ ساعت اخیر</option>
-                <option value="3">۳ روز اخیر</option>
-                <option value="7">۷ روز اخیر</option>
-                <option value="30">۳۰ روز اخیر</option>
-              </select>
+                  <option value="">از همیشه</option>
+                  <option value="1">۲۴ ساعت اخیر</option>
+                  <option value="3">۳ روز اخیر</option>
+                  <option value="7">۷ روز اخیر</option>
+                  <option value="30">۳۰ روز اخیر</option>
+                </select>
+              </Section>
             </div>
           </Card>
 
-          {loading && errors.length === 0 ? (
+          {loading && errors.length === 0 && !loadError ? (
             <Card>
-              <div className="text-xs text-[var(--color-text-dim)]">...</div>
+              <div className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری…</div>
             </Card>
           ) : errors.length === 0 ? (
-            <Card>
-              <p className="text-sm text-[var(--color-text-dim)]">
-                هیچ خطایی با این فیلتر ثبت نشده.
-              </p>
-            </Card>
+            !loadError && <EmptyState icon="✅" title="هیچ خطایی با این فیلتر ثبت نشده" hint="فیلترها رو عوض کن یا بازه‌ی زمانی رو بازتر کن." />
           ) : (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3">
               {errors.map((e) => {
                 const tone =
                   e.level === "error" ? "danger" : e.level === "info" ? "info" : ("warn" as const);
                 return (
                   <Card key={e.id} className="!p-3">
-                    <div className="flex items-start justify-between gap-2 mb-1.5 flex-wrap">
-                      <div className="flex items-center gap-2 flex-wrap min-w-0">
-                        <Badge tone={tone}>{e.level.toUpperCase()}</Badge>
-                        <span className="text-[11px] font-mono text-[var(--color-text-dim)]">
-                          {e.source}
-                        </span>
-                        {e.scope && (
-                          <span className="text-[10px] text-[var(--color-text-dim)] font-mono">
-                            {e.scope}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-[10px] text-[var(--color-text-dim)]">
-                          {relTime(e.createdAt)}
-                        </span>
-                        <button
-                          onClick={() => copyError(e)}
-                          className={`text-[10px] px-2 py-1 rounded-md border ${
-                            copied === e.id
-                              ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-200"
-                              : "bg-[var(--color-surface-2)] border-[var(--color-border)] hover:bg-[var(--color-surface)]"
-                          }`}
-                        >
-                          {copied === e.id ? "✓ کپی شد" : "📋 کپی"}
-                        </button>
-                      </div>
+                    <div className="flex items-center justify-center gap-2 flex-wrap">
+                      <Badge tone={tone}>{e.level.toUpperCase()}</Badge>
+                      <span className="text-xs text-[var(--color-text-dim)]">{relTime(e.createdAt)}</span>
+                    </div>
+                    <div dir="ltr" className="mt-1.5 text-xs font-mono text-[var(--color-text-dim)] break-all">
+                      {e.source}
+                      {e.scope && <span className="opacity-80"> · {e.scope}</span>}
                     </div>
                     <div
                       dir="auto"
-                      className="text-xs leading-relaxed mb-2 font-mono whitespace-pre-wrap break-all"
+                      className="text-xs leading-6 my-2 font-mono whitespace-pre-wrap [overflow-wrap:anywhere] text-start"
                     >
                       {e.message}
                     </div>
                     {e.stack && (
                       <details className="mt-1">
-                        <summary className="text-[10px] text-[var(--color-text-dim)] cursor-pointer hover:text-white">
+                        <summary className={summaryCls}>
                           ▾ stack trace
                         </summary>
-                        <pre
-                          dir="ltr"
-                          className="mt-1 text-[10px] bg-[var(--color-surface-2)] rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[var(--color-text-dim)]"
-                        >
+                        <pre dir="ltr" className={`${pre} text-[var(--color-text-dim)]`}>
                           {e.stack}
                         </pre>
                       </details>
                     )}
                     {e.details != null && (
                       <details className="mt-1">
-                        <summary className="text-[10px] text-[var(--color-text-dim)] cursor-pointer hover:text-white">
+                        <summary className={summaryCls}>
                           ▾ جزئیات
                         </summary>
-                        <pre
-                          dir="ltr"
-                          className="mt-1 text-[10px] bg-[var(--color-surface-2)] rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[var(--color-text-dim)]"
-                        >
+                        <pre dir="ltr" className={`${pre} text-[var(--color-text-dim)]`}>
                           {JSON.stringify(e.details, null, 2)}
                         </pre>
                       </details>
                     )}
+                    <div className="mt-2">
+                      <button
+                        onClick={() => copyError(e)}
+                        className={`${btn} ${
+                          copied === e.id
+                            ? "!bg-emerald-500/15 !border-emerald-500/40 text-emerald-200"
+                            : "bg-[var(--color-surface-2)]"
+                        }`}
+                      >
+                        {copied === e.id ? "✓ کپی شد" : "📋 کپی"}
+                      </button>
+                    </div>
                   </Card>
                 );
               })}
@@ -327,40 +330,32 @@ export default function SystemLogPage() {
       {tab === "audit" && (
         <>
           {audit.length === 0 ? (
-            <Card>
-              <p className="text-sm text-[var(--color-text-dim)]">
-                هنوز هیچ تغییری ثبت نشده.
-              </p>
-            </Card>
+            !loadError && !loading && <EmptyState icon="📋" title="هنوز هیچ تغییری ثبت نشده" hint="هر تغییری که از داشبورد یا cron انجام بشه اینجا میاد." />
           ) : (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3">
               {audit.map((r) => (
                 <Card key={r.id} className="!p-3">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Badge tone={ACTION_TONE[r.action] ?? "neutral"}>
-                          {r.action}
-                        </Badge>
-                        {r.target && (
-                          <span className="text-xs text-[var(--color-text-dim)] font-mono">
-                            هدف: {r.target}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-[var(--color-text-dim)] mt-1">
-                        {r.actorName ??
-                          (r.actorId != null ? `user ${r.actorId}` : "system")}
-                        {" · "}
-                        {relTime(r.createdAt)}
-                      </div>
-                      {r.details != null && (
-                        <pre className="mt-2 text-[11px] bg-[var(--color-surface-2)] rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-all">
-                          {JSON.stringify(r.details, null, 2)}
-                        </pre>
-                      )}
-                    </div>
+                  <div className="flex items-center justify-center gap-2 flex-wrap">
+                    <Badge tone={ACTION_TONE[r.action] ?? "neutral"}>
+                      {r.action}
+                    </Badge>
                   </div>
+                  {r.target && (
+                    <div dir="ltr" className="mt-1.5 text-xs text-[var(--color-text-dim)] font-mono break-all">
+                      هدف: {r.target}
+                    </div>
+                  )}
+                  <div className="text-xs text-[var(--color-text-dim)] mt-1">
+                    {r.actorName ??
+                      (r.actorId != null ? `user ${r.actorId}` : "system")}
+                    {" · "}
+                    {relTime(r.createdAt)}
+                  </div>
+                  {r.details != null && (
+                    <pre dir="ltr" className={`${pre} mt-2`}>
+                      {JSON.stringify(r.details, null, 2)}
+                    </pre>
+                  )}
                 </Card>
               ))}
             </div>

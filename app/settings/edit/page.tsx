@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
 import OwnerPhotoUploader from "@/components/OwnerPhotoUploader";
+import Section, { Pill } from "@/components/ui/Section";
 
 type Settings = {
   ownerName: string;
@@ -68,9 +69,34 @@ type FieldConfig = {
   type?: "text" | "textarea" | "number" | "toggle";
 };
 
-const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
+// The custom editors that sit between (or after) a group's plain fields.
+type Block = "photo" | "secretaries" | "models" | "chatModels" | "headers";
+
+type Group = {
+  id: string;
+  icon: string;
+  title: string;
+  summary: (v: Settings) => string;
+  badge?: (v: Settings) => ReactNode;
+  lead?: Block[];
+  fields: FieldConfig[];
+  tail?: Block[];
+};
+
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+const isOn = (s: string) => s.toLowerCase() !== "false" && s !== "";
+const onOff = (s: string) => <Pill tone={isOn(s) ? "ok" : "neutral"}>{isOn(s) ? "روشن" : "خاموش"}</Pill>;
+const csv = (s: string) => (s || "").split(",").map((m) => m.trim()).filter(Boolean);
+
+// The old page was one 1,100-line scroll. Settings are now grouped by purpose into collapsible sections
+// (closed by default) with a one-line live summary each; the save button is pinned at the bottom.
+const GROUPS: Group[] = [
   {
+    id: "profile",
+    icon: "👤",
     title: "پروفایل صاحب",
+    summary: v => v.ownerName ? `${v.ownerName} · نام، نام‌های مستعار، کلمات کلیدی` : "نام، نام‌های مستعار، کلمات کلیدی",
+    lead: ["photo"],
     fields: [
       {
         key: "ownerName",
@@ -107,79 +133,12 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
     ],
   },
   {
-    title: "تشخیص فوری",
-    fields: [
-      {
-        key: "importanceThreshold",
-        label: "آستانه‌ی importance (۰ تا ۱۰)",
-        hint: "زیر این مقدار، هشدارها سرکوب می‌شن حتی اگه فوری علامت خورده باشن.",
-        type: "number",
-      },
-      {
-        key: "ownerNotifyChatId",
-        label: "chat id تلگرام برای هشدار فوری",
-        hint: "معمولاً user id خودته. یه کپی از هر هشدار رو از طریق این بات دریافت می‌کنه.",
-      },
-    ],
-  },
-  {
-    title: "مهلت گفتگوی فعال",
-    fields: [
-      {
-        key: "dmActiveGraceMinutes",
-        label: "مهلت DM (دقیقه)",
-        hint: "اگه تو توی این بازه توی یه DM پیامی فرستاده باشی، پیام‌های ورودی اونجا فقط لاگ می‌شن ولی دسته‌بندی، هشدار یا پاسخ خودکار نمی‌گیرن. ۰ یعنی غیرفعال. چت‌های VIP از این مستثنان.",
-        type: "number",
-      },
-      {
-        key: "groupActiveGraceMinutes",
-        label: "مهلت گروه (دقیقه)",
-        hint: "همین ایده برای چت‌های گروهی. پیش‌فرضش بالاتره چون فعالیت گروه پرنوسانه.",
-        type: "number",
-      },
-    ],
-  },
-  {
-    title: "webhook دستگاه هشدار",
-    fields: [
-      {
-        key: "alertWebhookUrl",
-        label: "آدرس webhook هشدار",
-        hint: "با payload پیام فوری POST می‌شه. خالی یعنی غیرفعال.",
-      },
-      {
-        key: "alertWebhookMethod",
-        label: "متد HTTP",
-      },
-    ],
-  },
-  {
-    title: "پاسخ خودکار (فقط DMهای فوری)",
-    fields: [
-      { key: "autoReplyEnabled", label: "فعال", type: "toggle" },
-      { key: "autoReplyText", label: "متن پیش‌فرض", type: "textarea" },
-      {
-        key: "autoReplyCooldownMinutes",
-        label: "cooldown برای هر فرستنده (دقیقه)",
-        hint: "توی این بازه بیشتر از یک بار به یه چت پاسخ خودکار نمی‌ده.",
-        type: "number",
-      },
-    ],
-  },
-  {
-    title: "تحلیل‌گر گروه",
-    fields: [
-      { key: "groupAnalysisEnabled", label: "فعال", type: "toggle" },
-      {
-        key: "groupSummaryHourUTC",
-        label: "ساعت خلاصه‌ی روزانه (UTC)",
-        hint: "Vercel Cron جداگانه توی vercel.json تنظیم می‌شه.",
-        type: "number",
-      },
-    ],
-  },
-  {
-    title: "منشی",
+    id: "secretary",
+    icon: "🧑‍💼",
+    title: "منشی‌ها",
+    summary: v => `${fa(parseSecretaries(v.secretariesJson).length)} منشی · لینک دعوت و رونویسی صدا`,
+    badge: v => onOff(v.secretaryEnabled),
+    lead: ["secretaries"],
     fields: [
       {
         key: "secretaryEnabled",
@@ -217,7 +176,109 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
     ],
   },
   {
-    title: "یادآوری‌ها و تقویم (استخراج AI)",
+    id: "models",
+    icon: "🧠",
+    title: "مدل‌های AI",
+    summary: v => `${fa(csv(v.aiModelsCsv).length)} مدل دسته‌بندی · ${fa(csv(v.aiChatModelsCsv).length)} مدل چت`,
+    lead: ["models", "chatModels"],
+    fields: [],
+  },
+  {
+    id: "urgent",
+    icon: "🚨",
+    title: "تشخیص فوری",
+    summary: v => `آستانه‌ی importance: ${fa(v.importanceThreshold || "؟")} از ۱۰`,
+    fields: [
+      {
+        key: "importanceThreshold",
+        label: "آستانه‌ی importance (۰ تا ۱۰)",
+        hint: "زیر این مقدار، هشدارها سرکوب می‌شن حتی اگه فوری علامت خورده باشن.",
+        type: "number",
+      },
+      {
+        key: "ownerNotifyChatId",
+        label: "chat id تلگرام برای هشدار فوری",
+        hint: "معمولاً user id خودته. یه کپی از هر هشدار رو از طریق این بات دریافت می‌کنه.",
+      },
+    ],
+  },
+  {
+    id: "grace",
+    icon: "⏳",
+    title: "مهلت گفتگوی فعال",
+    summary: v => `DM ${fa(v.dmActiveGraceMinutes || 0)} دقیقه · گروه ${fa(v.groupActiveGraceMinutes || 0)} دقیقه`,
+    fields: [
+      {
+        key: "dmActiveGraceMinutes",
+        label: "مهلت DM (دقیقه)",
+        hint: "اگه تو توی این بازه توی یه DM پیامی فرستاده باشی، پیام‌های ورودی اونجا فقط لاگ می‌شن ولی دسته‌بندی، هشدار یا پاسخ خودکار نمی‌گیرن. ۰ یعنی غیرفعال. چت‌های VIP از این مستثنان.",
+        type: "number",
+      },
+      {
+        key: "groupActiveGraceMinutes",
+        label: "مهلت گروه (دقیقه)",
+        hint: "همین ایده برای چت‌های گروهی. پیش‌فرضش بالاتره چون فعالیت گروه پرنوسانه.",
+        type: "number",
+      },
+    ],
+  },
+  {
+    id: "autoreply",
+    icon: "💬",
+    title: "پاسخ خودکار",
+    summary: () => "فقط برای DMهای فوری",
+    badge: v => onOff(v.autoReplyEnabled),
+    fields: [
+      { key: "autoReplyEnabled", label: "فعال", type: "toggle" },
+      { key: "autoReplyText", label: "متن پیش‌فرض", type: "textarea" },
+      {
+        key: "autoReplyCooldownMinutes",
+        label: "cooldown برای هر فرستنده (دقیقه)",
+        hint: "توی این بازه بیشتر از یک بار به یه چت پاسخ خودکار نمی‌ده.",
+        type: "number",
+      },
+    ],
+  },
+  {
+    id: "webhook",
+    icon: "🔔",
+    title: "webhook هشدار",
+    summary: v => v.alertWebhookUrl ? "آدرس تنظیم شده" : "غیرفعال — آدرسی ثبت نشده",
+    fields: [
+      {
+        key: "alertWebhookUrl",
+        label: "آدرس webhook هشدار",
+        hint: "با payload پیام فوری POST می‌شه. خالی یعنی غیرفعال.",
+      },
+      {
+        key: "alertWebhookMethod",
+        label: "متد HTTP",
+      },
+    ],
+    tail: ["headers"],
+  },
+  {
+    id: "analysis",
+    icon: "📊",
+    title: "تحلیل‌گر گروه",
+    summary: () => "خلاصه‌ی روزانه‌ی گروه‌ها",
+    badge: v => onOff(v.groupAnalysisEnabled),
+    fields: [
+      { key: "groupAnalysisEnabled", label: "فعال", type: "toggle" },
+      {
+        key: "groupSummaryHourUTC",
+        label: "ساعت خلاصه‌ی روزانه (UTC)",
+        hint: "Vercel Cron جداگانه توی vercel.json تنظیم می‌شه.",
+        type: "number",
+      },
+    ],
+  },
+  {
+    id: "extract",
+    icon: "🗓",
+    title: "یادآوری و تقویم",
+    summary: () => "استخراج خودکار کارها با AI",
+    badge: v => onOff(v.autoExtractEnabled),
     fields: [
       {
         key: "autoExtractEnabled",
@@ -234,7 +295,10 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
     ],
   },
   {
+    id: "defaults",
+    icon: "📋",
     title: "پیش‌فرض چت‌های جدید",
+    summary: () => "فوروارد، پردازش AI، خلاصه‌سازی",
     fields: [
       {
         key: "chatDefaultMode",
@@ -319,7 +383,10 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
     ],
   },
   {
-    title: "پیامک سایلنت (مانیتورینگ)",
+    id: "sms",
+    icon: "📟",
+    title: "پیامک سایلنت",
+    summary: () => "الگوهای فرستنده و مقصد کپی",
     fields: [
       {
         key: "smsSilentSenderPatterns",
@@ -341,7 +408,10 @@ const SECTIONS: Array<{ title: string; fields: FieldConfig[] }> = [
     ],
   },
   {
-    title: "آینه‌ی کانال (Mirror)",
+    id: "mirror",
+    icon: "🔁",
+    title: "آینه‌ی کانال",
+    summary: v => `${fa(v.channelMirrors.split("\n").filter(l => l.trim()).length)} قانون`,
     fields: [
       {
         key: "channelMirrors",
@@ -396,8 +466,18 @@ function parseSecretaries(json: string): Secretary[] {
   }
 }
 
+// Form controls. Typed text stays start-aligned (it is input, not card copy); labels and hints are centred.
+const inputCls = "w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3 py-2 disabled:opacity-60";
+const miniInputCls = "w-full min-h-11 text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl px-3 py-2 disabled:opacity-60";
+const btnCls = "min-h-11 px-4 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
+const iconBtnCls = "min-h-10 min-w-10 px-2 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface)] disabled:opacity-30";
+const LOCKED = "(قفل‌شده با env)";
+const SAVED = "ذخیره شد.";
+
 export default function SettingsPage() {
   const [values, setValues] = useState<Settings | null>(null);
+  const [initial, setInitial] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [envLocked, setEnvLocked] = useState<Set<keyof Settings>>(new Set());
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -414,36 +494,42 @@ export default function SettingsPage() {
   const [tenantName, setTenantName] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const r = await fetch(`/api/settings${tenantQuery}`);
-    if (!r.ok) return;
-    const j = (await r.json()) as {
-      values: Settings;
-      envLocked: Array<keyof Settings>;
-      meta?: { defaultModel?: string; tenantId?: number | null; tenantName?: string | null };
-    };
-    if (j.meta?.tenantName) setTenantName(j.meta.tenantName);
+    setLoadError(null);
+    try {
+      const r = await fetch(`/api/settings${tenantQuery}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as {
+        values: Settings;
+        envLocked: Array<keyof Settings>;
+        meta?: { defaultModel?: string; tenantId?: number | null; tenantName?: string | null };
+      };
+      if (j.meta?.tenantName) setTenantName(j.meta.tenantName);
 
-    // Migrate legacy fields so the new editors are pre-populated:
-    //  - secretariesJson empty + legacy secretaryUserId set → seed the list
-    //  - aiModelsCsv empty + meta.defaultModel known → seed the list
-    const v = { ...j.values };
-    if (!v.secretariesJson || v.secretariesJson.trim() === "") {
-      const legacyId = Number(v.secretaryUserId);
-      if (Number.isFinite(legacyId) && legacyId > 0) {
-        v.secretariesJson = JSON.stringify([
-          { userId: legacyId, name: v.secretaryDisplayName || "Secretary" },
-        ]);
+      // Migrate legacy fields so the new editors are pre-populated:
+      //  - secretariesJson empty + legacy secretaryUserId set → seed the list
+      //  - aiModelsCsv empty + meta.defaultModel known → seed the list
+      const v = { ...j.values };
+      if (!v.secretariesJson || v.secretariesJson.trim() === "") {
+        const legacyId = Number(v.secretaryUserId);
+        if (Number.isFinite(legacyId) && legacyId > 0) {
+          v.secretariesJson = JSON.stringify([
+            { userId: legacyId, name: v.secretaryDisplayName || "Secretary" },
+          ]);
+        }
       }
-    }
-    if (
-      (!v.aiModelsCsv || v.aiModelsCsv.trim() === "") &&
-      j.meta?.defaultModel
-    ) {
-      v.aiModelsCsv = j.meta.defaultModel;
-    }
+      if (
+        (!v.aiModelsCsv || v.aiModelsCsv.trim() === "") &&
+        j.meta?.defaultModel
+      ) {
+        v.aiModelsCsv = j.meta.defaultModel;
+      }
 
-    setValues(v);
-    setEnvLocked(new Set(j.envLocked));
+      setValues(v);
+      setInitial(JSON.stringify(v));
+      setEnvLocked(new Set(j.envLocked));
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : String(err));
+    }
   }, [tenantQuery]);
 
   useEffect(() => {
@@ -472,7 +558,8 @@ export default function SettingsPage() {
         const j = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error ?? `ذخیره ناموفق بود (${r.status})`);
       }
-      setMsg("ذخیره شد.");
+      setMsg(SAVED);
+      setInitial(JSON.stringify(values));
     } catch (err) {
       setMsg(err instanceof Error ? err.message : String(err));
     } finally {
@@ -480,54 +567,104 @@ export default function SettingsPage() {
     }
   }
 
-  // Approx OpenRouter input price ($/1M tokens) for the cost-sort button.
-  const MODEL_RATES_IN: Record<string, number> = {
-    "google/gemini-2.5-flash-lite": 0.1,
-    "google/gemini-2.5-flash": 0.3,
-    "google/gemini-2.5-pro": 1.25,
-    "anthropic/claude-haiku-4-5": 1.0,
-    "anthropic/claude-sonnet-4-6": 3.0,
-    "openai/gpt-4o-mini": 0.15,
-  };
-  function sortModelsCheapestFirst() {
-    if (!values) return;
-    const list = (values.aiModelsCsv || "")
-      .split(",")
-      .map((m) => m.trim())
-      .filter(Boolean);
-    if (list.length === 0) {
-      const ranked = Object.entries(MODEL_RATES_IN)
-        .sort((a, b) => a[1] - b[1])
-        .map(([m]) => m);
-      update("aiModelsCsv", ranked.join(", "));
-      return;
-    }
-    list.sort(
-      (a, b) =>
-        (MODEL_RATES_IN[a] ?? Infinity) - (MODEL_RATES_IN[b] ?? Infinity),
-    );
-    update("aiModelsCsv", list.join(", "));
-  }
-
   if (!values) {
     return (
       <Shell>
         <PageTitle title="تنظیمات" />
-        <Card>در حال بارگذاری…</Card>
+        {loadError ? (
+          <Card>
+            <p className="text-sm text-rose-300">بارگذاری تنظیمات ناموفق بود ({loadError})</p>
+            <button onClick={load} className="mt-3 min-h-11 px-5 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium">تلاش دوباره</button>
+          </Card>
+        ) : (
+          <Card>در حال بارگذاری…</Card>
+        )}
       </Shell>
     );
   }
 
+  const dirty = JSON.stringify(values) !== initial;
+  const lockedNote = (k: keyof Settings) => (envLocked.has(k) ? <span className="mx-1 italic">{LOCKED}</span> : null);
+
+  const renderBlock = (b: Block) => {
+    switch (b) {
+      case "photo":
+        // Owner reference photo — uploads a file instead of needing a URL.
+        return <OwnerPhotoUploader key={b} />;
+      case "secretaries":
+        return (
+          <div key={b}>
+            <h3 className="text-sm font-semibold mb-1">لیست منشی‌ها{lockedNote("secretariesJson")}</h3>
+            <p className="text-xs leading-6 text-[var(--color-text-dim)] mb-3">
+              اولین نفر توی لیست، فوروارد‌های خودکار رو انجام می‌ده. هر کسی رو با یه user id عددی تلگرام می‌تونی اضافه یا حذف کنی (باید یه بار بات رو /start کنه تا بتونه بهش DM بده). یا لینک دعوت زیر رو براشون بفرست تا وقتی روش زدن، خودکار اضافه بشن.
+            </p>
+            <SecretariesEditor
+              value={parseSecretaries(values.secretariesJson)}
+              disabled={envLocked.has("secretariesJson")}
+              onChange={(list) => update("secretariesJson", JSON.stringify(list))}
+            />
+            <InviteLinkPanel disabled={envLocked.has("secretariesJson")} />
+          </div>
+        );
+      case "models":
+        return (
+          <div key={b}>
+            <h3 className="text-sm font-semibold mb-1">دسته‌بندی و خلاصه‌ها{lockedNote("aiModelsCsv")}</h3>
+            <p className="text-xs leading-6 text-[var(--color-text-dim)] mb-3">
+              برای تشخیص فوری، خلاصه‌ی گروه‌ها و متادیتای رونویسی استفاده می‌شه. به ترتیب امتحان می‌شن؛ در صورت خطا به بعدی برمی‌گرده.
+            </p>
+            <ModelsEditor
+              value={csv(values.aiModelsCsv)}
+              disabled={envLocked.has("aiModelsCsv")}
+              onChange={(list) => update("aiModelsCsv", list.join(", "))}
+            />
+          </div>
+        );
+      case "chatModels":
+        return (
+          <div key={b} className="pt-5 border-t border-[var(--color-border)]">
+            <h3 className="text-sm font-semibold mb-1">چت و پاسخ دوستانه{lockedNote("aiChatModelsCsv")}</h3>
+            <p className="text-xs leading-6 text-[var(--color-text-dim)] mb-3">
+              لیست جداگانه‌ای که فقط وقتی یه چت توی حالت <strong>AI chat</strong> یا <strong>پاسخ خودکار دوستانه</strong> باشه استفاده می‌شه. مدل‌های باهوش‌تر رو اینجا بذار (Claude Sonnet, GPT-4o, …) — فقط وقتی یه گفتگوی واقعی در جریانه اجرا می‌شن. خالی بذار تا از همون لیست دسته‌بندی استفاده بشه.
+            </p>
+            <ModelsEditor
+              value={csv(values.aiChatModelsCsv)}
+              disabled={envLocked.has("aiChatModelsCsv")}
+              onChange={(list) => update("aiChatModelsCsv", list.join(", "))}
+            />
+          </div>
+        );
+      case "headers":
+        return (
+          <div key={b} className="pt-5 border-t border-[var(--color-border)]">
+            <h3 className="text-sm font-semibold mb-1">هدرهای webhook هشدار{lockedNote("alertWebhookHeaders")}</h3>
+            <p className="text-xs leading-6 text-[var(--color-text-dim)] mb-3">
+              هدرهای HTTP اضافه‌ای که با هر فراخوانی webhook هشدار فرستاده می‌شن.
+            </p>
+            <HeadersEditor
+              value={parseHeaders(values.alertWebhookHeaders)}
+              disabled={envLocked.has("alertWebhookHeaders")}
+              onChange={(pairs) =>
+                update(
+                  "alertWebhookHeaders",
+                  JSON.stringify(Object.fromEntries(pairs.filter((p) => p.key).map((p) => [p.key, p.value]))),
+                )
+              }
+            />
+          </div>
+        );
+    }
+  };
+
   return (
     <Shell>
       {tenantId && (
-        <div className="mb-3 p-3 rounded-lg border border-amber-700 bg-amber-900/20">
+        <div className="mb-3 p-3 rounded-2xl border border-amber-700 bg-amber-900/20 text-center">
           <div className="text-sm font-medium text-amber-200">
             🏢 در حال ویرایش tenant: {tenantName ?? `#${tenantId}`}
           </div>
-          <div className="text-[11px] text-amber-300/80 mt-1">
-            تغییرات روی این tenant ذخیره می‌شن — مقادیر خالی fallback به global.
-            برای ویرایش global،{" "}
+          <div className="text-xs leading-6 text-amber-300/80 mt-1">
+            تغییرات روی این tenant ذخیره می‌شن — مقادیر خالی fallback به global. برای ویرایش global،{" "}
             <a href="/settings" className="underline">
               برو settings بدون ?tenant
             </a>
@@ -538,211 +675,112 @@ export default function SettingsPage() {
       <PageTitle
         title={tenantId ? `تنظیمات · ${tenantName ?? `#${tenantId}`}` : "تنظیمات"}
         subtitle="همه چیز قابل تنظیم. مقادیری که با متغیرهای محیطی قفل شدن فقط‌خواندنی هستن."
-        actions={
-          <button
-            disabled={saving}
-            onClick={save}
-            className="text-xs px-4 py-2 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
-          >
-            {saving ? "در حال ذخیره…" : "ذخیره‌ی تغییرات"}
-          </button>
-        }
       />
 
-      <div className="mb-4 text-[11px]">
-        <Link
-          href="/settings"
-          className="text-[var(--color-text-dim)] hover:text-white underline-offset-2 hover:underline"
+      <Link
+        href="/settings"
+        className="mb-4 inline-flex min-h-11 items-center text-sm text-[var(--color-text-dim)] hover:text-white underline-offset-2 hover:underline"
+      >
+        ← برگشت به Settings
+      </Link>
+
+      {GROUPS.map((g) => (
+        <Section key={g.id} icon={g.icon} title={g.title} summary={g.summary(values)} badge={g.badge?.(values)}>
+          <div className="flex flex-col gap-5">
+            {g.lead?.map(renderBlock)}
+            {g.fields.length > 0 && (
+              <div className="flex flex-col gap-4">
+                {g.fields.map((f) => (
+                  <FieldRow
+                    key={f.key}
+                    f={f}
+                    value={values[f.key]}
+                    locked={envLocked.has(f.key)}
+                    onChange={(val) => update(f.key, val)}
+                  />
+                ))}
+              </div>
+            )}
+            {g.tail?.map(renderBlock)}
+          </div>
+        </Section>
+      ))}
+
+      {/* Pinned save bar: always reachable, shows whether anything is unsaved. Sits above the mobile tab bar. */}
+      <div className="sticky bottom-[4.5rem] md:bottom-3 z-10 mt-4 flex items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 shadow-lg">
+        <span
+          role="status"
+          className={`min-w-0 flex-1 text-center text-xs leading-5 ${msg && msg !== SAVED ? "text-rose-300" : msg === SAVED ? "text-emerald-300" : dirty ? "text-amber-200" : "text-[var(--color-text-dim)]"}`}
         >
-          ← برگشت به Settings
-        </Link>
-      </div>
-
-      {msg && (
-        <Card className="mb-6">
-          <p className="text-sm">{msg}</p>
-        </Card>
-      )}
-
-      <div className="flex flex-col gap-4 md:gap-6">
-        {/* Owner reference photo — uploads a file instead of needing a URL. */}
-        <OwnerPhotoUploader />
-        {/* Custom rich editor: Secretaries */}
-        <Card>
-          <h2 className="text-sm font-semibold mb-1">منشی‌ها</h2>
-          <p className="text-xs text-[var(--color-text-dim)] mb-4">
-            اولین نفر توی لیست، فوروارد‌های خودکار رو انجام می‌ده. هر کسی رو با
-            یه user id عددی تلگرام می‌تونی اضافه یا حذف کنی (باید یه بار بات رو
-            /start کنه تا بتونه بهش DM بده). یا لینک دعوت زیر رو براشون بفرست تا
-            وقتی روش زدن، خودکار اضافه بشن.
-            {envLocked.has("secretariesJson") && (
-              <span className="ml-2 italic">(قفل‌شده با env)</span>
-            )}
-          </p>
-          <SecretariesEditor
-            value={parseSecretaries(values.secretariesJson)}
-            disabled={envLocked.has("secretariesJson")}
-            onChange={(list) =>
-              update("secretariesJson", JSON.stringify(list))
-            }
-          />
-          <InviteLinkPanel disabled={envLocked.has("secretariesJson")} />
-        </Card>
-
-        {/* Custom rich editor: AI Models — general (classify / summaries) */}
-        <Card>
-          <h2 className="text-sm font-semibold mb-1">
-            مدل‌های AI — دسته‌بندی و خلاصه‌ها
-          </h2>
-          <p className="text-xs text-[var(--color-text-dim)] mb-4">
-            برای تشخیص فوری، خلاصه‌ی گروه‌ها و متادیتای رونویسی استفاده می‌شه. به
-            ترتیب امتحان می‌شن؛ در صورت خطا به بعدی برمی‌گرده.
-            {envLocked.has("aiModelsCsv") && (
-              <span className="ml-2 italic">(قفل‌شده با env)</span>
-            )}
-          </p>
-          <ModelsEditor
-            value={(values.aiModelsCsv || "")
-              .split(",")
-              .map((m) => m.trim())
-              .filter(Boolean)}
-            disabled={envLocked.has("aiModelsCsv")}
-            onChange={(list) => update("aiModelsCsv", list.join(", "))}
-          />
-        </Card>
-
-        {/* Custom rich editor: AI Models — chat (ai_chat / friendly_reply) */}
-        <Card>
-          <h2 className="text-sm font-semibold mb-1">
-            مدل‌های AI — چت و پاسخ دوستانه
-          </h2>
-          <p className="text-xs text-[var(--color-text-dim)] mb-4">
-            لیست جداگانه‌ای که فقط وقتی یه چت توی حالت <strong>AI chat</strong>{" "}
-            یا <strong>پاسخ خودکار دوستانه</strong> باشه استفاده می‌شه. مدل‌های
-            باهوش‌تر رو اینجا بذار (Claude Sonnet, GPT-4o, …) — فقط وقتی یه گفتگوی
-            واقعی در جریانه اجرا می‌شن. خالی بذار تا از همون لیست دسته‌بندی استفاده بشه.
-            {envLocked.has("aiChatModelsCsv") && (
-              <span className="ml-2 italic">(قفل‌شده با env)</span>
-            )}
-          </p>
-          <ModelsEditor
-            value={(values.aiChatModelsCsv || "")
-              .split(",")
-              .map((m) => m.trim())
-              .filter(Boolean)}
-            disabled={envLocked.has("aiChatModelsCsv")}
-            onChange={(list) => update("aiChatModelsCsv", list.join(", "))}
-          />
-        </Card>
-
-        {/* Custom rich editor: Alert webhook headers */}
-        <Card>
-          <h2 className="text-sm font-semibold mb-1">
-            هدرهای webhook هشدار
-          </h2>
-          <p className="text-xs text-[var(--color-text-dim)] mb-4">
-            هدرهای HTTP اضافه‌ای که با هر فراخوانی webhook هشدار فرستاده می‌شن.
-            {envLocked.has("alertWebhookHeaders") && (
-              <span className="ml-2 italic">(قفل‌شده با env)</span>
-            )}
-          </p>
-          <HeadersEditor
-            value={parseHeaders(values.alertWebhookHeaders)}
-            disabled={envLocked.has("alertWebhookHeaders")}
-            onChange={(pairs) =>
-              update(
-                "alertWebhookHeaders",
-                JSON.stringify(
-                  Object.fromEntries(
-                    pairs
-                      .filter((p) => p.key)
-                      .map((p) => [p.key, p.value]),
-                  ),
-                ),
-              )
-            }
-          />
-        </Card>
-
-        {SECTIONS.map((section) => (
-          <Card key={section.title}>
-            <h2 className="text-sm font-semibold mb-1">{section.title}</h2>
-            <div className="mt-4 flex flex-col gap-4">
-              {section.fields.map((f) => {
-                const locked = envLocked.has(f.key);
-                const val = values[f.key];
-                const lockedSuffix = locked ? " (قفل‌شده با env)" : "";
-                if (f.type === "toggle") {
-                  return (
-                    <label
-                      key={f.key}
-                      className="flex items-center gap-3 text-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        disabled={locked}
-                        checked={val.toLowerCase() !== "false" && val !== ""}
-                        onChange={(e) =>
-                          update(f.key, e.target.checked ? "true" : "false")
-                        }
-                      />
-                      <span>
-                        {f.label}
-                        <span className="text-[var(--color-text-dim)] text-xs">
-                          {lockedSuffix}
-                        </span>
-                      </span>
-                    </label>
-                  );
-                }
-                return (
-                  <div key={f.key}>
-                    <label className="block text-xs text-[var(--color-text-dim)] mb-1">
-                      {f.label}
-                      {lockedSuffix && (
-                        <span className="ml-1 italic">{lockedSuffix}</span>
-                      )}
-                    </label>
-                    {f.type === "textarea" ? (
-                      <textarea
-                        rows={3}
-                        disabled={locked}
-                        value={val}
-                        onChange={(e) => update(f.key, e.target.value)}
-                        className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm disabled:opacity-60"
-                      />
-                    ) : (
-                      <input
-                        type={f.type === "number" ? "number" : "text"}
-                        disabled={locked}
-                        value={val}
-                        onChange={(e) => update(f.key, e.target.value)}
-                        className="w-full bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 text-sm disabled:opacity-60"
-                      />
-                    )}
-                    {f.hint && (
-                      <p className="text-xs text-[var(--color-text-dim)] mt-1">
-                        {f.hint}
-                      </p>
-                    )}
-                    {f.key === "aiModelsCsv" && (
-                      <button
-                        type="button"
-                        onClick={sortModelsCheapestFirst}
-                        disabled={locked}
-                        className="mt-2 text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                      >
-                        💵 مرتب‌سازی از ارزان‌ترین
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-        ))}
+          {msg ?? (dirty ? "تغییرات ذخیره‌نشده داری" : "همه‌ی تغییرات ذخیره‌ست")}
+        </span>
+        <button
+          disabled={saving}
+          onClick={save}
+          className="shrink-0 min-h-11 px-5 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? "در حال ذخیره…" : "ذخیره‌ی تغییرات"}
+        </button>
       </div>
     </Shell>
+  );
+}
+
+// One setting: a toggle becomes label + explanation + 52 px switch; everything else is label, field, hint.
+function FieldRow({ f, value, locked, onChange }: { f: FieldConfig; value: string; locked: boolean; onChange: (v: string) => void }) {
+  const lockedSuffix = locked ? <span className="mx-1 text-xs italic text-[var(--color-text-dim)]">{LOCKED}</span> : null;
+  if (f.type === "toggle") {
+    return (
+      <label className="flex items-center gap-3 min-h-14 py-2.5 px-3 rounded-xl bg-[var(--color-surface-2)] cursor-pointer">
+        <span className="min-w-0 flex-1 text-center">
+          <span className="block text-sm leading-6">
+            {f.label}
+            {lockedSuffix}
+          </span>
+          {f.hint && <span className="block text-xs leading-6 text-[var(--color-text-dim)]">{f.hint}</span>}
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          className="peer sr-only"
+          disabled={locked}
+          checked={isOn(value)}
+          onChange={(e) => onChange(e.target.checked ? "true" : "false")}
+        />
+        <span
+          aria-hidden
+          className="relative shrink-0 w-[52px] h-8 rounded-full bg-[var(--color-border)] transition-colors peer-checked:bg-[var(--color-accent)] peer-disabled:opacity-50 peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--color-accent)] after:content-[''] after:absolute after:top-1 after:left-1 after:w-6 after:h-6 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-5"
+        />
+      </label>
+    );
+  }
+  return (
+    <div>
+      <label className="block text-sm leading-6 mb-1.5">
+        {f.label}
+        {lockedSuffix}
+      </label>
+      {f.type === "textarea" ? (
+        <textarea
+          rows={3}
+          dir="auto"
+          disabled={locked}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={`${inputCls} leading-6`}
+        />
+      ) : (
+        <input
+          type={f.type === "number" ? "number" : "text"}
+          dir={f.type === "number" ? "ltr" : "auto"}
+          disabled={locked}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={inputCls}
+        />
+      )}
+      {f.hint && <p className="text-xs leading-6 text-[var(--color-text-dim)] mt-1.5">{f.hint}</p>}
+    </div>
   );
 }
 
@@ -775,69 +813,53 @@ function SecretariesEditor({
   return (
     <div className="flex flex-col gap-2">
       {value.length === 0 && (
-        <p className="text-xs text-[var(--color-text-dim)]">
+        <p className="rounded-xl border border-dashed border-[var(--color-border)] py-5 text-sm text-[var(--color-text-dim)]">
           هنوز منشی‌ای نیست.
         </p>
       )}
       {value.map((s, idx) => (
-        <div
-          key={idx}
-          className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-md p-2"
-        >
-          <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] w-6 shrink-0 text-center">
-            {idx === 0 ? "★" : idx + 1}
+        <div key={idx} className="rounded-xl bg-[var(--color-surface-2)] p-3">
+          <div className="mb-2 text-xs text-[var(--color-text-dim)]">{idx === 0 ? "★ منشی اصلی" : `منشی ${fa(idx + 1)}`}</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              type="text"
+              dir="auto"
+              disabled={disabled}
+              value={s.name}
+              placeholder="نام"
+              aria-label="نام منشی"
+              onChange={(e) => update(idx, { name: e.target.value })}
+              className={miniInputCls}
+            />
+            <input
+              type="number"
+              dir="ltr"
+              disabled={disabled}
+              value={s.userId || ""}
+              placeholder="user id"
+              aria-label="user id"
+              onChange={(e) => update(idx, { userId: Number(e.target.value) || 0 })}
+              className={miniInputCls}
+            />
           </div>
-          <input
-            type="text"
-            disabled={disabled}
-            value={s.name}
-            placeholder="نام"
-            onChange={(e) => update(idx, { name: e.target.value })}
-            className="flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
-          />
-          <input
-            type="number"
-            disabled={disabled}
-            value={s.userId || ""}
-            placeholder="user id"
-            onChange={(e) => update(idx, { userId: Number(e.target.value) || 0 })}
-            className="w-32 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
-          />
-          <div className="flex gap-0.5 shrink-0">
-            <button
-              disabled={disabled || idx === 0}
-              onClick={() => move(idx, -1)}
-              className="text-xs px-1.5 py-1 rounded hover:bg-[var(--color-surface)] disabled:opacity-30"
-              aria-label="انتقال به بالا"
-            >
+          <div className="mt-2 flex gap-2">
+            <button disabled={disabled || idx === 0} onClick={() => move(idx, -1)} className={iconBtnCls} aria-label="انتقال به بالا">
               ▲
             </button>
-            <button
-              disabled={disabled || idx === value.length - 1}
-              onClick={() => move(idx, 1)}
-              className="text-xs px-1.5 py-1 rounded hover:bg-[var(--color-surface)] disabled:opacity-30"
-              aria-label="انتقال به پایین"
-            >
+            <button disabled={disabled || idx === value.length - 1} onClick={() => move(idx, 1)} className={iconBtnCls} aria-label="انتقال به پایین">
               ▼
             </button>
-            <button
-              disabled={disabled}
-              onClick={() => remove(idx)}
-              className="text-xs px-2 py-1 rounded text-red-400 hover:bg-red-900/30 disabled:opacity-30"
-              aria-label="حذف"
-            >
+            <button disabled={disabled} onClick={() => remove(idx)} className={`${iconBtnCls} text-red-400`} aria-label="حذف">
               ✕
             </button>
           </div>
         </div>
       ))}
-      <button
-        disabled={disabled}
-        onClick={add}
-        className="text-xs px-3 py-2 rounded-md border border-dashed border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 self-start"
-      >
-        + افزودن منشی
-      </button>
+      <div>
+        <button disabled={disabled} onClick={add} className={`${btnCls} border-dashed`}>
+          + افزودن منشی
+        </button>
+      </div>
     </div>
   );
 }
@@ -875,68 +897,49 @@ function ModelsEditor({
   return (
     <div className="flex flex-col gap-2">
       {value.length === 0 && (
-        <p className="text-xs text-[var(--color-text-dim)]">
+        <p className="rounded-xl border border-dashed border-[var(--color-border)] py-5 text-sm text-[var(--color-text-dim)]">
           فقط از OPENROUTER_MODEL پیش‌فرض استفاده می‌شه.
         </p>
       )}
       {value.map((id, idx) => {
         const meta = KNOWN_MODELS.find((m) => m.id === id);
         return (
-          <div
-            key={`${id}-${idx}`}
-            className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-md p-2"
-          >
-            <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-dim)] w-6 shrink-0 text-center">
-              {idx === 0 ? "★" : idx + 1}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm truncate">{meta?.label ?? id}</div>
-              <div className="text-[10px] text-[var(--color-text-dim)] truncate">
-                {id}
-                {meta && (
-                  <span className="ml-2">
-                    ورودی ${meta.in}/M · خروجی ${meta.out}/M
-                  </span>
-                )}
-                {!meta && <span className="ml-2 italic">قیمت نامشخص</span>}
+          <div key={`${id}-${idx}`} className="rounded-xl bg-[var(--color-surface-2)] p-3">
+            <div className="min-w-0">
+              <div className="text-sm [overflow-wrap:anywhere]">
+                <span className="text-xs text-[var(--color-text-dim)]">{idx === 0 ? "★" : fa(idx + 1)} </span>
+                {meta?.label ?? id}
+              </div>
+              <div dir="ltr" className="mt-0.5 text-xs leading-5 text-[var(--color-text-dim)] break-all">{id}</div>
+              <div className="text-xs leading-5 text-[var(--color-text-dim)]">
+                {meta ? <>ورودی <bdi>${meta.in}/M</bdi> · خروجی <bdi>${meta.out}/M</bdi></> : <span className="italic">قیمت نامشخص</span>}
               </div>
             </div>
-            <div className="flex gap-0.5 shrink-0">
-              <button
-                disabled={disabled || idx === 0}
-                onClick={() => move(idx, -1)}
-                className="text-xs px-1.5 py-1 rounded hover:bg-[var(--color-surface)] disabled:opacity-30"
-              >
+            <div className="mt-2 flex gap-2">
+              <button disabled={disabled || idx === 0} onClick={() => move(idx, -1)} className={iconBtnCls} aria-label="انتقال به بالا">
                 ▲
               </button>
-              <button
-                disabled={disabled || idx === value.length - 1}
-                onClick={() => move(idx, 1)}
-                className="text-xs px-1.5 py-1 rounded hover:bg-[var(--color-surface)] disabled:opacity-30"
-              >
+              <button disabled={disabled || idx === value.length - 1} onClick={() => move(idx, 1)} className={iconBtnCls} aria-label="انتقال به پایین">
                 ▼
               </button>
-              <button
-                disabled={disabled}
-                onClick={() => remove(idx)}
-                className="text-xs px-2 py-1 rounded text-red-400 hover:bg-red-900/30 disabled:opacity-30"
-              >
+              <button disabled={disabled} onClick={() => remove(idx)} className={`${iconBtnCls} text-red-400`} aria-label="حذف">
                 ✕
               </button>
             </div>
           </div>
         );
       })}
-      <div className="flex flex-wrap gap-2 items-center mt-1">
+      <div className="grid gap-2 sm:grid-cols-2 mt-1">
         <select
           disabled={disabled}
           defaultValue=""
+          aria-label="افزودن مدل شناخته‌شده"
           onChange={(e) => {
             const v = e.target.value;
             e.target.value = "";
             add(v);
           }}
-          className="text-xs px-2 py-1.5 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)]"
+          className="w-full min-h-11 text-sm px-3 rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)]"
         >
           <option value="" disabled>
             + افزودن یک مدل شناخته‌شده…
@@ -949,8 +952,10 @@ function ModelsEditor({
         </select>
         <input
           type="text"
+          dir="auto"
           disabled={disabled}
           placeholder="…یا هر id از OpenRouter رو بچسبون"
+          aria-label="id مدل OpenRouter"
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               const t = e.currentTarget.value.trim();
@@ -960,19 +965,16 @@ function ModelsEditor({
               }
             }
           }}
-          className="text-xs px-2 py-1.5 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] flex-1 min-w-[160px]"
+          className="w-full min-h-11 text-sm px-3 rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)]"
         />
-        <button
-          type="button"
-          disabled={disabled || value.length < 2}
-          onClick={sortByCost}
-          className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-        >
+      </div>
+      <div>
+        <button type="button" disabled={disabled || value.length < 2} onClick={sortByCost} className={btnCls}>
           💵 مرتب‌سازی از ارزان‌ترین
         </button>
       </div>
       {value.some((id) => !knownIds.has(id)) && (
-        <p className="text-[11px] text-[var(--color-text-dim)] mt-1">
+        <p className="text-xs leading-6 text-[var(--color-text-dim)]">
           مدل‌هایی که قیمت داخلی ندارن، در پیش‌بینی هزینه به حساب نمیان.
         </p>
       )}
@@ -1001,48 +1003,46 @@ function HeadersEditor({
   return (
     <div className="flex flex-col gap-2">
       {value.length === 0 && (
-        <p className="text-xs text-[var(--color-text-dim)]">
+        <p className="rounded-xl border border-dashed border-[var(--color-border)] py-5 text-sm text-[var(--color-text-dim)]">
           هدر اضافه‌ای نیست.
         </p>
       )}
       {value.map((p, idx) => (
-        <div
-          key={idx}
-          className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-md p-2"
-        >
-          <input
-            type="text"
-            disabled={disabled}
-            value={p.key}
-            placeholder="نام هدر (مثلاً X-Auth)"
-            onChange={(e) => update(idx, { key: e.target.value })}
-            className="w-40 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
-          />
-          <input
-            type="text"
-            disabled={disabled}
-            value={p.value}
-            placeholder="مقدار"
-            onChange={(e) => update(idx, { value: e.target.value })}
-            className="flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-2 py-1 text-sm"
-          />
-          <button
-            disabled={disabled}
-            onClick={() => remove(idx)}
-            className="text-xs px-2 py-1 rounded text-red-400 hover:bg-red-900/30 disabled:opacity-30"
-            aria-label="حذف"
-          >
-            ✕
-          </button>
+        <div key={idx} className="rounded-xl bg-[var(--color-surface-2)] p-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              type="text"
+              dir="ltr"
+              disabled={disabled}
+              value={p.key}
+              placeholder="نام هدر (مثلاً X-Auth)"
+              aria-label="نام هدر"
+              onChange={(e) => update(idx, { key: e.target.value })}
+              className={miniInputCls}
+            />
+            <input
+              type="text"
+              dir="auto"
+              disabled={disabled}
+              value={p.value}
+              placeholder="مقدار"
+              aria-label="مقدار هدر"
+              onChange={(e) => update(idx, { value: e.target.value })}
+              className={miniInputCls}
+            />
+          </div>
+          <div className="mt-2 flex gap-2">
+            <button disabled={disabled} onClick={() => remove(idx)} className={`${iconBtnCls} text-red-400`} aria-label="حذف">
+              ✕
+            </button>
+          </div>
         </div>
       ))}
-      <button
-        disabled={disabled}
-        onClick={add}
-        className="text-xs px-3 py-2 rounded-md border border-dashed border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 self-start"
-      >
-        + افزودن هدر
-      </button>
+      <div>
+        <button disabled={disabled} onClick={add} className={`${btnCls} border-dashed`}>
+          + افزودن هدر
+        </button>
+      </div>
     </div>
   );
 }
@@ -1082,48 +1082,40 @@ function InviteLinkPanel({ disabled }: { disabled: boolean }) {
 
   return (
     <div className="mt-4 pt-4 border-t border-[var(--color-border)]">
-      <div className="flex items-center gap-2 flex-wrap mb-2">
+      <p className="text-xs leading-6 text-[var(--color-text-dim)] mb-3">
+        لینک دعوت ۷ روز معتبره و یک‌بارمصرفه. توی تلگرام به اشتراک بذار تا یه منشی جدید اضافه بشه.
+      </p>
+      <div>
         <button
           type="button"
           onClick={generate}
           disabled={disabled || pending}
-          className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
+          className="min-h-11 px-5 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
         >
           {pending ? "در حال ساخت…" : "🔗 ساخت لینک دعوت"}
         </button>
-        <span className="text-[11px] text-[var(--color-text-dim)]">
-          ۷ روز معتبره و یک‌بارمصرفه. توی تلگرام به اشتراک بذار تا یه منشی جدید
-          اضافه بشه.
-        </span>
       </div>
       {url && (
-        <div className="flex items-center gap-2 bg-[var(--color-surface-2)] rounded-md p-2">
+        <div className="mt-3 rounded-xl bg-[var(--color-surface-2)] p-3">
           <input
             readOnly
+            dir="ltr"
             value={url}
+            aria-label="لینک دعوت"
             onFocus={(e) => e.currentTarget.select()}
-            className="flex-1 min-w-0 bg-transparent text-xs"
+            className={miniInputCls}
           />
-          <button
-            type="button"
-            onClick={copy}
-            className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
-          >
-            {copied ? "کپی شد ✓" : "کپی"}
-          </button>
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
-          >
-            باز کردن
-          </a>
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={copy} className={btnCls}>
+              {copied ? "کپی شد ✓" : "کپی"}
+            </button>
+            <a href={url} target="_blank" rel="noreferrer" className={`${btnCls} inline-flex items-center`}>
+              باز کردن
+            </a>
+          </div>
         </div>
       )}
-      {error && (
-        <p className="text-xs text-red-400 mt-2">{error}</p>
-      )}
+      {error && <p className="text-xs leading-6 text-red-400 mt-2">{error}</p>}
     </div>
   );
 }
