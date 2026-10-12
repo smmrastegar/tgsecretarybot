@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
-import { Card, PageTitle, TableWrap } from "@/components/Card";
+import { Card, PageTitle } from "@/components/Card";
+import Section from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
 import { relTime } from "@/lib/format";
 
 type Row = {
@@ -27,6 +29,20 @@ type Response = {
 };
 
 const REACTION_TYPES = new Set(["message_reaction", "message_reaction_count"]);
+
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+
+// Controls are >= 40 px tall; fields 44 px.
+const btn = "min-h-10 px-4 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const chip = (on: boolean, reaction = false) =>
+  `min-h-10 px-3 rounded-xl border text-sm ${
+    on
+      ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+      : reaction
+        ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
+        : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
+  }`;
+const field = "w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3 py-2";
 
 export default function DebugLogPage() {
   const [data, setData] = useState<Response | null>(null);
@@ -119,69 +135,54 @@ export default function DebugLogPage() {
         }`}
       />
 
-      <Card className="mb-4">
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <button
-            onClick={load}
-            disabled={loading}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
-          >
+      <Card className="mb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={load} disabled={loading} className={btn}>
             {loading ? "..." : "🔄 رفرش"}
           </button>
           <button
             onClick={refreshWebhook}
             disabled={refreshingWebhook}
-            className="text-xs px-3 py-1.5 rounded-md bg-sky-500/10 border border-sky-500/30 text-sky-200 disabled:opacity-50"
+            className="min-h-10 px-4 rounded-xl border border-sky-500/30 bg-sky-500/10 text-sm text-sky-200 disabled:opacity-50"
             title="setWebhook رو با ALLOWED_UPDATES فعلی صدا می‌زنه. لازم بعد از هر اضافه شدن نوع جدید update."
           >
             {refreshingWebhook ? "..." : "📡 webhook رو refresh کن"}
           </button>
-          <span className="text-xs text-[var(--color-text-dim)] mr-auto">
-            {filtered.length} نمایش
-          </span>
         </div>
+        <div className="mt-2 text-xs text-[var(--color-text-dim)]">{fa(filtered.length)} نمایش</div>
         {webhookMsg && (
-          <div className="text-[11px] text-[var(--color-text-dim)] mb-3 px-1 break-all">
+          <div role="status" className="text-xs leading-6 text-[var(--color-text-dim)] mt-2 px-1 break-all">
             {webhookMsg}
           </div>
         )}
-        <div className="text-[10px] text-[var(--color-text-dim)] mb-3 px-1 leading-relaxed border-r-2 border-amber-500/40 pr-2">
-          🔍 <b>چرا ری‌اکشن نمی‌بینم؟</b> طبق Telegram Bot API:
+      </Card>
+
+      <Section icon="🔍" title="چرا ری‌اکشن نمی‌بینم؟" summary="محدودیت‌های Telegram Bot API">
+        <div className="text-xs leading-7 text-[var(--color-text-dim)]">
+          طبق Telegram Bot API:
           <br />• توی <b>گروه/کانال</b>: بات باید <b>administrator</b> باشه (فقط عضو کافی نیست) تا
           {" "}<code>message_reaction</code> فایر بشه.
           <br />• توی <b>چت Business</b>: ری‌اکشن owner روی پیام مشتری اصلاً به bot نمی‌رسه — این محدودیت Telegram هست. باید از دکمه «👌 ack» توی Follow-up استفاده کنی.
           <br />• <code>message_reaction_count</code> فقط برای <b>کانال‌ها</b> (anonymous aggregate) هست.
           <br />• اگه نوع update جدید اضافه شده، باید webhook رو refresh کنی.
         </div>
+      </Section>
 
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          <button
-            onClick={() => setActiveType(null)}
-            className={`text-[11px] px-2 py-1 rounded-md border ${
-              activeType == null
-                ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
-                : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
-            }`}
-          >
+      <Card className="mb-4">
+        <div className="flex flex-wrap justify-center gap-2 mb-3">
+          <button onClick={() => setActiveType(null)} className={chip(activeType == null)}>
             همه
           </button>
           {buckets.map((b) => {
             const isReaction = REACTION_TYPES.has(b.updateType);
-            const isOn = activeType === b.updateType;
             return (
               <button
                 key={b.updateType}
                 onClick={() => setActiveType(b.updateType)}
-                className={`text-[11px] px-2 py-1 rounded-md border ${
-                  isOn
-                    ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
-                    : isReaction
-                      ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
-                      : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
-                }`}
+                className={`${chip(activeType === b.updateType, isReaction)} break-all`}
               >
                 {isReaction ? "🌟 " : ""}
-                {b.updateType} · {b.count}
+                {b.updateType} · {fa(b.count)}
               </button>
             );
           })}
@@ -190,133 +191,94 @@ export default function DebugLogPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           <input
             type="text"
+            dir="ltr"
+            inputMode="numeric"
             value={chatIdFilter}
             onChange={(e) => setChatIdFilter(e.target.value)}
             placeholder="🔢 فیلتر chatId"
-            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+            aria-label="فیلتر chatId"
+            className={field}
           />
           <input
-            type="text"
+            type="search"
+            dir="auto"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="🔍 جستجو توی preview / bcId"
-            className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
+            aria-label="جستجو توی preview / bcId"
+            className={field}
           />
         </div>
       </Card>
 
       {err && (
-        <Card className="mb-4">
-          <div className="text-xs text-red-300">خطا: {err}</div>
+        <Card className="mb-4 !border-red-800 !bg-red-900/20">
+          <div className="text-sm text-red-200">خطا: {err}</div>
+          <button onClick={load} className={`${btn} mt-3`}>تلاش دوباره</button>
         </Card>
       )}
 
-      <Card>
-        <TableWrap>
-          <table className="w-full text-xs">
-            <thead className="text-[var(--color-text-dim)]">
-              <tr className="text-right border-b border-[var(--color-border)]">
-                <th className="py-2 px-2">زمان</th>
-                <th className="py-2 px-2">نوع</th>
-                <th className="py-2 px-2">چت</th>
-                <th className="py-2 px-2">کاربر</th>
-                <th className="py-2 px-2">bcId</th>
-                <th className="py-2 px-2">پیش‌نمایش</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 && !loading && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    className="py-6 px-2 text-center text-[var(--color-text-dim)]"
+      {!data && !err ? (
+        <Card>
+          <div className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری…</div>
+        </Card>
+      ) : filtered.length === 0 ? (
+        !err && <EmptyState icon="🪵" title="هیچ لاگی نیست" hint="هنوز Updateای توی یک ساعت اخیر به webhook نرسیده، یا فیلترها همه رو حذف کرده." />
+      ) : (
+        // One card per update (instead of a 6-column table that scrolled sideways on phones).
+        <div className="flex flex-col gap-2">
+          {filtered.map((r) => {
+            const isReaction = REACTION_TYPES.has(r.updateType);
+            const expanded = expandedId === r.id;
+            return (
+              <Card key={r.id} className="!p-3">
+                <div className="flex items-center justify-center gap-2 flex-wrap">
+                  <span
+                    className={`inline-block text-xs px-2 py-0.5 rounded-lg border ${
+                      isReaction
+                        ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
+                        : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-dim)]"
+                    }`}
                   >
-                    هیچ لاگی نیست.
-                  </td>
-                </tr>
-              )}
-              {filtered.map((r) => {
-                const isReaction = REACTION_TYPES.has(r.updateType);
-                const expanded = expandedId === r.id;
-                return (
-                  <>
-                    <tr
-                      key={r.id}
-                      className="border-b border-[var(--color-border)]/40 hover:bg-[var(--color-surface-2)]/50 cursor-pointer"
-                      onClick={() =>
-                        setExpandedId(expanded ? null : r.id)
-                      }
-                    >
-                      <td className="py-2 px-2 text-[var(--color-text-dim)]">
-                        {relTime(new Date(r.receivedAt))}
-                      </td>
-                      <td className="py-2 px-2">
-                        <span
-                          className={`inline-block text-[10px] px-1.5 py-0.5 rounded-md border ${
-                            isReaction
-                              ? "bg-amber-500/15 border-amber-500/40 text-amber-200"
-                              : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-dim)]"
-                          }`}
-                        >
-                          {r.updateType}
-                        </span>
-                      </td>
-                      <td className="py-2 px-2">
-                        {r.chatId ? (
-                          <Link
-                            href={`/chats/${r.chatId}`}
-                            className="text-[var(--color-accent)] hover:underline"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {r.chatId}
-                          </Link>
-                        ) : (
-                          <span className="text-[var(--color-text-dim)]">—</span>
-                        )}
-                        {r.chatType && (
-                          <div className="text-[10px] text-[var(--color-text-dim)]">
-                            {r.chatType}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-2 px-2 text-[var(--color-text-dim)]">
-                        {r.userId ?? "—"}
-                      </td>
-                      <td className="py-2 px-2 text-[var(--color-text-dim)] font-mono text-[10px]">
-                        {r.businessConnectionId
-                          ? r.businessConnectionId.slice(0, 16) + "…"
-                          : "—"}
-                      </td>
-                      <td className="py-2 px-2 text-[var(--color-text-dim)]">
-                        <div className="max-w-[40ch] truncate" title={r.preview ?? ""}>
-                          {r.preview || (
-                            <span className="opacity-50">(خالی)</span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                    {expanded && (
-                      <tr key={`${r.id}-payload`}>
-                        <td
-                          colSpan={6}
-                          className="py-2 px-2 bg-[var(--color-surface-2)]/30"
-                        >
-                          <pre
-                            className="text-[10px] overflow-auto max-h-[400px] whitespace-pre-wrap font-mono text-[var(--color-text-dim)]"
-                            dir="ltr"
-                          >
-                            {JSON.stringify(r.payload, null, 2)}
-                          </pre>
-                        </td>
-                      </tr>
-                    )}
-                  </>
-                );
-              })}
-            </tbody>
-          </table>
-        </TableWrap>
-      </Card>
+                    {r.updateType}
+                  </span>
+                  <span className="text-xs text-[var(--color-text-dim)]">{relTime(new Date(r.receivedAt))}</span>
+                </div>
+                <p dir="auto" className="mt-2 text-sm leading-6 line-clamp-3 [overflow-wrap:anywhere]">
+                  {r.preview || <span className="opacity-50 text-[var(--color-text-dim)]">(خالی)</span>}
+                </p>
+                <div className="mt-2 flex items-center justify-center gap-x-3 gap-y-1 flex-wrap text-xs text-[var(--color-text-dim)]">
+                  {r.chatId ? (
+                    <Link href={`/chats/${r.chatId}`} className="inline-flex min-h-10 items-center text-[var(--color-accent)] hover:underline">
+                      چت {r.chatId}
+                    </Link>
+                  ) : (
+                    <span>چت —</span>
+                  )}
+                  {r.chatType && <span>{r.chatType}</span>}
+                  <span>کاربر {r.userId ?? "—"}</span>
+                  {r.businessConnectionId && (
+                    <span dir="ltr" className="font-mono">bc {r.businessConnectionId.slice(0, 16)}…</span>
+                  )}
+                </div>
+                <div className="mt-1">
+                  <button onClick={() => setExpandedId(expanded ? null : r.id)} aria-expanded={expanded} className={btn}>
+                    {expanded ? "▴ payload" : "▾ payload"}
+                  </button>
+                </div>
+                {expanded && (
+                  <pre
+                    className="mt-2 text-start text-xs overflow-auto max-h-[400px] whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[var(--color-text-dim)] bg-[var(--color-surface-2)] rounded-xl p-3"
+                    dir="ltr"
+                  >
+                    {JSON.stringify(r.payload, null, 2)}
+                  </pre>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </Shell>
   );
 }

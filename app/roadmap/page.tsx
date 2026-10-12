@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
 import { Badge, Card, PageTitle, StatCard } from "@/components/Card";
+import Section from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
+import { confirmDialog } from "@/components/ui/Dialogs";
 
 // نقشه‌ی راه: دستور کار برنامه‌ی بهبود روزانه. هر آیتم یک فیچر، رفع
 // باگ یا بهبود است که از «ایده» به «برنامه‌ریزی‌شده» و «انجام‌شده» می‌رسد.
@@ -50,11 +53,17 @@ const STATUS: Record<Item["status"], { label: string; tone: "neutral" | "info" |
 const PRIORITY: Record<number, string> = { 1: "🔴 بالا", 2: "🟡 عادی", 3: "🟢 پایین" };
 const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
 
+// Controls are >= 40 px tall; fields 44 px.
+const field = "w-full min-h-11 text-sm px-3 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]";
+const btn = "min-h-11 px-4 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const btnPrimary = "min-h-11 px-5 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50";
+
 export default function RoadmapPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [snaps, setSnaps] = useState<Snapshot[]>([]);
   const [view, setView] = useState<"open" | "done" | "all">("open");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [title, setTitle] = useState("");
   const [details, setDetails] = useState("");
@@ -66,15 +75,19 @@ export default function RoadmapPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const [r1, r2] = await Promise.all([
         fetch(`/api/roadmap?status=${view === "open" ? "open" : view === "done" ? "done" : "all"}`),
         fetch("/api/metrics?days=14"),
       ]);
+      if (!r1.ok) throw new Error(`HTTP ${r1.status}`);
       const j1 = (await r1.json()) as { items: Item[] };
-      const j2 = (await r2.json()) as { snapshots: Snapshot[] };
+      const j2 = r2.ok ? ((await r2.json()) as { snapshots: Snapshot[] }) : { snapshots: [] };
       setItems(j1.items ?? []);
       setSnaps(j2.snapshots ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -119,7 +132,7 @@ export default function RoadmapPage() {
   }
 
   async function remove(id: number) {
-    if (!confirm("این آیتم حذف شود؟")) return;
+    if (!(await confirmDialog("این آیتم حذف شود؟", { danger: true, confirmLabel: "حذف" }))) return;
     await fetch(`/api/roadmap/${id}`, { method: "DELETE" });
     await load();
   }
@@ -138,29 +151,6 @@ export default function RoadmapPage() {
       <PageTitle
         title="نقشه‌ی راه و بهره‌وری"
         subtitle="دستور کار برنامه‌ی بهبود روزانه: فیچرهای جدید، رفع باگ‌ها و بهبود فیچرهای قبلی. گزارش بهره‌وری هر شب از همین جا می‌خواند."
-        actions={
-          <div className="flex gap-2 flex-wrap">
-            {(["open", "done", "all"] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`text-xs px-3 py-1.5 rounded-md border ${
-                  view === v
-                    ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20 text-white"
-                    : "border-[var(--color-border)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
-                }`}
-              >
-                {v === "open" ? "باز" : v === "done" ? "انجام‌شده" : "همه"}
-              </button>
-            ))}
-            <button
-              onClick={() => setShowAdd((s) => !s)}
-              className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white"
-            >
-              + آیتم جدید
-            </button>
-          </div>
-        }
       />
 
       {latest && (
@@ -181,158 +171,190 @@ export default function RoadmapPage() {
       )}
 
       {snaps.length > 1 && (
-        <Card className="mb-4 !p-3 overflow-x-auto">
-          <div className="text-xs text-[var(--color-text-dim)] mb-2">۱۴ روز اخیر</div>
-          <table className="text-xs w-full min-w-[520px]">
-            <thead>
-              <tr className="text-[var(--color-text-dim)]">
-                <th className="text-right py-1">روز</th>
-                <th className="text-right">پایداری</th>
-                <th className="text-right">پیام</th>
-                <th className="text-right">فوروارد</th>
-                <th className="text-right">خلاصه</th>
-                <th className="text-right">خطا</th>
-                <th className="text-right">دیپلوی</th>
-                <th className="text-right">تحویل</th>
-                <th className="text-right">AI $</th>
-              </tr>
-            </thead>
-            <tbody>
-              {snaps.map((s) => (
-                <tr key={s.day} className="border-t border-[var(--color-border)]">
-                  <td className="py-1 font-mono">{s.day}</td>
-                  <td>{fa(s.metrics.derived?.stabilityScore ?? 0)}</td>
-                  <td>{fa(s.metrics.work?.messages ?? 0)}</td>
-                  <td>{fa(s.metrics.work?.ruleForwarded ?? 0)}</td>
-                  <td>{fa(s.metrics.work?.threadSummaries ?? 0)}</td>
-                  <td>{fa(s.metrics.reliability?.errors ?? 0)}</td>
-                  <td>{fa(s.metrics.reliability?.deploysOk ?? 0)}</td>
-                  <td>{fa(s.metrics.improvement?.done?.length ?? 0)}</td>
-                  <td>{(s.metrics.cost?.aiCostUsd ?? 0).toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
-
-      {showAdd && (
-        <Card className="mb-4">
+        <Section icon="📈" title="۱۴ روز اخیر" summary={`${fa(snaps.length)} روز · پایداری، پیام، خطا، دیپلوی`}>
+          {/* One card per day (instead of a 9-column table that scrolled sideways on phones). */}
           <div className="grid gap-2 md:grid-cols-2">
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="عنوان (مثلاً: چرخش توکن‌های MCP)"
-              className="md:col-span-2 text-sm px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
-            />
-            <textarea
-              value={details}
-              onChange={(e) => setDetails(e.target.value)}
-              placeholder="جزئیات، معیار پذیرش، لینک‌ها…"
-              rows={3}
-              className="md:col-span-2 text-sm px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
-            />
-            <select value={kind} onChange={(e) => setKind(e.target.value as Item["kind"])} className="text-sm px-2 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]">
-              {(Object.keys(KIND) as Item["kind"][]).map((k) => (
-                <option key={k} value={k}>{KIND[k].emoji} {KIND[k].label}</option>
-              ))}
-            </select>
-            <select value={priority} onChange={(e) => setPriority(Number(e.target.value))} className="text-sm px-2 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]">
-              {[1, 2, 3].map((p) => (
-                <option key={p} value={p}>{PRIORITY[p]}</option>
-              ))}
-            </select>
-            <label className="text-xs text-[var(--color-text-dim)] flex items-center gap-2">
-              برنامه برای روز:
-              <input type="date" value={plannedFor} onChange={(e) => setPlannedFor(e.target.value)} className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-            </label>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setShowAdd(false)} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">انصراف</button>
-              <button onClick={add} disabled={saving || !title.trim()} className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50">
-                {saving ? "در حال ذخیره…" : "ثبت"}
-              </button>
-            </div>
+            {snaps.map((s) => (
+              <div key={s.day} className="rounded-xl border border-[var(--color-border)] px-3 py-2">
+                <div className="text-sm font-mono mb-1.5" dir="ltr">{s.day}</div>
+                <div className="grid grid-cols-4 gap-x-2 gap-y-2 tabular-nums">
+                  {(
+                    [
+                      ["پایداری", fa(s.metrics.derived?.stabilityScore ?? 0)],
+                      ["پیام", fa(s.metrics.work?.messages ?? 0)],
+                      ["فوروارد", fa(s.metrics.work?.ruleForwarded ?? 0)],
+                      ["خلاصه", fa(s.metrics.work?.threadSummaries ?? 0)],
+                      ["خطا", fa(s.metrics.reliability?.errors ?? 0)],
+                      ["دیپلوی", fa(s.metrics.reliability?.deploysOk ?? 0)],
+                      ["تحویل", fa(s.metrics.improvement?.done?.length ?? 0)],
+                      ["AI $", (s.metrics.cost?.aiCostUsd ?? 0).toFixed(2)],
+                    ] as const
+                  ).map(([label, v]) => (
+                    <div key={label}>
+                      <div className="text-xs text-[var(--color-text-dim)]">{label}</div>
+                      <div className="text-sm">{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
-        </Card>
+        </Section>
       )}
 
-      {loading ? (
+      <Section
+        icon="➕"
+        title="آیتم جدید"
+        summary="فیچر، رفع باگ یا بهبود تازه ثبت کن"
+        open={showAdd}
+        onOpenChange={setShowAdd}
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="عنوان (مثلاً: چرخش توکن‌های MCP)"
+            aria-label="عنوان"
+            dir="auto"
+            className={`md:col-span-2 ${field}`}
+          />
+          <textarea
+            value={details}
+            onChange={(e) => setDetails(e.target.value)}
+            placeholder="جزئیات، معیار پذیرش، لینک‌ها…"
+            aria-label="جزئیات"
+            dir="auto"
+            rows={3}
+            className={`md:col-span-2 leading-6 ${field}`}
+          />
+          <select value={kind} onChange={(e) => setKind(e.target.value as Item["kind"])} aria-label="نوع" className={field}>
+            {(Object.keys(KIND) as Item["kind"][]).map((k) => (
+              <option key={k} value={k}>{KIND[k].emoji} {KIND[k].label}</option>
+            ))}
+          </select>
+          <select value={priority} onChange={(e) => setPriority(Number(e.target.value))} aria-label="اولویت" className={field}>
+            {[1, 2, 3].map((p) => (
+              <option key={p} value={p}>{PRIORITY[p]}</option>
+            ))}
+          </select>
+          <label className="md:col-span-2 text-sm flex flex-col gap-1.5">
+            برنامه برای روز:
+            <input type="date" dir="ltr" value={plannedFor} onChange={(e) => setPlannedFor(e.target.value)} className={field} />
+          </label>
+          <div className="md:col-span-2 flex gap-2">
+            <button onClick={add} disabled={saving || !title.trim()} className={btnPrimary}>
+              {saving ? "در حال ذخیره…" : "ثبت"}
+            </button>
+            <button onClick={() => setShowAdd(false)} className={btn}>انصراف</button>
+          </div>
+        </div>
+      </Section>
+
+      <div role="tablist" className="grid grid-cols-3 gap-2 my-4">
+        {(["open", "done", "all"] as const).map((v) => (
+          <button
+            key={v}
+            role="tab"
+            aria-selected={view === v}
+            onClick={() => setView(v)}
+            className={`min-h-11 rounded-xl border text-sm ${
+              view === v
+                ? "border-[var(--color-accent)] bg-[var(--color-accent)]/20 text-white"
+                : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-dim)] hover:bg-[var(--color-surface-2)]"
+            }`}
+          >
+            {v === "open" ? "باز" : v === "done" ? "انجام‌شده" : "همه"}
+          </button>
+        ))}
+      </div>
+
+      {loading && items.length === 0 && !error ? (
         <Card>در حال بارگذاری…</Card>
-      ) : items.length === 0 ? (
-        <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">
-            هنوز آیتمی نیست. با «+ آیتم جدید» اولین فیچر یا باگ رو ثبت کن؛ برای این که توی گزارش فردا بیاد، براش تاریخ بذار.
-          </p>
+      ) : error ? (
+        <Card className="!border-red-800 !bg-red-900/20">
+          <p className="text-sm text-red-200">بارگذاری نقشه‌ی راه ناموفق بود ({error})</p>
+          <button onClick={load} className={`${btn} mt-3`}>تلاش دوباره</button>
         </Card>
+      ) : items.length === 0 ? (
+        <EmptyState
+          icon="🗺"
+          title="هنوز آیتمی نیست"
+          hint="اولین فیچر یا باگ رو ثبت کن؛ برای این که توی گزارش فردا بیاد، براش تاریخ بذار."
+          action={<button onClick={() => setShowAdd(true)} className={btnPrimary}>+ آیتم جدید</button>}
+        />
       ) : (
         order.map((st) =>
           groups[st].length === 0 ? null : (
             <div key={st} className="mb-5">
-              <h2 className="text-sm font-semibold mb-2 flex items-center gap-2">
+              <h2 className="text-sm font-semibold mb-2 flex items-center justify-center gap-2">
                 <Badge tone={STATUS[st].tone}>{STATUS[st].label}</Badge>
                 <span className="text-xs text-[var(--color-text-dim)]">{fa(groups[st].length)}</span>
               </h2>
               <div className="flex flex-col gap-2">
                 {groups[st].map((it) => (
                   <Card key={it.id} className="!p-3">
-                    <div className="flex items-start justify-between gap-2 flex-wrap">
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium">
-                          {KIND[it.kind].emoji} {it.title}
-                        </div>
-                        <div className="text-[11px] text-[var(--color-text-dim)] mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                          <span>{PRIORITY[it.priority]}</span>
-                          <span>{KIND[it.kind].label}</span>
-                          {it.plannedFor && <span>📅 {it.plannedFor}</span>}
-                          {it.commitSha && <span className="font-mono">{it.commitSha.slice(0, 7)}</span>}
-                          {it.source !== "owner" && <span>منبع: {it.source}</span>}
-                          {it.doneAt && <span>✔ {it.doneAt.slice(0, 10)}</span>}
-                        </div>
-                        {it.details && editing !== it.id && (
-                          <p className="text-xs text-[var(--color-text-dim)] mt-1.5 whitespace-pre-wrap">{it.details}</p>
-                        )}
-                        {it.outcome && (
-                          <p className="text-xs mt-1.5 whitespace-pre-wrap">📝 {it.outcome}</p>
-                        )}
-                      </div>
-                      <div className="flex gap-1 flex-wrap">
-                        <select
-                          value={it.status}
-                          onChange={(e) => patch(it.id, { status: e.target.value })}
-                          className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
-                        >
-                          {(Object.keys(STATUS) as Item["status"][]).map((s) => (
-                            <option key={s} value={s}>{STATUS[s].label}</option>
-                          ))}
-                        </select>
-                        <select
-                          value={it.priority}
-                          onChange={(e) => patch(it.id, { priority: Number(e.target.value) })}
-                          className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
-                        >
-                          {[1, 2, 3].map((p) => (
-                            <option key={p} value={p}>{PRIORITY[p]}</option>
-                          ))}
-                        </select>
-                        <input
-                          type="date"
-                          value={it.plannedFor ?? ""}
-                          onChange={(e) => patch(it.id, { plannedFor: e.target.value || null, ...(e.target.value && it.status === "idea" ? { status: "planned" } : {}) })}
-                          className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]"
-                        />
-                        <button onClick={() => setEditing(editing === it.id ? null : it.id)} className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)]">✎</button>
-                        <button onClick={() => remove(it.id)} className="text-[11px] px-2 py-1 rounded-md border border-red-900 text-red-300">🗑</button>
-                      </div>
+                    <div className="text-sm font-medium leading-7 [overflow-wrap:anywhere]">
+                      {KIND[it.kind].emoji} {it.title}
+                    </div>
+                    <div className="text-xs text-[var(--color-text-dim)] mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1">
+                      <span>{PRIORITY[it.priority]}</span>
+                      <span>{KIND[it.kind].label}</span>
+                      {it.plannedFor && <span>📅 {it.plannedFor}</span>}
+                      {it.commitSha && <span className="font-mono">{it.commitSha.slice(0, 7)}</span>}
+                      {it.source !== "owner" && <span>منبع: {it.source}</span>}
+                      {it.doneAt && <span>✔ {it.doneAt.slice(0, 10)}</span>}
+                    </div>
+                    {it.details && editing !== it.id && (
+                      <p className="text-xs leading-6 text-[var(--color-text-dim)] mt-2 whitespace-pre-wrap">{it.details}</p>
+                    )}
+                    {it.outcome && (
+                      <p className="text-xs leading-6 mt-2 whitespace-pre-wrap">📝 {it.outcome}</p>
+                    )}
+                    <div className="mt-3 flex items-center gap-2">
+                      <select
+                        value={it.status}
+                        onChange={(e) => patch(it.id, { status: e.target.value })}
+                        aria-label="وضعیت"
+                        className={`${field} flex-1 min-w-0`}
+                      >
+                        {(Object.keys(STATUS) as Item["status"][]).map((s) => (
+                          <option key={s} value={s}>{STATUS[s].label}</option>
+                        ))}
+                      </select>
+                      <button onClick={() => setEditing(editing === it.id ? null : it.id)} aria-label="ویرایش" aria-expanded={editing === it.id} className={`${btn} px-3`}>✎</button>
+                      <button onClick={() => remove(it.id)} aria-label="حذف" className={`${btn} px-3 !border-red-900 text-red-300`}>🗑</button>
                     </div>
                     {editing === it.id && (
-                      <EditBox
-                        item={it}
-                        onSave={async (b) => {
-                          await patch(it.id, b);
-                          setEditing(null);
-                        }}
-                        onCancel={() => setEditing(null)}
-                      />
+                      <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                          <select
+                            value={it.priority}
+                            onChange={(e) => patch(it.id, { priority: Number(e.target.value) })}
+                            aria-label="اولویت"
+                            className={field}
+                          >
+                            {[1, 2, 3].map((p) => (
+                              <option key={p} value={p}>{PRIORITY[p]}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="date"
+                            dir="ltr"
+                            aria-label="برنامه برای روز"
+                            value={it.plannedFor ?? ""}
+                            onChange={(e) => patch(it.id, { plannedFor: e.target.value || null, ...(e.target.value && it.status === "idea" ? { status: "planned" } : {}) })}
+                            className={field}
+                          />
+                        </div>
+                        <EditBox
+                          item={it}
+                          onSave={async (b) => {
+                            await patch(it.id, b);
+                            setEditing(null);
+                          }}
+                          onCancel={() => setEditing(null)}
+                        />
+                      </div>
                     )}
                   </Card>
                 ))}
@@ -359,24 +381,23 @@ function EditBox({
   const [outcome, setOutcome] = useState(item.outcome ?? "");
   const [kind, setKind] = useState<Item["kind"]>(item.kind);
   return (
-    <div className="mt-3 grid gap-2">
-      <input value={title} onChange={(e) => setTitle(e.target.value)} className="text-sm px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-      <textarea value={details} onChange={(e) => setDetails(e.target.value)} rows={3} placeholder="جزئیات" className="text-sm px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-      <textarea value={outcome} onChange={(e) => setOutcome(e.target.value)} rows={2} placeholder="نتیجه / چی تحویل شد" className="text-sm px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]" />
-      <div className="flex gap-2 items-center flex-wrap">
-        <select value={kind} onChange={(e) => setKind(e.target.value as Item["kind"])} className="text-sm px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]">
-          {(Object.keys(KIND) as Item["kind"][]).map((k) => (
-            <option key={k} value={k}>{KIND[k].emoji} {KIND[k].label}</option>
-          ))}
-        </select>
-        <div className="flex-1" />
-        <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]">انصراف</button>
+    <div className="grid gap-2">
+      <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="عنوان" dir="auto" className={field} />
+      <textarea value={details} onChange={(e) => setDetails(e.target.value)} rows={3} placeholder="جزئیات" aria-label="جزئیات" dir="auto" className={`leading-6 ${field}`} />
+      <textarea value={outcome} onChange={(e) => setOutcome(e.target.value)} rows={2} placeholder="نتیجه / چی تحویل شد" aria-label="نتیجه" dir="auto" className={`leading-6 ${field}`} />
+      <select value={kind} onChange={(e) => setKind(e.target.value as Item["kind"])} aria-label="نوع" className={field}>
+        {(Object.keys(KIND) as Item["kind"][]).map((k) => (
+          <option key={k} value={k}>{KIND[k].emoji} {KIND[k].label}</option>
+        ))}
+      </select>
+      <div className="flex gap-2 mt-1">
         <button
           onClick={() => onSave({ title, details: details || null, outcome: outcome || null, kind })}
-          className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white"
+          className={btnPrimary}
         >
           ذخیره
         </button>
+        <button onClick={onCancel} className={btn}>انصراف</button>
       </div>
     </div>
   );

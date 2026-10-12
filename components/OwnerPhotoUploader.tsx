@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Card } from "@/components/Card";
+import { confirmDialog } from "@/components/ui/Dialogs";
 
 // Single owner-reference-photo block. The primary UX is file upload —
 // the bytes land in owner_assets (BYTEA) and the image-gen path
@@ -9,6 +9,9 @@ import { Card } from "@/components/Card";
 // for power users who'd rather host their photo themselves. We
 // consciously avoid showing both as peer options in the generic
 // settings list because that confused the operator.
+// Rendered inside a Section of the settings page (which supplies the title), so it has no card of its own.
+
+const btn = "min-h-11 px-4 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
 export default function OwnerPhotoUploader() {
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -79,7 +82,7 @@ export default function OwnerPhotoUploader() {
   );
 
   const remove = useCallback(async () => {
-    if (!confirm("عکس آپلودی پاک بشه؟")) return;
+    if (!(await confirmDialog("عکس آپلودی پاک بشه؟", { danger: true, confirmLabel: "پاک کن" }))) return;
     setBusy(true);
     setErr(null);
     try {
@@ -114,93 +117,82 @@ export default function OwnerPhotoUploader() {
   }, [url]);
 
   return (
-    <Card>
-      <h2 className="text-sm font-semibold mb-1">
-        🖼 عکس مرجع صاحب (تولید عکس AI)
-      </h2>
-      <p className="text-[11px] text-[var(--color-text-dim)] mb-3">
+    <div>
+      <h3 className="text-sm font-semibold mb-1">🖼 عکس مرجع صاحب (تولید عکس AI)</h3>
+      <p className="text-xs leading-6 text-[var(--color-text-dim)] mb-3">
         عکس مرجع تو که AI به‌عنوان «همون آدم» توی تولید عکس‌ها استفاده می‌کنه.
         وقتی کسی توی چت ai_chat (با تیک «🖼 تولید عکس من») ازت عکس خواست،
         Gemini با این عکس به‌عنوان anchor یه عکس تازه می‌سازه. حداکثر 5MB.
       </p>
-      <div className="flex items-start gap-3 flex-wrap">
+      <div className="flex justify-center mb-3">
         {hasPhoto ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={`/api/settings/owner-photo?t=${nonce}`}
             alt="عکس مرجع صاحب"
-            className="w-24 h-24 rounded-md object-cover border border-[var(--color-border)] bg-[var(--color-surface-2)]"
+            className="w-28 h-28 rounded-2xl object-cover border border-[var(--color-border)] bg-[var(--color-surface-2)]"
           />
         ) : (
-          <div className="w-24 h-24 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-center text-[10px] text-[var(--color-text-dim)]">
+          <div className="w-28 h-28 rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-center text-xs text-[var(--color-text-dim)]">
             (هنوز ست نشده)
           </div>
         )}
-        <div className="flex flex-col gap-2">
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/*"
-            onChange={onPick}
-            className="hidden"
-          />
-          <div className="flex gap-2 flex-wrap">
-            <button
-              type="button"
-              onClick={() => inputRef.current?.click()}
-              disabled={busy}
-              className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-50"
-            >
-              {busy ? "در حال آپلود…" : hasPhoto ? "تعویض عکس" : "آپلود عکس"}
-            </button>
-            {hasPhoto && (
-              <button
-                type="button"
-                onClick={remove}
-                disabled={busy}
-                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-              >
-                پاک کن
-              </button>
-            )}
-          </div>
-          {err && <div className="text-[11px] text-red-300">{err}</div>}
-        </div>
       </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        onChange={onPick}
+        className="hidden"
+      />
+      <div className="flex gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          className="min-h-11 px-5 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+        >
+          {busy ? "در حال آپلود…" : hasPhoto ? "تعویض عکس" : "آپلود عکس"}
+        </button>
+        {hasPhoto && (
+          <button type="button" onClick={remove} disabled={busy} className={btn}>
+            پاک کن
+          </button>
+        )}
+      </div>
+      {err && <div className="mt-2 text-xs leading-5 text-red-300">{err}</div>}
 
       <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
         <button
           type="button"
           onClick={() => setUrlMode((v) => !v)}
-          className="text-[10px] text-[var(--color-text-dim)] hover:text-white"
+          aria-expanded={urlMode}
+          className="min-h-11 px-3 text-xs text-[var(--color-text-dim)] hover:text-white"
         >
           {urlMode ? "▾ روش URL" : "▸ یا اگه ترجیح می‌دی URL بدی…"}
         </button>
         {urlMode && (
-          <div className="mt-2">
-            <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+          <div className="mt-1">
+            <p className="text-xs leading-6 text-[var(--color-text-dim)] mb-2">
               اگه آپلود کنی این فیلد نادیده گرفته می‌شه — آپلود همیشه اولویت داره.
             </p>
-            <div className="flex gap-2 items-center flex-wrap">
-              <input
-                type="text"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://…/me.jpg"
-                className="flex-1 min-w-[200px] text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-              />
-              <button
-                type="button"
-                onClick={saveUrl}
-                disabled={savingUrl}
-                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-              >
+            <input
+              type="text"
+              dir="ltr"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://…/me.jpg"
+              aria-label="آدرس عکس"
+              className="w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3 mb-2"
+            />
+            <div className="flex gap-2">
+              <button type="button" onClick={saveUrl} disabled={savingUrl} className={btn}>
                 {savingUrl ? "…" : "ذخیره URL"}
               </button>
             </div>
           </div>
         )}
       </div>
-    </Card>
+    </div>
   );
 }

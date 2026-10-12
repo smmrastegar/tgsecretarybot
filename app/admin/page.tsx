@@ -1,8 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle, Badge } from "@/components/Card";
+import Section from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
+import { confirmDialog } from "@/components/ui/Dialogs";
 
 type Tenant = {
   id: number;
@@ -84,8 +87,74 @@ type Finance = {
   recent: HikerCall[];
 };
 
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+
+// Shared control styles: every control is >= 40 px tall (44 for fields) so it works with a thumb.
+const field = "w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3 py-2 disabled:opacity-60";
+const btn = "min-h-10 px-4 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const btnPrimary = "min-h-11 px-5 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50";
+const btnOk = "min-h-10 px-4 rounded-xl border border-emerald-700 text-emerald-300 text-sm hover:bg-emerald-900/30 disabled:opacity-50";
+const btnWarn = "min-h-10 px-4 rounded-xl border border-amber-700 text-amber-300 text-sm hover:bg-amber-900/30 disabled:opacity-50";
+const btnDanger = "min-h-10 px-4 rounded-xl border border-red-800 text-red-300 text-sm hover:bg-red-900/30 disabled:opacity-50";
+
+// Money keeps Latin digits (it is a $ amount) but is isolated so it does not scramble inside Persian text.
+const usd = (n: number, d = 2) => <bdi dir="ltr">${n.toFixed(d)}</bdi>;
+
+// Bottom sheet on phones, centred dialog on desktop; the body scrolls, the footer (actions) stays visible.
+function Sheet({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={`w-full ${wide ? "md:max-w-3xl" : "md:max-w-2xl"} max-h-[92dvh] flex flex-col rounded-t-3xl md:rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl`}
+      >
+        <div className="px-5 pt-5 pb-3 text-center border-b border-[var(--color-border)]">
+          <h2 className="text-base font-semibold [overflow-wrap:anywhere]">{title}</h2>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 py-4 text-center [overflow-wrap:anywhere]">{children}</div>
+        {footer && <div className="px-5 py-3 border-t border-[var(--color-border)]">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+// label + explanation + 52 px switch (same markup as the settings page).
+function SwitchRow({ label, hint, checked, onChange }: { label: ReactNode; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-3 min-h-14 py-2.5 px-3 rounded-xl bg-[var(--color-surface-2)] cursor-pointer">
+      <span className="min-w-0 flex-1 text-center">
+        <span className="block text-sm leading-6">{label}</span>
+        {hint && <span className="block text-xs leading-6 text-[var(--color-text-dim)]">{hint}</span>}
+      </span>
+      <input type="checkbox" role="switch" className="peer sr-only" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span
+        aria-hidden
+        className="relative shrink-0 w-[52px] h-8 rounded-full bg-[var(--color-border)] transition-colors peer-checked:bg-[var(--color-accent)] peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--color-accent)] after:content-[''] after:absolute after:top-1 after:left-1 after:w-6 after:h-6 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-5"
+      />
+    </label>
+  );
+}
+
+function FieldBox({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-sm leading-6">{label}</span>
+      {children}
+    </label>
+  );
+}
+
 export default function AdminPage() {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [accessDenied, setAccessDenied] = useState(false);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [admins, setAdmins] = useState<AdminUser[]>([]);
@@ -125,12 +194,14 @@ export default function AdminPage() {
   const [editing, setEditing] = useState<Tenant | null>(null);
   const [creating, setCreating] = useState(false);
   const [finance, setFinance] = useState<Finance | null>(null);
+  const [financeBusy, setFinanceBusy] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulking, setBulking] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setAccessDenied(false);
+    setLoadError(null);
     try {
       const me = await fetch("/api/admin/me");
       const meJ = (await me.json()) as { admin?: boolean };
@@ -147,6 +218,8 @@ export default function AdminPage() {
       if (t.ok) {
         const j = (await t.json()) as { tenants: Tenant[] };
         setTenants(j.tenants);
+      } else {
+        setLoadError(`بارگذاری tenantها ناموفق بود (${t.status})`);
       }
       if (a.ok) {
         const j = (await a.json()) as { admins: AdminUser[] };
@@ -160,6 +233,8 @@ export default function AdminPage() {
         const j = (await p.json()) as { presets: PlanPreset[] };
         setPlans(j.presets);
       }
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -191,7 +266,7 @@ export default function AdminPage() {
 
   async function runBulk(op: string, plan?: string) {
     if (selected.size === 0) return;
-    if (op === "delete" && !confirm(`${selected.size} tenant حذف بشن؟`))
+    if (op === "delete" && !(await confirmDialog(`${fa(selected.size)} tenant حذف بشن؟`, { danger: true, confirmLabel: "حذف" })))
       return;
     setBulking(true);
     try {
@@ -205,8 +280,8 @@ export default function AdminPage() {
         errors?: Array<{ id: number; error: string }>;
       };
       if (j.errors && j.errors.length > 0) {
-        alert(
-          `${j.succeeded ?? 0} موفق · ${j.errors.length} خطا:\n` +
+        setNotice(
+          `${fa(j.succeeded ?? 0)} موفق · ${fa(j.errors.length)} خطا:\n` +
             j.errors.map((e) => `${e.id}: ${e.error}`).join("\n"),
         );
       }
@@ -219,12 +294,32 @@ export default function AdminPage() {
 
   async function openFinance(tenantId: number) {
     setFinance(null);
-    const r = await fetch(`/api/admin/tenants/${tenantId}/finance`);
-    if (r.ok) {
-      const j = (await r.json()) as Finance;
-      setFinance(j);
+    setFinanceBusy(tenantId);
+    try {
+      const r = await fetch(`/api/admin/tenants/${tenantId}/finance`);
+      if (r.ok) {
+        const j = (await r.json()) as Finance;
+        setFinance(j);
+      } else {
+        setNotice("خطا در بارگذاری");
+      }
+    } finally {
+      setFinanceBusy(null);
+    }
+  }
+
+  async function removeAdmin(a: AdminUser) {
+    if (!(await confirmDialog(`حذف admin ${a.userId}؟`, { danger: true, confirmLabel: "حذف" }))) return;
+    const r = await fetch(`/api/admin/admins/${a.userId}`, {
+      method: "DELETE",
+    });
+    if (!r.ok) {
+      const j = (await r.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      setNotice(j.error ?? "خطا");
     } else {
-      alert("خطا در بارگذاری");
+      await load();
     }
   }
 
@@ -240,7 +335,7 @@ export default function AdminPage() {
       <Shell>
         <PageTitle title="🛠 Admin" subtitle="" />
         <Card>
-          <p className="text-sm text-red-300">
+          <p className="text-sm leading-7 text-red-300">
             ⛔ دسترسی نداری. ADMIN_USER_IDS رو توی env ست کن یا از یکی از
             admin‌های فعلی بخواه اضافه‌ت کنه.
           </p>
@@ -249,6 +344,13 @@ export default function AdminPage() {
     );
   }
 
+  const tabs = [
+    ["tenants", "🏢 مستأجرها", tenants.length],
+    ["admins", "👮 مدیرها", admins.length],
+    ["connections", "🔗 اتصال‌ها", connections.length],
+    ["external", "🛰 پایش خارجی", external?.stats.activeSubscriptions ?? 0],
+  ] as const;
+
   return (
     <Shell>
       <PageTitle
@@ -256,112 +358,66 @@ export default function AdminPage() {
         subtitle="مدیریت tenantها، حساب‌کتاب مالی، کلیدهای API، و assign کردن business_connectionها"
       />
 
-      <div className="flex gap-1 mb-3 flex-wrap">
-        {(
-          [
-            ["tenants", "🏢 مستأجرها", tenants.length],
-            ["admins", "👮 مدیرها", admins.length],
-            ["connections", "🔗 اتصال‌ها", connections.length],
-            ["external", "🛰 پایش خارجی", external?.stats.activeSubscriptions ?? 0],
-          ] as const
-        ).map(([key, label, count]) => (
+      {loadError && (
+        <Card className="mb-3 !border-red-800 !bg-red-900/20">
+          <p className="text-sm text-red-200">{loadError}</p>
+          <button onClick={load} className={`${btn} mt-3`}>تلاش دوباره</button>
+        </Card>
+      )}
+
+      {notice && (
+        <div role="alert" className="mb-3 rounded-2xl border border-amber-700 bg-amber-900/20 px-4 py-3 text-center">
+          <p className="text-sm leading-7 text-amber-100 whitespace-pre-line">{notice}</p>
+          <button onClick={() => setNotice(null)} className={`${btn} mt-2`}>بستن</button>
+        </div>
+      )}
+
+      <div role="tablist" className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+        {tabs.map(([key, label, count]) => (
           <button
             key={key}
+            role="tab"
+            aria-selected={tab === key}
             onClick={() => setTab(key)}
-            className={`text-xs px-3 py-1.5 rounded-md border ${
+            className={`min-h-12 px-2 rounded-xl border text-sm ${
               tab === key
                 ? "border-[var(--color-accent)] bg-[var(--color-accent)]/15"
-                : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
             }`}
           >
-            {label} ({count})
+            {label} <span className="text-xs tabular-nums opacity-70">({fa(count)})</span>
           </button>
         ))}
       </div>
 
       {tab === "tenants" && (
         <>
-          <Card className="mb-3 !p-3">
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <button
-                onClick={() => setCreating(true)}
-                className="px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white"
-              >
-                ➕ tenant جدید
-              </button>
-              <button
-                onClick={() => setSelected(new Set(tenants.map((t) => t.id)))}
-                className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-              >
-                انتخاب همه
-              </button>
-              <button
-                onClick={() => setSelected(new Set())}
-                disabled={selected.size === 0}
-                className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-              >
-                پاک کردن
-              </button>
-              <span className="text-[var(--color-text-dim)]">
-                {selected.size} انتخاب شده
-              </span>
-            </div>
-            {selected.size > 0 && (
-              <div className="flex items-center gap-2 flex-wrap text-[11px] mt-2 pt-2 border-t border-[var(--color-border)]">
-                <button
-                  onClick={() => runBulk("enable")}
-                  disabled={bulking}
-                  className="px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30"
-                >
-                  ▶ روشن
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <button onClick={() => setCreating(true)} className={btnPrimary}>
+              ➕ tenant جدید
+            </button>
+            {tenants.length > 0 && (
+              <>
+                <button onClick={() => setSelected(new Set(tenants.map((t) => t.id)))} className={btn}>
+                  انتخاب همه
                 </button>
-                <button
-                  onClick={() => runBulk("disable")}
-                  disabled={bulking}
-                  className="px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                >
-                  ⏸ خاموش
+                <button onClick={() => setSelected(new Set())} disabled={selected.size === 0} className={btn}>
+                  پاک کردن
                 </button>
-                <select
-                  disabled={bulking}
-                  defaultValue=""
-                  onChange={(e) => {
-                    if (!e.target.value) return;
-                    runBulk("apply-plan", e.target.value);
-                    e.currentTarget.value = "";
-                  }}
-                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-1.5 py-1"
-                >
-                  <option value="">📋 اعمال plan…</option>
-                  {plans.map((p) => (
-                    <option key={p.key} value={p.key}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => {
-                    if (!confirm(`خرج محلی ${selected.size} tenant ریست بشه؟`))
-                      return;
-                    runBulk("reset-spend");
-                  }}
-                  disabled={bulking}
-                  className="px-2 py-1 rounded-md border border-amber-700 text-amber-300 hover:bg-amber-900/30"
-                >
-                  🔁 ریست خرج محلی
-                </button>
-                <button
-                  onClick={() => runBulk("delete")}
-                  disabled={bulking}
-                  className="px-2 py-1 rounded-md border border-red-800 text-red-300 hover:bg-red-900/30"
-                >
-                  🗑 حذف
-                </button>
-              </div>
+              </>
             )}
-          </Card>
+          </div>
 
-          <div className="flex flex-col gap-2">
+          {tenants.length === 0 && !loadError && (
+            <EmptyState
+              icon="🏢"
+              title="هنوز tenantی نیست"
+              hint="با «tenant جدید» اولین مستأجر رو بساز؛ بعد اتصال‌های business رو بهش assign کن."
+              action={<button onClick={() => setCreating(true)} className={btnPrimary}>➕ tenant جدید</button>}
+            />
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {tenants.map((t) => {
               const pct =
                 t.hikerBudgetUsd > 0
@@ -371,192 +427,210 @@ export default function AdminPage() {
                 t.hikerBudgetUsd > 0
                   ? Math.min(100, (t.hikerApprovedUsd / t.hikerBudgetUsd) * 100)
                   : 0;
+              const keyChip = "rounded-lg bg-[var(--color-surface-2)] px-2 py-1 text-xs";
               return (
-                <Card key={t.id} className={!t.isEnabled ? "opacity-50" : ""}>
-                  <div className="flex items-start justify-between gap-2 flex-wrap mb-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(t.id)}
-                        onChange={() => toggleSelect(t.id)}
-                      />
-                      <span className="text-base font-semibold">{t.name}</span>
-                      <Badge tone={t.isEnabled ? "success" : "neutral"}>
-                        {t.isEnabled ? "فعال" : "غیرفعال"}
-                      </Badge>
-                      <Badge tone="info">{t.plan}</Badge>
+                <Card key={t.id} className={!t.isEnabled ? "opacity-60" : ""}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <label className="grid place-items-center w-11 h-11 shrink-0 cursor-pointer" aria-label={`انتخاب ${t.name}`}>
+                      <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleSelect(t.id)} />
+                    </label>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-base font-semibold [overflow-wrap:anywhere]">{t.name}</div>
+                      <div className="mt-1 flex items-center justify-center gap-1.5 flex-wrap">
+                        <Badge tone={t.isEnabled ? "success" : "neutral"}>
+                          {t.isEnabled ? "فعال" : "غیرفعال"}
+                        </Badge>
+                        <Badge tone="info">{t.plan}</Badge>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <button
-                        onClick={() => openFinance(t.id)}
-                        className="text-[11px] px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30"
-                        title="جزئیات مالی و چارت‌ها"
-                      >
-                        📊 جزئیات مالی
-                      </button>
-                      <a
-                        href={`/settings?tenant=${t.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                        title="همه‌ی تنظیمات (مدل، owner، auto-reply، ...) per-tenant"
-                      >
-                        ⚙️ تنظیمات
-                      </a>
-                      <button
-                        onClick={() => setEditing(t)}
-                        className="text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                      >
-                        ✏️ ویرایش
-                      </button>
-                    </div>
+                    <span aria-hidden className="w-11 shrink-0" />
                   </div>
 
-                  <div className="mb-2">
-                    <div className="text-[10px] flex items-center justify-between text-[var(--color-text-dim)] mb-0.5">
-                      <span>
-                        خرج <strong>${t.spentUsd.toFixed(4)}</strong>{" "}
-                        / مجاز ${t.hikerApprovedUsd.toFixed(2)} / سقف $
-                        {t.hikerBudgetUsd.toFixed(2)} · step $
-                        {t.hikerApprovalStepUsd.toFixed(2)}
-                      </span>
-                      <span>{pct.toFixed(1)}%</span>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    <div>
+                      <div className="text-xs text-[var(--color-text-dim)]">خرج</div>
+                      <div className="text-sm font-semibold tabular-nums">{usd(t.spentUsd, 4)}</div>
                     </div>
-                    <div className="h-2 bg-[var(--color-surface-2)] rounded-full overflow-hidden relative">
-                      <div
-                        className="absolute inset-y-0 left-0 bg-emerald-600/40"
-                        style={{ width: `${approvedPct}%` }}
-                      />
-                      <div
-                        className={`absolute inset-y-0 left-0 ${
-                          pct >= 100
-                            ? "bg-red-500"
-                            : pct >= approvedPct
-                              ? "bg-amber-500"
-                              : "bg-[var(--color-accent)]"
-                        }`}
-                        style={{ width: `${pct}%` }}
-                      />
+                    <div>
+                      <div className="text-xs text-[var(--color-text-dim)]">مجاز</div>
+                      <div className="text-sm font-semibold tabular-nums">{usd(t.hikerApprovedUsd)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-[var(--color-text-dim)]">سقف</div>
+                      <div className="text-sm font-semibold tabular-nums">{usd(t.hikerBudgetUsd)}</div>
                     </div>
                   </div>
+                  <div className="h-2 bg-[var(--color-surface-2)] rounded-full overflow-hidden relative">
+                    <div className="absolute inset-y-0 left-0 bg-emerald-600/40" style={{ width: `${approvedPct}%` }} />
+                    <div
+                      className={`absolute inset-y-0 left-0 ${
+                        pct >= 100 ? "bg-red-500" : pct >= approvedPct ? "bg-amber-500" : "bg-[var(--color-accent)]"
+                      }`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <div className="mt-1 text-xs text-[var(--color-text-dim)]">
+                    {fa(pct.toFixed(1))}٪ از سقف · step {usd(t.hikerApprovalStepUsd)}
+                  </div>
 
-                  <div className="text-[10px] text-[var(--color-text-dim)] flex flex-wrap gap-3">
-                    <span>
-                      monitored cap: <strong>{t.monitoredCap}</strong>
+                  <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                    <span className={keyChip}>
+                      monitored cap: <strong>{fa(t.monitoredCap)}</strong>
                     </span>
                     {t.hikerKeyPrefix ? (
-                      <span dir="ltr">
+                      <span dir="ltr" className={keyChip}>
                         Hiker: {t.hikerKeyName ? `[${t.hikerKeyName}] ` : ""}
                         <span className="font-mono">{t.hikerKeyPrefix}</span>
                       </span>
                     ) : (
-                      <span className="text-amber-400">Hiker: (fallback)</span>
+                      <span className={`${keyChip} text-amber-400`}>Hiker: (fallback)</span>
                     )}
                     {t.openrouterKeyPrefix ? (
-                      <span dir="ltr">
-                        OR:{" "}
-                        <span className="font-mono">
-                          {t.openrouterKeyPrefix}
-                        </span>
+                      <span dir="ltr" className={keyChip}>
+                        OR: <span className="font-mono">{t.openrouterKeyPrefix}</span>
                       </span>
                     ) : (
-                      <span className="text-amber-400">OR: (fallback)</span>
+                      <span className={`${keyChip} text-amber-400`}>OR: (fallback)</span>
                     )}
                     {t.groqKeyPrefix ? (
-                      <span dir="ltr">
-                        Groq:{" "}
-                        <span className="font-mono">{t.groqKeyPrefix}</span>
+                      <span dir="ltr" className={keyChip}>
+                        Groq: <span className="font-mono">{t.groqKeyPrefix}</span>
                       </span>
                     ) : (
-                      <span className="text-amber-400">Groq: (fallback)</span>
+                      <span className={`${keyChip} text-amber-400`}>Groq: (fallback)</span>
                     )}
                   </div>
                   {t.notes && (
-                    <div className="text-[10px] mt-2 text-[var(--color-text-dim)]">
-                      📝 {t.notes}
-                    </div>
+                    <div className="text-xs leading-6 mt-3 text-[var(--color-text-dim)]">📝 {t.notes}</div>
                   )}
+
+                  <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex flex-wrap gap-2">
+                    <button
+                      onClick={() => openFinance(t.id)}
+                      disabled={financeBusy === t.id}
+                      className={btnOk}
+                      title="جزئیات مالی و چارت‌ها"
+                    >
+                      {financeBusy === t.id ? "…" : "📊 جزئیات مالی"}
+                    </button>
+                    <a
+                      href={`/settings/edit?tenant=${t.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`${btn} inline-flex items-center`}
+                      title="همه‌ی تنظیمات (مدل، owner، auto-reply، ...) per-tenant"
+                    >
+                      ⚙️ تنظیمات
+                    </a>
+                    <button onClick={() => setEditing(t)} className={btn}>
+                      ✏️ ویرایش
+                    </button>
+                  </div>
                 </Card>
               );
             })}
           </div>
+
+          {/* Bulk actions follow the selection: pinned above the mobile tab bar so they are reachable from any scroll position. */}
+          {selected.size > 0 && (
+            <div className="sticky bottom-[4.5rem] md:bottom-3 z-10 mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3 shadow-lg text-center">
+              <div className="text-sm mb-2">{fa(selected.size)} انتخاب شده</div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => runBulk("enable")} disabled={bulking} className={btnOk}>
+                  ▶ روشن
+                </button>
+                <button onClick={() => runBulk("disable")} disabled={bulking} className={btn}>
+                  ⏸ خاموش
+                </button>
+                <select
+                  disabled={bulking}
+                  defaultValue=""
+                  aria-label="اعمال plan"
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    runBulk("apply-plan", e.target.value);
+                    e.currentTarget.value = "";
+                  }}
+                  className="min-h-10 px-3 rounded-xl text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)]"
+                >
+                  <option value="">📋 اعمال plan…</option>
+                  {plans.map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={async () => {
+                    if (!(await confirmDialog(`خرج محلی ${fa(selected.size)} tenant ریست بشه؟`, { confirmLabel: "ریست" }))) return;
+                    runBulk("reset-spend");
+                  }}
+                  disabled={bulking}
+                  className={btnWarn}
+                >
+                  🔁 ریست خرج محلی
+                </button>
+                <button onClick={() => runBulk("delete")} disabled={bulking} className={btnDanger}>
+                  🗑 حذف
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
 
       {tab === "admins" && (
         <>
-          <Card className="mb-3 !p-3">
+          <Section icon="➕" title="افزودن admin" summary="با user id تلگرام (username اختیاری)">
             <AdminAddForm onSaved={load} />
-          </Card>
-          <Card>
-            <div className="flex flex-col gap-1">
+          </Section>
+          {admins.length === 0 ? (
+            <EmptyState icon="👮" title="هنوز adminی ثبت نشده" hint="از بخش «افزودن admin» بالا یکی اضافه کن." />
+          ) : (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               {admins.map((a) => (
-                <div
-                  key={a.userId}
-                  className="text-xs flex items-center gap-2 p-1.5 border border-[var(--color-border)] rounded-md flex-wrap"
-                >
-                  <span className="font-mono">{a.userId}</span>
-                  {a.username && <span>@{a.username}</span>}
-                  {a.firstName && (
-                    <span className="text-[var(--color-text-dim)]">
-                      {a.firstName}
-                    </span>
-                  )}
-                  <span className="text-[10px] text-[var(--color-text-dim)] mr-auto">
-                    {new Date(a.addedAt).toLocaleDateString()}
-                  </span>
-                  <button
-                    onClick={async () => {
-                      if (!confirm(`حذف admin ${a.userId}؟`)) return;
-                      const r = await fetch(`/api/admin/admins/${a.userId}`, {
-                        method: "DELETE",
-                      });
-                      if (!r.ok) {
-                        const j = (await r.json().catch(() => ({}))) as {
-                          error?: string;
-                        };
-                        alert(j.error ?? "خطا");
-                      } else {
-                        await load();
-                      }
-                    }}
-                    className="text-[10px] px-1.5 py-0.5 rounded-md border border-red-700 text-red-300 hover:bg-red-900/30"
-                  >
+                <div key={a.userId} className="flex items-center gap-3 min-h-16 px-4 py-2.5 border-t first:border-t-0 border-[var(--color-border)]">
+                  <div className="min-w-0 flex-1 text-center">
+                    <div className="text-sm">
+                      <span dir="ltr" className="font-mono">{a.userId}</span>
+                      {a.username && <span dir="ltr" className="ms-2">@{a.username}</span>}
+                    </div>
+                    <div className="text-xs text-[var(--color-text-dim)] [overflow-wrap:anywhere]">
+                      {a.firstName ? `${a.firstName} · ` : ""}
+                      {new Date(a.addedAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <button onClick={() => removeAdmin(a)} className={`${btnDanger} px-3`} aria-label={`حذف admin ${a.userId}`}>
                     🗑
                   </button>
                 </div>
               ))}
             </div>
-          </Card>
+          )}
         </>
       )}
 
       {tab === "connections" && (
-        <Card>
-          <div className="flex flex-col gap-1">
+        connections.length === 0 ? (
+          <EmptyState icon="🔗" title="هنوز اتصالی نیست" hint="وقتی کسی بات رو به Telegram Business وصل کنه، اینجا میاد و می‌تونی به tenant assign کنی." />
+        ) : (
+          <div className="flex flex-col gap-3">
             {connections.map((c) => (
-              <div
-                key={c.id}
-                className="text-xs flex items-center gap-2 p-2 border border-[var(--color-border)] rounded-md flex-wrap"
-              >
-                <span className="font-medium">
+              <Card key={c.id}>
+                <div className="text-sm font-medium [overflow-wrap:anywhere]">
                   {[c.firstName, c.lastName].filter(Boolean).join(" ") ||
                     c.username ||
                     `user ${c.userId}`}
-                </span>
-                {c.username && (
-                  <span className="text-[var(--color-text-dim)]">
-                    @{c.username}
-                  </span>
-                )}
-                <span className="text-[10px] text-[var(--color-text-dim)]">
-                  uid {c.userId}
-                </span>
-                {!c.isEnabled && <Badge tone="neutral">غیرفعال</Badge>}
-                {c.canReply && <Badge tone="success">قابل پاسخ</Badge>}
-                <div className="flex-1" />
+                </div>
+                <div className="mt-1 flex items-center justify-center gap-2 flex-wrap text-xs text-[var(--color-text-dim)]">
+                  {c.username && <span dir="ltr">@{c.username}</span>}
+                  <span>uid {c.userId}</span>
+                  {!c.isEnabled && <Badge tone="neutral">غیرفعال</Badge>}
+                  {c.canReply && <Badge tone="success">قابل پاسخ</Badge>}
+                </div>
                 <select
                   value={c.tenantId ?? ""}
+                  aria-label="tenant این اتصال"
                   onChange={async (e) => {
                     const tenantId = Number(e.target.value);
                     if (!Number.isFinite(tenantId)) return;
@@ -568,10 +642,10 @@ export default function AdminPage() {
                         body: JSON.stringify({ tenantId }),
                       },
                     );
-                    if (!r.ok) alert("خطا");
+                    if (!r.ok) setNotice("خطا");
                     else await load();
                   }}
-                  className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-0.5 text-[11px]"
+                  className={`${field} mt-3`}
                 >
                   <option value="">— انتخاب tenant —</option>
                   {tenants.map((t) => (
@@ -580,10 +654,10 @@ export default function AdminPage() {
                     </option>
                   ))}
                 </select>
-              </div>
+              </Card>
             ))}
           </div>
-        </Card>
+        )
       )}
 
       {tab === "external" && (
@@ -666,15 +740,18 @@ function AdminAddForm({ onSaved }: { onSaved: () => Promise<void> }) {
   const [userId, setUserId] = useState("");
   const [username, setUsername] = useState("");
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   return (
-    <div className="flex items-center gap-2 flex-wrap">
+    <div className="flex flex-col gap-3">
       <input
         dir="ltr"
         type="text"
+        inputMode="numeric"
         value={userId}
         onChange={(e) => setUserId(e.target.value)}
         placeholder="Telegram user_id (عدد)"
-        className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-xs w-44"
+        aria-label="Telegram user_id"
+        className={field}
       />
       <input
         dir="ltr"
@@ -682,37 +759,42 @@ function AdminAddForm({ onSaved }: { onSaved: () => Promise<void> }) {
         value={username}
         onChange={(e) => setUsername(e.target.value)}
         placeholder="username (اختیاری)"
-        className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 text-xs w-40"
+        aria-label="username"
+        className={field}
       />
-      <button
-        onClick={async () => {
-          setBusy(true);
-          try {
-            const r = await fetch("/api/admin/admins", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                userId: Number(userId),
-                username: username || undefined,
-              }),
-            });
-            if (!r.ok) {
-              const j = (await r.json().catch(() => ({}))) as { error?: string };
-              alert(j.error ?? "خطا");
-            } else {
-              setUserId("");
-              setUsername("");
-              await onSaved();
+      {err && <p className="text-sm text-red-300">{err}</p>}
+      <div>
+        <button
+          onClick={async () => {
+            setBusy(true);
+            setErr(null);
+            try {
+              const r = await fetch("/api/admin/admins", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  userId: Number(userId),
+                  username: username || undefined,
+                }),
+              });
+              if (!r.ok) {
+                const j = (await r.json().catch(() => ({}))) as { error?: string };
+                setErr(j.error ?? "خطا");
+              } else {
+                setUserId("");
+                setUsername("");
+                await onSaved();
+              }
+            } finally {
+              setBusy(false);
             }
-          } finally {
-            setBusy(false);
-          }
-        }}
-        disabled={busy || !userId.trim()}
-        className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-      >
-        ➕ افزودن admin
-      </button>
+          }}
+          disabled={busy || !userId.trim()}
+          className={btnPrimary}
+        >
+          ➕ افزودن admin
+        </button>
+      </div>
     </div>
   );
 }
@@ -739,6 +821,7 @@ function TenantEditDialog(props: {
   const [openrouterKey, setOpenrouterKey] = useState("");
   const [groqKey, setGroqKey] = useState("");
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   function applyPreset(key: string) {
     const p = plans.find((x) => x.key === key);
@@ -751,6 +834,7 @@ function TenantEditDialog(props: {
 
   async function save() {
     setBusy(true);
+    setErr(null);
     try {
       const body: Record<string, unknown> = {
         name,
@@ -777,7 +861,7 @@ function TenantEditDialog(props: {
       });
       if (!r.ok) {
         const j = (await r.json().catch(() => ({}))) as { error?: string };
-        alert(j.error ?? "خطا");
+        setErr(j.error ?? "خطا");
         return;
       }
       await onSaved();
@@ -786,236 +870,125 @@ function TenantEditDialog(props: {
     }
   }
 
+  async function resetSpend(t: Tenant) {
+    if (!(await confirmDialog("کل خرج محلی این tenant ریست بشه؟", { confirmLabel: "ریست" }))) return;
+    const r = await fetch(`/api/admin/tenants/${t.id}/reset-spend`, { method: "POST" });
+    if (r.ok) {
+      await onSaved();
+    } else setErr("خطا");
+  }
+
+  async function deleteTenant(t: Tenant) {
+    if (!(await confirmDialog(`حذف کامل ${t.name}؟ همه‌ی monitored / usage پاک می‌شه.`, { danger: true, confirmLabel: "حذف" }))) return;
+    const r = await fetch(`/api/admin/tenants/${t.id}`, { method: "DELETE" });
+    if (r.ok) {
+      await onSaved();
+    } else {
+      const j = (await r.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      setErr(j.error ?? "خطا");
+    }
+  }
+
   return (
-    <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 overflow-y-auto"
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-2xl my-8"
-      >
-        <h2 className="text-base font-semibold mb-3">
-          {tenant ? `✏️ ویرایش ${tenant.name}` : "➕ tenant جدید"}
-        </h2>
-
-        <div className="mb-3">
-          <div className="text-xs font-medium mb-1">📋 Plan preset</div>
-          <div className="flex gap-1.5 flex-wrap text-[11px]">
-            {plans.map((p) => (
-              <button
-                key={p.key}
-                onClick={() => applyPreset(p.key)}
-                className={`px-2 py-1 rounded-md border ${
-                  plan === p.key
-                    ? "border-[var(--color-accent)] bg-[var(--color-accent)]/15"
-                    : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                }`}
-                title={p.description}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-          <div className="text-[9px] text-[var(--color-text-dim)] mt-1">
-            preset مقادیر سقف + step + cap رو ست می‌کنه — می‌تونی دستی هم
-            override کنی
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 text-sm">
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-[var(--color-text-dim)]">نام</span>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-[var(--color-text-dim)]">plan</span>
-            <input
-              type="text"
-              value={plan}
-              onChange={(e) => setPlan(e.target.value)}
-              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-[var(--color-text-dim)]">
-              سقف بودجه ($)
-            </span>
-            <input
-              type="number"
-              step="0.01"
-              value={budget}
-              onChange={(e) => setBudget(e.target.value)}
-              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-[var(--color-text-dim)]">
-              مجاز فعلی ($)
-            </span>
-            <input
-              type="number"
-              step="0.01"
-              value={approved}
-              onChange={(e) => setApproved(e.target.value)}
-              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-[var(--color-text-dim)]">
-              step تخصیص ($)
-            </span>
-            <input
-              type="number"
-              step="0.01"
-              value={step}
-              onChange={(e) => setStep(e.target.value)}
-              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-[var(--color-text-dim)]">
-              سقف تعداد monitored
-            </span>
-            <input
-              type="number"
-              value={cap}
-              onChange={(e) => setCap(e.target.value)}
-              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-            />
-          </label>
-        </div>
-
-        <label className="flex items-center gap-2 mb-3 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={isEnabled}
-            onChange={(e) => setIsEnabled(e.target.checked)}
-          />
-          <span>فعال (cron و routeها اجرا می‌شن)</span>
-        </label>
-
-        <div className="mb-3">
-          <div className="text-xs font-medium mb-1">🔑 کلیدهای API (per-tenant)</div>
-          <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-            خالی بذار تا fallback به override کلی یا env. مقدار قبلی نمایش
-            داده نمی‌شه — فقط override کن.
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-            <input
-              dir="ltr"
-              type="password"
-              value={hikerKey}
-              onChange={(e) => setHikerKey(e.target.value)}
-              placeholder="Hiker x-access-key"
-              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 font-mono"
-            />
-            <input
-              dir="ltr"
-              type="text"
-              value={hikerKeyName}
-              onChange={(e) => setHikerKeyName(e.target.value)}
-              placeholder="نام Hiker (smmr)"
-              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-            />
-            <input
-              dir="ltr"
-              type="password"
-              value={openrouterKey}
-              onChange={(e) => setOpenrouterKey(e.target.value)}
-              placeholder="OpenRouter sk-or-…"
-              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 font-mono sm:col-span-2"
-            />
-            <input
-              dir="ltr"
-              type="password"
-              value={groqKey}
-              onChange={(e) => setGroqKey(e.target.value)}
-              placeholder="Groq gsk_…"
-              className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 font-mono sm:col-span-2"
-            />
-          </div>
-        </div>
-
-        <label className="flex flex-col gap-1 mb-4 text-sm">
-          <span className="text-[11px] text-[var(--color-text-dim)]">یادداشت</span>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={2}
-            className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-          />
-        </label>
-
-        {tenant && (
-          <div className="mb-4 p-2 rounded-md border border-amber-700 bg-amber-900/15">
-            <div className="text-[11px] text-amber-200 mb-1">عملیات خطرناک</div>
-            <div className="flex gap-2 flex-wrap">
-              <button
-                onClick={async () => {
-                  if (!confirm("کل خرج محلی این tenant ریست بشه؟")) return;
-                  const r = await fetch(
-                    `/api/admin/tenants/${tenant.id}/reset-spend`,
-                    { method: "POST" },
-                  );
-                  if (r.ok) {
-                    await onSaved();
-                  } else alert("خطا");
-                }}
-                className="text-[11px] px-2 py-1 rounded-md border border-amber-700 text-amber-300 hover:bg-amber-900/30"
-              >
-                🔁 ریست خرج محلی
-              </button>
-              <button
-                onClick={async () => {
-                  if (
-                    !confirm(
-                      `حذف کامل ${tenant.name}؟ همه‌ی monitored / usage پاک می‌شه.`,
-                    )
-                  )
-                    return;
-                  const r = await fetch(`/api/admin/tenants/${tenant.id}`, {
-                    method: "DELETE",
-                  });
-                  if (r.ok) {
-                    await onSaved();
-                  } else {
-                    const j = (await r.json().catch(() => ({}))) as {
-                      error?: string;
-                    };
-                    alert(j.error ?? "خطا");
-                  }
-                }}
-                className="text-[11px] px-2 py-1 rounded-md border border-red-700 text-red-300 hover:bg-red-900/30"
-              >
-                🗑 حذف tenant
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="flex gap-2 justify-end">
-          <button
-            onClick={onClose}
-            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-          >
+    <Sheet
+      title={tenant ? `✏️ ویرایش ${tenant.name}` : "➕ tenant جدید"}
+      onClose={onClose}
+      footer={
+        <div className="flex gap-2">
+          <button onClick={onClose} className={btn}>
             لغو
           </button>
-          <button
-            onClick={save}
-            disabled={busy || !name.trim()}
-            className="text-xs px-4 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-          >
+          <button onClick={save} disabled={busy || !name.trim()} className={btnPrimary}>
             {busy ? "ذخیره…" : "💾 ذخیره"}
           </button>
         </div>
+      }
+    >
+      {err && (
+        <p role="alert" className="mb-3 rounded-xl border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-200">{err}</p>
+      )}
+
+      <div className="mb-4">
+        <div className="text-sm font-medium mb-2">📋 Plan preset</div>
+        <div className="flex gap-2 flex-wrap justify-center">
+          {plans.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => applyPreset(p.key)}
+              className={`min-h-10 px-3 rounded-xl border text-sm ${
+                plan === p.key
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent)]/15"
+                  : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+              }`}
+              title={p.description}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <div className="text-xs leading-6 text-[var(--color-text-dim)] mt-1.5">
+          preset مقادیر سقف + step + cap رو ست می‌کنه — می‌تونی دستی هم override کنی
+        </div>
       </div>
-    </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+        <FieldBox label="نام">
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={field} />
+        </FieldBox>
+        <FieldBox label="plan">
+          <input type="text" dir="ltr" value={plan} onChange={(e) => setPlan(e.target.value)} className={field} />
+        </FieldBox>
+        <FieldBox label="سقف بودجه ($)">
+          <input type="number" dir="ltr" step="0.01" value={budget} onChange={(e) => setBudget(e.target.value)} className={field} />
+        </FieldBox>
+        <FieldBox label="مجاز فعلی ($)">
+          <input type="number" dir="ltr" step="0.01" value={approved} onChange={(e) => setApproved(e.target.value)} className={field} />
+        </FieldBox>
+        <FieldBox label="step تخصیص ($)">
+          <input type="number" dir="ltr" step="0.01" value={step} onChange={(e) => setStep(e.target.value)} className={field} />
+        </FieldBox>
+        <FieldBox label="سقف تعداد monitored">
+          <input type="number" dir="ltr" value={cap} onChange={(e) => setCap(e.target.value)} className={field} />
+        </FieldBox>
+      </div>
+
+      <div className="mb-4">
+        <SwitchRow label="فعال" hint="cron و routeها اجرا می‌شن" checked={isEnabled} onChange={setIsEnabled} />
+      </div>
+
+      <FieldBox label="یادداشت">
+        <textarea dir="auto" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={`${field} leading-6`} />
+      </FieldBox>
+
+      <div className="mt-4 text-start">
+        <Section icon="🔑" title="کلیدهای API (per-tenant)" summary="خالی بذار تا fallback به override کلی یا env" className="!mb-3">
+          <p className="text-xs leading-6 text-[var(--color-text-dim)] mb-3">
+            خالی بذار تا fallback به override کلی یا env. مقدار قبلی نمایش داده نمی‌شه — فقط override کن.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input dir="ltr" type="password" value={hikerKey} onChange={(e) => setHikerKey(e.target.value)} placeholder="Hiker x-access-key" aria-label="Hiker x-access-key" autoComplete="off" className={`${field} font-mono`} />
+            <input dir="ltr" type="text" value={hikerKeyName} onChange={(e) => setHikerKeyName(e.target.value)} placeholder="نام Hiker (smmr)" aria-label="نام Hiker" className={field} />
+            <input dir="ltr" type="password" value={openrouterKey} onChange={(e) => setOpenrouterKey(e.target.value)} placeholder="OpenRouter sk-or-…" aria-label="OpenRouter key" autoComplete="off" className={`${field} font-mono sm:col-span-2`} />
+            <input dir="ltr" type="password" value={groqKey} onChange={(e) => setGroqKey(e.target.value)} placeholder="Groq gsk_…" aria-label="Groq key" autoComplete="off" className={`${field} font-mono sm:col-span-2`} />
+          </div>
+        </Section>
+
+        {tenant && (
+          <Section icon="⚠️" title="عملیات خطرناک" summary="ریست خرج محلی، حذف کامل tenant" className="!mb-0">
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={() => resetSpend(tenant)} className={btnWarn}>
+                🔁 ریست خرج محلی
+              </button>
+              <button onClick={() => deleteTenant(tenant)} className={btnDanger}>
+                🗑 حذف tenant
+              </button>
+            </div>
+          </Section>
+        )}
+      </div>
+    </Sheet>
   );
 }
 
@@ -1027,143 +1000,119 @@ function FinanceDialog(props: { finance: Finance; onClose: () => void }) {
   const maxMonthly = Math.max(0.001, ...finance.monthly.map((b) => b.costUsd));
 
   return (
-    <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 overflow-y-auto"
-      onClick={onClose}
+    <Sheet
+      title={`📊 حساب‌کتاب — ${finance.tenant.name}`}
+      wide
+      onClose={onClose}
+      footer={
+        <div className="flex">
+          <button onClick={onClose} className={btn}>
+            بستن
+          </button>
+        </div>
+      }
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 w-full max-w-3xl my-8"
-      >
-        <h2 className="text-base font-semibold mb-1">
-          📊 حساب‌کتاب — {finance.tenant.name}
-        </h2>
-        <div className="text-[11px] text-[var(--color-text-dim)] mb-3">
-          plan: <strong>{finance.tenant.plan}</strong>
-        </div>
+      <div className="text-xs text-[var(--color-text-dim)] mb-3">
+        plan: <strong>{finance.tenant.plan}</strong>
+      </div>
 
-        <div className="flex items-center gap-3 flex-wrap text-[11px] mb-3 p-2 rounded-md border border-[var(--color-border)]">
-          <span>
-            خرج: <strong>${finance.state.spentUsd.toFixed(4)}</strong>
-          </span>
-          <span>
-            مجاز تا: <strong>${finance.state.approvedUsd.toFixed(2)}</strong>
-          </span>
-          <span>
-            سقف: <strong>${finance.state.budgetUsd.toFixed(2)}</strong>
-          </span>
-          <span>
-            step: <strong>${finance.state.stepUsd.toFixed(2)}</strong>
-          </span>
-        </div>
-
-        <div className="mb-4 overflow-x-auto">
-          <table className="w-full text-[11px] tabular-nums">
-            <thead className="text-[var(--color-text-dim)]">
-              <tr className="text-right">
-                <th className="font-normal py-1">بازه</th>
-                <th className="font-normal py-1">تعداد call</th>
-                <th className="font-normal py-1">هزینه</th>
-                <th className="font-normal py-1">میانگین / call</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(
-                [
-                  ["⏰ ۱ ساعت", finance.summary.lastHour],
-                  ["📅 ۲۴ ساعت", finance.summary.today],
-                  ["🗓 ۷ روز", finance.summary.last7d],
-                  ["🗓 ۳۰ روز", finance.summary.last30d],
-                  ["Σ کل", finance.summary.allTime],
-                ] as const
-              ).map(([label, w]) => (
-                <tr
-                  key={label}
-                  className="border-t border-[var(--color-border)]"
-                >
-                  <td className="py-1">{label}</td>
-                  <td className="py-1">{w.calls.toLocaleString()}</td>
-                  <td className="py-1 font-semibold">
-                    ${w.costUsd.toFixed(4)}
-                  </td>
-                  <td className="py-1 text-[var(--color-text-dim)]">
-                    {w.calls > 0
-                      ? `$${(w.costUsd / w.calls).toFixed(5)}`
-                      : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
         {(
           [
-            ["⏰ ساعتی (۲۴ ساعت)", finance.hourly, maxHourly, "bg-[var(--color-accent)]/70"],
-            ["📅 روزانه (۱۴ روز)", finance.daily, maxDaily, "bg-[var(--color-accent)]/70"],
-            ["🗓 هفتگی (۱۲ هفته)", finance.weekly, maxWeekly, "bg-emerald-600/70"],
-            ["🗓 ماهانه (۶ ماه)", finance.monthly, maxMonthly, "bg-amber-500/70"],
+            ["خرج", usd(finance.state.spentUsd, 4)],
+            ["مجاز تا", usd(finance.state.approvedUsd)],
+            ["سقف", usd(finance.state.budgetUsd)],
+            ["step", usd(finance.state.stepUsd)],
           ] as const
-        ).map(([label, buckets, max, color]) => (
-          <div key={label} className="mb-3">
-            <div className="text-xs font-medium mb-1">{label}</div>
-            {buckets.length === 0 ? (
-              <div className="text-[11px] text-[var(--color-text-dim)]">
-                خالی
-              </div>
-            ) : (
-              <div className="flex items-end gap-0.5 h-12">
-                {buckets.map((b) => (
-                  <div
-                    key={b.at}
-                    title={`${new Date(b.at).toLocaleString()} · ${b.calls} call · $${b.costUsd.toFixed(4)}`}
-                    className={`flex-1 ${color} rounded-t-sm min-h-[2px]`}
-                    style={{
-                      height: `${Math.max(4, (b.costUsd / max) * 100)}%`,
-                    }}
-                  />
-                ))}
-              </div>
-            )}
+        ).map(([label, v]) => (
+          <div key={label} className="rounded-xl border border-[var(--color-border)] py-2">
+            <div className="text-xs text-[var(--color-text-dim)]">{label}</div>
+            <div className="text-sm font-semibold tabular-nums">{v}</div>
           </div>
         ))}
+      </div>
 
-        <div className="mb-2">
-          <div className="text-xs font-medium mb-1">📜 آخرین callها</div>
-          {finance.recent.length === 0 ? (
-            <div className="text-[11px] text-[var(--color-text-dim)]">خالی</div>
+      {/* One row-card per window instead of a 4-column table, so nothing scrolls sideways on a phone. */}
+      <div className="mb-4 flex flex-col gap-2">
+        {(
+          [
+            ["⏰ ۱ ساعت", finance.summary.lastHour],
+            ["📅 ۲۴ ساعت", finance.summary.today],
+            ["🗓 ۷ روز", finance.summary.last7d],
+            ["🗓 ۳۰ روز", finance.summary.last30d],
+            ["Σ کل", finance.summary.allTime],
+          ] as const
+        ).map(([label, w]) => (
+          <div key={label} className="rounded-xl border border-[var(--color-border)] px-3 py-2">
+            <div className="text-sm font-medium mb-1">{label}</div>
+            <div className="grid grid-cols-3 gap-2 tabular-nums">
+              <div>
+                <div className="text-xs text-[var(--color-text-dim)]">call</div>
+                <div className="text-sm">{fa(w.calls.toLocaleString("en-US"))}</div>
+              </div>
+              <div>
+                <div className="text-xs text-[var(--color-text-dim)]">هزینه</div>
+                <div className="text-sm font-semibold">{usd(w.costUsd, 4)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-[var(--color-text-dim)]">میانگین / call</div>
+                <div className="text-sm text-[var(--color-text-dim)]">{w.calls > 0 ? usd(w.costUsd / w.calls, 5) : "—"}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {(
+        [
+          ["⏰ ساعتی (۲۴ ساعت)", finance.hourly, maxHourly, "bg-[var(--color-accent)]/70"],
+          ["📅 روزانه (۱۴ روز)", finance.daily, maxDaily, "bg-[var(--color-accent)]/70"],
+          ["🗓 هفتگی (۱۲ هفته)", finance.weekly, maxWeekly, "bg-emerald-600/70"],
+          ["🗓 ماهانه (۶ ماه)", finance.monthly, maxMonthly, "bg-amber-500/70"],
+        ] as const
+      ).map(([label, buckets, max, color]) => (
+        <div key={label} className="mb-4">
+          <div className="text-sm font-medium mb-1.5">{label}</div>
+          {buckets.length === 0 ? (
+            <div className="text-xs text-[var(--color-text-dim)]">خالی</div>
           ) : (
-            <div className="max-h-48 overflow-y-auto flex flex-col gap-0.5">
-              {finance.recent.map((c) => (
+            <div dir="ltr" className="flex items-end gap-0.5 h-16">
+              {buckets.map((b) => (
                 <div
-                  key={c.id}
-                  className="text-[10px] flex items-center gap-2 py-0.5 border-b border-[var(--color-border)]"
-                >
-                  <span className="text-[var(--color-text-dim)] w-28 shrink-0">
-                    {new Date(c.calledAt).toLocaleString()}
-                  </span>
-                  <span dir="ltr" className="flex-1 truncate font-mono">
-                    {c.endpoint}
-                  </span>
-                  <span className="text-[var(--color-text-dim)]">
-                    ${c.costUsd.toFixed(4)}
-                  </span>
-                </div>
+                  key={b.at}
+                  title={`${new Date(b.at).toLocaleString()} · ${b.calls} call · $${b.costUsd.toFixed(4)}`}
+                  className={`flex-1 ${color} rounded-t-sm min-h-[2px]`}
+                  style={{
+                    height: `${Math.max(4, (b.costUsd / max) * 100)}%`,
+                  }}
+                />
               ))}
             </div>
           )}
         </div>
+      ))}
 
-        <div className="flex justify-end mt-4">
-          <button
-            onClick={onClose}
-            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-          >
-            بستن
-          </button>
-        </div>
+      <div className="mb-2">
+        <div className="text-sm font-medium mb-1.5">📜 آخرین callها</div>
+        {finance.recent.length === 0 ? (
+          <div className="text-xs text-[var(--color-text-dim)]">خالی</div>
+        ) : (
+          <div className="max-h-80 overflow-y-auto overscroll-contain flex flex-col gap-1.5">
+            {finance.recent.map((c) => (
+              <div key={c.id} className="rounded-xl border border-[var(--color-border)] px-3 py-2">
+                <div className="flex items-center justify-between gap-2 text-xs text-[var(--color-text-dim)]">
+                  <span>{new Date(c.calledAt).toLocaleString()}</span>
+                  <span className="tabular-nums">{usd(c.costUsd, 4)}</span>
+                </div>
+                <div dir="ltr" className="mt-0.5 truncate font-mono text-xs">
+                  {c.endpoint}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-    </div>
+    </Sheet>
   );
 }
 
@@ -1202,11 +1151,12 @@ function ExternalMonitorPanel(props: {
 }) {
   const { data, loading, syncing, syncResult, onDismissSync, onReload, onSync } =
     props;
+  const code = "mx-1 px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] font-mono text-xs [overflow-wrap:anywhere]";
   return (
     <div className="flex flex-col gap-3">
       {syncResult && (
         <div
-          className={`p-3 rounded-lg border ${
+          className={`p-3 rounded-2xl border text-center ${
             syncResult.failed === 0
               ? "border-emerald-700 bg-emerald-900/20 text-emerald-200"
               : syncResult.succeeded > 0
@@ -1214,76 +1164,46 @@ function ExternalMonitorPanel(props: {
                 : "border-red-700 bg-red-900/20 text-red-200"
           }`}
         >
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex-1">
-              <div className="text-sm font-medium">
-                {syncResult.failed === 0
-                  ? "✅ Sync کامل"
-                  : syncResult.succeeded > 0
-                    ? "⚠️ Sync جزئی"
-                    : "❌ Sync ناموفق"}
-              </div>
-              <div className="text-[11px] mt-0.5">
-                {syncResult.succeeded} / {syncResult.total} موفق
-                {syncResult.failed > 0 && ` · ${syncResult.failed} خطا`}
-              </div>
-              {syncResult.errors.length > 0 && (
-                <div className="mt-2 max-h-32 overflow-y-auto flex flex-col gap-0.5 text-[10px] font-mono">
-                  {syncResult.errors.slice(0, 10).map((e) => (
-                    <div key={e.username} dir="ltr" className="break-all">
-                      @{e.username} · {e.status || "—"} ·{" "}
-                      {e.body.slice(0, 100)}
-                    </div>
-                  ))}
-                  {syncResult.errors.length > 10 && (
-                    <div className="text-[var(--color-text-dim)]">
-                      … و {syncResult.errors.length - 10} مورد دیگه
-                    </div>
-                  )}
+          <div className="text-sm font-medium">
+            {syncResult.failed === 0
+              ? "✅ Sync کامل"
+              : syncResult.succeeded > 0
+                ? "⚠️ Sync جزئی"
+                : "❌ Sync ناموفق"}
+          </div>
+          <div className="text-xs mt-0.5">
+            {fa(syncResult.succeeded)} / {fa(syncResult.total)} موفق
+            {syncResult.failed > 0 && ` · ${fa(syncResult.failed)} خطا`}
+          </div>
+          {syncResult.errors.length > 0 && (
+            <div className="mt-2 max-h-40 overflow-y-auto flex flex-col gap-1 text-xs font-mono">
+              {syncResult.errors.slice(0, 10).map((e) => (
+                <div key={e.username} dir="ltr" className="break-all">
+                  @{e.username} · {e.status || "—"} · {e.body.slice(0, 100)}
+                </div>
+              ))}
+              {syncResult.errors.length > 10 && (
+                <div className="text-[var(--color-text-dim)]">
+                  … و {fa(syncResult.errors.length - 10)} مورد دیگه
                 </div>
               )}
             </div>
-            <button
-              onClick={onDismissSync}
-              aria-label="بستن"
-              className="text-[12px] opacity-60 hover:opacity-100 px-1"
-            >
-              ✕
-            </button>
-          </div>
+          )}
+          <button onClick={onDismissSync} className={`${btn} mt-2`}>
+            بستن
+          </button>
         </div>
       )}
-      <Card className="!p-3">
-        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-          <div className="text-sm font-medium">🛰 تشخیص‌دهنده‌ی تغییر خارجی</div>
-          <div className="flex gap-2">
-            <button
-              onClick={onReload}
-              disabled={loading}
-              className="text-[10px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-            >
-              {loading ? "…" : "🔄"}
-            </button>
-            <button
-              onClick={onSync}
-              disabled={syncing || !data?.config.enabled}
-              className="text-[10px] px-2 py-1 rounded-md border border-emerald-700 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
-              title="همه‌ی usernameهای فعال رو دوباره push کن"
-            >
-              {syncing ? "Sync…" : "🔁 Sync همه"}
-            </button>
-          </div>
-        </div>
+      <Card>
+        <div className="text-sm font-medium mb-3">🛰 تشخیص‌دهنده‌ی تغییر خارجی</div>
         {!data ? (
-          <div className="text-[11px] text-[var(--color-text-dim)]">
-            بارگذاری…
-          </div>
+          <div className="text-sm text-[var(--color-text-dim)]">بارگذاری…</div>
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] mb-2">
-              <div className="p-2 rounded-md border border-[var(--color-border)]">
-                <div className="text-[var(--color-text-dim)] mb-0.5">وضعیت</div>
-                <div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+              <div className="p-3 rounded-xl border border-[var(--color-border)]">
+                <div className="text-xs text-[var(--color-text-dim)] mb-0.5">وضعیت</div>
+                <div className="text-sm">
                   {data.config.enabled ? (
                     <span className="text-emerald-300">✅ فعال</span>
                   ) : (
@@ -1297,62 +1217,103 @@ function ExternalMonitorPanel(props: {
                   )}
                 </div>
                 {data.config.baseUrl && (
-                  <div dir="ltr" className="font-mono text-[10px] mt-0.5 break-all text-[var(--color-text-dim)]">
+                  <div dir="ltr" className="font-mono text-xs mt-0.5 break-all text-[var(--color-text-dim)]">
                     {data.config.baseUrl}
                   </div>
                 )}
               </div>
-              <div className="p-2 rounded-md border border-[var(--color-border)]">
-                <div className="text-[var(--color-text-dim)] mb-0.5">
-                  🩺 Health (آخرین بار)
-                </div>
-                <div>
+              <div className="p-3 rounded-xl border border-[var(--color-border)]">
+                <div className="text-xs text-[var(--color-text-dim)] mb-0.5">🩺 Health (آخرین بار)</div>
+                <div className="text-sm">
                   {data.health.ok ? (
-                    <span className="text-emerald-300">
-                      ✅ {data.health.status}
-                    </span>
+                    <span className="text-emerald-300">✅ {data.health.status}</span>
                   ) : (
-                    <span className="text-red-300">
-                      ✗ {data.health.status || "—"}
-                    </span>
+                    <span className="text-red-300">✗ {data.health.status || "—"}</span>
                   )}
                 </div>
-                <div className="text-[9px] text-[var(--color-text-dim)] mt-0.5 break-all font-mono">
+                <div dir="ltr" className="text-xs text-[var(--color-text-dim)] mt-0.5 break-all font-mono">
                   {data.health.body.slice(0, 200)}
                 </div>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-2 text-[11px]">
-              <div className="p-2 rounded-md border border-[var(--color-border)] text-center">
-                <div className="text-[var(--color-text-dim)] text-[10px]">
-                  فعال
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  ["فعال", data.stats.activeSubscriptions],
+                  ["کل ثبت‌شده", data.stats.totalSubscriptions],
+                  ["notify دریافتی", data.stats.totalNotificationsReceived],
+                ] as const
+              ).map(([label, n]) => (
+                <div key={label} className="p-2 rounded-xl border border-[var(--color-border)]">
+                  <div className="text-[var(--color-text-dim)] text-xs">{label}</div>
+                  <div className="text-lg font-bold tabular-nums">{fa(n)}</div>
                 </div>
-                <div className="text-base font-bold tabular-nums">
-                  {data.stats.activeSubscriptions}
-                </div>
-              </div>
-              <div className="p-2 rounded-md border border-[var(--color-border)] text-center">
-                <div className="text-[var(--color-text-dim)] text-[10px]">
-                  کل ثبت‌شده
-                </div>
-                <div className="text-base font-bold tabular-nums">
-                  {data.stats.totalSubscriptions}
-                </div>
-              </div>
-              <div className="p-2 rounded-md border border-[var(--color-border)] text-center">
-                <div className="text-[var(--color-text-dim)] text-[10px]">
-                  notify دریافتی
-                </div>
-                <div className="text-base font-bold tabular-nums">
-                  {data.stats.totalNotificationsReceived}
-                </div>
-              </div>
+              ))}
             </div>
           </>
         )}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button onClick={onReload} disabled={loading} className={btn}>
+            {loading ? "…" : "🔄 بارگذاری دوباره"}
+          </button>
+          <button
+            onClick={onSync}
+            disabled={syncing || !data?.config.enabled}
+            className={btnOk}
+            title="همه‌ی usernameهای فعال رو دوباره push کن"
+          >
+            {syncing ? "Sync…" : "🔁 Sync همه"}
+          </button>
+        </div>
       </Card>
 
-      <Card className="!p-3">
+      <Section
+        icon="📋"
+        title="اشتراک‌ها"
+        summary={data ? `${fa(data.subscriptions.length)} اشتراک` : "در حال بارگذاری…"}
+        defaultOpen
+      >
+        {!data || data.subscriptions.length === 0 ? (
+          <EmptyState icon="📋" title="هنوز اشتراکی نیست" hint="وقتی owner یه اکانت اضافه می‌کنه اینجا میاد." />
+        ) : (
+          <div className="-mx-4 -mb-4">
+            {data.subscriptions.map((s) => {
+              const pushOk = s.lastStatus && s.lastStatus >= 200 && s.lastStatus < 300;
+              return (
+                <div
+                  key={s.username}
+                  className={`min-h-16 px-4 py-2.5 border-t first:border-t-0 border-[var(--color-border)] ${s.unregisteredAt ? "opacity-50" : ""}`}
+                >
+                  <div className="flex items-center justify-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium [overflow-wrap:anywhere]" dir="ltr">
+                      @{s.username}
+                    </span>
+                    {s.unregisteredAt ? (
+                      <Badge tone="neutral">لغو‌شده</Badge>
+                    ) : pushOk ? (
+                      <Badge tone="success">{s.lastStatus}</Badge>
+                    ) : s.lastStatus ? (
+                      <Badge tone="danger">{s.lastStatus}</Badge>
+                    ) : (
+                      <Badge tone="info">در انتظار</Badge>
+                    )}
+                  </div>
+                  <div className="mt-0.5 text-xs text-[var(--color-text-dim)]">
+                    notify‌شده ×{fa(s.notifyCount)}
+                    {s.lastNotifiedAt && ` · آخرین notify: ${new Date(s.lastNotifiedAt).toLocaleString()}`}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Section>
+
+      <Section
+        icon="⚙️"
+        title="پیکربندی اتصال"
+        summary={data ? (data.config.enabled ? "فعال" : "غیرفعال") : "Base URL و secret"}
+      >
         <ExternalConfigForm
           initial={{
             enabled: data?.config.enabled ?? false,
@@ -1361,88 +1322,40 @@ function ExternalMonitorPanel(props: {
           }}
           onSaved={onReload}
         />
-      </Card>
+      </Section>
 
-      <Card className="!p-3">
-        <div className="text-xs font-medium mb-2">📋 اشتراک‌ها</div>
-        {!data || data.subscriptions.length === 0 ? (
-          <div className="text-[11px] text-[var(--color-text-dim)]">
-            خالی. وقتی owner یه اکانت اضافه می‌کنه اینجا میاد.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-0.5">
-            {data.subscriptions.map((s) => {
-              const pushOk = s.lastStatus && s.lastStatus >= 200 && s.lastStatus < 300;
-              return (
-                <div
-                  key={s.username}
-                  className={`text-[11px] flex items-center gap-2 p-1.5 rounded-md border ${
-                    s.unregisteredAt
-                      ? "border-[var(--color-border)] opacity-50"
-                      : "border-[var(--color-border)]"
-                  } flex-wrap`}
-                >
-                  <span className="font-medium" dir="ltr">
-                    @{s.username}
-                  </span>
-                  {s.unregisteredAt ? (
-                    <Badge tone="neutral">لغو‌شده</Badge>
-                  ) : pushOk ? (
-                    <Badge tone="success">{s.lastStatus}</Badge>
-                  ) : s.lastStatus ? (
-                    <Badge tone="danger">{s.lastStatus}</Badge>
-                  ) : (
-                    <Badge tone="info">در انتظار</Badge>
-                  )}
-                  <span className="text-[10px] text-[var(--color-text-dim)]">
-                    notify‌شده ×{s.notifyCount}
-                  </span>
-                  <div className="flex-1" />
-                  {s.lastNotifiedAt && (
-                    <span className="text-[9px] text-[var(--color-text-dim)]">
-                      آخرین notify: {new Date(s.lastNotifiedAt).toLocaleString()}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-
-      <Card className="!p-3">
-        <div className="text-xs font-medium mb-1">📄 Docs برای سرویس خارجی</div>
-        <p className="text-[11px] text-[var(--color-text-dim)] mb-2">
+      <Section icon="📄" title="Docs برای سرویس خارجی" summary="contract، HMAC و endpointها">
+        <p className="text-xs leading-7 text-[var(--color-text-dim)] mb-2">
           contract کامل (endpointها، HMAC، نمونه‌ی پایتون) توی repo:
-          <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)] font-mono text-[10px]" dir="ltr">
+          <code className={code} dir="ltr">
             docs/EXTERNAL_MONITOR_API.md
           </code>
         </p>
-        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
+        <p className="text-xs text-[var(--color-text-dim)] mb-2">
           سرویس خارجی این چیزا رو باید بدونه:
         </p>
-        <ul className="text-[10px] text-[var(--color-text-dim)] list-disc list-inside space-y-0.5">
+        <ul className="text-xs leading-8 text-[var(--color-text-dim)] list-none space-y-1">
           <li>
             URL ما برای notify:
-            <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)] font-mono" dir="ltr">
+            <code className={code} dir="ltr">
               POST /api/monitored/notify
             </code>
           </li>
           <li>
             Health endpoint ما (بدون auth):
-            <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)] font-mono" dir="ltr">
+            <code className={code} dir="ltr">
               GET /api/monitored/notify/health
             </code>
           </li>
           <li>
             Header امضا:
-            <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)] font-mono" dir="ltr">
+            <code className={code} dir="ltr">
               X-Signature: hex(HMAC_SHA256(body, secret))
             </code>
           </li>
           <li>سرویس خارجی باید endpointهای <code dir="ltr">POST /accounts</code>, <code dir="ltr">DELETE /accounts/&lt;username&gt;</code>, <code dir="ltr">GET /health</code> رو expose کنه.</li>
         </ul>
-      </Card>
+      </Section>
     </div>
   );
 }
@@ -1492,66 +1405,51 @@ function ExternalConfigForm(props: {
   }
 
   return (
-    <>
-      <div className="text-xs font-medium mb-2">⚙️ پیکربندی</div>
-      <div className="flex flex-col gap-2 text-sm">
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-          />
-          <span>
-            🔌 اتصال فعال
-            <span className="text-[10px] text-[var(--color-text-dim)] mr-2">
-              (خاموش شه ربات نه register می‌فرسته نه notify قبول می‌کنه)
-            </span>
-          </span>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] text-[var(--color-text-dim)]">
-            🌐 Base URL سرویس خارجی
-          </span>
-          <input
-            dir="ltr"
-            type="text"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="http://144.126.199.205:8080"
-            className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 font-mono text-xs"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] text-[var(--color-text-dim)]">
+    <div className="flex flex-col gap-3">
+      <SwitchRow
+        label="🔌 اتصال فعال"
+        hint="خاموش شه ربات نه register می‌فرسته نه notify قبول می‌کنه"
+        checked={enabled}
+        onChange={setEnabled}
+      />
+      <FieldBox label="🌐 Base URL سرویس خارجی">
+        <input
+          dir="ltr"
+          type="text"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder="http://144.126.199.205:8080"
+          className={`${field} font-mono`}
+        />
+      </FieldBox>
+      <FieldBox
+        label={
+          <>
             🔑 Shared HMAC secret
-            <span className="text-[9px] mr-2">
+            <span className="block text-xs text-[var(--color-text-dim)]">
               {initial.secretConfigured
                 ? "(در حال حاضر ست شده — برای rotate کن وارد کن)"
                 : "(هنوز ست نشده)"}
             </span>
-          </span>
-          <input
-            dir="ltr"
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder={
-              initial.secretConfigured ? "********" : "hex 64 chars"
-            }
-            className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5 font-mono text-xs"
-          />
-        </label>
-        <div className="flex items-center gap-2 mt-1">
-          <button
-            onClick={save}
-            disabled={saving}
-            className="text-xs px-4 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-          >
-            {saving ? "ذخیره…" : "💾 ذخیره"}
-          </button>
-          {msg && <span className="text-[11px]">{msg}</span>}
-        </div>
+          </>
+        }
+      >
+        <input
+          dir="ltr"
+          type="password"
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+          autoComplete="off"
+          placeholder={initial.secretConfigured ? "********" : "hex 64 chars"}
+          className={`${field} font-mono`}
+        />
+      </FieldBox>
+      {msg && <p role="status" className="text-sm">{msg}</p>}
+      <div>
+        <button onClick={save} disabled={saving} className={btnPrimary}>
+          {saving ? "ذخیره…" : "💾 ذخیره"}
+        </button>
       </div>
-    </>
+    </div>
   );
 }
