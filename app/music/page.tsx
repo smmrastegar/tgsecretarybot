@@ -115,6 +115,20 @@ export default function MusicPage() {
     const r = await fetch("/api/music/verify", { cache: "no-store" });
     if (r.ok) setVerify((await r.json()) as { counts: Record<string, number>; suspicious: Sus[] });
   }, []);
+  // per-track feedback for the "fix" buttons: "busy" while the request runs, then a confirmation line that stays on the row
+  const [fixState, setFixState] = useState<Record<number, string>>({});
+  async function fixTrack(trackId: number, via?: "spotsaver") {
+    if (!via && !confirm("از ربات تلگرام دوباره دانلود شود؟")) return;
+    setFixState((m) => ({ ...m, [trackId]: "busy" }));
+    try {
+      const r = await fetch(`/api/music/${trackId}${via ? "?via=spotsaver" : ""}`, { method: "POST" });
+      if (!r.ok) throw new Error(String(r.status));
+      setFixState((m) => ({ ...m, [trackId]: via ? "✓ در صف SpotSaver؛ تا یکی دو دقیقه دیگر جایگزین می‌شود" : "✓ در صف دانلود از ربات" }));
+      void load();
+    } catch {
+      setFixState((m) => ({ ...m, [trackId]: "✗ انجام نشد؛ دوباره امتحان کن" }));
+    }
+  }
   useEffect(() => { void loadVerify(); const i = window.setInterval(() => void loadVerify(), 60_000); return () => window.clearInterval(i); }, [loadVerify]);
   const loadReports = useCallback(async () => {
     const r = await fetch("/api/music/reports?status=open", { cache: "no-store" });
@@ -408,8 +422,15 @@ export default function MusicPage() {
                 <div key={s.trackId} className="rounded-lg border border-[var(--color-border)] p-3 text-xs flex flex-wrap items-center gap-2">
                   <span className="font-medium text-sm" dir="ltr">{s.title} — {s.artist}</span>
                   <span className={`px-2 py-0.5 rounded-full ${s.status === "mismatch" ? "bg-rose-500/15 text-rose-300" : "bg-amber-500/15 text-amber-200"}`}>{s.status === "mismatch" ? "فایل اشتباه" : "نامطمئن"} · {s.score != null ? s.score.toFixed(2) : "—"}{s.fixes > 0 ? " · یک بار اصلاح شده" : ""}</span>
-                  <button onClick={async () => { await fetch(`/api/music/${s.trackId}?via=spotsaver`, { method: "POST" }); setMsg("در صف SpotSaver؛ تا یکی دو دقیقه دیگر"); void loadVerify(); }} className="px-3 py-1 rounded-md border border-[var(--color-border)]">↻ از SpotSaver</button>
-                  <button onClick={async () => { if (!confirm("از ربات تلگرام دوباره دانلود شود؟")) return; await fetch(`/api/music/${s.trackId}`, { method: "POST" }); void load(); void loadVerify(); }} className="px-3 py-1 rounded-md border border-[var(--color-border)]">↻ از ربات</button>
+                  {(() => {
+                    const st = fixState[s.trackId];
+                    const busy = st === "busy";
+                    return (<>
+                      <button disabled={busy} onClick={() => void fixTrack(s.trackId, "spotsaver")} className="px-3 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-50">{busy ? "…" : "↻ از SpotSaver"}</button>
+                      <button disabled={busy} onClick={() => void fixTrack(s.trackId)} className="px-3 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-50">{busy ? "…" : "↻ از ربات"}</button>
+                      {st && !busy && <span className={`basis-full text-xs ${st.startsWith("✗") ? "text-rose-300" : "text-emerald-300"}`}>{st}</span>}
+                    </>);
+                  })()}
                 </div>
               ))}
             </div>

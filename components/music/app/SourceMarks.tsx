@@ -32,3 +32,21 @@ export function TitleLine({ title, ids, className = "", size }: { title: ReactNo
     </span>
   );
 }
+
+/** Roomy places (full-screen player, song details): each account as a small pill with its FULL name, wrapping onto as many lines as needed. */
+export function SourceChips({ ids }: { ids?: number[] }) {
+  const accounts = useContext(AccountsCtx);
+  if (!ids?.length || accounts.length === 0) return null;
+  const mine = accounts.filter((a) => ids.includes(a.id));
+  if (mine.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5" dir="ltr" aria-label="Spotify accounts that have this song">
+      {mine.map((a) => (
+        <span key={a.id} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-current py-0.5 pl-1 pr-2.5 text-[12px] leading-4 opacity-60">
+          <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-current/20 text-[9px] font-bold">{(a.name.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "?").toUpperCase()}</span>
+          <span className="break-words">{a.name}</span>
+        </span>
+      ))}
+    </div>
+  );
+}

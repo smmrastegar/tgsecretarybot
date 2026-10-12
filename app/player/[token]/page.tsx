@@ -2,7 +2,8 @@
 
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
-import { AccountsCtx, TitleLine } from "@/components/music/app/SourceMarks";
+import Marquee from "@/components/music/app/Marquee";
+import { AccountsCtx, SourceChips, SourceMarks } from "@/components/music/app/SourceMarks";
 import dynamic from "next/dynamic";
 import { loadLyrics, removeLyrics, saveLyrics } from "@/components/music/app/lyricsCache";
 import BackLayer from "@/components/music/app/BackLayer";
@@ -299,10 +300,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     };
   };
   const chipsFor = (id: number): string[] => {
-    const from = (byId.get(id)?.sources ?? []).map((sid) => accounts.find((a) => a.id === sid)?.name).filter((n): n is string => !!n).map((n) => `From ${n}`);
-    const d = vibeData.tracks[id]; if (!d) return from;
+    const d = vibeData.tracks[id]; if (!d) return [];
     const vibe = vibeData.vibes.find((v) => v.key === d.vibe)?.name;
-    return [...from, `${d.bpm} BPM`, `${d.key} ${d.mode}`, d.energy < 0.35 ? "Low energy" : d.energy > 0.6 ? "High energy" : "Medium energy", d.brightness > 0.4 ? "Bright" : d.brightness < 0.2 ? "Warm" : "Balanced", ...(vibe ? [vibe] : []), ...moodChips(d.moods), ...d.genres.slice(0, 3).map((g) => g.split(" / ").map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase())).join(" / "))];
+    return [`${d.bpm} BPM`, `${d.key} ${d.mode}`, d.energy < 0.35 ? "Low energy" : d.energy > 0.6 ? "High energy" : "Medium energy", d.brightness > 0.4 ? "Bright" : d.brightness < 0.2 ? "Warm" : "Balanced", ...(vibe ? [vibe] : []), ...moodChips(d.moods), ...d.genres.slice(0, 3).map((g) => g.split(" / ").map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase())).join(" / "))];
   };
   const requestDownload = (ids: number[], label: string) => {
     const todo = ids.filter((id) => !offline.has(id));
@@ -521,7 +521,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           <div className="flex items-center gap-3 p-2">
             <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-left" aria-label="Open player">
               <Cover t={now} tq={tq} size={44} radius={8} />
-              <span className="min-w-0"><span className="block text-[14px] font-semibold"><TitleLine title={now.title} ids={now.sources} /></span><span className="block text-xs text-[var(--dim)] truncate">{now.artist}</span></span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5 min-w-0"><Marquee className="text-[14px] font-semibold min-w-0 flex-1">{now.title}</Marquee><SourceMarks ids={now.sources} /></span>
+                <Marquee className="text-xs text-[var(--dim)]">{now.artist}</Marquee>
+              </span>
             </button>
             <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={22} filled={now.rating > 0} /></button>
             <button onClick={toggle} className="w-10 h-10 grid place-items-center" aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={28} /> : <PlayIcon size={28} />}</button>
@@ -562,8 +565,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
             <div className="mt-2 flex items-center gap-3 shrink-0">
               <div className="min-w-0 flex-1">
-                <div className="text-[20px] font-bold leading-tight"><TitleLine title={now.title} ids={now.sources} size="md" /></div>
-                <button onClick={() => { setFull(false); setStack((s) => [...s, { kind: "artist", key: artistsOf(now)[0]!, title: artistsOf(now)[0]! }]); setTab("library"); }} className="block text-[15px] text-[var(--dim)] truncate max-w-full text-left">{now.artist}</button>
+                <div className="text-[20px] font-bold leading-tight break-words" style={{ textWrap: "balance" }}>{now.title}</div>
+                <button onClick={() => { setFull(false); setStack((s) => [...s, { kind: "artist", key: artistsOf(now)[0]!, title: artistsOf(now)[0]! }]); setTab("library"); }} className="block text-[15px] text-[var(--dim)] max-w-full break-words text-left">{now.artist}</button>
+                <SourceChips ids={now.sources} />
               </div>
               <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={28} filled={now.rating > 0} /></button>
               <button onClick={() => rate(now, -1)} className={`p-2 ${now.rating < 0 ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={24} filled={now.rating < 0} /></button>

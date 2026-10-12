@@ -3,7 +3,7 @@
 import { AccountsCtx, TitleLine } from "./SourceMarks";
 import { memo, useContext, useMemo, useState } from "react";
 import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, SearchIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
-import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, PlayAllButton, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
+import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
 
 // Everything the views need from the player engine.
 export type Api = {
@@ -307,34 +307,45 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
   }, [page, c, api.vibes, api.byId]);
   const ids = list.map((t) => t.id);
   const vb = page.kind === "vibe" ? api.vibes.find((v) => v.key === page.key) : null;
-  const sub = vb ? `Vibe · ~${vb.bpm} BPM${vb.genres[0] ? ` · ${vb.genres[0]}` : ""}` : page.kind === "artist" ? "Artist" : page.kind === "album" ? `Album · ${list[0] ? artistsOf(list[0])[0] : ""}` : "Playlist";
+    const totalS = list.reduce((n, t) => n + (t.durationS ?? 0), 0);
+  const mins = Math.round(totalS / 60);
+  const length = totalS ? (mins >= 60 ? `${Math.floor(mins / 60)} hr ${mins % 60} min` : `${mins} min`) : null;
+  const year = (list.map((t) => (t.releaseDate ?? "").slice(0, 4)).filter((y) => /^\d{4}$/.test(y)).sort().pop()) ?? null;
+  const kindLabel = vb ? "Vibe" : page.kind === "artist" ? "Artist" : page.kind === "album" ? "Album" : page.kind === "liked" ? "Playlist" : "Playlist";
+  const byline = page.kind === "album" && list[0] ? artistsOf(list[0])[0] : page.kind === "artist" ? null : "Your library";
+  const meta = [kindLabel, year, `${list.length} ${list.length === 1 ? "song" : "songs"}`, length].filter(Boolean).join(" • ");
+  const left = ids.filter((id) => !api.offline.has(id)).length;
+  const allDown = left === 0 && ids.length > 0;
+  const iconBtn = "w-11 h-11 grid place-items-center rounded-full text-[var(--dim2)] active:scale-95 transition";
   return (
     <div>
-      <div className="flex flex-col items-center text-center pt-2">
-        <div className={`w-52 h-52 overflow-hidden shadow-2xl ${page.kind === "artist" ? "rounded-full" : "rounded-2xl"}`}>
-          {page.kind === "liked" ? <span className="grid place-items-center w-full h-full bg-gradient-to-br from-rose-500 to-fuchsia-700 text-white"><HeartIcon size={64} filled /></span>
+      {/* Spotify-style header: a tinted wash from the artwork colour, the cover centred, everything else left-aligned */}
+      <div className="-mx-4 -mt-1 px-4 pt-4 pb-1" style={{ background: "linear-gradient(to bottom, rgba(var(--ac), .38), rgba(var(--ac), .10) 70%, transparent)" }}>
+        <div className="mx-auto w-[min(68vw,18rem)] aspect-square overflow-hidden shadow-2xl" style={{ borderRadius: page.kind === "artist" ? "9999px" : "6px" }}>
+          {page.kind === "liked" ? <span className="grid place-items-center w-full h-full bg-gradient-to-br from-rose-500 to-fuchsia-700 text-white"><HeartIcon size={72} filled /></span>
             : page.kind === "playlist" || page.kind === "top" || page.kind === "recent" || page.kind === "vibe" ? <Mosaic tracks={list} tq={api.tq} size="100%" radius={0} />
             : list[0] ? <Cover t={list[0]} tq={api.tq} size="100%" radius={0} /> : null}
         </div>
-        <h2 className="text-[28px] font-extrabold tracking-tight mt-5 leading-tight">{page.title}</h2>
-        <div className="text-[14px] text-[var(--dim)] mt-1">{sub} · {list.length} {list.length === 1 ? "song" : "songs"}</div>
-        <div className="flex items-center justify-center gap-2.5 mt-5 flex-wrap">
-          <PlayAllButton onClick={() => list[0] && api.play(ids, ids[0])} />
-          <button onClick={() => api.play(ids, undefined, true)} className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[var(--s2)] font-semibold text-[15px] active:scale-95 transition"><ShuffleIcon size={18} /> Shuffle</button>
-          <button onClick={() => void shareText(page.title, [`${page.title} — ${list.length} songs`, "", ...list.slice(0, 50).flatMap((t) => [...trackShareLines(t, api.tq), ""])])} className="w-11 h-11 grid place-items-center rounded-full bg-[var(--s2)] active:scale-95 transition" aria-label="Share"><ShareIcon size={18} /></button>
-          {(() => {
-            const left = ids.filter((id) => !api.offline.has(id)).length;
-            const all = left === 0 && ids.length > 0;
-            return (
-              <button onClick={() => left > 0 && !api.dl && api.download(ids, page.title)} disabled={all || !!api.dl} aria-label={all ? "Downloaded for offline" : "Download for offline"}
-                className={`h-11 ${api.dl ? "px-4" : "w-11"} inline-flex items-center justify-center gap-1.5 rounded-full bg-[var(--s2)] text-[13px] font-semibold tabular-nums active:scale-95 transition ${all ? "text-[rgb(var(--ac))]" : ""}`}>
-                {api.dl ? `${api.dl.done}/${api.dl.total}` : all ? <CheckIcon size={18} /> : <DownloadIcon size={18} />}
-              </button>
-            );
-          })()}
+        <h2 className="mt-5 text-[26px] font-extrabold tracking-tight leading-[1.15] break-words" style={{ textWrap: "balance" }}>{page.title}</h2>
+        {byline && (
+          <div className="mt-2 flex items-center gap-2 text-[14px] font-semibold">
+            {list[0] && <span className="w-6 h-6 rounded-full overflow-hidden block shrink-0"><Cover t={list[0]} tq={api.tq} size="100%" radius={0} res={128} /></span>}
+            <span className="break-words min-w-0">{byline}</span>
+          </div>
+        )}
+        <div className="mt-1.5 text-[13px] text-[var(--dim)]">{meta}</div>
+        <div className="mt-3 flex items-center gap-1">
+          <button onClick={() => left > 0 && !api.dl && api.download(ids, page.title)} disabled={allDown || !!api.dl} aria-label={allDown ? "Downloaded for offline" : "Download for offline"}
+            className={`${iconBtn} ${api.dl ? "w-auto px-3 gap-1.5 text-[13px] font-semibold tabular-nums" : ""} ${allDown ? "text-[rgb(var(--ac))]" : ""}`}>
+            {api.dl ? `${api.dl.done}/${api.dl.total}` : allDown ? <CheckIcon size={22} /> : <DownloadIcon size={22} />}
+          </button>
+          <button onClick={() => void shareText(page.title, [`${page.title} — ${list.length} songs`, "", ...list.slice(0, 50).flatMap((t) => [...trackShareLines(t, api.tq), ""])])} className={iconBtn} aria-label="Share"><ShareIcon size={21} /></button>
+          <span className="flex-1" />
+          <button onClick={() => api.play(ids, undefined, true)} className={iconBtn} aria-label="Shuffle"><ShuffleIcon size={24} /></button>
+          <button onClick={() => list[0] && api.play(ids, ids[0])} disabled={!list[0]} aria-label="Play" className="w-14 h-14 grid place-items-center rounded-full bg-[rgb(var(--ac))] text-[var(--acfg)] shadow-lg active:scale-95 transition disabled:opacity-40"><PlayIcon size={26} /></button>
         </div>
       </div>
-      <div className="mt-6"><TrackList list={list} api={api} numbered={page.kind === "album"} /></div>
+      <div className="mt-3"><TrackList list={list} api={api} numbered={page.kind === "album"} /></div>
     </div>
   );
 }
