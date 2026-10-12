@@ -29,7 +29,9 @@ export async function getMcpTokenScope(
   const r = rows[0] as Record<string, unknown> | undefined;
   if (!r) return null;
   // Best-effort usage stamp; never block the call on it.
-  void sql()`UPDATE mcp_tokens SET last_used_at = NOW() WHERE id = ${Number(r.id)}`.catch(
+  // At most once every 5 minutes: it used to rewrite the row on every call (~140k updates in a few months).
+  void sql()`UPDATE mcp_tokens SET last_used_at = NOW() WHERE id = ${Number(r.id)}
+               AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '5 minutes')`.catch(
     () => {},
   );
   const parseIds = (v: unknown): number[] =>
@@ -136,7 +138,8 @@ export async function stampCodeFeedAccess(
   if (!hasDb()) return;
   await sql()`
     UPDATE code_feeds SET last_access_at = NOW(), last_access_ip = ${ip}
-     WHERE id = ${id}`;
+     WHERE id = ${id}
+       AND (last_access_at IS NULL OR last_access_at < NOW() - INTERVAL '5 minutes' OR last_access_ip IS DISTINCT FROM ${ip})`;
 }
 
 export async function upsertCodeFeed(args: {
