@@ -31,5 +31,5 @@ export default function Section({ icon, title, summary, badge, defaultOpen = fal
 
 export function Pill({ tone = "neutral", children }: { tone?: "neutral" | "ok" | "warn" | "bad"; children: ReactNode }) {
   const c = { neutral: "bg-[var(--color-surface-2)] text-[var(--color-text-dim)]", ok: "bg-emerald-500/15 text-emerald-300", warn: "bg-amber-500/15 text-amber-200", bad: "bg-rose-500/15 text-rose-300" }[tone];
-  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium tabular-nums ${c}`}>{children}</span>;
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium tabular-nums ${c}`}>{children}</span>;
 }
