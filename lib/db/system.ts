@@ -102,6 +102,19 @@ export type SystemErrorRow = {
 
 let logSystemErrorWriteCounter = 0;
 
+// The same failure repeating (a provider out of credit, a dead model id, a flapping upstream) used to write
+// thousands of identical rows a week and bury everything else. Identical errors (digits ignored) are written
+// once per 10 minutes; the row that follows says how many were held back.
+const DEDUPE_MS = 10 * 60_000;
+const recent = new Map<string, { at: number; held: number }>();
+// Provider/AI errors vary only in numbers (token counts, balances) → numbers ignored. Everything else (music
+// tracks, deploys…) keeps its exact text so errors about different things stay separate.
+const FUZZY_SOURCES = new Set(["classifier", "rules", "bot", "stt", "self-voice", "sms-router", "cron:daily-summary", "watchlist"]);
+function dedupeKey(source: string, level: string, message: string): string {
+  const m = FUZZY_SOURCES.has(source) ? message.replace(/\d+/g, "N") : message;
+  return `${source}|${level}|${m.slice(0, 200)}`;
+}
+
 export async function logSystemError(args: {
   source: string;
   message: string;
@@ -112,13 +125,20 @@ export async function logSystemError(args: {
 }): Promise<void> {
   if (!hasDb()) return;
   await ensureSchema();
+  const key = dedupeKey(args.source, args.level ?? "error", args.message);
+  const seen = recent.get(key);
+  if (seen && Date.now() - seen.at < DEDUPE_MS) { seen.held++; return; }
+  const held = seen?.held ?? 0;
+  recent.set(key, { at: Date.now(), held: 0 });
+  if (recent.size > 500) for (const [k, v] of recent) if (Date.now() - v.at > DEDUPE_MS) recent.delete(k);
+  const message = held > 0 ? `${args.message}\n(×${held} identical in the last 10 min were held back)` : args.message;
   try {
     await sql()`
       INSERT INTO system_errors (level, source, message, stack, scope, details)
       VALUES (
         ${args.level ?? "error"},
         ${args.source.slice(0, 120)},
-        ${args.message.slice(0, 4000)},
+        ${message.slice(0, 4000)},
         ${args.stack ? args.stack.slice(0, 8000) : null},
         ${args.scope ? args.scope.slice(0, 200) : null},
         ${JSON.stringify(args.details ?? null)}::jsonb

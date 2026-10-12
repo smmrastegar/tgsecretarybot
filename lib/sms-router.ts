@@ -8,6 +8,7 @@
 // function role, prepended with "☎️ +PHONE — Name" (or just
 // "☎️ +PHONE" when the lookup fails).
 
+import { noteOpenRouterStatus, openRouterGate } from "./openrouter-guard";
 import { InlineKeyboard, type Bot } from "grammy";
 import {
   findOwnerOfPhone,
@@ -110,6 +111,7 @@ Never explain.`;
   const userPrompt = `${args.kind.toUpperCase()} EXAMPLES:\n${list}\n\nNEW SMS:\n${args.body.slice(0, 1500)}`;
   for (const model of GATE_MODELS) {
     try {
+      await openRouterGate();
       const res = await fetchWithTimeout(
         "https://openrouter.ai/api/v1/chat/completions",
         {
@@ -127,6 +129,8 @@ Never explain.`;
         },
         GATE_TIMEOUT_MS,
       );
+      await noteOpenRouterStatus(res.status);
+      if (res.status === 402) break;
       if (!res.ok) continue;
       const json = (await res.json()) as {
         choices?: Array<{ message?: { content?: string } }>;
@@ -327,6 +331,7 @@ ${args.body.slice(0, 1500)}`;
   let usedModel = "";
   for (const model of GATE_MODELS) {
     try {
+      await openRouterGate();
       const res = await fetchWithTimeout(
         "https://openrouter.ai/api/v1/chat/completions",
         {
@@ -344,6 +349,8 @@ ${args.body.slice(0, 1500)}`;
         },
         GATE_TIMEOUT_MS,
       );
+      await noteOpenRouterStatus(res.status);
+      if (res.status === 402) break;
       if (!res.ok) continue;
       const json = (await res.json()) as {
         choices?: Array<{ message?: { content?: string } }>;

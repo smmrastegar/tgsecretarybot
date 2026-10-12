@@ -10,6 +10,7 @@
 // as JSON. Cheap (~$0.0001 with Gemini 2.0 Flash) and easy to
 // reason about.
 
+import { noteOpenRouterStatus, openRouterGate, OpenRouterCircuitOpen } from "./openrouter-guard";
 import {
   listRuleExamples,
   recordAiUsage,
@@ -91,6 +92,7 @@ async function callLlm(args: {
     if (args.jsonObject) body.response_format = { type: "json_object" };
     let res: Response;
     try {
+      await openRouterGate();
       res = await fetchWithTimeout(
         "https://openrouter.ai/api/v1/chat/completions",
         { method: "POST", headers, body: JSON.stringify(body) },
@@ -98,10 +100,13 @@ async function callLlm(args: {
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof OpenRouterCircuitOpen) { errors.push(`${model}: ${msg}`); break; }
       reportWarn("rules", `[rules] ${model} network: ${msg}`);
       errors.push(`${model}: ${msg}`);
       continue;
     }
+    await noteOpenRouterStatus(res.status);
+    if (res.status === 402) { errors.push(`${model}: 402 credits exhausted`); break; }
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
       reportWarn("rules", `[rules] ${model} HTTP ${res.status}: ${txt.slice(0, 200)}`);

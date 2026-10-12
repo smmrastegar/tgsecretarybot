@@ -1,3 +1,4 @@
+import { noteOpenRouterStatus, openRouterGate, OpenRouterCircuitOpen } from "./openrouter-guard";
 import { normalizeEvidence, type TaskEvidence } from "./evidence";
 import { config } from "./config";
 import { getSettings } from "./settings";
@@ -230,6 +231,7 @@ async function callOpenRouter(
 
     let res: Response;
     try {
+      await openRouterGate();
       res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers,
@@ -237,8 +239,11 @@ async function callOpenRouter(
       });
     } catch (err) {
       lastErr = err;
+      if (err instanceof OpenRouterCircuitOpen) break; // credit gone: no point trying the other models
       continue;
     }
+    await noteOpenRouterStatus(res.status);
+    if (res.status === 402) { lastErr = new Error(`OpenRouter 402 (${model}): credits exhausted`); break; }
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
       lastErr = new Error(`OpenRouter ${res.status} (${model}): ${txt.slice(0, 200)}`);

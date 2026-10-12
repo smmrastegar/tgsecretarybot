@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { config } from "./config";
 import { recordAiUsage } from "./db";
+import { noteOpenRouterStatus, openRouterGate } from "./openrouter-guard";
 
 import { reportError, reportWarn } from "./report";
 const OPENROUTER_STT_MODEL = "google/gemini-2.5-flash";
@@ -171,6 +172,7 @@ async function transcribeViaOpenRouter(
     max_tokens: 4000,
   };
 
+  await openRouterGate();
   const res = await fetchWithTimeout(
     "https://openrouter.ai/api/v1/chat/completions",
     {
@@ -185,6 +187,7 @@ async function transcribeViaOpenRouter(
     STT_API_TIMEOUT_MS,
   );
 
+  await noteOpenRouterStatus(res.status);
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
     throw new Error(`${res.status}: ${txt.slice(0, 400)}`);
