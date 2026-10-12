@@ -53,6 +53,10 @@ export async function deployStatus(logLines = 40): Promise<{
   services: Record<string, string>;
   caddyWildcardVhost: boolean;
   caddyfileReadable: boolean;
+  /** the Caddyfile has a block for chatbot.bz (and *.chatbot.bz) */
+  caddyServesChatbot: boolean;
+  /** NEXT_PUBLIC_APP_URL as this running process sees it (the deploy script mirrors deploy/public-url into .env) */
+  publicUrl: string;
   log: string;
 }> {
   const n = Math.min(Math.max(1, Math.trunc(logLines) || 40), 200);
@@ -83,6 +87,8 @@ export async function deployStatus(logLines = 40): Promise<{
     },
     caddyWildcardVhost: caddyfile.includes("managed:wildcard-vhost"),
     caddyfileReadable,
+    caddyServesChatbot: caddyfile.includes("chatbot.bz"),
+    publicUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
     log: await tail(DEPLOY_LOG, n),
   };
 }
