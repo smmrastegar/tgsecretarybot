@@ -23,7 +23,7 @@ Settings → 🌐 Site Monitor → new monitor:
 ### 2. Add the ingest secret to Vercel
 Vercel → Project → Settings → Environment Variables → redeploy:
 ```
-SITE_MONITOR_INGEST_SECRET=URdP6yxMpldBKpVbgymxK8Q73m-i7rxs
+SITE_MONITOR_INGEST_SECRET=<generate a long random value; never commit it>
 ```
 
 ### 3. Add GitHub repo Secrets
