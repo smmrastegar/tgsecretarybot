@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
+import { SourceMarks } from "@/components/music/app/SourceMarks";
 import { useEffect, useState } from "react";
 import { CloseIcon, HeartIcon, ThumbDownIcon } from "./Icons";
 
@@ -106,7 +107,7 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa",
           <div className="relative flex items-center gap-4">
             {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="w-24 h-24 shrink-0 rounded-2xl object-cover shadow-2xl ring-1 ring-white/10" /> : <div className="w-24 h-24 shrink-0 rounded-2xl bg-[var(--s2)]" />}
             <div className="min-w-0 flex-1">
-              <div className="text-xl font-extrabold leading-tight" style={{ textWrap: "balance" }}>{t.title ?? "—"}</div>
+              <div className="text-xl font-extrabold leading-tight" style={{ textWrap: "balance" }}>{t.title ?? "—"} <SourceMarks ids={(t as { sources?: number[] }).sources} size="md" /></div>
               <div className="mt-1 text-sm text-[var(--dim2)] truncate">{t.artist}</div>
               {chips && chips.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{chips.map((c) => <span key={c} className="px-2 py-0.5 rounded-full bg-[var(--s2)] text-[11px] font-medium text-[var(--dim2)] leading-4">{c}</span>)}</div>}
             </div>

@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
+import { AccountsCtx, TitleLine } from "@/components/music/app/SourceMarks";
 import dynamic from "next/dynamic";
 import { loadLyrics, removeLyrics, saveLyrics } from "@/components/music/app/lyricsCache";
 import BackLayer from "@/components/music/app/BackLayer";
@@ -436,7 +437,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     download: (ids: number[], label: string) => fns.current.download(ids, label),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, accounts, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, accounts, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
+  const api: Api = useMemo(() => ({ tq, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -462,6 +463,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const upNextCount = cur != null ? Math.max(0, queue.length - queue.indexOf(cur) - 1) : 0;
 
   return (
+    <AccountsCtx.Provider value={accounts}>
     <div dir="ltr" lang="en" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: 'var(--font-inter), -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', letterSpacing: "-0.011em", fontOpticalSizing: "auto", WebkitFontSmoothing: "antialiased" }} className="relative overflow-x-hidden">
       <style>{`
         html, body { overscroll-behavior: none; }
@@ -517,7 +519,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           <div className="flex items-center gap-3 p-2">
             <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-left" aria-label="Open player">
               <Cover t={now} tq={tq} size={44} radius={8} />
-              <span className="min-w-0"><span className="block text-[14px] font-semibold truncate">{now.title}</span><span className="block text-xs text-[var(--dim)] truncate">{now.artist}</span></span>
+              <span className="min-w-0"><span className="block text-[14px] font-semibold"><TitleLine title={now.title} ids={now.sources} /></span><span className="block text-xs text-[var(--dim)] truncate">{now.artist}</span></span>
             </button>
             <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={22} filled={now.rating > 0} /></button>
             <button onClick={toggle} className="w-10 h-10 grid place-items-center" aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={28} /> : <PlayIcon size={28} />}</button>
@@ -558,7 +560,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
             <div className="mt-2 flex items-center gap-3 shrink-0">
               <div className="min-w-0 flex-1">
-                <div className="text-[20px] font-bold leading-tight truncate">{now.title}</div>
+                <div className="text-[20px] font-bold leading-tight"><TitleLine title={now.title} ids={now.sources} size="md" /></div>
                 <button onClick={() => { setFull(false); setStack((s) => [...s, { kind: "artist", key: artistsOf(now)[0]!, title: artistsOf(now)[0]! }]); setTab("library"); }} className="block text-[15px] text-[var(--dim)] truncate max-w-full text-left">{now.artist}</button>
               </div>
               <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={28} filled={now.rating > 0} /></button>
@@ -624,6 +626,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark chips={chipsFor(detailId)} t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
       {toast && <div className="fixed left-1/2 -translate-x-1/2 z-[80] px-4 py-2 rounded-full text-sm bg-[rgb(var(--ac))] text-[var(--acfg)] shadow-lg" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))", animation: "fade .15s" }} role="status">{toast}</div>}
     </div>
+    </AccountsCtx.Provider>
   );
 }
 

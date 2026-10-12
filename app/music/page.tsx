@@ -487,10 +487,9 @@ export default function MusicPage() {
               {t.hasCover ? <img src={`/api/music/cover/${t.id}`} alt="" className="w-full h-full object-cover" /> : <span>🎵</span>}
             </button>
             <div className="min-w-0 flex-1 text-center">
-              <div className="text-sm font-medium truncate" dir="auto">{t.title ?? t.spotifyUrl.split("/").pop()}</div>
+              <div className="flex items-center justify-center gap-1.5 min-w-0 text-sm font-medium"><span className="truncate" dir="auto">{t.title ?? t.spotifyUrl.split("/").pop()}</span>{t.status === "ready" && <AccountMarks ids={t.sources} accounts={accounts} />}</div>
               <div className="text-[11px] text-[var(--color-text-dim)] truncate" dir="auto">
                 {t.status === "ready" && `${t.artist ?? ""}${t.album ? ` · ${t.album}` : ""}${t.durationS ? ` · ${fmt(t.durationS)}` : ""}${t.playCount ? ` · ▶ ${t.playCount}` : ""}${t.skipCount ? ` · ⏭ ${t.skipCount}` : ""}`}
-                {t.status === "ready" && <AccountMarks ids={t.sources} accounts={accounts} />}
                 {t.status === "queued" && "⏳ در صف دانلود"}
                 {t.status === "downloading" && "⬇️ در حال دانلود از بات…"}
                 {t.status === "failed" && <span className="text-rose-300">❌ {t.error ?? "ناموفق"}</span>}

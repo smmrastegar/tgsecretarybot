@@ -1,5 +1,6 @@
 "use client";
 
+import { TitleLine } from "./SourceMarks";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDownIcon, CheckIcon, SparkIcon, DownloadIcon, FlagIcon, ShareIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon } from "../Icons";
 import { Cover, type Track } from "./shared";
@@ -53,7 +54,7 @@ export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onA
     <Sheet onClose={onClose}>
       <div className="flex items-center gap-3 px-5 pb-3 border-b border-[var(--bd0)]">
         <Cover t={t} tq={tq} size={52} radius={8} />
-        <div className="min-w-0"><div className="font-semibold truncate">{t.title}</div><div className="text-sm text-[var(--dim)] truncate">{t.artist}</div></div>
+        <div className="min-w-0"><div className="font-semibold"><TitleLine title={t.title} ids={t.sources} size="md" /></div><div className="text-sm text-[var(--dim)] truncate">{t.artist}</div></div>
       </div>
       <Item icon={<SparkIcon size={22} />} label="Start radio (similar songs)" onClick={go(onRadio)} />
       {onSmart && <Item icon={<SparkIcon size={22} />} label="Smart playlist from this song…" onClick={go(onSmart)} />}
@@ -82,7 +83,7 @@ export function QueueSheet({ ids, byId, cur, tq, onClose, onPlay, onRemove, onMo
     <Sheet onClose={onClose} title="Queue">
       {now && (
         <div className="px-5 py-2"><div className="text-xs uppercase tracking-wide text-[var(--dim3)] mb-1">Now playing</div>
-          <div className="flex items-center gap-3"><Cover t={now} tq={tq} size={44} radius={8} /><div className="min-w-0"><div className="truncate font-medium">{now.title}</div><div className="text-xs text-[var(--dim)] truncate">{now.artist}</div></div></div></div>
+          <div className="flex items-center gap-3"><Cover t={now} tq={tq} size={44} radius={8} /><div className="min-w-0"><div className="font-medium"><TitleLine title={now.title} ids={now.sources} /></div><div className="text-xs text-[var(--dim)] truncate">{now.artist}</div></div></div></div>
       )}
       <div className="px-5 pt-2 pb-1 flex items-center justify-between"><span className="text-xs uppercase tracking-wide text-[var(--dim3)]">Up next · {upcoming.length}</span>
         {upcoming.length > 0 && <button onClick={() => { onClear(); }} className="text-xs text-[var(--dim)] underline">Clear</button>}</div>
@@ -91,7 +92,7 @@ export function QueueSheet({ ids, byId, cur, tq, onClose, onPlay, onRemove, onMo
         const t = byId.get(id); if (!t) return null;
         return (
           <div key={`${id}-${k}`} className="flex items-center gap-2 px-5 py-2 border-b border-[var(--bd0)]">
-            <button onClick={() => onPlay(id)} className="flex items-center gap-3 min-w-0 flex-1 text-left"><Cover t={t} tq={tq} size={44} radius={8} /><span className="min-w-0"><span className="block truncate text-[15px]">{t.title}</span><span className="block truncate text-xs text-[var(--dim)]">{t.artist}</span></span></button>
+            <button onClick={() => onPlay(id)} className="flex items-center gap-3 min-w-0 flex-1 text-left"><Cover t={t} tq={tq} size={44} radius={8} /><span className="min-w-0"><span className="block text-[15px]"><TitleLine title={t.title} ids={t.sources} /></span><span className="block truncate text-xs text-[var(--dim)]">{t.artist}</span></span></button>
             <button onClick={() => onMove(id, -1)} disabled={k === 0} className="p-2 text-[var(--dim)] disabled:opacity-25" aria-label="Move up"><ArrowUpIcon size={18} /></button>
             <button onClick={() => onMove(id, 1)} disabled={k === upcoming.length - 1} className="p-2 text-[var(--dim)] disabled:opacity-25" aria-label="Move down"><ArrowDownIcon size={18} /></button>
             <button onClick={() => onRemove(id)} className="p-2 text-[var(--dim)]" aria-label="Remove"><CloseIcon size={18} /></button>
@@ -261,7 +262,7 @@ export function SmartFromSongSheet({ t, d, tq, blocked, onClose, onCreated, onMe
   );
   return (
     <Sheet onClose={onClose} title="Smart playlist from this song">
-      <div className="px-5 pb-2 flex items-center gap-3"><Cover t={t} tq={tq} size={48} radius={8} /><div className="min-w-0"><div className="font-semibold truncate">{t.title}</div><div className="text-xs text-[var(--dim)] truncate">{t.artist}</div></div></div>
+      <div className="px-5 pb-2 flex items-center gap-3"><Cover t={t} tq={tq} size={48} radius={8} /><div className="min-w-0"><div className="font-semibold"><TitleLine title={t.title} ids={t.sources} /></div><div className="text-xs text-[var(--dim)] truncate">{t.artist}</div></div></div>
       {blocked ? (
         <div className="px-5 py-6 text-sm text-[var(--dim)] leading-6">This link isn&apos;t allowed to create playlists. Turn on “ساخت پلی‌لیست در پلیر” for this link in the dashboard (/music → player links).</div>
       ) : !d ? (

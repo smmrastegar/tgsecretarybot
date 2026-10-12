@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
+import { TitleLine } from "./SourceMarks";
 import { PlayIcon } from "../Icons";
 
 export type Track = {
@@ -79,11 +80,11 @@ export function Shelf({ children }: { children: React.ReactNode }) {
   return <div className="flex gap-3.5 overflow-x-auto -mx-4 px-4 pb-1 snap-x scroll-pl-4 [scrollbar-width:none]">{children}</div>;
 }
 
-export function Card({ cover, title, subtitle, onClick, round }: { cover: React.ReactNode; title: string; subtitle?: string; onClick: () => void; round?: boolean }) {
+export function Card({ cover, title, subtitle, onClick, round, ids }: { cover: React.ReactNode; title: string; subtitle?: string; onClick: () => void; round?: boolean; ids?: number[] }) {
   return (
     <button onClick={onClick} className="w-36 shrink-0 text-left snap-start active:scale-[.97] transition">
       <div className={`overflow-hidden shadow-lg ${round ? "rounded-full" : "rounded-xl"}`} style={{ width: 144, height: 144 }}>{cover}</div>
-      <div className="mt-2 text-[15px] font-semibold truncate">{title}</div>
+      <div className="mt-2 text-[15px] font-semibold"><TitleLine title={title} ids={ids} /></div>
       {subtitle && <div className="text-[13px] text-[var(--dim)] truncate">{subtitle}</div>}
     </button>
   );

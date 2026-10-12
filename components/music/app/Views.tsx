@@ -1,5 +1,6 @@
 "use client";
 
+import { TitleLine } from "./SourceMarks";
 import { memo, useMemo, useState } from "react";
 import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, SearchIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
 import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, PlayAllButton, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
@@ -7,8 +8,6 @@ import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, PlayAllButton
 // Everything the views need from the player engine.
 export type Api = {
   tq: string;
-  /** connected Spotify accounts (owner views only) — drives the tiny "who has this song" marks */
-  accounts: Array<{ id: number; name: string }>;
   tracks: Track[];
   playlists: Playlist[];
   byId: Map<number, Track>;
@@ -39,21 +38,6 @@ const albumKey = (t: Track) => `${t.album ?? "Single"}|${artistsOf(t)[0] ?? ""}`
 /* ---------- rows ---------- */
 
 type RowProps = { t: Track; api: Api; ids: number[]; index?: number };
-/** Tiny, dim initials of the Spotify account(s) a song came from; hover/long-press shows the full name. */
-export function SourceMarks({ ids, accounts }: { ids?: number[]; accounts: Array<{ id: number; name: string }> }) {
-  if (!ids?.length || accounts.length === 0) return null;
-  const clean = (n: string) => n.replace(/[^\p{L}\p{N}]/gu, "");
-  const mark = (n: string, len: number) => clean(n).slice(0, len).toUpperCase() || "?";
-  const mine = accounts.filter((a) => ids.includes(a.id));
-  if (mine.length === 0) return null;
-  const lab = (a: { name: string }) => mark(a.name, accounts.filter((x) => mark(x.name, 1) === mark(a.name, 1)).length > 1 ? 2 : 1);
-  return (
-    <span className="ml-1.5 inline-flex gap-0.5 align-middle">
-      {mine.map((a) => <span key={a.id} title={a.name} aria-label={`From ${a.name}`} className="text-[8px] leading-[10px] px-[3px] rounded-[3px] border border-current opacity-40">{lab(a)}</span>)}
-    </span>
-  );
-}
-
 function TrackRowImpl({ t, api, ids, index }: RowProps) {
   const active = api.cur === t.id;
   return (
@@ -65,8 +49,8 @@ function TrackRowImpl({ t, api, ids, index }: RowProps) {
           {active && index == null && <span className="absolute inset-0 grid place-items-center rounded-lg bg-black/50 text-white"><Eq on={api.playing} /></span>}
         </span>
         <span className="min-w-0">
-          <span className={`block text-[16px] leading-tight font-medium truncate ${active ? "underline decoration-2 underline-offset-4" : ""}`}>{t.title ?? "—"}</span>
-          <span className="block text-[13px] text-[var(--dim)] truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}<SourceMarks ids={t.sources} accounts={api.accounts} /></span>
+          <TitleLine title={t.title ?? "—"} ids={t.sources} className={`text-[16px] leading-tight font-medium ${active ? "underline decoration-2 underline-offset-4" : ""}`} />
+          <span className="block text-[13px] text-[var(--dim)] truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span>
         </span>
       </button>
       {t.rating > 0 && <HeartIcon size={16} filled className="text-rose-500 shrink-0" />}
@@ -146,8 +130,8 @@ export function HomeView({ api, c }: { api: Api; c: Collections }) {
         ))}
       </div>
       {api.loading && <Skeleton />}
-      {c.recent.length > 0 && (<><SectionTitle>Jump back in</SectionTitle><Shelf>{c.recent.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} subtitle={t.artist ?? ""} onClick={() => api.play(c.recent.map((x) => x.id), t.id)} />)}</Shelf></>)}
-      {c.top.length > 0 && (<><SectionTitle action={<button onClick={() => api.open({ kind: "top", key: "top", title: "Most played" })} className="text-sm text-[var(--dim)]">See all</button>}>Most played</SectionTitle><Shelf>{c.top.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} subtitle={`${t.playCount} plays`} onClick={() => api.play(c.top.map((x) => x.id), t.id)} />)}</Shelf></>)}
+      {c.recent.length > 0 && (<><SectionTitle>Jump back in</SectionTitle><Shelf>{c.recent.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} ids={t.sources} subtitle={t.artist ?? ""} onClick={() => api.play(c.recent.map((x) => x.id), t.id)} />)}</Shelf></>)}
+      {c.top.length > 0 && (<><SectionTitle action={<button onClick={() => api.open({ kind: "top", key: "top", title: "Most played" })} className="text-sm text-[var(--dim)]">See all</button>}>Most played</SectionTitle><Shelf>{c.top.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} ids={t.sources} subtitle={`${t.playCount} plays`} onClick={() => api.play(c.top.map((x) => x.id), t.id)} />)}</Shelf></>)}
       {c.lists.length > 0 && (<><SectionTitle>Your playlists</SectionTitle><Shelf>{c.lists.map(({ p, tracks }) => <Card key={p.id} cover={<Mosaic tracks={tracks} tq={api.tq} size={144} radius={0} />} title={p.name} subtitle={`${tracks.length} songs`} onClick={() => api.open({ kind: "playlist", key: String(p.id), title: p.name })} />)}</Shelf></>)}
       {api.vibes.length > 0 ? (
         <>
@@ -159,7 +143,7 @@ export function HomeView({ api, c }: { api: Api; c: Collections }) {
           {api.analysis.analyzed < api.analysis.ready && <div className="mt-2 text-[12px] text-[var(--dim3)]">Still listening to your library: {api.analysis.analyzed} of {api.analysis.ready} songs analysed.</div>}
         </>
       ) : api.analysis.ready > 0 && api.analysis.analyzed < api.analysis.ready && <div className="mt-6 text-[12px] text-[var(--dim3)]">Vibes appear once your library is analysed ({api.analysis.analyzed} of {api.analysis.ready} songs so far).</div>}
-      {c.added.length > 0 && (<><SectionTitle>Recently added</SectionTitle><Shelf>{c.added.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} subtitle={t.artist ?? ""} onClick={() => api.play(c.added.map((x) => x.id), t.id)} />)}</Shelf></>)}
+      {c.added.length > 0 && (<><SectionTitle>Recently added</SectionTitle><Shelf>{c.added.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} ids={t.sources} subtitle={t.artist ?? ""} onClick={() => api.play(c.added.map((x) => x.id), t.id)} />)}</Shelf></>)}
     </div>
   );
 }
@@ -211,7 +195,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
               {songs.map((t) => (
                 <button key={t.id} onClick={() => api.play(songs.map((x) => x.id), t.id)} className="text-left active:scale-[.97] transition" style={{ contentVisibility: "auto", containIntrinsicSize: "0 200px" }}>
                   <Cover t={t} tq={api.tq} size="100%" radius={12} className="aspect-square shadow-lg" res={320} />
-                  <div className="mt-2 text-[15px] font-semibold truncate">{t.title}</div>
+                  <div className="mt-2 text-[15px] font-semibold"><TitleLine title={t.title} ids={t.sources} /></div>
                   <div className="text-[13px] text-[var(--dim)] truncate">{t.artist}</div>
                 </button>
               ))}
