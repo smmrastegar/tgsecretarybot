@@ -33,9 +33,20 @@ const MHome = memo(HomeView), MLibrary = memo(LibraryView), MSearch = memo(Searc
 export default function PlayerPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
   const tq = `t=${encodeURIComponent(token)}`;
-  const [tracks, setTracks] = useState<Track[]>([]);
+  const [allTracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [accounts, setAccounts] = useState<Array<{ id: number; name: string }>>([]);
+  // Settings → "Songs from": a standing account filter for the whole player (every list, search, mixes), remembered on this phone.
+  const [scope, setScopeState] = useState<{ ids: number[]; mode: "any" | "all" }>({ ids: [], mode: "any" });
+  useEffect(() => {
+    try { const j = JSON.parse(localStorage.getItem("player.scope") || "null") as { ids?: unknown; mode?: unknown } | null; if (j && Array.isArray(j.ids)) setScopeState({ ids: j.ids.map(Number).filter(Number.isFinite), mode: j.mode === "all" ? "all" : "any" }); } catch { /* none */ }
+  }, []);
+  const setScope = useCallback((v: { ids: number[]; mode: "any" | "all" }) => { setScopeState(v); try { localStorage.setItem("player.scope", JSON.stringify(v)); } catch { /* private mode */ } }, []);
+  const tracks = useMemo(() => {
+    const want = scope.ids.filter((id) => accounts.some((a) => a.id === id)); // ignore accounts this link can't see any more
+    if (!want.length) return allTracks;
+    return allTracks.filter((t) => { const h = t.sources ?? []; return scope.mode === "all" ? want.every((a) => h.includes(a)) : want.some((a) => h.includes(a)); });
+  }, [allTracks, scope, accounts]);
   const [accPl, setAccPl] = useState<{ ids: number[]; mode: "any" | "all" } | null>(null);
   const saveAccountPlaylist = useCallback((ids: number[], mode: "any" | "all") => setAccPl({ ids, mode }), []);
   const [loading, setLoading] = useState(true);
@@ -619,7 +630,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {smartT && <BackLayer onClose={() => setSmartT(null)} />}
       {dlPlan && <DownloadSheet label={dlPlan.label} count={dlPlan.ids.length} bytes={dlPlan.bytes} onAllow={() => void startDownload(dlPlan.ids)} onClose={() => setDlPlan(null)} />}
       {dlPlan && <BackLayer onClose={() => setDlPlan(null)} />}
-      {settingsOpen && <SettingsSheet downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsSheet accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
       {settingsOpen && <BackLayer onClose={() => setSettingsOpen(false)} />}
       {dl && <div className="fixed left-3 right-3 z-[60] max-w-2xl mx-auto rounded-2xl glass border border-[var(--bd)] px-4 py-3 flex items-center gap-3" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))" }} role="status">
         <div className="min-w-0 flex-1"><div className="text-[13px] font-semibold">Downloading {dl.done} of {dl.total}</div><div className="mt-1.5 h-1 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full bg-[rgb(var(--ac))] transition-[width]" style={{ width: `${(dl.done / dl.total) * 100}%` }} /></div></div>

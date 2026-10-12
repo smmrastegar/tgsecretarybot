@@ -353,7 +353,8 @@ export function DownloadSheet({ label, count, bytes, onAllow, onClose }: { label
 }
 
 /** App settings: storage, visualizer, install, and "sign out" so a different link can be used. */
-export function SettingsSheet({ downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onRefresh, onSignOut, onClose }: {
+export function SettingsSheet({ accounts, scope, onScope, shown, total, downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onRefresh, onSignOut, onClose }: {
+  accounts: Array<{ id: number; name: string }>; scope: { ids: number[]; mode: "any" | "all" }; onScope: (v: { ids: number[]; mode: "any" | "all" }) => void; shown: number; total: number;
   downloaded: number; viz: boolean; onViz: () => void; installable: boolean; iosHint: boolean; onInstall: () => void;
   onRemoveDownloads: () => Promise<void>; onRefresh: () => Promise<void>; onSignOut: (removeDownloads: boolean) => void; onClose: () => void;
 }) {
@@ -371,6 +372,34 @@ export function SettingsSheet({ downloaded, viz, onViz, installable, iosHint, on
     <Sheet onClose={onClose} title="Settings">
       <Row label="Refresh player" sub="Reload the app and your whole library. Downloaded songs stay."
         right={<button disabled={refreshing} onClick={() => { setRefreshing(true); void onRefresh(); }} className={`${btn} disabled:opacity-60`}>{refreshing ? "Refreshing…" : "Refresh"}</button>} />
+      {accounts.length > 0 && (() => {
+        const ids = scope.ids.filter((id) => accounts.some((a) => a.id === id));
+        return (
+          <div className="px-5 py-3.5 border-b border-[var(--bd0)]">
+            <div className="text-[15px]">Songs from</div>
+            <div className="text-[12px] text-[var(--dim)] mt-0.5">{ids.length ? `Showing ${shown} of ${total} songs everywhere in the player.` : "Everything. Pick Spotify accounts to only see their songs in every list, search and mix."}</div>
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              {accounts.map((a) => {
+                const on = ids.includes(a.id);
+                const letter = (a.name.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "?").toUpperCase();
+                return (
+                  <button key={a.id} role="checkbox" aria-checked={on} onClick={() => onScope({ ...scope, ids: on ? ids.filter((x) => x !== a.id) : [...ids, a.id] })}
+                    className={`inline-flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full text-[13px] font-semibold transition ${on ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>
+                    <span className={`grid place-items-center w-5 h-5 rounded-full text-[10px] font-bold ${on ? "bg-[var(--bg)] text-[var(--fg)]" : "bg-[var(--s2)]"}`}>{letter}</span>
+                    <span className="max-w-[10rem] truncate">{a.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {ids.length > 0 && (
+              <div className="mt-2.5 flex items-center gap-3 text-[13px]">
+                {ids.length > 1 && <button onClick={() => onScope({ ...scope, mode: scope.mode === "any" ? "all" : "any" })} className="px-2.5 py-1 rounded-full text-[12px] font-semibold border border-[var(--bd)] text-[var(--dim2)]">{scope.mode === "any" ? "In any of them" : "In all of them"} ⇄</button>}
+                <button onClick={() => onScope({ ids: [], mode: "any" })} className="font-semibold text-[var(--dim2)]">Show everything</button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
       <Row label="Offline downloads" sub={`${downloaded} ${downloaded === 1 ? "song" : "songs"} on this phone${usage ? ` · app storage ${usage}` : ""}`}
         right={<button disabled={downloaded === 0} onClick={async () => { if (confirm("Remove every downloaded song from this phone?")) { await onRemoveDownloads(); refresh(); } }} className={`${btn} disabled:opacity-35`}>Remove all</button>} />
       <Row label="Spectrum on the cover" sub="Turn off to save battery" right={<button role="switch" aria-checked={viz} onClick={onViz} className={`shrink-0 w-[52px] h-8 rounded-full relative transition-colors ${viz ? "bg-[rgb(var(--ac))]" : "bg-[var(--s2)]"}`}><span className={`absolute top-1/2 -translate-y-1/2 left-1 w-6 h-6 rounded-full shadow transition-transform duration-200 ${viz ? "translate-x-5 bg-[var(--acfg)]" : "translate-x-0 bg-[var(--dim)]"}`} /></button>} />
