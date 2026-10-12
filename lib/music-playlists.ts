@@ -1,4 +1,4 @@
-import { listMusicPlaylists, listMusicTracks, sharedTrackIds, type MusicPlaylist, type MusicTrack } from "@/lib/db";
+import { listMusicPlaylists, listMusicTracks, listTrackSources, sharedTrackIds, type MusicPlaylist, type MusicTrack } from "@/lib/db";
 import { descriptors, similarTo, type Descriptor } from "@/lib/music-analysis";
 
 // Smart playlists: membership is computed from rules every time it is asked
@@ -16,6 +16,8 @@ export type SmartRules = {
   mode?: "major" | "minor";
   sharedByAll?: boolean;           // songs that every connected Spotify account has
   sharedByAny?: boolean;           // songs that at least two connected accounts have
+  accounts?: number[];             // Spotify account ids the song must come from …
+  accountsMode?: "any" | "all";    // … from any of them (default) or from all of them
   seed?: { trackId: number; n?: number }; // the n songs that sound most like this one
   limit?: number;
 };
@@ -36,6 +38,10 @@ export function sanitizeRules(raw: unknown): SmartRules {
   if (r.includeDisliked === true) out.includeDisliked = true;
   if (r.sharedByAll === true) out.sharedByAll = true;
   if (r.sharedByAny === true) out.sharedByAny = true;
+  if (Array.isArray(r.accounts)) {
+    const ids = [...new Set(r.accounts.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 20);
+    if (ids.length) { out.accounts = ids; out.accountsMode = r.accountsMode === "all" ? "all" : "any"; }
+  }
   if (strs(r.genres).length) out.genres = strs(r.genres);
   if (strs(r.artists).length) out.artists = strs(r.artists);
   if (r.moods && typeof r.moods === "object") {
@@ -76,6 +82,11 @@ function matches(t: MusicTrack, d: Descriptor | undefined, r: SmartRules): boole
 export async function resolveRules(rawRules: unknown, tracks?: MusicTrack[]): Promise<number[]> {
   const r = sanitizeRules(rawRules);
   let all = (tracks ?? (await listMusicTracks())).filter((t) => t.status === "ready");
+  if (r.accounts?.length) {
+    const src = await listTrackSources();
+    const want = r.accounts;
+    all = all.filter((t) => { const have = src.get(t.id) ?? []; return r.accountsMode === "all" ? want.every((a) => have.includes(a)) : want.some((a) => have.includes(a)); });
+  }
   if (r.sharedByAll || r.sharedByAny) { const shared = new Set(await sharedTrackIds(r.sharedByAll ? "all" : "any")); all = all.filter((t) => shared.has(t.id)); }
   const desc = await descriptors().catch(() => new Map<number, Descriptor>());
   let ids: number[];

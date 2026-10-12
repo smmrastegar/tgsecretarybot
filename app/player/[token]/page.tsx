@@ -15,7 +15,7 @@ import Spectrum from "@/components/music/Spectrum";
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { artistsOf, DetailView, type Desc, type Vibe, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
-import { DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, TrackMenu } from "@/components/music/app/Sheets";
+import { AccountPlaylistSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, TrackMenu } from "@/components/music/app/Sheets";
 
 // Private personal player. The URL's 256-bit token is the credential.
 type Tab = "home" | "search" | "library" | "stats";
@@ -35,6 +35,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [accounts, setAccounts] = useState<Array<{ id: number; name: string }>>([]);
+  const [accPl, setAccPl] = useState<{ ids: number[]; mode: "any" | "all" } | null>(null);
+  const saveAccountPlaylist = useCallback((ids: number[], mode: "any" | "all") => setAccPl({ ids, mode }), []);
   const [loading, setLoading] = useState(true);
   const [denied, setDenied] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
@@ -437,7 +439,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     download: (ids: number[], label: string) => fns.current.download(ids, label),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
+  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, saveAccountPlaylist, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -606,6 +608,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {sheet === "sleep" && <OptionSheet title="Sleep timer" options={SLEEP} value={sleepMin} onPick={(v) => { setSleepMin(v); if (v === 0) sleepEnd.current = 0; }} onClose={() => setSheet(null)} />}
       {sheet === "speed" && <OptionSheet title="Playback speed" options={SPEEDS} value={speed} onPick={setSpeed} onClose={() => setSheet(null)} />}
       {reportT && <ReportSheet t={reportT} tq={tq} context={reportContext} onClose={() => setReportT(null)} onDone={flash} />}
+      {accPl && <AccountPlaylistSheet ids={accPl.ids} mode={accPl.mode} tq={tq} accounts={accounts} blocked={!vibeData.canCreate} onClose={() => setAccPl(null)} onMessage={flash}
+        onCreated={(id, name) => { flash("Playlist saved"); void load().then(() => setStack((st) => [...st, { kind: "playlist", key: String(id), title: name }])); }} />}
       {smartT && <SmartFromSongSheet blocked={!vibeData.canCreate} t={smartT} d={vibeData.tracks[smartT.id]} tq={tq} onClose={() => setSmartT(null)} onMessage={flash}
         onCreated={(id, name) => { flash("Smart playlist created"); void load().then(() => setStack((s) => [...s, { kind: "playlist", key: String(id), title: name }])); }} />}
       {smartT && <BackLayer onClose={() => setSmartT(null)} />}

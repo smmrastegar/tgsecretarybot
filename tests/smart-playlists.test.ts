@@ -41,4 +41,11 @@ describe("smart playlists", () => {
     expect(sanitizeRules({ sharedByAll: "yes" })).toEqual({});
     expect(sanitizeRules({ sharedByAny: true })).toEqual({ sharedByAny: true });
   });
+
+  it("keeps account filters (ids only) with an any/all mode", async () => {
+    const { sanitizeRules } = await import("@/lib/music-playlists");
+    expect(sanitizeRules({ accounts: [1, "3", 3, -2, "x"], accountsMode: "all" })).toEqual({ accounts: [1, 3], accountsMode: "all" });
+    expect(sanitizeRules({ accounts: [2] })).toEqual({ accounts: [2], accountsMode: "any" });
+    expect(sanitizeRules({ accounts: [], accountsMode: "all" })).toEqual({});
+  });
 });

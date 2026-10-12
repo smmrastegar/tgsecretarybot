@@ -1,13 +1,17 @@
 "use client";
 
-import { TitleLine } from "./SourceMarks";
-import { memo, useMemo, useState } from "react";
+import { AccountsCtx, TitleLine } from "./SourceMarks";
+import { memo, useContext, useMemo, useState } from "react";
 import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, SearchIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
 import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, PlayAllButton, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
 
 // Everything the views need from the player engine.
 export type Api = {
   tq: string;
+  /** can this link create playlists (dashboard switch) */
+  canCreate: boolean;
+  /** open the "save this account filter as a playlist" sheet */
+  saveAccountPlaylist: (ids: number[], mode: "any" | "all") => void;
   tracks: Track[];
   playlists: Playlist[];
   byId: Map<number, Track>;
@@ -158,8 +162,13 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
   const [sort, setSort] = useState<Sort>("recent");
   const [grid, setGrid] = useState(false);
   const [likedOnly, setLikedOnly] = useState(false);
+  // Filter by the Spotify account(s) a song came from: songs from ANY of the chosen accounts, or from ALL of them.
+  const accounts = useContext(AccountsCtx);
+  const [accSel, setAccSel] = useState<number[]>([]);
+  const [accMode, setAccMode] = useState<"any" | "all">("any");
   const songs = useMemo(() => {
-    const base = likedOnly ? c.liked : c.ready;
+    let base = likedOnly ? c.liked : c.ready;
+    if (accSel.length) base = base.filter((t) => { const h = t.sources ?? []; return accMode === "all" ? accSel.every((a) => h.includes(a)) : accSel.some((a) => h.includes(a)); });
     const cmp: Record<Sort, (a: Track, b: Track) => number> = {
       recent: (a, b) => ts(b.readyAt ?? b.createdAt) - ts(a.readyAt ?? a.createdAt),
       az: (a, b) => (a.title ?? "").localeCompare(b.title ?? ""),
@@ -167,7 +176,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
       artist: (a, b) => (a.artist ?? "").localeCompare(b.artist ?? "") || (a.title ?? "").localeCompare(b.title ?? ""),
     };
     return [...base].sort(cmp[sort]);
-  }, [c, sort, likedOnly]);
+  }, [c, sort, likedOnly, accSel, accMode]);
   const artists = useMemo(() => [...c.artists.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])), [c.artists]);
   const albums = useMemo(() => [...c.albums.entries()].sort((a, b) => a[0].localeCompare(b[0])), [c.albums]);
   const segBtn = (k: typeof seg, label: string) => (
@@ -190,6 +199,40 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
             <button onClick={() => api.play(songs.map((t) => t.id), undefined, true)} className="p-2 text-[var(--dim2)]" aria-label="Shuffle"><ShuffleIcon size={22} /></button>
             <button onClick={() => setGrid((g) => !g)} className="p-2 text-[var(--dim2)]" aria-label={grid ? "List view" : "Grid view"}>{grid ? <ListIcon size={22} /> : <GridIcon size={22} />}</button>
           </div>
+          {accounts.length > 0 && (
+            <div className="mt-3">
+              <div className="flex items-center gap-2 overflow-x-auto -mx-4 px-4 [scrollbar-width:none]">
+                {accounts.map((a) => {
+                  const on = accSel.includes(a.id);
+                  const letter = (a.name.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "?").toUpperCase();
+                  return (
+                    <button key={a.id} onClick={() => setAccSel((s) => (on ? s.filter((x) => x !== a.id) : [...s, a.id]))} role="checkbox" aria-checked={on}
+                      className={`shrink-0 inline-flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full text-[13px] font-semibold transition ${on ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>
+                      <span className={`grid place-items-center w-5 h-5 rounded-full text-[10px] font-bold ${on ? "bg-[var(--bg)] text-[var(--fg)]" : "bg-[var(--s2)]"}`}>{letter}</span>
+                      <span className="max-w-[9rem] truncate">{a.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {accSel.length > 0 && (
+                <div className="mt-2 flex items-center justify-between text-[13px] text-[var(--dim)]">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span className="tabular-nums">{songs.length} {songs.length === 1 ? "song" : "songs"}</span>
+                    {accSel.length > 1 && (
+                      <button onClick={() => setAccMode((m) => (m === "any" ? "all" : "any"))} aria-label="Match any or all selected accounts"
+                        className="shrink-0 px-2.5 py-1 rounded-full text-[12px] font-semibold border border-[var(--bd)] text-[var(--dim2)]">
+                        {accMode === "any" ? "In any of them" : "In all of them"} ⇄
+                      </button>
+                    )}
+                  </span>
+                  <span className="flex gap-3 shrink-0">
+                    <button onClick={() => setAccSel([])} className="font-semibold text-[var(--dim2)]">Clear</button>
+                    {api.canCreate && songs.length > 0 && <button onClick={() => api.saveAccountPlaylist(accSel, accMode)} className="font-semibold text-[var(--fg)]">＋ Save as playlist</button>}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
           {grid ? (
             <div className="grid grid-cols-2 gap-4 mt-3">
               {songs.map((t) => (

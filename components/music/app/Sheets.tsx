@@ -209,6 +209,45 @@ export function ReportSheet({ t, tq, context, onClose, onDone }: { t: Track; tq:
  * lets the user pick which of those parameters the new smart playlist must
  * match, with a live count. The playlist is created for THIS link only.
  */
+/** Save "songs from these Spotify accounts (any / all)" as a live playlist — it keeps following the accounts. */
+export function AccountPlaylistSheet({ ids, mode, tq, blocked, accounts, onClose, onCreated, onMessage }: { ids: number[]; mode: "any" | "all"; tq: string; blocked?: boolean; accounts: Array<{ id: number; name: string }>; onClose: () => void; onCreated: (id: number, name: string) => void; onMessage: (m: string) => void }) {
+  const names = ids.map((i) => accounts.find((a) => a.id === i)?.name).filter((n): n is string => !!n);
+  const [name, setName] = useState(`From ${names.join(mode === "all" ? " + " : " / ")}`.slice(0, 80));
+  const [preview, setPreview] = useState<{ count: number; sample: string[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const rules = { accounts: ids, accountsMode: mode };
+  useEffect(() => {
+    let live = true;
+    void fetch(`/api/music/smart/preview?${tq}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rules }) }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (live && j) setPreview(j as { count: number; sample: string[] }); }).catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rules derives from ids + mode
+  }, [tq, ids.join(","), mode]);
+  async function create() {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/music/smart/create?${tq}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, rules }) });
+      const j = (await r.json().catch(() => ({}))) as { id?: number; error?: string };
+      if (r.ok && j.id != null) { onCreated(j.id, name); onClose(); } else onMessage(j.error ?? "Could not create the playlist");
+    } catch { onMessage("Could not create the playlist"); }
+    setBusy(false);
+  }
+  return (
+    <Sheet onClose={onClose} title="Save as playlist">
+      <div className="px-5 pb-6">
+        <p className="text-[14px] text-[var(--dim2)] leading-6">
+          {mode === "all" ? "Songs that are in all of" : "Songs from any of"} <b className="text-[var(--fg)]">{names.join(", ") || "the selected accounts"}</b>. The playlist updates itself as those accounts change.
+        </p>
+        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} aria-label="Playlist name" className="mt-4 w-full rounded-xl bg-[var(--s2)] px-4 py-3 text-[16px] outline-none" />
+        <div className="mt-3 rounded-xl bg-[var(--s1)] px-4 py-3 text-[14px] text-[var(--dim2)]">
+          {preview ? <>Right now <b className="text-[var(--fg)]">{preview.count}</b> {preview.count === 1 ? "song" : "songs"}{preview.sample.length ? <div className="mt-1 text-[12px] text-[var(--dim3)] truncate">{preview.sample.slice(0, 3).join(" · ")}</div> : null}</> : "Counting…"}
+        </div>
+        {blocked && <p className="mt-3 text-[13px] text-rose-400">This link can&apos;t create playlists.</p>}
+        <button disabled={busy || blocked || !name.trim() || preview?.count === 0} onClick={() => void create()} className="mt-5 w-full rounded-full bg-[var(--fg)] py-3.5 text-[16px] font-semibold text-[var(--bg)] disabled:opacity-40">{busy ? "Saving…" : "Save playlist"}</button>
+      </div>
+    </Sheet>
+  );
+}
+
 export function SmartFromSongSheet({ t, d, tq, blocked, onClose, onCreated, onMessage }: { t: Track; d: Desc | undefined; tq: string; blocked?: boolean; onClose: () => void; onCreated: (id: number, name: string) => void; onMessage: (m: string) => void }) {
   const moods = (["sad", "happy", "relaxed", "aggressive", "danceable"] as const).filter((k) => (d?.moods?.[k] ?? 0) > (k === "relaxed" ? 0.55 : k === "aggressive" ? 0.4 : k === "danceable" ? 0.6 : 0.5));
   const energyWord = d ? (d.energy < 0.35 ? "low energy" : d.energy > 0.6 ? "high energy" : "medium energy") : "";
