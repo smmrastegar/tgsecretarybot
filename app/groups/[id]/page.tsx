@@ -198,7 +198,7 @@ export default function GroupAnalyticsPage({
 
         <p className="mb-4 px-2 text-xs leading-6 text-center text-[var(--color-text-dim)]">
           لینکِ اشتراک‌گذاری عمومی و فرکانسِ خلاصه‌سازیِ این گروه از{" "}
-          <Link href="/groups" className="text-[var(--color-accent)] underline">
+          <Link href="/groups" className="inline-flex min-h-10 items-center px-1 text-[var(--color-accent)] underline">
             صفحه‌ی گروه‌ها
           </Link>{" "}
           تنظیم می‌شود.
@@ -235,7 +235,7 @@ export default function GroupAnalyticsPage({
           <>
             {data.cached && data.cachedAt && (
               <div className="text-xs leading-6 text-center text-[var(--color-text-dim)] mb-3">
-                💾 از کش: {new Date(data.cachedAt).toLocaleString("fa-IR")} (برای داده‌ی تازه‌تر «پردازش مجدد» رو بزن)
+                💾 از کش: <bdi>{new Date(data.cachedAt).toLocaleString("fa-IR", { dateStyle: "medium", timeStyle: "short" })}</bdi> (برای داده‌ی تازه‌تر «پردازش مجدد» رو بزن)
               </div>
             )}
             {data.analysis.tasks.length === 0 && data.messageCount > 0 && (
