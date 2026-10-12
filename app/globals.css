@@ -50,15 +50,8 @@ body {
    call site, give interactive elements a floor on touch pointers only, so
    the desktop density is untouched. */
 @media (pointer: coarse) {
-  button,
-  select,
-  [role="button"] {
-    min-height: 36px;
-  }
-
   input:not([type="checkbox"]):not([type="radio"]),
   textarea {
-    min-height: 40px;
     /* iOS zooms the whole page in when a focused field is under 16px. */
     font-size: 16px;
   }
@@ -77,11 +70,19 @@ body {
   .text-\[9px\] { font-size: 11px; }
   .text-\[10px\],
   .text-\[11px\] { font-size: 12px; }
+}
 
-  button,
-  select,
-  [role="button"] {
-    min-height: 40px;
+/* The control-height floor lives in the BASE layer so a deliberate Tailwind `min-h-*` on a control still wins
+   (unlayered rules beat utilities, which made `min-h-14` buttons collapse to 40px). */
+@layer base {
+  @media (pointer: coarse) {
+    button,
+    select,
+    [role="button"],
+    input:not([type="checkbox"]):not([type="radio"]),
+    textarea {
+      min-height: 40px;
+    }
   }
 }
 
