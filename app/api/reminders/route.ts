@@ -15,6 +15,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     upcoming: filter === "upcoming",
     doneOnly: filter === "done",
     priority: priority && priority !== "all" ? priority : null,
+    limit: Number(url.searchParams.get("limit")) || undefined,
+    offset: Number(url.searchParams.get("offset")) || undefined,
   });
   return NextResponse.json({ items });
 }

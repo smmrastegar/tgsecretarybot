@@ -445,10 +445,12 @@ export async function listExtractedItems(opts: {
   doneOnly?: boolean;
   priority?: string | null;
   limit?: number;
+  offset?: number;
 }): Promise<ExtractedItem[]> {
   if (!hasDb()) return [];
   await ensureSchema();
   const limit = Math.min(opts.limit ?? 100, 500);
+  const offset = Math.max(0, Math.floor(opts.offset ?? 0));
   // Priority filter is applied as an extra clause to whichever base
   // query the view (upcoming / done / all) selected. null = no filter.
   const prio =
@@ -464,17 +466,17 @@ export async function listExtractedItems(opts: {
         ORDER BY
           COALESCE(due_at, created_at + INTERVAL '100 years') ASC,
           created_at DESC
-        LIMIT ${limit}`
+        LIMIT ${limit} OFFSET ${offset}`
     : opts.doneOnly
       ? await sql()`
           SELECT * FROM extracted_items
           WHERE done_at IS NOT NULL
             AND (${prio}::text IS NULL OR priority = ${prio})
-          ORDER BY done_at DESC LIMIT ${limit}`
+          ORDER BY done_at DESC LIMIT ${limit} OFFSET ${offset}`
       : await sql()`
           SELECT * FROM extracted_items
           WHERE (${prio}::text IS NULL OR priority = ${prio})
-          ORDER BY created_at DESC LIMIT ${limit}`;
+          ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
   return rows.map(rowToExtracted);
 }
 

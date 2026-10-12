@@ -430,13 +430,22 @@ function SettingsTab() {
     load();
   }, [load]);
 
+  const [saveErr, setSaveErr] = useState<string | null>(null);
   const save = async (patch: Partial<NotesSettings>) => {
     setS((cur) => (cur ? { ...cur, ...patch } : cur));
-    await fetch("/api/notes-settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
+    try {
+      const r = await fetch("/api/notes-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setSaveErr(null);
+    } catch (e) {
+      // the switch must not keep showing a value the server never accepted
+      setSaveErr(`ذخیره نشد (${e instanceof Error ? e.message : "خطا"}) — مقدار قبلی برگشت`);
+      await load();
+    }
   };
 
   const runMaint = async () => {
@@ -461,6 +470,7 @@ function SettingsTab() {
 
   return (
     <div>
+      {saveErr && <div role="alert" className="mb-3 rounded-2xl border border-rose-400/50 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 text-center">{saveErr}</div>}
       <Section icon="🕵️" title="AI Watchlist" summary={asBool(s.notesWatchlistEnabled) ? "سکنر روشن است" : "سکنر خاموش است"} defaultOpen>
         <ToggleRow
           label="فعال بودن سکنر"

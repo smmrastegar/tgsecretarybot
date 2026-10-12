@@ -524,13 +524,14 @@ export default function ChatsPage() {
     }
   }
 
+  // (The list itself is loaded by the debounced effect above — calling load() here as well made every
+  // keystroke fetch twice and defeated the search debounce.)
   useEffect(() => {
-    load();
     fetch("/api/secretaries")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d?.secretaries && setSecretaries(d.secretaries))
       .catch(() => {});
-  }, [load]);
+  }, []);
 
   // Escape closes the edit sheet.
   useEffect(() => {
@@ -547,51 +548,45 @@ export default function ChatsPage() {
     return secretaries.find((s) => s.userId === id)?.name ?? `user ${id}`;
   }
 
+  // A failed save used to look successful (the list just reloaded with the old value). Tell the owner.
+  const [notice, setNotice] = useState<string | null>(null);
+  async function putChat(chatId: number, body: Record<string, unknown>): Promise<boolean> {
+    try {
+      const r = await fetch(`/api/chats/${chatId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error(String(r.status));
+      setNotice(null);
+      return true;
+    } catch (e) {
+      setNotice(`ذخیره نشد (${e instanceof Error ? e.message : "خطا"}) — دوباره امتحان کن`);
+      return false;
+    }
+  }
+
   async function save(c: Chat) {
-    await fetch(`/api/chats/${c.chatId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chatType: c.chatType,
-        chatTitle: c.chatTitle,
-        vip: c.vip,
-        muted: c.muted,
-        customReply: c.customReply || null,
-        mode: c.mode,
-        secretaryUserId: c.secretaryUserId,
-        firstName: c.firstName || null,
-        lastName: c.lastName || null,
-        nickname: c.nickname || null,
-        relationship: c.relationship || null,
-      }),
+    const ok = await putChat(c.chatId, {
+      chatType: c.chatType,
+      chatTitle: c.chatTitle,
+      vip: c.vip,
+      muted: c.muted,
+      customReply: c.customReply || null,
+      mode: c.mode,
+      secretaryUserId: c.secretaryUserId,
+      firstName: c.firstName || null,
+      lastName: c.lastName || null,
+      nickname: c.nickname || null,
+      relationship: c.relationship || null,
     });
-    setEdit(null);
+    if (ok) setEdit(null);
     load();
   }
 
   async function quickMode(c: Chat, mode: ChatMode) {
-    await fetch(`/api/chats/${c.chatId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chatType: c.chatType,
-        chatTitle: c.chatTitle,
-        mode,
-      }),
-    });
+    await putChat(c.chatId, { chatType: c.chatType, chatTitle: c.chatTitle, mode });
     load();
   }
 
   async function quickSecretary(c: Chat, secretaryUserId: number | null) {
-    await fetch(`/api/chats/${c.chatId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chatType: c.chatType,
-        chatTitle: c.chatTitle,
-        secretaryUserId,
-      }),
-    });
+    await putChat(c.chatId, { chatType: c.chatType, chatTitle: c.chatTitle, secretaryUserId });
     load();
   }
 
@@ -641,6 +636,13 @@ export default function ChatsPage() {
         title="چت‌ها"
         subtitle="رفتار هر چت رو تنظیم کن. VIP = همیشه هشدار. Muted = کاملاً نادیده بگیر."
       />
+
+      {notice && (
+        <div role="alert" className="mb-3 flex items-center gap-3 rounded-2xl border border-rose-400/50 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 text-center">
+          <span className="flex-1 leading-6">{notice}</span>
+          <button type="button" onClick={() => setNotice(null)} className="min-h-10 px-3 rounded-xl border border-rose-400/40 text-xs">بستن</button>
+        </div>
+      )}
 
       {facets && (
         <div className="grid grid-cols-3 gap-2 mb-3">

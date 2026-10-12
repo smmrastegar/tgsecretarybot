@@ -28,6 +28,7 @@ type Item = {
   createdAt: string;
 };
 
+const PAGE_SIZE = 100;
 const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
 
 // These three were rendering their raw English keys as button labels in an
@@ -150,6 +151,8 @@ export default function RemindersPage() {
   const [priorityFilter, setPriorityFilter] = useState<Prio>("all");
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
+  const [moreLeft, setMoreLeft] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulking, setBulking] = useState(false);
@@ -179,6 +182,7 @@ export default function RemindersPage() {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = (await r.json()) as { items: Item[] };
         setItems(j.items);
+        setMoreLeft(j.items.length >= PAGE_SIZE);
         setSelected(new Set());
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -192,6 +196,22 @@ export default function RemindersPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // The API returns 100 at a time; with thousands of open items the rest used to be unreachable.
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const r = await fetch(`/api/reminders?filter=${filter}&priority=${priorityFilter}&limit=${PAGE_SIZE}&offset=${items.length}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as { items: Item[] };
+      setItems((cur) => [...cur, ...j.items.filter((n) => !cur.some((c) => c.id === n.id))]);
+      setMoreLeft(j.items.length >= PAGE_SIZE);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const grouped = useMemo(() => {
     const m: Record<GroupId, Item[]> = { overdue: [], today: [], soon: [], none: [], done: [] };
@@ -415,10 +435,11 @@ export default function RemindersPage() {
               </button>
             </div>
 
-            {items.length >= 100 && (
-              <p className="mb-3 px-2 text-center text-xs leading-6 text-[var(--color-text-dim)]">
-                فقط ۱۰۰ مورد اول نمایش داده می‌شود؛ با «انجام شد» یا حذف، موردهای بعدی جای آن‌ها می‌آیند.
-              </p>
+            {moreLeft && (
+              <div className="mb-3 flex items-center justify-center gap-3 px-2 text-center text-xs leading-6 text-[var(--color-text-dim)]">
+                <span>{fa(items.length)} مورد نمایش داده شد؛ موردهای بیشتری هست.</span>
+                <button type="button" onClick={() => void loadMore()} disabled={loadingMore} className="min-h-10 px-4 rounded-xl border border-[var(--color-border)] text-sm text-[var(--color-text)] disabled:opacity-50">{loadingMore ? "…" : "بارگذاری بیشتر"}</button>
+              </div>
             )}
 
             {shownGroups.length === 0 ? (

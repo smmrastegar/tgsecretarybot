@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Shell from "@/components/Shell";
 import { Card } from "@/components/Card";
@@ -66,6 +66,9 @@ export default function ChatDetailPage() {
 
   const [personal, setPersonal] = useState<Personal>(blankPersonal);
   const [personalDirty, setPersonalDirty] = useState(false);
+  // load() runs after every toggle; it must not overwrite identity-form edits that are not saved yet.
+  const dirtyRef = useRef(false);
+  useEffect(() => { dirtyRef.current = personalDirty; }, [personalDirty]);
   const [personalSaved, setPersonalSaved] = useState(false);
 
   const load = useCallback(async () => {
@@ -91,22 +94,37 @@ export default function ChatDetailPage() {
       setHasMore(j.hasMore);
       setGrace(j.grace ?? null);
       // Rehydrate the personal form so the inputs reflect what's persisted.
-      setPersonal({
-        firstName: j.rule?.firstName ?? "",
-        lastName: j.rule?.lastName ?? "",
-        nickname: j.rule?.nickname ?? "",
-        relationship: j.rule?.relationship ?? "",
-        relationshipNotes: j.rule?.relationshipNotes ?? "",
-        talkStyleNotes: j.rule?.talkStyleNotes ?? "",
-        notes: j.rule?.notes ?? "",
-      });
-      setPersonalDirty(false);
+      if (!dirtyRef.current) {
+        setPersonal({
+          firstName: j.rule?.firstName ?? "",
+          lastName: j.rule?.lastName ?? "",
+          nickname: j.rule?.nickname ?? "",
+          relationship: j.rule?.relationship ?? "",
+          relationshipNotes: j.rule?.relationshipNotes ?? "",
+          talkStyleNotes: j.rule?.talkStyleNotes ?? "",
+          notes: j.rule?.notes ?? "",
+        });
+      }
       setLoadError(false);
       setReady(true);
     } catch {
       setLoadError(true);
     }
   }, [chatId]);
+
+  // Saves used to fail silently (the page just reloaded with the old value).
+  const [saveError, setSaveError] = useState<string | null>(null);
+  async function send(url: string, init: RequestInit): Promise<boolean> {
+    try {
+      const r = await fetch(url, init);
+      if (!r.ok) throw new Error(String(r.status));
+      setSaveError(null);
+      return true;
+    } catch (e) {
+      setSaveError(`ذخیره نشد (${e instanceof Error ? e.message : "خطا"}) — دوباره امتحان کن`);
+      return false;
+    }
+  }
 
   const retryLoad = () => {
     setLoadError(false);
@@ -116,7 +134,7 @@ export default function ChatDetailPage() {
 
   async function savePersonal() {
     setSaving(true);
-    await fetch(`/api/chats/${chatId}`, {
+    const saved = await send(`/api/chats/${chatId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -137,9 +155,12 @@ export default function ChatDetailPage() {
       }),
     });
     setSaving(false);
-    setPersonalDirty(false);
-    setPersonalSaved(true);
-    setTimeout(() => setPersonalSaved(false), 2000);
+    if (saved) {
+      dirtyRef.current = false;
+      setPersonalDirty(false);
+      setPersonalSaved(true);
+      setTimeout(() => setPersonalSaved(false), 2000);
+    }
     load();
   }
 
@@ -212,7 +233,7 @@ export default function ChatDetailPage() {
 
   async function skipGrace() {
     setSaving(true);
-    await fetch(`/api/chats/${chatId}/skip-grace`, { method: "POST" });
+    await send(`/api/chats/${chatId}/skip-grace`, { method: "POST" });
     setSaving(false);
     load();
   }
@@ -220,7 +241,7 @@ export default function ChatDetailPage() {
   async function patchAutomation(patch: Record<string, boolean>) {
     setSaving(true);
     try {
-      await fetch(`/api/chats/${chatId}/automation`, {
+      await send(`/api/chats/${chatId}/automation`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
@@ -234,7 +255,7 @@ export default function ChatDetailPage() {
   async function patchProfile(profileId: number | null) {
     setSaving(true);
     try {
-      await fetch(`/api/chats/${chatId}/profile`, {
+      await send(`/api/chats/${chatId}/profile`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ profileId }),
@@ -261,7 +282,7 @@ export default function ChatDetailPage() {
 
   async function patchRule(patch: Record<string, unknown>) {
     setSaving(true);
-    await fetch(`/api/chats/${chatId}`, {
+    await send(`/api/chats/${chatId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -350,6 +371,13 @@ export default function ChatDetailPage() {
           ← برگشت
         </button>
       </div>
+
+      {saveError && (
+        <div role="alert" className="mb-3 flex items-center gap-3 rounded-2xl border border-rose-400/50 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 text-center">
+          <span className="flex-1 leading-6">{saveError}</span>
+          <button type="button" onClick={() => setSaveError(null)} className="min-h-10 px-3 rounded-xl border border-rose-400/40 text-xs">بستن</button>
+        </div>
+      )}
 
       {loadError ? (
         <Card>

@@ -276,6 +276,7 @@ export default function FollowUpDebugPage() {
   const hasMore = sorted.length > visibleCount;
 
   const [analyzing, setAnalyzing] = useState<Set<number>>(new Set());
+  const [actionErr, setActionErr] = useState<string | null>(null);
 
   const analyzeChat = async (chatId: number) => {
     setAnalyzing((cur) => new Set(cur).add(chatId));
@@ -284,6 +285,9 @@ export default function FollowUpDebugPage() {
         method: "POST",
       });
       if (r.ok) await load();
+      else setActionErr(`تحلیل انجام نشد (HTTP ${r.status})`);
+    } catch {
+      setActionErr("تحلیل انجام نشد (خطای شبکه)");
     } finally {
       setAnalyzing((cur) => {
         const next = new Set(cur);
@@ -299,8 +303,9 @@ export default function FollowUpDebugPage() {
         method: "POST",
       });
       if (r.ok) await load();
+      else setActionErr(`ثبت نشد (HTTP ${r.status})`);
     } catch {
-      // surface via reload — silent failure is fine here
+      setActionErr("ثبت نشد (خطای شبکه)");
     }
   };
 
@@ -313,8 +318,9 @@ export default function FollowUpDebugPage() {
         body: JSON.stringify({ enabled: false }),
       });
       if (r.ok) await load();
+      else setActionErr(`خاموش نشد (HTTP ${r.status})`);
     } catch {
-      // ignored — reload will reflect persisted state
+      setActionErr("خاموش نشد (خطای شبکه)");
     }
   };
 
@@ -401,6 +407,13 @@ export default function FollowUpDebugPage() {
           title="⏰ دیباگ یادآور جواب‌ندادن"
           subtitle="هر چتی که این لحظه پیامش از طرف کاربر بدون جواب مونده — با فیلتر، جستجو، و trigger دستی."
         />
+
+        {actionErr && (
+          <div role="alert" className="mb-3 flex items-center gap-3 rounded-2xl border border-rose-400/50 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 text-center">
+            <span className="flex-1 leading-6">{actionErr}</span>
+            <button type="button" onClick={() => setActionErr(null)} className="min-h-10 px-3 rounded-xl border border-rose-400/40 text-xs">بستن</button>
+          </div>
+        )}
 
         {notesInboxMissing && (
           <div role="alert" className="mb-3 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4 text-center">
