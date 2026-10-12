@@ -398,6 +398,12 @@ const TOOLS = [
     },
   },
   {
+    name: "feature_usage",
+    description:
+      "How much each dashboard feature is really used (counts only): rows in total / last 7 / last 30 days, last activity, state (active | quiet | dormant | empty | configured) and quality signals (e.g. how many reminders were ever completed). Use it to find features that are abandoned, stalled or silently broken, and to propose fixes or removals.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
     name: "roadmap_list",
     description:
       "The improvement backlog (features, fixes, improvements, chores). status: open (default: idea+planned+in_progress), idea, planned, in_progress, done, dropped, all.",
@@ -1682,6 +1688,14 @@ async function callTool(
       const { listMetricsSnapshots } = await import("@/lib/db");
       const snaps = await listMetricsSnapshots(Number(args.days ?? 14));
       return toolText({ count: snaps.length, snapshots: snaps });
+    }
+
+    case "feature_usage": {
+      const { featureUsage, usageSummary } = await import("@/lib/feature-usage");
+      const { FEATURES } = await import("@/lib/features-meta");
+      const rows = await featureUsage(true);
+      const byId = new Map(FEATURES.map((f) => [f.id, f]));
+      return toolText({ summary: usageSummary(rows), features: rows.map((r) => ({ ...r, label: byId.get(r.id)?.label, href: byId.get(r.id)?.href })) });
     }
 
     case "roadmap_list": {

@@ -28,8 +28,7 @@ const MATCH_MODELS = [
   process.env.OPENROUTER_RULE_MODEL,
   config.openrouterModel,
   "google/gemini-2.5-flash",
-  "google/gemini-2.0-flash-001",
-  "google/gemini-flash-1.5",
+  "google/gemini-2.5-flash-lite", // the retired 2.0 / 1.5 ids answered 404 on every call
 ].filter(
   (m, i, arr): m is string =>
     typeof m === "string" && m.length > 0 && arr.indexOf(m) === i,

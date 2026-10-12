@@ -25,12 +25,16 @@ function authorized(request: Request): boolean {
 // dedupe and debug tables keep 30. messages_log, chat_notes,
 // system_errors and the like are NOT here on purpose — they are the
 // product's memory, not its exhaust.
-const POLICY: Array<{ table: string; column: string; keepDays: number }> = [
+const POLICY: Array<{ table: string; column: string; keepDays: number; where?: string }> = [
   { table: "processed_updates", column: "processed_at", keepDays: 30 },
   { table: "media_routing_log", column: "created_at", keepDays: 30 },
   { table: "telegram_debug_log", column: "received_at", keepDays: 30 },
   { table: "ai_usage", column: "created_at", keepDays: 90 },
   { table: "hikerapi_usage", column: "called_at", keepDays: 90 },
+  // Scheduled-deletion bookkeeping: once the message is gone the row has no reader.
+  { table: "ephemeral_messages", column: "created_at", keepDays: 30, where: "deleted_at IS NOT NULL" },
+  // One row a day; 400 days is more than any trend view reads.
+  { table: "system_metrics_daily", column: "computed_at", keepDays: 400 },
 ];
 
 // One DELETE per table, capped per run so a first pass over a large
@@ -57,7 +61,7 @@ async function run(request: Request): Promise<NextResponse> {
       DELETE FROM ${p.table}
       WHERE ctid IN (
         SELECT ctid FROM ${p.table}
-        WHERE ${p.column} < NOW() - ($1 || ' days')::INTERVAL
+        WHERE ${p.column} < NOW() - ($1 || ' days')::INTERVAL${p.where ? ` AND ${p.where}` : ""}
         LIMIT $2
       )
       RETURNING 1`;

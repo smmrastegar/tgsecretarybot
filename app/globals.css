@@ -59,3 +59,30 @@ a {
     height: 20px;
   }
 }
+
+/* Readability + robustness for the whole dashboard (measured: ~660 uses of 9–11px text and ~130 compact
+   buttons across the pages). On touch screens text never goes below 12px and controls get a 40px floor;
+   a long title or token can no longer widen a grid column and push the page sideways. */
+@media (pointer: coarse) {
+  .text-\[9px\] { font-size: 11px; }
+  .text-\[10px\],
+  .text-\[11px\] { font-size: 12px; }
+
+  button,
+  select,
+  [role="button"] {
+    min-height: 40px;
+  }
+}
+
+body {
+  overflow-x: clip;
+}
+
+main {
+  overflow-wrap: anywhere;
+}
+
+.grid > * {
+  min-width: 0;
+}

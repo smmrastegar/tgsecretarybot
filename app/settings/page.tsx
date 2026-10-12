@@ -1,235 +1,124 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Shell from "@/components/Shell";
 import { PageTitle } from "@/components/Card";
 import DebugModeToggle from "@/components/DebugModeToggle";
+import Section, { Pill } from "@/components/ui/Section";
+import { FEATURES, FEATURE_GROUPS, type FeatureUsage } from "@/lib/features-meta";
 
-// Tiles overview. The actual settings form (owner info, AI models,
-// auto-reply, all the toggles, etc.) lives at /settings/edit so this
-// page stays a quick directory. Each tile is one tool.
+// The hub of every tool. Rows are grouped by how often they are needed, searchable, and each one shows live
+// status from its own data (how much it holds, how recently it did anything) so an unused or silently
+// stalled feature is visible here instead of being forgotten.
+const ADMIN = { id: "admin", group: "system" as const, emoji: "🛡", label: "مدیریت", href: "/admin", desc: "tenants، کاربران ادمین، کلیدهای API", unit: "" };
 
-const TILES: Array<{
-  href: string;
-  emoji: string;
-  label: string;
-  desc: string;
-}> = [
-  {
-    href: "/settings/edit",
-    emoji: "⚙️",
-    label: "تنظیمات",
-    desc: "همه‌ی تنظیمات (owner، AI models، auto-reply، grace، debug، حداقل importance، ...)",
-  },
-  {
-    href: "/rules",
-    emoji: "📐",
-    label: "قوانین",
-    desc: "قانون‌های تشخیص پیام (مثلاً OTP) + فوروارد خودکار با format دلخواه",
-  },
-  {
-    href: "/webhooks",
-    emoji: "📡",
-    label: "وب‌هوک‌ها",
-    desc: "ورودی‌های مستقل SMS — هر کدوم اسم و URL خودش رو داره (برای SMS-Forwarder اندروید)",
-  },
-  {
-    href: "/sms-block-rules",
-    emoji: "🚫",
-    label: "بلاک پیامک",
-    desc: "نمونه‌هایی از SMS که نمی‌خوای ببینی (تبلیغ ملک، آرایشی، حراج، ...). AI پیام‌های شبیه به این‌ها رو فیلتر می‌کنه.",
-  },
-  {
-    href: "/secretary-relays",
-    emoji: "🧑‍💼",
-    label: "مسیرهای منشی",
-    desc: "هر Route یه لیست فرستنده + گیرنده داره؛ پیام DM به چند تا منشی فوروارد می‌شه و جواب اون‌ها مستقیم برمی‌گرده.",
-  },
-  {
-    href: "/note-watchlist",
-    emoji: "🕵️",
-    label: "دیده‌بان یادداشت",
-    desc: "مفاهیم global برای همه‌ی چت‌ها (با aliases) — جدا از auto_extract_notes هر چت. اگه پیامی به مفهومی اشاره کنه، توی Notes + کانال notes_inbox ثبت می‌شه.",
-  },
-  {
-    href: "/follow-up",
-    emoji: "⏰",
-    label: "پیگیری",
-    desc: "چت‌هایی که جوابشون رو ندادی — با فیلتر بر اساس وضعیت، جستجو، و دکمه اجرای فوری cron.",
-  },
-  {
-    href: "/chat-profiles",
-    emoji: "👤",
-    label: "پروفایل چت‌ها",
-    desc: "قالب‌های تنظیمات follow-up (کاری / دوستانه / صمیمی / پاسخ سریع / ...). هر چت رو می‌تونی به یه پروفایل assign کنی.",
-  },
-  {
-    href: "/debug-log",
-    emoji: "🪵",
-    label: "لاگ دیباگ",
-    desc: "هر Update که Telegram به webhook فرستاده — با تایم، چت، نوع، payload کامل. مخصوصاً MessageReactionUpdated برای دیباگ ری‌اکشن.",
-  },
-  {
-    href: "/ask",
-    emoji: "🔎",
-    label: "پرسش",
-    desc: "سوال طبیعی از همه‌ی پیام‌ها (مثلاً «ساعت کاری بچه‌ها رو بگو»)",
-  },
-  {
-    href: "/monitored",
-    emoji: "📸",
-    label: "پایش اینستاگرام",
-    desc: "اکانت‌های اینستاگرام که هر ۵ دقیقه چک می‌شن برای استوری جدید",
-  },
-  {
-    href: "/site-monitors",
-    emoji: "🌐",
-    label: "پایش سایت",
-    desc: "سایت‌های با لاگین (آدرس + یوزر/پسورد) که سر ساعت‌های مشخص به‌وقت تهران چک می‌شن؛ اگه نتیجه‌ای بود با تحلیل AI توی Note Inbox می‌آد.",
-  },
-  {
-    href: "/code-feeds",
-    emoji: "🔑",
-    label: "فیدِ کدها (URL توکن‌دار)",
-    desc: "آدرس توکن‌دار که فقط پیام‌های کددارِ یک کانال را در بازه‌ی اخیر (پیش‌فرض ۵ دقیقه) برمی‌گرداند. کانال، طول بازه، فرمت و IPهای مجاز از همین‌جا تنظیم می‌شود؛ خودِ آدرس کامل هم همان‌جا نمایش داده می‌شود.",
-  },
-  {
-    href: "/link-downloaders",
-    emoji: "⬇️",
-    label: "دانلودِ لینک",
-    desc: "لینک‌های اینستاگرام و اسپاتیفای که در چت‌های خصوصی می‌آیند به بات دانلودر فرستاده و نتیجه برگردانده می‌شود. دامنه‌ها و بات مقصدِ هرکدام از همین‌جا تنظیم می‌شود.",
-  },
-  {
-    href: "/emails",
-    emoji: "📧",
-    label: "ایمیل (Resend)",
-    desc: "دریافت/ارسال ایمیل با Resend. ایمیل ورودی توی کانال ایمیل با دکمه‌های Preview/Summary/Text/HTML میاد؛ ریپلای و ساخت ایمیل جدید هم از همینجا.",
-  },
-  {
-    href: "/groups",
-    emoji: "👥",
-    label: "گروه‌ها",
-    desc: "هر گروهی که بات در آن عضو است: لینکِ اشتراک‌گذاری عمومی، فرکانسِ خلاصه‌سازی، خلاصه‌گیریِ دستی، و تحلیلِ کارها و تاپیک‌های هر گروه.",
-  },
-  {
-    href: "/groups/summaries",
-    emoji: "📝",
-    label: "خلاصه‌های روزانه",
-    desc: "فیدِ خلاصه‌های AI همه‌ی گروه‌ها با فیلترِ بازه و جستجو در متن.",
-  },
-  {
-    href: "/functions",
-    emoji: "🧩",
-    label: "نقش‌ها",
-    desc: "نقش هر چت (downloader, news, voice/video/photo storage, ...)",
-  },
-  {
-    href: "/knowledge",
-    emoji: "📘",
-    label: "دانش‌نامه",
-    desc: "اصطلاحات و توضیحاتی که به AI تزریق می‌شه",
-  },
-  {
-    href: "/notes",
-    emoji: "📒",
-    label: "یادداشت‌ها",
-    desc: "تب «یادداشت‌ها» (استخراج‌شده از هر چت) + تب «مفاهیم» (global Watchlist) + تب «تنظیمات» پیشرفته (cooldown / digest / archive).",
-  },
-  {
-    href: "/media-routing",
-    emoji: "🛰",
-    label: "مسیریابی مدیا",
-    desc: "debug: چرا یه voice/video/photo توی کانال هدف کپی نشد",
-  },
-  {
-    href: "/music",
-    emoji: "🎧",
-    label: "پلیر موسیقی",
-    desc: "کتابخانه‌ی شخصی: لینک اسپاتیفای بده، از بات دانلود می‌شود، روی سرور می‌ماند و پخش می‌شود",
-  },
-  {
-    href: "/otp",
-    emoji: "🔑",
-    label: "کدهای یک‌بارمصرف",
-    desc: "تابلوی کدهای پیامکی: درشت، یک کلیک کپی، اعلان روی مک. قابل نصب به‌عنوان اپ",
-  },
-  {
-    href: "/roadmap",
-    emoji: "📈",
-    label: "نقشه‌ی راه و بهره‌وری",
-    desc: "دستور کار بهبود روزانه + شاخص‌های کارکرد و پایداری سیستم، روز به روز",
-  },
-  {
-    href: "/costs",
-    emoji: "💵",
-    label: "هزینه‌ها",
-    desc: "هزینه‌ی AI و توکن‌ها",
-  },
-  {
-    href: "/audit",
-    emoji: "🪵",
-    label: "لاگ سیستم",
-    desc: "خطاهای سیستم + لاگ تغییرات audit. هر خطا دکمه کپی داره با stack trace کامل.",
-  },
-  {
-    href: "/health",
-    emoji: "🩺",
-    label: "سلامت",
-    desc: "وضعیت webhook، business connections، DB",
-  },
-];
+const GROUP_ICON: Record<string, string> = { daily: "⭐", ai: "🧠", channels: "📨", monitor: "🛰", system: "⚙️" };
 
-// Admin-only tile — appended at the end of TILES when /api/admin/me
-// confirms the current user is in admin_users. Mobile has no sidebar,
-// so without this the operator can't reach /admin from the phone.
-const ADMIN_TILE: (typeof TILES)[number] = {
-  href: "/admin",
-  emoji: "🛡",
-  label: "مدیریت",
-  desc: "tenants، کاربران ادمین، کلیدهای API، impersonation",
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
+const ago = (iso: string | null) => {
+  if (!iso) return null;
+  const d = Math.floor((Date.now() - new Date(iso.replace(" ", "T").replace(/\+00$/, "Z")).getTime()) / 86_400_000);
+  return d <= 0 ? "امروز" : d === 1 ? "دیروز" : `${fa(d)} روز پیش`;
 };
 
-export default function SettingsTilesPage() {
+type Resp = { features: FeatureUsage[]; summary: { measurable: number; active: number; quiet: number; dormant: number; empty: number; usedPct: number }; alerts: Array<{ id: string; text: string; href: string }> };
+
+const DOT: Record<string, string> = { active: "bg-emerald-400", quiet: "bg-amber-400", dormant: "bg-rose-400/80", empty: "bg-[var(--color-border)]", configured: "bg-sky-400/70" };
+
+function stat(unit: string, u: FeatureUsage | undefined): string {
+  if (!u) return "";
+  if (u.state === "empty") return "هنوز چیزی ندارد";
+  const parts = [`${fa(u.total.toLocaleString("en-US"))} ${unit}`];
+  if (u.state === "active" || u.state === "quiet") parts.push(u.n7 > 0 ? `${fa(u.n7.toLocaleString("en-US"))} در ۷ روز اخیر` : `${fa(u.n30)} در ۳۰ روز اخیر`);
+  if (u.state === "dormant") parts.push(`آخرین فعالیت ${ago(u.last) ?? "مدت‌ها پیش"}`);
+  if (u.extra) parts.push(u.extra.replace(/[0-9]+/g, (n) => fa(n)));
+  return parts.join(" · ");
+}
+
+export default function SettingsHubPage() {
   const [isAdmin, setIsAdmin] = useState(false);
+  const [data, setData] = useState<Resp | null>(null);
+  const [q, setQ] = useState("");
+
   useEffect(() => {
-    let cancelled = false;
-    fetch("/api/admin/me")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { admin?: boolean } | null) => {
-        if (!cancelled) setIsAdmin(!!d?.admin);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    let off = false;
+    void fetch("/api/admin/me").then((r) => (r.ok ? r.json() : null)).then((d: { admin?: boolean } | null) => { if (!off) setIsAdmin(!!d?.admin); }).catch(() => {});
+    void fetch("/api/features", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d: Resp | null) => { if (!off && d) setData(d); }).catch(() => {});
+    return () => { off = true; };
   }, []);
 
-  const tiles = isAdmin ? [...TILES, ADMIN_TILE] : TILES;
+  const usage = useMemo(() => new Map((data?.features ?? []).map((f) => [f.id, f])), [data]);
+  const all = useMemo(() => (isAdmin ? [...FEATURES, ADMIN] : FEATURES), [isAdmin]);
+  const needle = q.trim().toLowerCase();
+  const shown = needle ? all.filter((f) => `${f.label} ${f.desc} ${f.href}`.toLowerCase().includes(needle)) : all;
+  const idle = shown.filter((f) => { const u = usage.get(f.id); return u && (u.state === "dormant" || u.state === "empty"); });
+
+  const Row = ({ f }: { f: (typeof all)[number] }) => {
+    const u = usage.get(f.id);
+    return (
+      <Link href={f.href} className="flex items-center gap-3 px-4 min-h-16 py-2.5 border-t first:border-t-0 border-[var(--color-border)] active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)]">
+        <span aria-hidden className="grid place-items-center w-10 h-10 rounded-xl bg-[var(--color-surface-2)] text-xl shrink-0">{f.emoji}</span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2">
+            <span className="text-sm font-semibold truncate">{f.label}</span>
+            {u && <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${DOT[u.state]}`} title={u.state} />}
+          </span>
+          <span className="block text-[11px] leading-5 text-[var(--color-text-dim)] line-clamp-2">{u ? stat(f.unit, u) || f.desc : f.desc}</span>
+        </span>
+        <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[var(--color-text-dim)] rotate-90"><path d="m6 9 6 6 6-6" /></svg>
+      </Link>
+    );
+  };
+
   return (
     <Shell>
-      <PageTitle
-        title="تنظیمات"
-        subtitle="ابزارها و پنل‌های مدیریتی. روی هر کارت کلیک کن تا وارد بشی."
-      />
+      <PageTitle title="تنظیمات" subtitle="همهٔ ابزارها، با وضعیت زنده‌ی هرکدام" />
 
-      <DebugModeToggle />
+      {data?.alerts.map((a) => (
+        <Link key={a.id} href={a.href} className="mb-3 flex items-center gap-3 rounded-2xl border border-rose-400/50 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          <span aria-hidden>⚠️</span><span className="flex-1 leading-6">{a.text}</span><span aria-hidden>‹</span>
+        </Link>
+      ))}
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-        {tiles.map((t) => (
-          <Link
-            key={t.href}
-            href={t.href}
-            className="flex flex-col items-start gap-1 p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
-          >
-            <span className="text-lg">{t.emoji}</span>
-            <span className="text-sm font-medium">{t.label}</span>
-            <span className="text-[10px] text-[var(--color-text-dim)] leading-relaxed">
-              {t.desc}
-            </span>
-          </Link>
-        ))}
-      </div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="جستجوی ابزار…" aria-label="جستجوی ابزار" type="search"
+        className="w-full min-h-11 mb-3 text-sm bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4" />
+
+      {data && !needle && (
+        <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-semibold tabular-nums">{fa(data.summary.usedPct)}٪</span>
+            <span className="text-xs text-[var(--color-text-dim)]">قابلیت‌ها در ۳۰ روز اخیر کار کرده‌اند ({fa(data.summary.active + data.summary.quiet)} از {fa(data.summary.measurable)})</span>
+          </div>
+          <div className="mt-2 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full bg-emerald-400" style={{ width: `${data.summary.usedPct}%` }} /></div>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+            <Pill tone="ok">{fa(data.summary.active)} فعال</Pill>
+            <Pill tone="warn">{fa(data.summary.quiet)} کم‌کار</Pill>
+            <Pill tone="bad">{fa(data.summary.dormant)} خوابیده</Pill>
+            <Pill>{fa(data.summary.empty)} خالی</Pill>
+          </div>
+        </div>
+      )}
+
+      {idle.length > 0 && !needle && (
+        <Section icon="💤" title="بی‌استفاده یا خوابیده" summary="تصمیم بگیر: راه‌اندازی، تعمیر یا کنار گذاشتن" badge={<Pill tone="warn">{fa(idle.length)}</Pill>}>
+          <div className="-mx-4 -mb-4">{idle.map((f) => <Row key={f.id} f={f} />)}</div>
+        </Section>
+      )}
+
+      {FEATURE_GROUPS.map((g) => {
+        const items = shown.filter((f) => f.group === g.id);
+        if (items.length === 0) return null;
+        return (
+          <Section key={g.id} icon={GROUP_ICON[g.id]} title={g.label} summary={g.hint} defaultOpen={g.id === "daily" || !!needle} open={needle ? true : undefined}
+            badge={<Pill>{fa(items.length)}</Pill>}>
+            <div className="-mx-4 -mb-4">{items.map((f) => <Row key={f.id} f={f} />)}</div>
+          </Section>
+        );
+      })}
+      {shown.length === 0 && <p className="text-sm text-[var(--color-text-dim)] px-1">چیزی پیدا نشد.</p>}
+
+      <div className="mt-4"><DebugModeToggle /></div>
     </Shell>
   );
 }
