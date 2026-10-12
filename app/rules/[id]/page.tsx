@@ -4,82 +4,21 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Shell from "@/components/Shell";
-import { Card, PageTitle, Badge } from "@/components/Card";
-import { relTime, truncate } from "@/lib/format";
+import { Card, PageTitle } from "@/components/Card";
+import { confirmDialog } from "@/components/ui/Dialogs";
+import EditorSection from "@/components/rule-editor/EditorSection";
+import ExampleEditor from "@/components/rule-editor/ExampleEditor";
+import MatchHistory, { matchStatus, type MatchFilter } from "@/components/rule-editor/MatchHistory";
+import RecipientsSection from "@/components/rule-editor/RecipientsSection";
+import RuleSummary from "@/components/rule-editor/RuleSummary";
+import { FormatFields, GateFields, SourceFields } from "@/components/rule-editor/SettingsFields";
+import { btnGhost, btnPrimary, Chip, fa, Field, inputCls, Note, windowLabel, type Example, type Match, type Recipient, type Rule, type TestResult } from "@/components/rule-editor/shared";
+import TestSection from "@/components/rule-editor/TestSection";
+import { relTime } from "@/lib/format";
 
-type Rule = {
-  id: number;
-  name: string;
-  description: string;
-  forwardFormat: string | null;
-  forwardHeader: string | null;
-  requestTrigger: string | null;
-  requestWindowSeconds: number | null;
-  sourceChatIds: number[] | null;
-  excludeSourceChatIds: number[] | null;
-  sourceThreadIds: number[] | null;
-  matchPattern: string | null;
-  matchAllFromSource: boolean;
-  showRulePrefix: boolean;
-  formatAsOtp: boolean;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
-const WINDOW_OPTIONS: { value: number | null; label: string }[] = [
-  { value: null, label: "⚠️ بدون gate — ارسال فوری" },
-  { value: 60, label: "۱ دقیقه" },
-  { value: 120, label: "۲ دقیقه" },
-  { value: 300, label: "۵ دقیقه" },
-  { value: 3600, label: "۱ ساعت" },
-];
-type Recipient = {
-  ruleId: number;
-  recipientChatId: number;
-  recipientLabel: string | null;
-  paused: boolean;
-  createdAt: string;
-};
-type Example = {
-  id: number;
-  text: string;
-  label: string | null;
-  purpose?: "rule_match" | "gate_match";
-  createdAt: string;
-};
-type Match = {
-  id: number;
-  ruleId: number;
-  messageLogId: number;
-  formattedText: string | null;
-  forwardedTo: number[];
-  forwardErrors: Record<string, string> | null;
-  matchedAt: string;
-  messageText: string;
-  senderName: string;
-  chatId: number;
-};
-type TestResult = {
-  messageLogId: number;
-  chatId: number;
-  chatTitle: string | null;
-  senderName: string;
-  originalText: string;
-  matched: boolean;
-  formattedText: string | null;
-  createdAt: string;
-};
-
-const HEADER_VARS: Array<{ token: string; label: string }> = [
-  { token: "{sender}", label: "نام فرستنده — مثلاً نام باتی که پیام رو فرستاده" },
-  { token: "{chat}", label: "نام چت مبدأ" },
-  { token: "{rule}", label: "نام همین قانون" },
-  { token: "{date}", label: "تاریخ" },
-  { token: "{time}", label: "ساعت" },
-  { token: "{dest}", label: "نام مقصد — برچسبِ گیرنده" },
-];
-
+// The rule editor. State and every API call live here; the sections (components/rule-editor/*) only lay the
+// fields out. The page opens with a plain-language "what does this rule do" card, then collapsible sections
+// by purpose, and a sticky save bar so the one save action is always in reach.
 export default function RuleDetailPage() {
   const params = useParams<{ id: string }>();
   const id = Number(params?.id);
@@ -90,6 +29,7 @@ export default function RuleDetailPage() {
   const [negExamples, setNegExamples] = useState<Example[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   // edit form
@@ -134,16 +74,18 @@ export default function RuleDetailPage() {
   const [testResults, setTestResults] = useState<TestResult[] | null>(null);
 
   const MATCH_PAGE = 10;
-  const [matchFilter, setMatchFilter] = useState<
-    "active" | "partial" | "done" | "expired"
-  >("active");
+  const [matchFilter, setMatchFilter] = useState<MatchFilter>("active");
   const [hasMoreMatches, setHasMoreMatches] = useState(true);
   const [loadingMoreMatches, setLoadingMoreMatches] = useState(false);
   const [matchesError, setMatchesError] = useState<string | null>(null);
 
+  // Only the very first load replaces the page with a spinner; later reloads (after save, simulate, …) refresh
+  // in place so open sections and the scroll position survive.
+  const loadedOnce = useRef(false);
   const load = useCallback(async () => {
     if (!Number.isFinite(id)) return;
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    setLoadError(null);
     try {
       const [r1, r2, r3, r4, r5] = await Promise.all([
         fetch(`/api/rules/${id}`),
@@ -154,6 +96,7 @@ export default function RuleDetailPage() {
       ]);
       if (r1.ok) {
         const j = (await r1.json()) as { rule: Rule; recipients: Recipient[] };
+        loadedOnce.current = true;
         setRule(j.rule);
         setRecipients(j.recipients ?? []);
         setName(j.rule.name);
@@ -169,6 +112,8 @@ export default function RuleDetailPage() {
         setMatchAllFromSource(!!j.rule.matchAllFromSource);
         setShowRulePrefix(j.rule.showRulePrefix !== false);
         setFormatAsOtp(!!j.rule.formatAsOtp);
+      } else {
+        setLoadError(r1.status === 404 ? "Rule پیدا نشد." : `خطا ${r1.status} — بارگذاری rule شکست خورد.`);
       }
       if (r2.ok) {
         const j = (await r2.json()) as { matches: Match[] };
@@ -187,6 +132,8 @@ export default function RuleDetailPage() {
         const j = (await r5.json()) as { examples: Example[] };
         setNegExamples(j.examples ?? []);
       }
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -331,7 +278,7 @@ export default function RuleDetailPage() {
   ]);
 
   const remove = useCallback(async () => {
-    if (!confirm("این rule پاک بشه؟")) return;
+    if (!(await confirmDialog("این rule پاک بشه؟", { danger: true, confirmLabel: "حذف" }))) return;
     await fetch(`/api/rules/${id}`, { method: "DELETE" });
     window.location.href = "/rules";
   }, [id]);
@@ -602,6 +549,14 @@ export default function RuleDetailPage() {
     }
   }, [id, requestTrigger, load]);
 
+  const deleteGateExample = useCallback(
+    async (exampleId: number) => {
+      await fetch(`/api/rules/${id}/examples?exampleId=${exampleId}`, { method: "DELETE" });
+      load();
+    },
+    [id, load],
+  );
+
   const runTest = useCallback(async () => {
     setTesting(true);
     setTestResults(null);
@@ -623,7 +578,7 @@ export default function RuleDetailPage() {
   if (loading) {
     return (
       <Shell>
-        <Card>Loading…</Card>
+        <Card>در حال بارگذاری…</Card>
       </Shell>
     );
   }
@@ -631,49 +586,39 @@ export default function RuleDetailPage() {
     return (
       <Shell>
         <Card>
-          <p>Rule پیدا نشد.</p>
-          <Link href="/rules" className="text-xs underline">
-            برگشت
-          </Link>
+          <p className="text-sm">{loadError ?? "Rule پیدا نشد."}</p>
+          <div className="mt-3 flex gap-2">
+            <button onClick={load} className={btnPrimary}>تلاش دوباره</button>
+            <Link href="/rules" className={`${btnGhost} inline-flex items-center`}>برگشت</Link>
+          </div>
         </Card>
       </Shell>
     );
   }
 
-  const matchPastWindow = (m: Match): boolean => {
-    const windowMs = (rule.requestWindowSeconds ?? 0) * 1000;
-    const ageMs = Date.now() - new Date(m.matchedAt).getTime();
-    return windowMs > 0 && ageMs > windowMs;
-  };
-  // Four mutually-exclusive states:
-  //  done    → every recipient got it (historical; can't re-run)
-  //  partial → SOME got it but not all (the delivered went; the rest
-  //            won't once the window passes)
-  //  active  → nobody got it yet, still inside the window (pending — the
-  //            only ones that can still fire on their own)
-  //  expired → nobody got it AND past the window (fully dead)
-  const matchStatus = (m: Match): "active" | "done" | "partial" | "expired" => {
-    const deliveredSet = new Set(m.forwardedTo);
-    // Paused recipients aren't expected to receive — not getting to them
-    // is NOT "incomplete". Judge completeness against ACTIVE recipients.
-    const active = recipients.filter((r) => !r.paused);
-    const got = active.filter((r) => deliveredSet.has(r.recipientChatId)).length;
-    if (active.length > 0 && got === active.length) return "done";
-    if (got > 0) return "partial";
-    return matchPastWindow(m) ? "expired" : "active";
-  };
-  const activeMatches = matches.filter((m) => matchStatus(m) === "active");
-  const partialMatches = matches.filter((m) => matchStatus(m) === "partial");
-  const doneMatches = matches.filter((m) => matchStatus(m) === "done");
-  const expiredMatches = matches.filter((m) => matchStatus(m) === "expired");
-  const visibleMatches =
-    matchFilter === "expired"
-      ? expiredMatches
-      : matchFilter === "done"
-        ? doneMatches
-        : matchFilter === "partial"
-          ? partialMatches
-          : activeMatches;
+  // Unsaved edits of the rule's own fields (examples and recipients save themselves).
+  const dirty =
+    name !== rule.name ||
+    desc !== rule.description ||
+    format !== (rule.forwardFormat ?? "") ||
+    header !== (rule.forwardHeader ?? "") ||
+    requestTrigger !== (rule.requestTrigger ?? "") ||
+    requestWindow !== rule.requestWindowSeconds ||
+    sourceChats !== (rule.sourceChatIds ?? []).join(", ") ||
+    excludeChats !== (rule.excludeSourceChatIds ?? []).join(", ") ||
+    sourceThreads !== (rule.sourceThreadIds ?? []).join(", ") ||
+    matchPattern !== (rule.matchPattern ?? "") ||
+    matchAllFromSource !== !!rule.matchAllFromSource ||
+    showRulePrefix !== (rule.showRulePrefix !== false) ||
+    formatAsOtp !== !!rule.formatAsOtp;
+
+  const sources = sourceChats.split(/[\s,،]+/).filter(Boolean);
+  const activeRecipients = recipients.filter((r) => !r.paused).length;
+  const gateActive =
+    requestWindow != null && requestWindow > 0 && (requestTrigger.trim().length > 0 || gateExamples.length > 0);
+  const count = (f: MatchFilter) => matches.filter((m) => matchStatus(m, recipients, rule.requestWindowSeconds) === f).length;
+  const waiting = count("active");
+  const partialN = count("partial");
 
   return (
     <Shell>
@@ -681,1143 +626,143 @@ export default function RuleDetailPage() {
         title={`📐 ${rule.name}`}
         subtitle={`ساخته شده ${relTime(rule.createdAt)} · آخرین ویرایش ${relTime(rule.updatedAt)}`}
         actions={
-          <Link href="/rules" className="text-xs underline-offset-2 underline">
+          <Link href="/rules" className="inline-flex items-center whitespace-nowrap min-h-10 px-3 rounded-xl border border-[var(--color-border)] text-sm">
             ← rules
           </Link>
         }
       />
 
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-3">🔗 این rule به کجا وصله؟</div>
-        <div className="flex flex-col sm:flex-row items-stretch gap-3">
-          <div className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 p-3">
-            <div className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
-              📥 می‌شنوه از
-            </div>
-            {rule.sourceChatIds && rule.sourceChatIds.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {rule.sourceChatIds.map((cid) => (
-                  <span
-                    key={cid}
-                    dir="ltr"
-                    className="inline-flex items-center px-1.5 py-0.5 rounded bg-[var(--color-surface)] text-[10px] tabular-nums"
-                  >
-                    {cid}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <div className="text-[11px] text-amber-300">
-                همه‌ی چت‌ها (بدون محدودیت مبدأ)
-              </div>
-            )}
-          </div>
-          <div className="hidden sm:flex items-center text-[var(--color-text-dim)]">
-            ←
-          </div>
-          <div className="flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 p-3">
-            <div className="text-[10px] text-[var(--color-text-dim)] mb-1.5">
-              📤 می‌فرسته به ({recipients.length})
-            </div>
-            {recipients.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {recipients.map((r) => (
-                  <span
-                    key={r.recipientChatId}
-                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] ${
-                      r.paused
-                        ? "bg-amber-500/10 text-amber-200 line-through"
-                        : "bg-[var(--color-surface)]"
-                    }`}
-                  >
-                    {r.paused && <span className="no-underline">⏸</span>}
-                    <span>{r.recipientLabel || "بدون‌نام"}</span>
-                    <span dir="ltr" className="text-[var(--color-text-dim)] tabular-nums">
-                      {r.recipientChatId}
-                    </span>
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <div className="text-[11px] text-[var(--color-text-dim)]">
-                هیچ گیرنده‌ای — پیام‌های match‌شده فقط لاگ می‌شن، جایی فرستاده
-                نمی‌شن.
-              </div>
-            )}
-          </div>
-        </div>
-      </Card>
+      {/* one readable column on wide screens; the sections are forms, not a dashboard grid */}
+      <div className="max-w-3xl">
+      <RuleSummary
+        name={name} enabled={rule.enabled} sourceChats={sourceChats} examplesCount={examples.length} negativeCount={negExamples.length}
+        description={desc} matchPattern={matchPattern} matchAllFromSource={matchAllFromSource} recipients={recipients}
+        formatAsOtp={formatAsOtp} format={format} header={header} requestWindow={requestWindow} requestTrigger={requestTrigger}
+        gateExamplesCount={gateExamples.length}
+      />
 
-      {(() => {
-        const gateActive =
-          requestWindow != null &&
-          requestWindow > 0 &&
-          (requestTrigger.trim().length > 0 || gateExamples.length > 0);
-        return (
-          <div
-            className={`mb-4 p-3 rounded-md border text-xs leading-relaxed ${
-              gateActive
-                ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-200"
-                : "bg-rose-500/10 border-rose-500/40 text-rose-200"
-            }`}
+      <EditorSection icon="✏️" title="نام و توصیف" summary={name}>
+        <div className="flex flex-col gap-4">
+          <Field label="✏️ اسم rule">
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="اسم rule" className={inputCls} />
+          </Field>
+          <Field
+            label="📝 توصیف (اختیاری)"
+            hint="فقط وقتی به کار می‌آد که هیچ نمونه‌ای نداری — اون‌وقت rule از روی این توصیف با AI تصمیم می‌گیره. اگه نمونه داری، این نادیده گرفته می‌شه. (با «💾 ذخیره» پایین ذخیره می‌شه.)"
           >
-            {gateActive ? (
-              <>
-                🔒 <b>گیت فعاله.</b> پیام‌های match‌شده نگه داشته می‌شن و فقط
-                وقتی گیرنده خودش درخواست بده (تو پنجره‌ی{" "}
-                {requestWindow === 3600
-                  ? "۱ ساعته"
-                  : `${Math.round((requestWindow ?? 0) / 60)} دقیقه‌ای`}
-                ) ارسال می‌شن. هر درخواست فقط <b>یک</b> پیام آزاد می‌کنه.
-              </>
-            ) : (
-              <>
-                🔓 <b>گیت غیرفعاله — هر پیامِ match‌شده فوراً به همه‌ی
-                گیرنده‌ها فوروارد می‌شه.</b> برای فعال‌کردن گیت، هم پنجره‌ی
-                زمانی رو ست کن هم توصیف درخواست (یا نمونه‌های Gate) رو.
-              </>
-            )}
-            {!sourceChats.trim() && (
-              <div className="mt-1.5 text-amber-200">
-                ⚠️ محدودیت چت مبدأ ست نشده — پیام <b>هر</b> چتی می‌تونه match
-                بشه. برای دقت، پایین chat_id مبدأ (مثلاً چت پیامک بانک) رو
-                وارد کن.
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      <Card className="mb-4">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="text-xs font-medium">✏️ اسم rule</div>
-          <div className="flex gap-2">
-            <button
-              onClick={remove}
-              className="text-xs px-3 py-1.5 rounded-md border border-red-700 text-red-300 hover:bg-red-900/30"
-            >
-              🗑 پاک کن
-            </button>
-            <button
-              onClick={save}
-              disabled={saving}
-              className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-            >
-              {saving ? "ذخیره…" : "💾 ذخیره"}
-            </button>
-          </div>
+            <textarea value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="مثلاً «پیام‌هایی که خبر ارز دیجیتال دارن»" rows={3} className={inputCls} />
+          </Field>
         </div>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="اسم rule"
-          className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-        />
-        <p className="text-[10px] text-[var(--color-text-dim)] mt-2 leading-relaxed">
-          🧠 این rule <b>با نمونه</b> کار می‌کنه: پایین نمونه‌ی پیام‌هایی که باید
-          بگیره رو بده (یا با «🤖 بساز» چندتا بساز). هرچی بیشتر بدی دقیق‌تر می‌شه؛
-          هر پیامی که مثل نمونه‌هات باشه match می‌شه — حتی همون پیامی که ازش
-          نمونه ساختی. اگه چیزی رو اشتباه گرفت، به «نمونه‌های منفی» اضافه‌اش کن.
-          تنظیمات فوروارد، گیت و مبدأ پایین‌ترن.
-        </p>
-      </Card>
+      </EditorSection>
 
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-2">
-          ✅ نمونه‌های مثبت ({examples.length}) — این‌ها و هر پیامِ شبیهشون match
-          می‌شن
-        </div>
-        {examples.length === 0 && (
-          <p className="text-xs text-amber-300/90 mb-2">
-            ⚠️ هنوز نمونه‌ای نداری — این rule هیچی نمی‌گیره. یه پیام واقعی که
-            باید بگیره اضافه کن (یا با «🤖 بساز» بساز) و ذخیره بزن.
-          </p>
-        )}
-        <ExampleEditor
-          ruleId={id}
-          items={examples}
-          purpose="rule_match"
-          tone="pos"
-          placeholder="متن یه نمونه پیام که باید match بشه…"
-          aiGenerate
-          onSaved={load}
+      <EditorSection icon="🎯" title="مبدأ و الگو" summary={`${sources.length ? `${fa(sources.length)} چت مشخص` : "همه‌ی چت‌ها"}${matchPattern.trim() ? " · regex" : ""}${matchAllFromSource ? " · هر پیام" : ""}`}
+        badge={sources.length === 0 ? <Chip tone="warn">بدون محدودیت</Chip> : undefined}>
+        <SourceFields
+          sourceChats={sourceChats} excludeChats={excludeChats} sourceThreads={sourceThreads} matchPattern={matchPattern} matchAllFromSource={matchAllFromSource}
+          setSourceChats={setSourceChats} setExcludeChats={setExcludeChats} setSourceThreads={setSourceThreads} setMatchPattern={setMatchPattern} setMatchAllFromSource={setMatchAllFromSource}
         />
+      </EditorSection>
 
-        <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
-          <div className="text-[11px] font-medium mb-1">
-            📝 یا توصیف بده (اختیاری)
-          </div>
-          <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-            فقط وقتی به کار می‌آد که <b>هیچ نمونه‌ای نداری</b> — اون‌وقت rule از
-            روی این توصیف با AI تصمیم می‌گیره. اگه نمونه داری، این نادیده گرفته
-            می‌شه. (با «💾 ذخیره تنظیمات» پایین ذخیره می‌شه.)
+      <EditorSection icon="✅" title="نمونه‌های مثبت" summary="این‌ها و هر پیامِ شبیهشون match می‌شن"
+        badge={<Chip tone={examples.length === 0 ? "warn" : "ok"}>{fa(examples.length)}</Chip>}>
+        <div className="flex flex-col gap-4">
+          <p className="text-xs text-[var(--color-text-dim)] leading-6">
+            🧠 این rule <b>با نمونه</b> کار می‌کنه: نمونه‌ی پیام‌هایی که باید بگیره رو بده (یا با «🤖 بساز» چندتا بساز). هرچی بیشتر بدی دقیق‌تر
+            می‌شه؛ هر پیامی که مثل نمونه‌هات باشه match می‌شه — حتی همون پیامی که ازش نمونه ساختی. اگه چیزی رو اشتباه گرفت، به «نمونه‌های منفی»
+            اضافه‌اش کن.
           </p>
-          <textarea
-            value={desc}
-            onChange={(e) => setDesc(e.target.value)}
-            placeholder="مثلاً «پیام‌هایی که خبر ارز دیجیتال دارن»"
-            rows={2}
-            className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+          {examples.length === 0 && (
+            <Note tone="warn">
+              ⚠️ هنوز نمونه‌ای نداری — این rule هیچی نمی‌گیره. یه پیام واقعی که باید بگیره اضافه کن (یا با «🤖 بساز» بساز) و ذخیره بزن.
+            </Note>
+          )}
+          <ExampleEditor
+            ruleId={id}
+            items={examples}
+            purpose="rule_match"
+            tone="pos"
+            placeholder="متن یه نمونه پیام که باید match بشه…"
+            aiGenerate
+            onSaved={load}
           />
         </div>
-      </Card>
+      </EditorSection>
 
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-2">
-          🚫 نمونه‌های منفی ({negExamples.length}) — این‌ها <i>نباید</i> match
-          بشن
-        </div>
-        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-          اگه rule داره چیزی رو اشتباه می‌گیره، متنِ همون پیامِ اشتباه رو
-          اینجا اضافه کن و ذخیره بزن — دیگه پیام‌های شبیهش رو نمی‌گیره.
-        </p>
-        <ExampleEditor
-          ruleId={id}
-          items={negExamples}
-          purpose="negative_match"
-          tone="neg"
-          placeholder="متن یه پیامی که اشتباه match شده (مثلاً رزرو/بلیط یا OTP)"
-          onSaved={load}
-        />
-      </Card>
-
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-2">
-          ▶️ تست/اجرای دستی — یه پیام بده، اگه match شد واقعاً اجرا می‌شه
-        </div>
-        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-          دقیقاً مثل یه پیام واقعی از همین مسیر رد می‌شه: اگه match بشه و گیت
-          فعال باشه، <b>نگه‌داشته می‌شه</b> و می‌ره تو تب «فعال (منتظر)» تا
-          گیرنده «کد بده» بفرسته. اگه گیت غیرفعال باشه، <b>واقعاً فوروارد
-          می‌شه</b>. (گیرنده‌های متوقف‌شده رد می‌شن.)
-        </p>
-        <div className="flex gap-2">
-          <textarea
-            value={simText}
-            onChange={(e) => setSimText(e.target.value)}
-            placeholder="متن پیام تستی…"
-            rows={2}
-            className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+      <EditorSection icon="🚫" title="نمونه‌های منفی" summary="این‌ها نباید match بشن" badge={<Chip>{fa(negExamples.length)}</Chip>}>
+        <div className="flex flex-col gap-4">
+          <p className="text-xs text-[var(--color-text-dim)] leading-6">
+            اگه rule داره چیزی رو اشتباه می‌گیره، متنِ همون پیامِ اشتباه رو اینجا اضافه کن و ذخیره بزن — دیگه پیام‌های شبیهش رو نمی‌گیره.
+          </p>
+          <ExampleEditor
+            ruleId={id}
+            items={negExamples}
+            purpose="negative_match"
+            tone="neg"
+            placeholder="متن یه پیامی که اشتباه match شده (مثلاً رزرو/بلیط یا OTP)"
+            onSaved={load}
           />
-          <button
-            onClick={runSimulate}
-            disabled={simBusy || !simText.trim()}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50 self-start"
-          >
-            {simBusy ? "…" : "▶️ اجرا"}
+        </div>
+      </EditorSection>
+
+      <EditorSection icon="📬" title="گیرنده‌های فوروارد"
+        summary={recipients.length === 0 ? "هیچ گیرنده‌ای ست نشده" : `${fa(activeRecipients)} فعال${recipients.length > activeRecipients ? ` · ${fa(recipients.length - activeRecipients)} متوقف` : ""}`}
+        badge={<Chip tone={recipients.length === 0 ? "warn" : "info"}>{fa(recipients.length)}</Chip>}>
+        <RecipientsSection
+          recipients={recipients} busyMap={recipientBusy} testStatus={testStatus}
+          newChat={newChat} newLabel={newLabel} adding={addingRecipient} onNewChat={setNewChat} onNewLabel={setNewLabel} onAdd={addRecipient}
+          onPause={setRecipientPaused} onRemove={removeRecipient} onRename={renameRecipient} onTest={testRecipient}
+        />
+      </EditorSection>
+
+      <EditorSection icon="🪧" title="قالب پیام"
+        summary={`${formatAsOtp ? "حالت OTP" : format.trim() ? "format سفارشی" : "پیام اصلی"}${header.trim() ? " · هدر" : ""}${showRulePrefix ? " · prefix" : ""}`}>
+        <FormatFields
+          formatAsOtp={formatAsOtp} header={header} showRulePrefix={showRulePrefix} format={format} previewHeader={previewHeader}
+          setFormatAsOtp={setFormatAsOtp} setHeader={setHeader} setShowRulePrefix={setShowRulePrefix} setFormat={setFormat}
+        />
+      </EditorSection>
+
+      <EditorSection icon={gateActive ? "🔒" : "🔓"} title="گیت درخواست"
+        summary={gateActive ? `فعال · پنجره‌ی ${windowLabel(requestWindow ?? 0)}` : "غیرفعال — ارسال فوری"}
+        badge={gateExamples.length > 0 ? <Chip tone="warn">{fa(gateExamples.length)}</Chip> : undefined}>
+        <GateFields
+          requestTrigger={requestTrigger} requestWindow={requestWindow} gateExamples={gateExamples} generating={generating} variationStatus={variationStatus}
+          setRequestTrigger={setRequestTrigger} setRequestWindow={setRequestWindow} onGenerate={generateVariations} onDeleteExample={deleteGateExample}
+        />
+      </EditorSection>
+
+      <EditorSection icon="🧪" title="تست و پیش‌نمایش" summary="اجرای دستی · تست روی پیام‌های قبلی">
+        <TestSection
+          simText={simText} simBusy={simBusy} simResult={simResult} setSimText={setSimText} onSimulate={runSimulate}
+          testLimit={testLimit} testing={testing} testResults={testResults} setTestLimit={setTestLimit} onRunTest={runTest}
+        />
+      </EditorSection>
+
+      <EditorSection icon="🕐" title="تاریخچه تطبیق‌ها"
+        summary={matches.length === 0 ? "هنوز هیچ پیامی به این rule نخورده" : `${fa(waiting)} منتظر · ${fa(partialN)} ناقص`}
+        badge={matches.length > 0 ? <Chip tone={waiting > 0 ? "warn" : "neutral"}>{fa(matches.length)}</Chip> : undefined}>
+        <MatchHistory
+          matches={matches} recipients={recipients} windowSeconds={rule.requestWindowSeconds} filter={matchFilter} onFilter={setMatchFilter}
+          hasMore={hasMoreMatches} loadingMore={loadingMoreMatches} error={matchesError} sentinelRef={matchSentinelRef} onLoadMore={loadMoreMatches}
+          forceStatus={forceStatus} onForceSend={forceSend}
+        />
+      </EditorSection>
+
+      {/* Sticky save bar: sits above the mobile tab bar (h-16), stays in reach while scrolling the sections. */}
+      <div className="sticky bottom-16 md:bottom-4 z-10 -mx-4 md:mx-0 mt-4 px-4 py-3 md:rounded-2xl border-t md:border border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur shadow-[0_-8px_24px_rgba(0,0,0,0.35)] flex items-center gap-3">
+        <div className={`flex-1 min-w-0 text-xs leading-5 ${dirty ? "text-amber-300" : "text-[var(--color-text-dim)]"}`}>
+          {dirty ? "تغییرات ذخیره نشده" : "همه‌چیز ذخیره‌ست"}
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <button onClick={save} disabled={saving} className={btnPrimary}>
+            {saving ? "ذخیره…" : "💾 ذخیره"}
+          </button>
+          <button onClick={remove} aria-label="پاک کردن rule" className="min-h-11 px-3 rounded-xl border border-red-700 text-red-300 text-sm hover:bg-red-900/30">
+            🗑 پاک کن
           </button>
         </div>
-        {simResult && (
-          <div className="text-[11px] mt-2 p-2 rounded-md bg-[var(--color-surface-2)] leading-relaxed">
-            {simResult}
-          </div>
-        )}
-      </Card>
-
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-3">⚙️ تنظیمات فوروارد و گیت</div>
-        <div className="flex flex-col gap-3">
-          {/* how the forwarded message looks */}
-          <div className="flex flex-col gap-1.5">
-            <label className="flex items-center gap-2 text-[11px] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={formatAsOtp}
-                onChange={(e) => setFormatAsOtp(e.target.checked)}
-              />
-              <span>
-                🔑 <b>حالت OTP</b> — کد رو از متن استخراج کن و به‌صورت
-                <code className="mx-1 px-1 bg-[var(--color-surface-2)] rounded">tap-to-copy</code>
-                بفرست.
-              </span>
-            </label>
-            <div className="p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]">
-              <div className="text-[11px] font-medium mb-1">
-                🪧 هدر پیام{" "}
-                <span className="text-[var(--color-text-dim)]">
-                  (اول هر فوروارد می‌آید — خالی = بدون هدر)
-                </span>
-              </div>
-              <textarea
-                value={header}
-                onChange={(e) => setHeader(e.target.value)}
-                rows={2}
-                placeholder="مثلاً: 🎫 درخواست تیک جدید داریم&#10;از {sender}"
-                className="w-full text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-3 py-2"
-              />
-              <div className="text-[10px] text-[var(--color-text-dim)] mt-2 leading-relaxed">
-                متغیرها (کلیک = افزودن):
-                <span className="inline-flex flex-wrap gap-1 mx-1 align-middle">
-                  {HEADER_VARS.map((v) => (
-                    <button
-                      key={v.token}
-                      type="button"
-                      title={v.label}
-                      onClick={() => setHeader((h) => (h ? `${h} ${v.token}` : v.token))}
-                      className="px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] hover:border-[var(--color-accent)] font-mono"
-                    >
-                      {v.token}
-                    </button>
-                  ))}
-                </span>
-              </div>
-              {header.trim() && (
-                <div className="text-[11px] mt-2 p-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap">
-                  <span className="text-[var(--color-text-dim)]">پیش‌نمایش: </span>
-                  {previewHeader}
-                </div>
-              )}
-            </div>
-            <label className="flex items-center gap-2 text-[11px] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showRulePrefix}
-                onChange={(e) => setShowRulePrefix(e.target.checked)}
-              />
-              <span>🏷 prefix اول پیام بیاد («[rule: …] · از …»).</span>
-            </label>
-            <textarea
-              value={format}
-              onChange={(e) => setFormat(e.target.value)}
-              placeholder="(اختیاری) format فوروارد — مثلاً «فقط عدد کد رو با emoji 🔑 بفرست» — خالی = پیام اصلی"
-              rows={2}
-              disabled={formatAsOtp}
-              className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 disabled:opacity-50"
-            />
-          </div>
-
-          {/* source scope */}
-          <div className="pt-2 border-t border-[var(--color-border)]">
-            <div className="text-[11px] font-medium mb-1">🎯 محدودیت مبدأ</div>
-            <input
-              type="text"
-              dir="ltr"
-              value={sourceChats}
-              onChange={(e) => setSourceChats(e.target.value)}
-              placeholder="فقط از این چت‌ها (chat_id با کاما) — خالی = همه چت‌ها"
-              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-            />
-            <input
-              type="text"
-              dir="ltr"
-              value={excludeChats}
-              onChange={(e) => setExcludeChats(e.target.value)}
-              placeholder="هرگز از این چت‌ها (chat_id با کاما) — برای قانون «همه مبدأها» که باید چند چت را به قانون دیگری واگذار کند"
-              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 mt-1"
-            />
-            <input
-              type="text"
-              dir="ltr"
-              value={sourceThreads}
-              onChange={(e) => setSourceThreads(e.target.value)}
-              disabled={!sourceChats.trim()}
-              placeholder="فقط این تاپیک‌ها (message_thread_id با کاما) — خالی = همه‌ی تاپیک‌ها"
-              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 mt-2 disabled:opacity-50"
-            />
-            <div className="text-[10px] text-[var(--color-text-dim)] mt-1">
-              برای گروه‌های فورومی: یک گروه ده‌ها تاپیک بی‌ربط دارد، پس محدودکردن
-              به کل چت معمولاً خیلی گشاد است. شناسه‌ی تاپیک را از آدرس پیام در
-              تلگرام وب یا از ستون <code dir="ltr">message_thread_id</code>{" "}
-              بردار.
-            </div>
-            <div className="mt-3 pt-2 border-t border-[var(--color-border)]">
-              <div className="text-[11px] font-medium mb-1">
-                🔒 الگوی اجباری (regex)
-              </div>
-              <input
-                type="text"
-                dir="ltr"
-                value={matchPattern}
-                onChange={(e) => setMatchPattern(e.target.value)}
-                placeholder="مثلاً ^\s*🎫?\s*تیکت — خالی = بدون الگو"
-                className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 font-mono"
-              />
-              <div className="text-[10px] text-[var(--color-text-dim)] mt-1">
-                اگر پر باشد، <b>الگو تصمیم می‌گیرد و AI اصلاً دخالت نمی‌کند</b>:
-                پیامی که با الگو بخواند فوروارد می‌شود و بقیه رد می‌شوند. برای
-                وقتی که فرمت پیام مهم است (مثل «باید با تیکت #شماره شروع شود»)
-                و نمی‌خواهی نه هر چیزی که کسی تایپ کرد برود، نه AI پیامی را که
-                دقیقاً در فرمت است به‌خاطر متنش رد کند. الگوی نامعتبر یعنی
-                قانون هیچ پیامی را نمی‌گیرد، نه اینکه همه را بگیرد.
-              </div>
-            </div>
-            <label className="flex items-center gap-2 text-[11px] cursor-pointer mt-2">
-              <input
-                type="checkbox"
-                checked={matchAllFromSource}
-                disabled={!sourceChats.trim()}
-                onChange={(e) => setMatchAllFromSource(e.target.checked)}
-              />
-              <span className={!sourceChats.trim() ? "opacity-50" : ""}>
-                📩 <b>هر پیامی از این چت‌ها رو بگیر</b> (بدون بررسی نمونه). برای
-                فیدهای اختصاصی مثل پیامک بانک. تو حالت OTP، پیام‌های بدون کد رد
-                می‌شن.
-              </span>
-            </label>
-          </div>
-
-          {/* request gate */}
-          <div className="pt-2 border-t border-[var(--color-border)]">
-            <div className="text-[11px] font-medium mb-1">⏸ گیت درخواست (اختیاری)</div>
-            <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-              اگه ست شد، پیام‌های منطبق فقط وقتی فوروارد می‌شن که گیرنده تو
-              پنجره‌ی زمانی یه پیامی بفرسته که با این توصیف یا نمونه‌های زیر بخوره.
-            </p>
-            <textarea
-              value={requestTrigger}
-              onChange={(e) => setRequestTrigger(e.target.value)}
-              placeholder="توصیف درخواست — مثلاً «کد رو برام بفرست»"
-              rows={2}
-              className="w-full text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2 mb-2"
-            />
-            <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-              <button
-                onClick={generateVariations}
-                disabled={generating || !requestTrigger.trim()}
-                className="text-[11px] px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/40 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
-                title="با AI پاراف‌رازهای متن بالا رو به‌عنوان نمونه‌ی گیت ذخیره کن"
-              >
-                {generating ? "..." : "🤖 ساخت نمونه‌های گیت با AI"}
-              </button>
-              {variationStatus && (
-                <span className="text-[10px] text-[var(--color-text-dim)]">{variationStatus}</span>
-              )}
-            </div>
-            {gateExamples.length > 0 && (
-              <div className="mb-2 flex flex-col gap-1">
-                {gateExamples.map((g) => (
-                  <div
-                    key={g.id}
-                    className="flex items-start gap-2 p-1.5 rounded-md bg-amber-500/5 border border-amber-500/20 text-xs"
-                  >
-                    <div dir="auto" style={{ unicodeBidi: "plaintext" }} className="flex-1 min-w-0 break-words">
-                      {g.text}
-                    </div>
-                    <button
-                      onClick={async () => {
-                        await fetch(`/api/rules/${id}/examples?exampleId=${g.id}`, { method: "DELETE" });
-                        load();
-                      }}
-                      className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="flex items-center gap-2 text-[11px]">
-              <span className="text-[var(--color-text-dim)]">پنجره:</span>
-              <select
-                value={requestWindow ?? ""}
-                onChange={(e) => setRequestWindow(e.target.value === "" ? null : Number(e.target.value))}
-                className="text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1"
-              >
-                {WINDOW_OPTIONS.map((o) => (
-                  <option key={o.value ?? "always"} value={o.value ?? ""}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="flex justify-end">
-            <button
-              onClick={save}
-              disabled={saving}
-              className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-            >
-              {saving ? "ذخیره…" : "💾 ذخیره تنظیمات"}
-            </button>
-          </div>
-        </div>
-      </Card>
-
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-2">
-          📬 گیرنده‌های فوروارد ({recipients.length})
-        </div>
-        <p className="text-[10px] text-[var(--color-text-dim)] mb-2">
-          chat_id کاربر (مثبت) یا گروه/کانال (منفی). گیرنده باید قبلاً به بات
-          /start زده باشه یا بات تو گروه/کانال عضو باشه.
-        </p>
-        {recipients.length === 0 ? (
-          <p className="text-xs text-[var(--color-text-dim)] mb-3">
-            هیچ گیرنده‌ای ست نشده — پیام‌های match‌شده فقط لاگ می‌شن.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-1 mb-3">
-            {recipients.map((r) => (
-              <RecipientRow
-                key={r.recipientChatId}
-                r={r}
-                busy={!!recipientBusy[r.recipientChatId]}
-                testStatus={testStatus[r.recipientChatId]}
-                onPause={() => setRecipientPaused(r.recipientChatId, !r.paused)}
-                onRemove={() => removeRecipient(r.recipientChatId)}
-                onRename={(label) => renameRecipient(r.recipientChatId, label)}
-                onTest={() => testRecipient(r.recipientChatId)}
-              />
-            ))}
-          </div>
-        )}
-        <div className="flex gap-2 flex-wrap">
-          <input
-            type="number"
-            value={newChat}
-            onChange={(e) => setNewChat(e.target.value)}
-            placeholder="chat_id"
-            className="flex-1 min-w-[140px] text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5"
-          />
-          <input
-            type="text"
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
-            placeholder="label (اختیاری)"
-            className="flex-1 min-w-[140px] text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5"
-          />
-          <button
-            onClick={addRecipient}
-            disabled={!newChat || addingRecipient}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-          >
-            {addingRecipient ? "…" : "+ اضافه"}
-          </button>
-        </div>
-      </Card>
-
-      <Card className="mb-4">
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-          <div className="text-xs font-medium">🧪 تست روی پیام‌های قبلی</div>
-          <div className="flex items-center gap-2">
-            <select
-              value={testLimit}
-              onChange={(e) => setTestLimit(Number(e.target.value))}
-              className="text-xs px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)]"
-            >
-              <option value={10}>۱۰ پیام</option>
-              <option value={30}>۳۰ پیام</option>
-              <option value={50}>۵۰ پیام</option>
-              <option value={100}>۱۰۰ پیام</option>
-            </select>
-            <button
-              onClick={runTest}
-              disabled={testing}
-              className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-            >
-              {testing ? "تست…" : "▶ run"}
-            </button>
-          </div>
-        </div>
-        {testResults && (
-          <>
-            <div className="text-[11px] text-[var(--color-text-dim)] mb-2">
-              {testResults.filter((r) => r.matched).length} از{" "}
-              {testResults.length} پیام match شد.
-              {testResults.filter((r) => r.matched).length === 0 &&
-                " — هیچی match نشد، rule رو ویرایش کن یا نمونه‌ی بیشتر اضافه کن."}
-            </div>
-            <div className="flex flex-col gap-1">
-              {testResults
-                .filter((r) => r.matched)
-                .map((r) => (
-                <div
-                  key={r.messageLogId}
-                  className="p-2 rounded-md text-xs border border-emerald-700 bg-emerald-900/20"
-                >
-                  <div className="flex items-center gap-2 text-[10px] text-[var(--color-text-dim)] mb-1">
-                    <Badge tone="success">match</Badge>
-                    <span>
-                      {r.senderName} ·{" "}
-                      {r.chatTitle ?? `chat ${r.chatId}`} ·{" "}
-                      {relTime(r.createdAt)}
-                    </span>
-                  </div>
-                  <div
-                    dir="auto"
-                    style={{ unicodeBidi: "plaintext" }}
-                    className="whitespace-pre-wrap break-words"
-                  >
-                    {truncate(r.originalText, 300)}
-                  </div>
-                  {r.formattedText && (
-                    <div className="mt-2 pt-2 border-t border-emerald-700/40">
-                      <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
-                        خروجی format شده:
-                      </div>
-                      <div
-                        dir="auto"
-                        style={{ unicodeBidi: "plaintext" }}
-                        className="whitespace-pre-wrap break-words"
-                      >
-                        {r.formattedText}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </Card>
-
-      <Card>
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-          <div className="text-xs font-medium">🕐 تاریخچه تطبیق‌ها</div>
-          <div className="flex gap-1.5 flex-wrap">
-            {([
-              { key: "active", label: `🟢 فعال (${activeMatches.length})` },
-              { key: "partial", label: `⚠️ ناقص (${partialMatches.length})` },
-              { key: "done", label: `✓ انجام‌شده (${doneMatches.length})` },
-              { key: "expired", label: `⌛ منقضی (${expiredMatches.length})` },
-            ] as const).map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setMatchFilter(t.key)}
-                className={`text-[11px] px-2.5 py-1 rounded-md border ${
-                  matchFilter === t.key
-                    ? "bg-[var(--color-accent)] text-white border-transparent"
-                    : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        {matches.length === 0 ? (
-          <p className="text-xs text-[var(--color-text-dim)]">
-            هنوز هیچ پیامی به این rule نخورده.
-          </p>
-        ) : visibleMatches.length === 0 ? (
-          <p className="text-xs text-[var(--color-text-dim)]">
-            {matchFilter === "expired"
-              ? "هیچ تطبیق منقضی‌ای نیست."
-              : matchFilter === "partial"
-                ? "هیچ تطبیق ناقصی نیست."
-                : matchFilter === "done"
-                  ? "هنوز چیزی کامل تحویل نشده."
-                  : "تطبیق فعالی نیست — چیزی در حال انتظارِ ارسال نیست. تب‌های دیگه رو ببین."}
-          </p>
-        ) : (
-          <>
-            <div className="flex flex-col gap-1">
-              {visibleMatches.map((m) => {
-                const deliveredSet = new Set(m.forwardedTo);
-                const rowsByRecipient = recipients.map((r) => {
-                  const got = deliveredSet.has(r.recipientChatId);
-                  const err =
-                    m.forwardErrors?.[String(r.recipientChatId)] ?? null;
-                  return {
-                    recipientChatId: r.recipientChatId,
-                    label: r.recipientLabel,
-                    paused: r.paused,
-                    got,
-                    err,
-                  };
-                });
-                // Completeness ignores paused recipients — they're not
-                // expected to receive, so a paused non-delivery isn't
-                // "ناقص".
-                const activeRows = rowsByRecipient.filter((r) => !r.paused);
-                const total = activeRows.length;
-                const gotCount = activeRows.filter((r) => r.got).length;
-                const allDelivered = total > 0 && gotCount === total;
-                const partial = gotCount > 0 && gotCount < total;
-                // Past the window a match can NEVER be delivered again —
-                // not auto-released, and force-send is refused server-
-                // side. `expired` = not-fully-delivered AND past window;
-                // it drives the "no more sending" note + hidden button.
-                const windowMs = (rule.requestWindowSeconds ?? 0) * 1000;
-                const ageMs = Date.now() - new Date(m.matchedAt).getTime();
-                const pastWindow = windowMs > 0 && ageMs > windowMs;
-                const expired = !allDelivered && pastWindow;
-                return (
-                  <div
-                    key={m.id}
-                    className="p-2 rounded-md bg-[var(--color-surface-2)] text-xs"
-                  >
-                    <div className="flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-dim)] mb-1">
-                      <span>{m.senderName}</span>
-                      <span>·</span>
-                      <span>{relTime(m.matchedAt)}</span>
-                      <span>·</span>
-                      {allDelivered ? (
-                        <Badge tone="success">
-                          ✓ همه گرفتن ({gotCount}/{total})
-                        </Badge>
-                      ) : partial ? (
-                        <Badge tone="danger">
-                          ⚠️ ناقص ({gotCount}/{total})
-                          {pastWindow ? " — بقیه دیگه نمی‌ره" : ""}
-                        </Badge>
-                      ) : pastWindow ? (
-                        <Badge tone="neutral">
-                          ⌛ منقضی — دیگه ارسال نمی‌شه
-                        </Badge>
-                      ) : (
-                        <Badge tone="warn">⏸ نگه‌داشته (gate)</Badge>
-                      )}
-                    </div>
-                    {rowsByRecipient.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mb-1">
-                        {rowsByRecipient.map((r) => (
-                          <span
-                            key={r.recipientChatId}
-                            title={r.paused ? "این گیرنده متوقفه" : r.err ?? undefined}
-                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] ${
-                              r.got
-                                ? "bg-emerald-900/40 text-emerald-200"
-                                : r.paused
-                                  ? "bg-amber-500/10 text-amber-200/70 line-through"
-                                  : r.err
-                                    ? "bg-red-900/40 text-red-200"
-                                    : "bg-[var(--color-surface)] text-[var(--color-text-dim)]"
-                            }`}
-                          >
-                            {r.got
-                              ? "✓"
-                              : r.paused
-                                ? "⏸"
-                                : expired
-                                  ? "⌛"
-                                  : r.err
-                                    ? "✗"
-                                    : "⏸"}{" "}
-                            {r.label
-                              ? `${r.label}`
-                              : String(r.recipientChatId)}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <div
-                      dir="auto"
-                      style={{ unicodeBidi: "plaintext" }}
-                      className="whitespace-pre-wrap break-words"
-                    >
-                      {truncate(m.messageText, 200)}
-                    </div>
-                    {m.formattedText && (
-                      <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
-                        <div className="text-[10px] text-[var(--color-text-dim)] mb-1">
-                          خروجی format شده:
-                        </div>
-                        <div
-                          dir="auto"
-                          style={{ unicodeBidi: "plaintext" }}
-                          className="whitespace-pre-wrap break-words"
-                        >
-                          {m.formattedText}
-                        </div>
-                      </div>
-                    )}
-                    {expired && (
-                      <div className="mt-2 text-[10px] text-[var(--color-text-dim)]">
-                        ⌛ منقضی — پنجره‌ی زمانی گذشته، دیگه قابل ارسال نیست.
-                      </div>
-                    )}
-                    {!allDelivered && !expired && (
-                      <div className="mt-2 flex flex-col gap-1.5">
-                        <button
-                          onClick={() => forceSend(m.id)}
-                          className="text-[10px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)] self-start"
-                        >
-                          🚀 ارسال اجباری به نگرفته‌ها
-                        </button>
-                        {forceStatus && forceStatus.matchId === m.id && (
-                          <div
-                            className={`text-[10px] leading-relaxed p-2 rounded-md ${
-                              forceStatus.ok
-                                ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-200"
-                                : "bg-rose-500/10 border border-rose-500/30 text-rose-200"
-                            }`}
-                          >
-                            {forceStatus.msg}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            {matchesError ? (
-              <div className="mt-3 p-2 rounded-md bg-red-900/30 border border-red-800 text-[11px] text-red-200 flex items-center justify-between gap-2 flex-wrap">
-                <span>⚠ {matchesError}</span>
-                <button
-                  onClick={loadMoreMatches}
-                  className="text-[11px] px-2 py-1 rounded-md bg-red-700 hover:bg-red-600"
-                >
-                  🔄 دوباره امتحان کن
-                </button>
-              </div>
-            ) : hasMoreMatches ? (
-              <div
-                ref={matchSentinelRef}
-                className="text-center text-[11px] text-[var(--color-text-dim)] py-3"
-              >
-                {loadingMoreMatches
-                  ? "⏳ در حال بارگذاری بیشتر…"
-                  : "اسکرول کن تا بقیه بیاد"}
-              </div>
-            ) : (
-              matches.length > MATCH_PAGE && (
-                <div className="text-center text-[10px] text-[var(--color-text-dim)] py-3">
-                  · پایان لیست ({matches.length} match) ·
-                </div>
-              )
-            )}
-          </>
-        )}
-      </Card>
+      </div>
+      </div>
     </Shell>
-  );
-}
-
-// Staged example editor: adds/removals are collected LOCALLY and only
-// committed on 💾 ذخیره — nothing auto-applies. AI generation previews
-// into the pending list for review before saving.
-function ExampleEditor({
-  ruleId,
-  items,
-  purpose,
-  tone,
-  placeholder,
-  aiGenerate,
-  onSaved,
-}: {
-  ruleId: number;
-  items: Example[];
-  purpose: "rule_match" | "negative_match";
-  tone: "pos" | "neg";
-  placeholder: string;
-  aiGenerate?: boolean;
-  onSaved: () => void;
-}) {
-  const [adds, setAdds] = useState<string[]>([]);
-  const [dels, setDels] = useState<Set<number>>(new Set());
-  const [draft, setDraft] = useState("");
-  const [seed, setSeed] = useState("");
-  const [aiBusy, setAiBusy] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const dirty = adds.length > 0 || dels.size > 0;
-  const accent = tone === "neg" ? "bg-rose-600" : "bg-[var(--color-accent)]";
-  const chipBg =
-    tone === "neg"
-      ? "bg-rose-500/5 border-rose-500/20"
-      : "bg-[var(--color-surface-2)] border-transparent";
-
-  const addDraft = () => {
-    const t = draft.trim();
-    if (!t) return;
-    setAdds((a) => [...a, t]);
-    setDraft("");
-  };
-  const toggleDel = (exId: number) =>
-    setDels((d) => {
-      const n = new Set(d);
-      if (n.has(exId)) n.delete(exId);
-      else n.add(exId);
-      return n;
-    });
-  const aiGen = async () => {
-    if (!seed.trim()) return;
-    setAiBusy(true);
-    setMsg(null);
-    try {
-      const r = await fetch(`/api/rules/${ruleId}/generate-examples`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sample: seed, save: false }),
-      });
-      const j = (await r.json()) as { variations?: string[]; error?: string };
-      if (r.ok && j.variations?.length) {
-        setAdds((a) => [...a, ...j.variations!]);
-        setSeed("");
-        setMsg(`✅ ${j.variations.length} نمونه ساخته شد — بازبینی کن، بعد ذخیره بزن`);
-      } else setMsg(`❌ ${j.error ?? "خطا"}`);
-    } finally {
-      setAiBusy(false);
-      setTimeout(() => setMsg(null), 8000);
-    }
-  };
-  const save = async () => {
-    setSaving(true);
-    try {
-      for (const text of adds)
-        await fetch(`/api/rules/${ruleId}/examples`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, purpose }),
-        });
-      for (const exId of dels)
-        await fetch(`/api/rules/${ruleId}/examples?exampleId=${exId}`, {
-          method: "DELETE",
-        });
-      setAdds([]);
-      setDels(new Set());
-      onSaved();
-    } finally {
-      setSaving(false);
-    }
-  };
-  const discard = () => {
-    setAdds([]);
-    setDels(new Set());
-    setDraft("");
-  };
-
-  return (
-    <div className="flex flex-col gap-2">
-      {(items.length > 0 || adds.length > 0) && (
-        <div className="flex flex-col gap-1">
-          {items.map((e) => {
-            const marked = dels.has(e.id);
-            return (
-              <div
-                key={e.id}
-                className={`flex items-start gap-2 p-2 rounded-md border text-xs ${chipBg} ${marked ? "opacity-50" : ""}`}
-              >
-                <div
-                  dir="auto"
-                  style={{ unicodeBidi: "plaintext" }}
-                  className={`flex-1 min-w-0 whitespace-pre-wrap break-words ${marked ? "line-through" : ""}`}
-                >
-                  {truncate(e.text, 400)}
-                </div>
-                <button
-                  onClick={() => toggleDel(e.id)}
-                  title={marked ? "برگردون" : "برای حذف علامت بزن"}
-                  className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
-                >
-                  {marked ? "↩︎" : "✕"}
-                </button>
-              </div>
-            );
-          })}
-          {adds.map((t, i) => (
-            <div
-              key={`add-${i}`}
-              className="flex items-start gap-2 p-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 text-xs"
-            >
-              <span className="text-[9px] text-emerald-300 shrink-0 mt-0.5">جدید</span>
-              <div dir="auto" style={{ unicodeBidi: "plaintext" }} className="flex-1 min-w-0 whitespace-pre-wrap break-words">
-                {truncate(t, 400)}
-              </div>
-              <button
-                onClick={() => setAdds((a) => a.filter((_, j) => j !== i))}
-                className="text-[10px] text-red-300 hover:text-red-200 shrink-0"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="flex gap-2">
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={placeholder}
-          rows={2}
-          className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-        />
-        <button
-          onClick={addDraft}
-          disabled={!draft.trim()}
-          className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 self-start"
-        >
-          + به لیست
-        </button>
-      </div>
-
-      {aiGenerate && (
-        <div className="flex gap-2">
-          <input
-            dir="auto"
-            value={seed}
-            onChange={(e) => setSeed(e.target.value)}
-            placeholder="🤖 یه نمونه بده تا چندتای مشابه بسازه…"
-            className="flex-1 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
-          />
-          <button
-            onClick={aiGen}
-            disabled={aiBusy || !seed.trim()}
-            className="text-[11px] px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/40 text-amber-200 hover:bg-amber-500/20 disabled:opacity-50 self-start"
-          >
-            {aiBusy ? "..." : "🤖 بساز"}
-          </button>
-        </div>
-      )}
-      {msg && <div className="text-[10px] text-[var(--color-text-dim)]">{msg}</div>}
-
-      <div className="flex items-center gap-2 justify-end">
-        {dirty && (
-          <>
-            <span className="text-[10px] text-amber-300 me-auto">
-              {adds.length ? `${adds.length} افزودن` : ""}
-              {adds.length && dels.size ? " · " : ""}
-              {dels.size ? `${dels.size} حذف` : ""} — ذخیره نشده
-            </span>
-            <button
-              onClick={discard}
-              className="text-[11px] px-2.5 py-1 rounded-md border border-[var(--color-border)]"
-            >
-              انصراف
-            </button>
-          </>
-        )}
-        <button
-          onClick={save}
-          disabled={!dirty || saving}
-          className={`text-xs px-3 py-1.5 rounded-md text-white disabled:opacity-40 ${accent}`}
-        >
-          {saving ? "ذخیره…" : "💾 ذخیره"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// One recipient row: inline rename + per-action loading, no page reload.
-function RecipientRow({
-  r,
-  busy,
-  testStatus,
-  onPause,
-  onRemove,
-  onRename,
-  onTest,
-}: {
-  r: Recipient;
-  busy: boolean;
-  testStatus?: string;
-  onPause: () => void;
-  onRemove: () => void;
-  onRename: (label: string) => Promise<void>;
-  onTest: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [label, setLabel] = useState(r.recipientLabel ?? "");
-  const [saving, setSaving] = useState(false);
-  const save = async () => {
-    setSaving(true);
-    try {
-      await onRename(label);
-      setEditing(false);
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <div
-      className={`flex items-center gap-2 p-2 rounded-md text-xs ${
-        r.paused
-          ? "bg-amber-500/5 border border-amber-500/30"
-          : "bg-[var(--color-surface-2)]"
-      } ${busy ? "opacity-60" : ""}`}
-    >
-      {editing ? (
-        <div className="flex-1 flex items-center gap-1.5">
-          <input
-            autoFocus
-            dir="auto"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") save();
-              if (e.key === "Escape") setEditing(false);
-            }}
-            placeholder="اسم گیرنده"
-            className="flex-1 min-w-0 text-xs bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1"
-          />
-          <button
-            onClick={save}
-            disabled={saving}
-            className="text-[10px] px-2 py-1 rounded border border-[var(--color-accent)] text-[var(--color-accent)] disabled:opacity-50"
-          >
-            {saving ? "…" : "ذخیره"}
-          </button>
-          <button
-            onClick={() => {
-              setLabel(r.recipientLabel ?? "");
-              setEditing(false);
-            }}
-            className="text-[10px] px-2 py-1 rounded border border-[var(--color-border)]"
-          >
-            انصراف
-          </button>
-        </div>
-      ) : (
-        <span className="flex-1 tabular-nums flex items-center gap-1.5 min-w-0">
-          <span className="truncate">
-            {r.recipientLabel ? (
-              <>
-                <strong>{r.recipientLabel}</strong>{" "}
-                <span className="text-[var(--color-text-dim)]">
-                  ({r.recipientChatId})
-                </span>
-              </>
-            ) : (
-              <span className="text-[var(--color-text-dim)]">{r.recipientChatId}</span>
-            )}
-          </span>
-          <button
-            onClick={() => setEditing(true)}
-            title="ویرایش اسم"
-            className="text-[10px] text-[var(--color-text-dim)] hover:text-white shrink-0"
-          >
-            ✏️
-          </button>
-          {r.paused && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 shrink-0">
-              ⏸ متوقف
-            </span>
-          )}
-          {testStatus && (
-            <span
-              className={`text-[10px] ${
-                testStatus.startsWith("✓") ? "text-emerald-300" : "text-red-300"
-              }`}
-            >
-              {testStatus}
-            </span>
-          )}
-        </span>
-      )}
-      {!editing && (
-        <>
-          <button
-            onClick={onPause}
-            disabled={busy}
-            className={`text-[10px] px-2 py-0.5 rounded-md border disabled:opacity-50 ${
-              r.paused
-                ? "border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/10"
-                : "border-amber-500/40 text-amber-200 hover:bg-amber-500/10"
-            }`}
-            title={r.paused ? "ادامه‌ی ارسال به این گیرنده" : "توقف موقت ارسال (بدون حذف)"}
-          >
-            {busy ? "…" : r.paused ? "▶️ ادامه" : "⏸ توقف"}
-          </button>
-          <button
-            onClick={onTest}
-            className="text-[10px] px-2 py-0.5 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
-            title="یه پیام تست از bot بفرست"
-          >
-            🧪 تست
-          </button>
-          <button
-            onClick={onRemove}
-            disabled={busy}
-            className="text-[10px] text-red-300 hover:text-red-200 disabled:opacity-50"
-          >
-            ✕
-          </button>
-        </>
-      )}
-    </div>
   );
 }

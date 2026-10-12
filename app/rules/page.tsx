@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Shell from "@/components/Shell";
-import { Card, PageTitle, Badge } from "@/components/Card";
+import { Card, PageTitle } from "@/components/Card";
+import EmptyState from "@/components/ui/EmptyState";
+import Section from "@/components/ui/Section";
+import { Chip, fa, inputCls } from "@/components/rule-editor/shared";
 
 import { relTime, truncate } from "@/lib/format";
 
@@ -34,20 +37,25 @@ export default function RulesPage() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [recent, setRecent] = useState<RecentMatch[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [format, setFormat] = useState("");
+  const [q, setQ] = useState("");
 
   const RECENT_PAGE = 10;
   const [hasMoreRecent, setHasMoreRecent] = useState(true);
   const [loadingMoreRecent, setLoadingMoreRecent] = useState(false);
   const [recentError, setRecentError] = useState<string | null>(null);
 
+  // Only the first load shows the full-page spinner; reloads after a toggle / create refresh the list in place.
+  const loadedOnce = useRef(false);
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
     setRecentError(null);
+    setLoadError(null);
     try {
       const [r1, r2] = await Promise.all([
         fetch("/api/rules"),
@@ -56,6 +64,9 @@ export default function RulesPage() {
       if (r1.ok) {
         const j = (await r1.json()) as { rules: Rule[] };
         setRules(j.rules ?? []);
+        loadedOnce.current = true;
+      } else {
+        setLoadError(`خطا ${r1.status} — لود rule‌ها شکست خورد`);
       }
       if (r2.ok) {
         const j = (await r2.json()) as { matches: RecentMatch[] };
@@ -65,7 +76,7 @@ export default function RulesPage() {
         setRecentError("لود لیست شکست خورد — برای retry دکمه رو بزن");
       }
     } catch (e) {
-      setRecentError(e instanceof Error ? e.message : String(e));
+      setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -148,147 +159,188 @@ export default function RulesPage() {
     [load],
   );
 
+  const needle = q.trim().toLowerCase();
+  const shown = useMemo(
+    () => (needle ? rules.filter((r) => `${r.name} ${r.description}`.toLowerCase().includes(needle)) : rules),
+    [rules, needle],
+  );
+  const onCount = rules.filter((r) => r.enabled).length;
+  const noRecipients = rules.filter((r) => r.recipientCount === 0).length;
+
+  const createButton = (
+    <button
+      onClick={() => setShowCreate((v) => !v)}
+      className="min-h-11 px-4 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium"
+    >
+      {showCreate ? "بستن" : "+ rule جدید"}
+    </button>
+  );
+
   return (
     <Shell>
       <PageTitle
         title="📐 Rules"
         subtitle="قانون‌های تشخیص پیام به‌علاوه‌ی فوروارد خودکار. هر قانون رو با یه متن طبیعی توصیف کن و گیرنده‌ها رو ست کن."
-        actions={
-          <button
-            onClick={() => setShowCreate((v) => !v)}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white hover:opacity-90"
-          >
-            {showCreate ? "بستن" : "+ rule جدید"}
-          </button>
-        }
+        actions={createButton}
       />
 
+      <div className="max-w-3xl">
       {showCreate && (
-        <Card className="mb-4">
-          <div className="text-xs font-medium mb-2">ساخت rule جدید</div>
-          <div className="flex flex-col gap-2">
+        <Section icon="➕" title="ساخت rule جدید" summary="اسم، توصیف و (اختیاری) format فوروارد" open onOpenChange={setShowCreate}>
+          <div className="flex flex-col gap-3">
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="اسم rule (مثلاً «کدهای OTP»)"
-              className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+              className={inputCls}
             />
             <textarea
               value={desc}
               onChange={(e) => setDesc(e.target.value)}
               placeholder="توصیف: چه پیام‌هایی باید match بشن؟ (مثلاً: «پیام‌هایی که شامل یک کد تایید/OTP/verification هستن، معمولاً ۴ تا ۸ رقمی»)"
               rows={3}
-              className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+              className={inputCls}
             />
             <textarea
               value={format}
               onChange={(e) => setFormat(e.target.value)}
               placeholder="(اختیاری) format فوروارد — مثلاً «فقط عدد کد رو با emoji 🔑 و علامت bold بفرست» — خالی = پیام اصلی فوروارد می‌شه"
               rows={2}
-              className="text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2"
+              className={inputCls}
             />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowCreate(false)}
-                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)]"
-              >
-                انصراف
-              </button>
+            <div className="flex gap-2">
               <button
                 onClick={create}
                 disabled={creating || !name.trim() || !desc.trim()}
-                className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
+                className="min-h-11 px-5 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium disabled:opacity-50"
               >
                 {creating ? "ساخت…" : "بساز"}
               </button>
+              <button
+                onClick={() => setShowCreate(false)}
+                className="min-h-11 px-5 rounded-xl border border-[var(--color-border)] text-sm"
+              >
+                انصراف
+              </button>
             </div>
           </div>
-        </Card>
+        </Section>
+      )}
+
+      {rules.length > 0 && (
+        <div className="mb-3 grid grid-cols-3 gap-2 text-center">
+          {[
+            { label: "همه", value: rules.length },
+            { label: "فعال", value: onCount },
+            { label: "بدون گیرنده", value: noRecipients },
+          ].map((s) => (
+            <div key={s.label} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-2.5">
+              <div className="text-lg font-semibold tabular-nums">{fa(s.value)}</div>
+              <div className="text-xs text-[var(--color-text-dim)]">{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {rules.length > 6 && (
+        <input
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="جستجوی rule…"
+          aria-label="جستجوی rule"
+          className={`${inputCls} mb-3`}
+        />
       )}
 
       {loading ? (
-        <Card>Loading…</Card>
-      ) : rules.length === 0 ? (
-        <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">
-            هنوز هیچ rule‌ای نساختی. روی «+ rule جدید» بزن.
-          </p>
+        <Card>در حال بارگذاری…</Card>
+      ) : loadError && rules.length === 0 ? (
+        <Card className="mb-4">
+          <p className="text-sm text-red-300 leading-7">⚠ {loadError}</p>
+          <div className="mt-3 flex gap-2">
+            <button onClick={load} className="min-h-11 px-4 rounded-xl bg-[var(--color-accent)] text-white text-sm">تلاش دوباره</button>
+          </div>
         </Card>
+      ) : rules.length === 0 ? (
+        <div className="mb-4">
+          <EmptyState
+            icon="📐"
+            title="هنوز هیچ rule‌ای نساختی"
+            hint="با یه توصیف طبیعی از پیام‌هایی که می‌خوای تشخیص داده بشن شروع کن، بعد گیرنده‌ها رو ست کن."
+            action={!showCreate ? createButton : undefined}
+          />
+        </div>
+      ) : shown.length === 0 ? (
+        <div className="mb-4">
+          <EmptyState icon="🔍" title="چیزی پیدا نشد" hint="جستجو رو عوض کن یا پاکش کن." />
+        </div>
       ) : (
-        <div className="flex flex-col gap-2 mb-4">
-          {rules.map((r) => (
-            <Card key={r.id} className="!p-3">
-              <div className="flex items-start justify-between gap-2 flex-wrap">
-                <Link
-                  href={`/rules/${r.id}`}
-                  className="flex-1 min-w-0"
-                >
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium hover:underline">
-                      {r.name}
-                    </span>
-                    {r.enabled ? (
-                      <Badge tone="success">on</Badge>
-                    ) : (
-                      <Badge tone="neutral">off</Badge>
-                    )}
-                    <Badge tone="info">{r.recipientCount} گیرنده</Badge>
-                    {r.forwardFormat && (
-                      <Badge tone="warn">format سفارشی</Badge>
-                    )}
-                  </div>
-                  <div
-                    className="text-[11px] text-[var(--color-text-dim)] mt-1 line-clamp-2"
-                    dir="auto"
-                  >
-                    {r.description}
-                  </div>
-                </Link>
-                <div className="flex items-center gap-2">
-                  <label className="text-[10px] flex items-center gap-1 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={r.enabled}
-                      onChange={(e) => toggle(r.id, e.target.checked)}
-                    />
-                    enabled
-                  </label>
+        <div className="flex flex-col gap-2 mb-5">
+          {shown.map((r) => (
+            <div key={r.id} className="flex items-stretch rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              <Link
+                href={`/rules/${r.id}`}
+                className="flex-1 min-w-0 min-h-16 px-4 py-3 text-center active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)]"
+              >
+                <div className="text-sm font-semibold leading-6 line-clamp-2">{r.name}</div>
+                <div className="mt-1.5 flex items-center justify-center gap-1.5 flex-wrap">
+                  {r.enabled ? <Chip tone="ok">on</Chip> : <Chip>off</Chip>}
+                  <Chip tone={r.recipientCount === 0 ? "warn" : "info"}>{fa(r.recipientCount)} گیرنده</Chip>
+                  {r.forwardFormat && <Chip tone="warn">format سفارشی</Chip>}
                 </div>
-              </div>
-            </Card>
+                <div className="mt-1.5 text-xs leading-5 text-[var(--color-text-dim)] line-clamp-2" dir="auto">
+                  {r.description}
+                </div>
+              </Link>
+              {/* enable switch: its own 56px-wide touch column so a tap never opens the rule by accident */}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={r.enabled}
+                aria-label={`${r.enabled ? "غیرفعال‌کردن" : "فعال‌کردن"} ${r.name}`}
+                onClick={() => toggle(r.id, !r.enabled)}
+                className="shrink-0 w-16 grid place-items-center border-s border-[var(--color-border)] active:bg-[var(--color-surface-2)]"
+              >
+                <span className={`relative w-11 h-6 rounded-full transition-colors ${r.enabled ? "bg-emerald-500" : "bg-[var(--color-border)]"}`}>
+                  <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${r.enabled ? "left-[22px]" : "left-0.5"}`} />
+                </span>
+              </button>
+            </div>
           ))}
         </div>
       )}
 
       {recent.length > 0 && (
         <Card className="mb-4">
-          <div className="text-xs font-medium mb-2">
-            🏷 پیام‌های match شده اخیر ({recent.length})
-          </div>
-          <div className="flex flex-col gap-1">
+          <h2 className="text-sm font-semibold mb-3">
+            🏷 پیام‌های match شده اخیر ({fa(recent.length)})
+          </h2>
+          <div className="flex flex-col gap-2">
             {recent.map((m) => (
               <Link
                 key={m.id}
                 href={`/rules/${m.ruleId}`}
-                className="block p-2 rounded-md bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] text-xs"
+                className="block min-h-14 p-3 rounded-xl bg-[var(--color-surface-2)] hover:bg-[var(--color-surface)] text-xs"
               >
-                <div className="flex items-center gap-2 text-[10px] text-[var(--color-text-dim)] mb-1 flex-wrap">
-                  <Badge tone="info">{m.ruleName}</Badge>
+                <div className="flex items-center justify-center gap-x-2 gap-y-1 text-xs text-[var(--color-text-dim)] mb-2 flex-wrap">
+                  <Chip tone="info">{truncate(m.ruleName, 40)}</Chip>
                   <span>{m.senderName}</span>
                   <span>·</span>
                   <span>{relTime(m.matchedAt)}</span>
                   <span>·</span>
                   <span>
                     {m.forwardedTo.length > 0
-                      ? `→ ${m.forwardedTo.length} گیرنده`
+                      ? `→ ${fa(m.forwardedTo.length)} گیرنده`
                       : "نگه‌ داشته شده (gate)"}
                   </span>
                 </div>
+                {/* text-start: the message body is data, centred lines are unreadable */}
                 <div
                   dir="auto"
                   style={{ unicodeBidi: "plaintext" }}
-                  className="whitespace-pre-wrap break-words"
+                  className="whitespace-pre-wrap break-words text-start leading-6"
                 >
                   {truncate(m.formattedText ?? m.messageText, 180)}
                 </div>
@@ -296,19 +348,21 @@ export default function RulesPage() {
             ))}
           </div>
           {recentError ? (
-            <div className="mt-3 p-2 rounded-md bg-red-900/30 border border-red-800 text-[11px] text-red-200 flex items-center justify-between gap-2 flex-wrap">
-              <span>⚠ {recentError}</span>
-              <button
-                onClick={loadMoreRecent}
-                className="text-[11px] px-2 py-1 rounded-md bg-red-700 hover:bg-red-600"
-              >
-                🔄 دوباره امتحان کن
-              </button>
+            <div className="mt-3 p-3 rounded-xl bg-red-900/30 border border-red-800 text-xs text-red-200 flex flex-col items-center gap-2">
+              <span className="leading-6">⚠ {recentError}</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={loadMoreRecent}
+                  className="min-h-10 px-4 rounded-lg bg-red-700 hover:bg-red-600 text-white text-xs"
+                >
+                  🔄 دوباره امتحان کن
+                </button>
+              </div>
             </div>
           ) : hasMoreRecent ? (
             <div
               ref={recentSentinelRef}
-              className="text-center text-[11px] text-[var(--color-text-dim)] py-3"
+              className="text-center text-xs text-[var(--color-text-dim)] py-3"
             >
               {loadingMoreRecent
                 ? "⏳ در حال بارگذاری بیشتر…"
@@ -316,13 +370,24 @@ export default function RulesPage() {
             </div>
           ) : (
             recent.length > RECENT_PAGE && (
-              <div className="text-center text-[10px] text-[var(--color-text-dim)] py-3">
-                · پایان لیست ({recent.length} match) ·
+              <div className="text-center text-xs text-[var(--color-text-dim)] py-3">
+                · پایان لیست ({fa(recent.length)} match) ·
               </div>
             )
           )}
         </Card>
       )}
+
+      {/* The recent-matches feed failed on first load: say so and offer a retry (loadError covers the rules list). */}
+      {recent.length === 0 && recentError && !loading && (
+        <Card className="mb-4">
+          <p className="text-sm text-red-200 leading-7">⚠ {recentError}</p>
+          <div className="mt-3 flex gap-2">
+            <button onClick={load} className="min-h-11 px-4 rounded-xl border border-[var(--color-border)] text-sm">تلاش دوباره</button>
+          </div>
+        </Card>
+      )}
+      </div>
     </Shell>
   );
 }
