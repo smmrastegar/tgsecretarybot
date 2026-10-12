@@ -22,7 +22,7 @@ export default function OtpChip({ code }: { code: string }) {
       title="کلیک کن تا کد کپی بشه"
     >
       🔑 <span className="tracking-wider">{code}</span>
-      <span className="text-emerald-300/70 text-[10px]">
+      <span className="text-emerald-300/70 text-xs">
         {copied ? "✓ کپی شد" : "📋"}
       </span>
     </button>

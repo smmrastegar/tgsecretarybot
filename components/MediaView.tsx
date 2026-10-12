@@ -38,7 +38,7 @@ export default function MediaView({
     return (
       <button
         onClick={() => setState("loading")}
-        className="mt-1 text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1"
+        className="mt-1 text-xs min-h-11 px-3 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1"
       >
         {isImage
           ? isSticker
@@ -164,7 +164,7 @@ export default function MediaView({
   return (
     <a
       href={downloadSrc}
-      className="mt-1 text-[11px] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1"
+      className="mt-1 text-xs min-h-11 px-3 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1"
     >
       ⬇️ دانلود فایل
     </a>
