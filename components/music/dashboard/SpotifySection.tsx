@@ -55,7 +55,7 @@ export default function SpotifySection(p: {
                 const on = p.acct === a.id, name = a.displayName ?? a.spotifyUserId;
                 return (
                   <li key={a.id} className={`flex items-center gap-2 rounded-2xl border p-2 ${on ? "border-[#1db954]/60 bg-[#1db954]/10" : "border-[var(--color-border)]"}`}>
-                    <button onClick={() => p.onSelect(a.id)} aria-pressed={on} className="flex items-center gap-3 min-w-0 flex-1 min-h-12 text-start rounded-xl">
+                    <button onClick={() => p.onSelect(a.id)} aria-pressed={on} className="flex items-center gap-3 min-w-0 flex-1 min-h-12 text-center rounded-xl">
                       <span aria-hidden className={`grid place-items-center w-10 h-10 rounded-full text-base font-semibold shrink-0 bg-[var(--color-surface-2)] ${on ? "ring-2 ring-[#1db954] text-[#1db954]" : ""}`}>{(name.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "?").toUpperCase()}</span>
                       <span className="min-w-0">
                         <span className="block text-sm font-medium truncate" dir="auto">{name}</span>
@@ -78,7 +78,7 @@ export default function SpotifySection(p: {
 
           {accounts.length > 0 && (
             <div className="mt-3 rounded-2xl border border-[var(--color-border)] overflow-hidden">
-              <button onClick={() => setListOpen((o) => !o)} aria-expanded={listOpen} className="w-full min-h-12 px-4 flex items-center gap-2 text-sm text-start active:bg-[var(--color-surface-2)]">
+              <button onClick={() => setListOpen((o) => !o)} aria-expanded={listOpen} className="w-full min-h-12 px-4 flex items-center gap-2 text-sm text-center active:bg-[var(--color-surface-2)]">
                 <span aria-hidden>📋</span>
                 <span className="flex-1 min-w-0 truncate">لیست‌های {p.spLib ? <bdi dir="auto">«{p.spLib.me}»</bdi> : "حساب"}</span>
                 <Pill>{p.spLib ? fa(p.spLib.playlists.length + 1) : "…"}</Pill>
@@ -112,7 +112,7 @@ export default function SpotifySection(p: {
 
 function Row({ name, count, onClick, busy, disabled, accent }: { name: string; count: number; onClick: () => void; busy: boolean; disabled: boolean; accent?: boolean }) {
   return (
-    <button onClick={onClick} disabled={disabled} className="w-full min-h-12 px-4 flex items-center gap-3 text-start active:bg-[var(--color-surface-2)] disabled:opacity-60">
+    <button onClick={onClick} disabled={disabled} className="w-full min-h-12 px-4 flex items-center gap-3 text-center active:bg-[var(--color-surface-2)] disabled:opacity-60">
       <span className={`flex-1 min-w-0 truncate text-sm ${accent ? "text-[#1db954] font-medium" : ""}`} dir="auto">{name}</span>
       {count >= 0 && <span className="text-[11px] text-[var(--color-text-dim)] tabular-nums shrink-0">{fa(count)}</span>}
       <span className="shrink-0 text-xs text-[var(--color-text-dim)] w-14 text-end">{busy ? "…" : "↓ وارد کن"}</span>

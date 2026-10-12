@@ -98,7 +98,7 @@ export default function SmartPlaylistCard({ tracks, onCreated, onMessage }: { tr
             {seed ? <button onClick={() => setSeed(null)} className="px-3 py-1 rounded-md border border-[var(--color-border)]">حذف «{seed.title}»</button> : (
               <>
                 <input value={seedQ} onChange={(e) => setSeedQ(e.target.value)} dir="ltr" placeholder="جستجوی آهنگ…" className={`${field} w-full`} />
-                {hits.map((t) => <button key={t.id} onClick={() => { setSeed(t); setSeedQ(""); }} className="block w-full text-start px-2 py-1.5 hover:bg-[var(--color-surface-2)] rounded" dir="ltr">{t.title} — {t.artist}</button>)}
+                {hits.map((t) => <button key={t.id} onClick={() => { setSeed(t); setSeedQ(""); }} className="block w-full text-center px-2 py-1.5 hover:bg-[var(--color-surface-2)] rounded" dir="ltr">{t.title} — {t.artist}</button>)}
               </>
             )}
           </div>

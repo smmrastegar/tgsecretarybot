@@ -86,3 +86,11 @@ main {
 .grid > * {
   min-width: 0;
 }
+
+/* Design principle (owner's rule, applies everywhere): card content is centred; action buttons sit on the LEFT.
+   `justify-content: left` is physical (it does not flip with RTL/LTR), and a row whose children are all
+   buttons is an action row. Full-width buttons and button grids are unaffected. */
+:is(div, form, footer, section, li):has(> button):not(:has(> :not(button, a, label))) {
+  justify-content: left;
+  text-align: left;
+}

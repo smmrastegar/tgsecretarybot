@@ -59,8 +59,8 @@ export default function SettingsHubPage() {
     return (
       <Link href={f.href} className="flex items-center gap-3 px-4 min-h-16 py-2.5 border-t first:border-t-0 border-[var(--color-border)] active:bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)]">
         <span aria-hidden className="grid place-items-center w-10 h-10 rounded-xl bg-[var(--color-surface-2)] text-xl shrink-0">{f.emoji}</span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 text-center">
+          <span className="flex items-center justify-center gap-2">
             <span className="text-sm font-semibold truncate">{f.label}</span>
             {u && <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${DOT[u.state]}`} title={u.state} />}
           </span>
@@ -76,7 +76,7 @@ export default function SettingsHubPage() {
       <PageTitle title="تنظیمات" subtitle="همهٔ ابزارها، با وضعیت زنده‌ی هرکدام" />
 
       {data?.alerts.map((a) => (
-        <Link key={a.id} href={a.href} className="mb-3 flex items-center gap-3 rounded-2xl border border-rose-400/50 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <Link key={a.id} href={a.href} className="mb-3 flex items-center gap-3 rounded-2xl border border-rose-400/50 bg-rose-500/10 px-4 py-3 text-sm text-rose-200 text-center">
           <span aria-hidden>⚠️</span><span className="flex-1 leading-6">{a.text}</span><span aria-hidden>‹</span>
         </Link>
       ))}
@@ -85,13 +85,13 @@ export default function SettingsHubPage() {
         className="w-full min-h-11 mb-3 text-sm bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4" />
 
       {data && !needle && (
-        <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
-          <div className="flex items-baseline gap-2">
+        <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-center">
+          <div className="flex items-baseline justify-center gap-2 flex-wrap">
             <span className="text-2xl font-semibold tabular-nums">{fa(data.summary.usedPct)}٪</span>
             <span className="text-xs text-[var(--color-text-dim)]">قابلیت‌ها در ۳۰ روز اخیر کار کرده‌اند ({fa(data.summary.active + data.summary.quiet)} از {fa(data.summary.measurable)})</span>
           </div>
           <div className="mt-2 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full bg-emerald-400" style={{ width: `${data.summary.usedPct}%` }} /></div>
-          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+          <div className="mt-2 flex flex-wrap justify-center gap-1.5 text-[11px]">
             <Pill tone="ok">{fa(data.summary.active)} فعال</Pill>
             <Pill tone="warn">{fa(data.summary.quiet)} کم‌کار</Pill>
             <Pill tone="bad">{fa(data.summary.dormant)} خوابیده</Pill>

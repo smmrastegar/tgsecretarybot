@@ -16,7 +16,7 @@ export default function Section({ icon, title, summary, badge, defaultOpen = fal
       <button type="button" data-section-toggle onClick={toggle} aria-expanded={isOpen}
         className="w-full min-h-14 flex items-center gap-3 px-4 py-2.5 text-start active:bg-[var(--color-surface-2)]">
         <span aria-hidden className="grid place-items-center w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-lg shrink-0">{icon}</span>
-        <span className="min-w-0 flex-1">
+        <span className="min-w-0 flex-1 text-center">
           <span className="block text-sm font-semibold truncate">{title}</span>
           {summary != null && <span className="block text-[11px] text-[var(--color-text-dim)] truncate">{summary}</span>}
         </span>
@@ -24,7 +24,7 @@ export default function Section({ icon, title, summary, badge, defaultOpen = fal
         <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
           className={`shrink-0 text-[var(--color-text-dim)] transition-transform ${isOpen ? "rotate-180" : ""}`}><path d="m6 9 6 6 6-6" /></svg>
       </button>
-      {isOpen && <div className="px-4 pb-4 pt-3 border-t border-[var(--color-border)] min-w-0 [overflow-wrap:anywhere]">{children}</div>}
+      {isOpen && <div className="px-4 pb-4 pt-3 border-t border-[var(--color-border)] min-w-0 [overflow-wrap:anywhere] text-center">{children}</div>}
     </section>
   );
 }

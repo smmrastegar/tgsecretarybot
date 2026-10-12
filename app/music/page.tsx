@@ -79,7 +79,7 @@ function RemovedSection({ onRestored }: { onRestored: () => void }) {
 }
 
 function MenuItem({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
-  return <button role="menuitem" onClick={onClick} className={`block w-full min-h-11 px-3 py-2.5 rounded-xl text-start hover:bg-[var(--color-surface-2)] active:bg-[var(--color-surface-2)] ${danger ? "text-rose-300" : ""}`}>{children}</button>;
+  return <button role="menuitem" onClick={onClick} className={`block w-full min-h-11 px-3 py-2.5 rounded-xl text-center hover:bg-[var(--color-surface-2)] active:bg-[var(--color-surface-2)] ${danger ? "text-rose-300" : ""}`}>{children}</button>;
 }
 
 function FocusShell({ children }: { children: React.ReactNode }) {
@@ -374,7 +374,7 @@ export default function MusicPage() {
         onSync={() => void syncNow()} onImport={(id, name) => void importSp(id, name)} onConnect={() => { window.location.href = "/api/music/spotify/login"; }} />
       {!focus && (<>
 
-      <section className="mb-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+      <section className="mb-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-center">
         <label htmlFor="paste" className="block text-sm font-semibold mb-2">➕ افزودن آهنگ به کتابخانه</label>
         <textarea id="paste" value={paste} onChange={(e) => setPaste(e.target.value)} dir="ltr" rows={2}
           placeholder="https://open.spotify.com/track/…  (چند لینک، هر کدام در یک خط)"
@@ -486,7 +486,7 @@ export default function MusicPage() {
             <button disabled={t.status !== "ready"} onClick={() => playTrack(t.id)} className="w-12 h-12 rounded-lg overflow-hidden bg-[var(--color-surface-2)] shrink-0 grid place-items-center disabled:opacity-60">
               {t.hasCover ? <img src={`/api/music/cover/${t.id}`} alt="" className="w-full h-full object-cover" /> : <span>🎵</span>}
             </button>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 text-center">
               <div className="text-sm font-medium truncate" dir="auto">{t.title ?? t.spotifyUrl.split("/").pop()}</div>
               <div className="text-[11px] text-[var(--color-text-dim)] truncate" dir="auto">
                 {t.status === "ready" && `${t.artist ?? ""}${t.album ? ` · ${t.album}` : ""}${t.durationS ? ` · ${fmt(t.durationS)}` : ""}${t.playCount ? ` · ▶ ${t.playCount}` : ""}${t.skipCount ? ` · ⏭ ${t.skipCount}` : ""}`}
@@ -545,9 +545,9 @@ export default function MusicPage() {
         <div className="fixed bottom-16 md:bottom-0 inset-x-0 z-30 border-t border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur">
           <div className="max-w-3xl mx-auto px-3 pt-2 pb-2.5">
             <div className="flex items-center gap-1.5">
-              <button onClick={() => setExpanded((e) => !e)} aria-expanded={expanded} aria-label="گزینه‌های بیشتر پلیر" className="flex items-center gap-3 min-w-0 flex-1 text-start rounded-xl">
+              <button onClick={() => setExpanded((e) => !e)} aria-expanded={expanded} aria-label="گزینه‌های بیشتر پلیر" className="flex items-center gap-3 min-w-0 flex-1 text-center rounded-xl">
                 {now.hasCover ? <img src={`/api/music/cover/${now.id}`} alt="" className="w-11 h-11 rounded-lg shrink-0 object-cover" /> : <span className="grid place-items-center w-11 h-11 rounded-lg bg-[var(--color-surface-2)] shrink-0 text-xl">🎵</span>}
-                <span className="min-w-0"><span className="block text-sm font-medium truncate" dir="auto">{now.title}</span><span className="block text-[11px] text-[var(--color-text-dim)] truncate" dir="auto">{now.artist}</span></span>
+                <span className="min-w-0 flex-1"><span className="block text-sm font-medium truncate" dir="auto">{now.title}</span><span className="block text-[11px] text-[var(--color-text-dim)] truncate" dir="auto">{now.artist}</span></span>
               </button>
               <div className="flex items-center gap-1 shrink-0" dir="ltr">
                 <button className="w-11 h-11 grid place-items-center rounded-full text-lg active:bg-[var(--color-surface-2)]" onClick={() => step(-1)} aria-label="قبلی">⏮</button>
