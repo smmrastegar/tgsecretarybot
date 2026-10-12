@@ -166,6 +166,27 @@ cron_selfheal() {
 }
 cron_selfheal >>"$LOG" 2>&1 || true
 
+# The canonical public URL lives in the repo (deploy/public-url) and is mirrored into .env, so changing the
+# domain is a commit, not a hand edit on the box. A change restarts the service once (the URL is read at runtime).
+public_url_selfheal() {
+  local f="$APP_DIR/deploy/public-url" env="$APP_DIR/.env" want have
+  [[ -f "$f" && -f "$env" ]] || return 0
+  want=$(tr -d '[:space:]' <"$f")
+  [[ "$want" =~ ^https://[a-z0-9.-]+$ ]] || return 0
+  have=$(grep -E '^NEXT_PUBLIC_APP_URL=' "$env" | head -1 | cut -d= -f2- | tr -d '[:space:]"' || true)
+  [[ "$want" == "$have" ]] && return 0
+  ( umask 077; mkdir -p /var/backups && cp -p "$env" "/var/backups/tgsb-env.$(date +%s)" )
+  if grep -qE '^NEXT_PUBLIC_APP_URL=' "$env"; then
+    sed -i "s|^NEXT_PUBLIC_APP_URL=.*|NEXT_PUBLIC_APP_URL=${want}|" "$env"
+  else
+    printf '\nNEXT_PUBLIC_APP_URL=%s\n' "$want" >>"$env"
+  fi
+  systemctl restart tgsecretarybot
+  echo "  ✓ public url: ${have:-<unset>} → ${want}"
+  report_status "public-url" "warn" "NEXT_PUBLIC_APP_URL ${have:-unset} → ${want}; service restarted"
+}
+public_url_selfheal >>"$LOG" 2>&1 || true
+
 # Self-heal the spotDL fallback downloader (installed in the background
 # so a slow pip never delays a deploy; lock fd 9 is closed for the child).
 spotdl_selfheal() {

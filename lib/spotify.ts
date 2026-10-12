@@ -8,8 +8,11 @@ import { deleteSpotifyAccount, getAllSettings, getSpotifyRefreshToken, listSpoti
 
 export const SCOPES = "user-library-read playlist-read-private playlist-read-collaborative";
 
+// The redirect URI must match one registered in the Spotify app's dashboard exactly. It is deliberately NOT tied to
+// the public app URL: moving the site to a new domain must not break the Spotify sign-in until the new URI is
+// registered there and SPOTIFY_REDIRECT_BASE is switched.
 export function redirectUri(): string {
-  return `${(config.publicAppUrl || "https://bot.text.bz").replace(/\/$/, "")}/api/music/spotify/callback`;
+  return `${(process.env.SPOTIFY_REDIRECT_BASE || "https://bot.text.bz").replace(/\/$/, "")}/api/music/spotify/callback`;
 }
 
 export async function getSpotifyConfig(): Promise<{ clientId: string; clientSecret: string }> {
