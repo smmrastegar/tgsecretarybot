@@ -36,38 +36,43 @@ export default function OtpPairPage() {
   }, []);
 
   return (
-    <div dir="rtl" style={{ background: "#0f172a", color: "#e2e8f0", minHeight: "100dvh" }} className="flex items-center justify-center p-6">
-      <div className="max-w-md w-full rounded-3xl bg-slate-800/70 border border-slate-700 p-6 text-center space-y-4">
-        <div className="text-5xl">🔑</div>
+    <div dir="rtl" style={{ background: "#0f172a", color: "#e2e8f0", minHeight: "100dvh" }} className="flex items-center justify-center px-4 py-8 pt-[max(2rem,env(safe-area-inset-top))]">
+      <main className="max-w-md w-full rounded-3xl bg-slate-800/70 border border-slate-700 px-5 py-8 text-center space-y-5">
+        <div className="text-5xl" aria-hidden>🔑</div>
         <h1 className="text-xl font-semibold">اتصال OtpBar به این حساب</h1>
-        <p className="text-sm text-slate-400">
+        <p className="text-sm leading-7 text-slate-400">
           با زدن دکمه، یک کلید اختصاصی برای اپ منوبار ساخته و مستقیم به اپ داده می‌شود. چیزی لازم نیست کپی کنی.
         </p>
         {state !== "done" && (
           <button
             onClick={pair}
             disabled={state === "busy"}
-            className="w-full py-3 rounded-2xl bg-amber-500 text-slate-900 font-bold text-lg disabled:opacity-50"
+            className="w-full min-h-14 rounded-2xl bg-amber-500 text-slate-900 font-bold text-lg disabled:opacity-50"
           >
             {state === "busy" ? "در حال اتصال…" : auto ? "دوباره وصل کن" : "اتصال OtpBar"}
           </button>
         )}
         {state === "done" && (
-          <div className="space-y-3">
-            <div className="text-emerald-300 font-medium">✓ کلید به اپ فرستاده شد. اگر مک پرسید «Open OtpBar?» تأیید کن.</div>
-            <button onClick={pair} className="text-xs text-slate-400 underline">دوباره بفرست</button>
-            <details className="text-xs text-slate-400">
-              <summary>اگر خودکار وصل نشد</summary>
-              <div className="mt-2 text-right space-y-1">
-                <div>در اپ: راست‌کلیک روی 🔑 ← تنظیمات… و این دو را وارد کن:</div>
-                <div dir="ltr" className="font-mono break-all bg-slate-900 rounded p-2">{base}</div>
-                <div dir="ltr" className="font-mono break-all bg-slate-900 rounded p-2 select-all">{token}</div>
+          <div className="space-y-4">
+            <div className="text-emerald-300 font-medium leading-7">✓ کلید به اپ فرستاده شد. اگر مک پرسید «Open OtpBar?» تأیید کن.</div>
+            <button onClick={pair} className="min-h-11 px-5 rounded-xl border border-slate-600 text-sm text-slate-300">دوباره بفرست</button>
+            <details className="text-sm text-slate-400 rounded-2xl border border-slate-700 text-start">
+              <summary className="min-h-12 flex items-center justify-center cursor-pointer">اگر خودکار وصل نشد</summary>
+              <div className="px-3 pb-3 space-y-2">
+                <div className="leading-7">در اپ: راست‌کلیک روی 🔑 ← تنظیمات… و این دو را وارد کن:</div>
+                <div dir="ltr" className="text-xs font-mono break-all bg-slate-900 rounded-xl p-3">{base}</div>
+                <div dir="ltr" className="text-xs font-mono break-all bg-slate-900 rounded-xl p-3 select-all">{token}</div>
               </div>
             </details>
           </div>
         )}
-        {err && <div className="text-rose-300 text-sm">{err}</div>}
-      </div>
+        {err && (
+          <div role="alert" className="space-y-3">
+            <div className="text-rose-300 text-sm break-words">{err}</div>
+            {state === "error" && <button onClick={pair} className="min-h-11 px-5 rounded-xl border border-rose-400/50 text-rose-100 text-sm">تلاش دوباره</button>}
+          </div>
+        )}
+      </main>
     </div>
   );
 }

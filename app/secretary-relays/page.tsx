@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Shell from "@/components/Shell";
-import { Badge, Card, PageTitle } from "@/components/Card";
+import { Badge, PageTitle } from "@/components/Card";
+import Section, { Pill } from "@/components/ui/Section";
+import EmptyState from "@/components/ui/EmptyState";
+import { confirmDialog, promptDialog } from "@/components/ui/Dialogs";
+import { ErrorBox, Field, LoadingBox, Switch, SummaryBar, btnDanger, btnGhost, btnPrimary, fa, inputCls } from "@/components/tool-pages/Controls";
 
 type Party = {
   relayId: number;
@@ -24,17 +28,20 @@ type Relay = {
 export default function SecretaryRelaysPage() {
   const [list, setList] = useState<Relay[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(false);
     try {
       const r = await fetch("/api/secretary-relays");
-      if (r.ok) {
-        const j = (await r.json()) as { relays: Relay[] };
-        setList(j.relays ?? []);
-      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as { relays: Relay[] };
+      setList(j.relays ?? []);
+    } catch {
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -88,74 +95,72 @@ export default function SecretaryRelaysPage() {
 
   const remove = useCallback(
     async (id: number, name: string) => {
-      if (
-        !confirm(
-          `«${name}» پاک بشه؟ هر پیامی که از مبدا این مسیر می‌اومد دیگه فوروارد نمی‌شه.`,
-        )
-      )
-        return;
+      if (!(await confirmDialog(`«${name}» پاک بشه؟ هر پیامی که از مبدا این مسیر می‌اومد دیگه فوروارد نمی‌شه.`, { danger: true, confirmLabel: "پاک کن" }))) return;
       await fetch(`/api/secretary-relays/${id}`, { method: "DELETE" });
       load();
     },
     [load],
   );
 
+  const on = list.filter((r) => r.enabled).length;
+
   return (
     <Shell>
-      <PageTitle
-        title="🧑‍💼 مسیرهای منشی"
-        subtitle="ارتباط مستقیم از طریق اکانت Telegram شما — نه از طریق بات. پیام فرستنده‌ها توی چت معمولی شما با گیرنده‌ها (از طرف خودتون) ظاهر می‌شه. گیرنده هم توی همون چت معمولی جواب می‌ده و جوابش مستقیم برای فرستنده ارسال می‌شه. پیش‌شرط: هم گیرنده هم فرستنده باید قبلاً توی DM‌های شما باشن."
-      />
+      <div className="max-w-2xl mx-auto">
+        <PageTitle
+          title="🧑‍💼 مسیرهای منشی"
+          subtitle="ارتباط مستقیم از طریق اکانت Telegram شما — نه از طریق بات."
+        />
 
-      <Card className="mb-4">
-        <div className="text-xs font-medium mb-2">+ مسیر جدید</div>
-        <div className="flex gap-2 flex-wrap">
-          <input
-            type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="اسم مسیر (مثلاً «منشی‌های کاری»)"
-            className="flex-1 min-w-[200px] text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-1.5"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") create();
-            }}
-          />
-          <button
-            onClick={create}
-            disabled={creating || !newName.trim()}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-          >
-            {creating ? "..." : "بساز"}
-          </button>
-        </div>
-      </Card>
-
-      {loading ? (
-        <Card>در حال بارگذاری…</Card>
-      ) : list.length === 0 ? (
-        <Card>
-          <p className="text-sm text-[var(--color-text-dim)]">
-            هیچ مسیری ساخته نشده. بالا اولیشو بساز.
+        <Section icon="ℹ️" title="نحوه‌ی کار">
+          <p className="text-sm leading-7 text-[var(--color-text-dim)]">
+            پیام فرستنده‌ها توی چت معمولی شما با گیرنده‌ها (از طرف خودتون) ظاهر می‌شه. گیرنده هم توی همون چت معمولی جواب می‌ده و جوابش مستقیم برای فرستنده ارسال می‌شه. پیش‌شرط: هم گیرنده هم فرستنده باید قبلاً توی DM‌های شما باشن.
           </p>
-        </Card>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {list.map((relay) => (
-            <RelayCard
-              key={relay.id}
-              relay={relay}
-              onRename={rename}
-              onToggle={toggle}
-              onDelete={remove}
-              onChange={load}
-            />
-          ))}
-        </div>
-      )}
+        </Section>
+
+        <Section icon="➕" title="مسیر جدید" summary="یک اسم برای مسیر" key={!loading && !error && list.length === 0 ? "empty" : "list"} defaultOpen={!loading && !error && list.length === 0}>
+          <div className="flex flex-col gap-3">
+            <Field label="اسم مسیر">
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="اسم مسیر (مثلاً «منشی‌های کاری»)"
+                className={inputCls}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") create();
+                }}
+              />
+            </Field>
+            <div className="flex">
+              <button onClick={create} disabled={creating || !newName.trim()} className={btnPrimary}>
+                {creating ? "..." : "بساز"}
+              </button>
+            </div>
+          </div>
+        </Section>
+
+        {!loading && !error && list.length > 0 && (
+          <SummaryBar items={[{ text: `${fa(list.length)} مسیر` }, { text: `${fa(on)} روشن`, tone: "ok" }]} />
+        )}
+
+        {loading ? (
+          <LoadingBox />
+        ) : error ? (
+          <ErrorBox text="دریافت مسیرها ناموفق بود." onRetry={load} />
+        ) : list.length === 0 ? (
+          <EmptyState icon="🧑‍💼" title="هیچ مسیری ساخته نشده" hint="بالا اولیشو بساز؛ بعد فرستنده‌ها و گیرنده‌ها را اضافه کن." />
+        ) : (
+          list.map((relay) => (
+            <RelayCard key={relay.id} relay={relay} onRename={rename} onToggle={toggle} onDelete={remove} onChange={load} />
+          ))
+        )}
+      </div>
     </Shell>
   );
 }
 
+// One relay = one collapsible row (name, counts, on/off); inside: its settings and the two party lists.
 function RelayCard({
   relay,
   onRename,
@@ -169,48 +174,25 @@ function RelayCard({
   onDelete: (id: number, name: string) => void;
   onChange: () => void;
 }) {
+  const rename = async () => {
+    const v = (await promptDialog("اسم مسیر:", relay.name))?.trim();
+    if (v && v !== relay.name) onRename(relay.id, v);
+  };
   return (
-    <Card>
-      <div className="flex items-start justify-between gap-2 flex-wrap mb-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <input
-            type="text"
-            defaultValue={relay.name}
-            onBlur={(e) => {
-              const v = e.target.value.trim();
-              if (v && v !== relay.name) onRename(relay.id, v);
-            }}
-            className="text-sm font-medium bg-transparent border-b border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-accent)] focus:outline-none px-1 py-0.5"
-          />
-          {relay.enabled ? (
-            <Badge tone="success">روشن</Badge>
-          ) : (
-            <Badge tone="neutral">خاموش</Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5">
-          <label className="text-[10px] flex items-center gap-1 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={relay.enabled}
-              onChange={(e) => onToggle(relay.id, e.target.checked)}
-            />
-            فعال
-          </label>
-          <button
-            onClick={() => onDelete(relay.id, relay.name)}
-            className="text-[10px] text-red-300 hover:text-red-200 px-2 py-0.5 rounded-md border border-red-900/40 hover:bg-red-900/30"
-          >
-            🗑 پاک
-          </button>
-        </div>
+    <Section icon="🧑‍💼" title={relay.name} summary={`${fa(relay.sources.length)} فرستنده · ${fa(relay.recipients.length)} گیرنده`}
+      badge={relay.enabled ? <Badge tone="success">روشن</Badge> : <Badge tone="neutral">خاموش</Badge>}>
+      <Switch checked={relay.enabled} onChange={(v) => onToggle(relay.id, v)} label="فعال" />
+      <div className="mt-1 mb-4 flex flex-wrap gap-2">
+        <button type="button" onClick={rename} className={btnGhost}>✏️ تغییر اسم</button>
+        <button type="button" onClick={() => onDelete(relay.id, relay.name)} className={btnDanger}>🗑 پاک</button>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-3">
+      <div className="pt-3 border-t border-[var(--color-border)] [&>section:last-child]:mb-0">
         <PartyList
           relayId={relay.id}
           kind="sources"
-          title="📥 فرستنده‌ها (Sources)"
+          icon="📥"
+          title="فرستنده‌ها (Sources)"
           help="chat ID افرادی که می‌خوای پیام‌هاشون فوروارد بشه. به‌محض اینکه پیامی از این چت بیاد، برای تمام گیرنده‌ها فرستاده می‌شه — لازم نیست chat mode رو دستی تغییر بدی."
           parties={relay.sources}
           onChange={onChange}
@@ -218,19 +200,21 @@ function RelayCard({
         <PartyList
           relayId={relay.id}
           kind="recipients"
-          title="📤 گیرنده‌ها (Recipients)"
+          icon="📤"
+          title="گیرنده‌ها (Recipients)"
           help="chat ID گیرنده‌ها — کسانی که قراره پیام‌های فرستنده‌ها رو دریافت کنن. این چت باید توی DM‌های اکانت شخصی شما باشه (شما باید یه conversation با این فرد داشته باشید) تا بات بتونه از طرف شما براش پیام بفرسته."
           parties={relay.recipients}
           onChange={onChange}
         />
       </div>
-    </Card>
+    </Section>
   );
 }
 
 function PartyList({
   relayId,
   kind,
+  icon,
   title,
   help,
   parties,
@@ -238,6 +222,7 @@ function PartyList({
 }: {
   relayId: number;
   kind: "sources" | "recipients";
+  icon: string;
   title: string;
   help: string;
   parties: Party[];
@@ -278,69 +263,34 @@ function PartyList({
   };
 
   return (
-    <div className="border border-[var(--color-border)] rounded-md p-3">
-      <div className="text-xs font-medium mb-1.5">{title}</div>
-      <p className="text-[10px] text-[var(--color-text-dim)] mb-2 leading-relaxed">
-        {help}
-      </p>
+    <Section icon={icon} title={title} summary={parties.length === 0 ? "(خالی)" : undefined} badge={<Pill>{fa(parties.length)}</Pill>}>
+      <p className="mb-3 text-xs leading-6 text-[var(--color-text-dim)]">{help}</p>
 
-      <div className="flex flex-col gap-1.5 mb-2">
-        {parties.length === 0 ? (
-          <p className="text-[10px] text-[var(--color-text-dim)] italic">
-            (خالی)
-          </p>
-        ) : (
-          parties.map((p) => (
-            <div
-              key={p.chatId}
-              className="flex items-center justify-between gap-2 bg-[var(--color-surface-2)] rounded-md px-2 py-1.5"
-            >
-              <div className="min-w-0 flex-1">
-                <code className="text-[11px] tabular-nums" dir="ltr">
-                  {p.chatId}
-                </code>
-                {p.label && (
-                  <span className="text-[10px] text-[var(--color-text-dim)] mr-2 ms-2">
-                    {p.label}
-                  </span>
-                )}
+      {parties.length > 0 && (
+        <div className="flex flex-col gap-2 mb-3">
+          {parties.map((p) => (
+            <div key={p.chatId} className="flex items-center gap-2 min-h-12 bg-[var(--color-surface-2)] rounded-xl ps-3 pe-1">
+              <div className="min-w-0 flex-1 text-center">
+                <code className="block text-sm tabular-nums" dir="ltr">{p.chatId}</code>
+                {p.label && <span className="block text-xs text-[var(--color-text-dim)] truncate">{p.label}</span>}
               </div>
-              <button
-                onClick={() => remove(p.chatId)}
-                className="text-[10px] text-red-300 hover:text-red-200 px-1.5 py-0.5 rounded"
-              >
-                ✕
-              </button>
+              <button onClick={() => remove(p.chatId)} aria-label={`حذف ${p.chatId}`} className="min-w-10 rounded-xl text-rose-300 active:bg-rose-500/10">✕</button>
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
 
-      <div className="flex flex-col gap-1.5">
-        <input
-          type="text"
-          inputMode="numeric"
-          value={chatId}
-          onChange={(e) => setChatId(e.target.value)}
-          placeholder="chat ID"
-          dir="ltr"
-          className="text-[11px] tabular-nums bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-        />
-        <input
-          type="text"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder="برچسب اختیاری"
-          className="text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-        />
-        <button
-          onClick={add}
-          disabled={busy || !chatId.trim()}
-          className="text-[11px] px-2 py-1 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-        >
-          + اضافه
-        </button>
+      <div className="flex flex-col gap-2">
+        <Field label="chat ID">
+          <input type="text" inputMode="numeric" value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder="chat ID" dir="ltr" className={`${inputCls} tabular-nums`} />
+        </Field>
+        <Field label="برچسب (اختیاری)">
+          <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="برچسب اختیاری" className={inputCls} />
+        </Field>
+        <div className="flex">
+          <button onClick={add} disabled={busy || !chatId.trim()} className={btnPrimary}>+ اضافه</button>
+        </div>
       </div>
-    </div>
+    </Section>
   );
 }
