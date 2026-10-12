@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
+import EmptyState from "@/components/ui/EmptyState";
+import Section, { Pill } from "@/components/ui/Section";
+import { confirmDialog } from "@/components/ui/Dialogs";
 import { relTime } from "@/lib/format";
+
+const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
 
 type Decided =
   | "no_customer_message"
@@ -128,12 +133,15 @@ const NEEDS_REPLY_DECIDED: Decided[] = [
 
 function fmtHours(h: number | null): string {
   if (h == null) return "—";
-  if (h < 1) return `${Math.round(h * 60)} دقیقه`;
-  if (h < 48) return `${h.toFixed(1)} ساعت`;
-  return `${(h / 24).toFixed(1)} روز`;
+  if (h < 1) return `${fa(Math.round(h * 60))} دقیقه`;
+  if (h < 48) return `${fa(h.toFixed(1)).replace(".", "٫")} ساعت`;
+  return `${fa((h / 24).toFixed(1)).replace(".", "٫")} روز`;
 }
 
 const PAGE_SIZE = 25;
+
+const CHIP = "min-h-10 px-3 rounded-full border text-xs font-medium";
+const chipOff = "text-[var(--color-text-dim)] bg-transparent border-[var(--color-border)]";
 
 export default function FollowUpDebugPage() {
   const [data, setData] = useState<Response | null>(null);
@@ -144,6 +152,7 @@ export default function FollowUpDebugPage() {
   const [triggering, setTriggering] = useState(false);
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [moreStats, setMoreStats] = useState<Set<number>>(new Set());
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   // notes_inbox health check: if no chat carries the role, the cron
   // can't deliver pings and silently returns skipped. Surface a
@@ -296,6 +305,7 @@ export default function FollowUpDebugPage() {
   };
 
   const disableFollowUp = async (chatId: number) => {
+    if (!(await confirmDialog("فالو‌آپ این چت خاموش بشه؟", { danger: true, confirmLabel: "خاموش کن" }))) return;
     try {
       const r = await fetch(`/api/chats/${chatId}/follow-up`, {
         method: "PATCH",
@@ -309,6 +319,7 @@ export default function FollowUpDebugPage() {
   };
 
   const triggerNow = async () => {
+    if (!(await confirmDialog("برای چت‌های نیازمند جواب، همین الان ping فرستاده بشه؟", { confirmLabel: "بفرست" }))) return;
     setTriggering(true);
     try {
       const r = await fetch("/api/cron/follow-up", { method: "POST" });
@@ -333,11 +344,11 @@ export default function FollowUpDebugPage() {
         const skipped = j.tenants
           .filter((t) => t.skipped)
           .map((t) => t.skipped);
-        let msg = `✅ ${totalPinged}/${totalCands} ping رفت`;
+        let msg = `✅ ${fa(totalPinged)}/${fa(totalCands)} ping رفت`;
         if (skipped.length) msg += ` · skipped: ${skipped.join(", ")}`;
         if (allErrors.length) {
           msg +=
-            ` · ❌ ${allErrors.length} خطا — ` +
+            ` · ❌ ${fa(allErrors.length)} خطا — ` +
             allErrors
               .slice(0, 3)
               .map((e) => `chat ${e.chatId}: ${e.error}`)
@@ -373,310 +384,323 @@ export default function FollowUpDebugPage() {
     "no_customer_message",
   ];
 
+  const needsReplyCount = NEEDS_REPLY_DECIDED.reduce(
+    (n, k) => n + (aggBuckets[k] ?? 0),
+    0,
+  );
+  const presets: Array<{ key: FilterKey; label: string; count: number; toneClass: string }> = [
+    { key: "needs_reply", label: "🔔 نیاز به جواب", count: needsReplyCount, toneClass: TONE_CLASSES.candidate ?? "" },
+    { key: "all", label: "🌐 همه", count: allRows.length, toneClass: TONE_CLASSES.neutral ?? "" },
+  ];
+  const specific = active !== "all" && active !== "needs_reply" ? active : null;
+
   return (
     <Shell>
-      <PageTitle
-        title="⏰ دیباگ یادآور جواب‌ندادن"
-        subtitle="هر چتی که این لحظه پیامش از طرف کاربر بدون جواب مونده — با فیلتر، جستجو، و trigger دستی."
-      />
+      <div className="md:max-w-3xl md:mx-auto">
+        <PageTitle
+          title="⏰ دیباگ یادآور جواب‌ندادن"
+          subtitle="هر چتی که این لحظه پیامش از طرف کاربر بدون جواب مونده — با فیلتر، جستجو، و trigger دستی."
+        />
 
-      {notesInboxMissing && (
-        <Card className="mb-3 !p-3 bg-amber-500/5 border border-amber-500/40">
-          <div className="text-xs text-amber-200 leading-relaxed">
-            ⚠ <b>notes_inbox تنظیم نیست.</b> cron بدون این، هیچ ping
-            ای ارسال نمی‌کنه و در سکوت skip می‌شه. یه channel یا
-            group بساز، bot رو توش admin کن، بعد توی{" "}
-            <Link
-              href="/functions"
-              className="underline text-amber-100 hover:text-white"
-            >
-              /functions
-            </Link>{" "}
-            اون چت رو به‌عنوان notes_inbox ست کن.
+        {notesInboxMissing && (
+          <div role="alert" className="mb-3 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4 text-center">
+            <div className="text-sm text-amber-200 leading-7">
+              ⚠ <b>notes_inbox تنظیم نیست.</b> cron بدون این، هیچ ping
+              ای ارسال نمی‌کنه و در سکوت skip می‌شه. یه channel یا
+              group بساز، bot رو توش admin کن، بعد توی /functions اون چت
+              رو به‌عنوان notes_inbox ست کن.
+            </div>
+            <div className="mt-3 flex">
+              <Link href="/functions" className="min-h-10 inline-flex items-center px-4 rounded-xl border border-amber-500/50 text-sm text-amber-100">
+                باز کردن /functions
+              </Link>
+            </div>
           </div>
-        </Card>
-      )}
+        )}
 
-      <Card className="mb-4">
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <button
-            onClick={load}
-            disabled={loading}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] disabled:opacity-50"
-          >
-            {loading ? "..." : "🔄 رفرش"}
-          </button>
-          <button
-            onClick={triggerNow}
-            disabled={triggering || loading}
-            className="text-xs px-3 py-1.5 rounded-md bg-[var(--color-accent)] text-white disabled:opacity-50"
-          >
-            {triggering ? "در حال اجرا..." : "▶ الان اجرا کن (ping بفرست)"}
-          </button>
+        <div className="mb-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-center">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={triggerNow}
+              disabled={triggering || loading}
+              className="min-h-11 px-4 rounded-xl bg-[var(--color-accent)] text-white text-sm font-medium disabled:opacity-50"
+            >
+              {triggering ? "در حال اجرا..." : "▶ الان اجرا کن (ping بفرست)"}
+            </button>
+            <button
+              type="button"
+              onClick={load}
+              disabled={loading}
+              className="min-h-11 px-4 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] text-sm disabled:opacity-50"
+            >
+              {loading ? "در حال بارگذاری…" : "🔄 رفرش"}
+            </button>
+          </div>
           {lastRun && (
-            <span className="text-xs text-[var(--color-text-dim)]">
+            <p role="status" className="mt-3 text-xs leading-6 text-[var(--color-text-dim)] break-words">
               {lastRun}
-            </span>
+            </p>
           )}
-          <span className="text-xs text-[var(--color-text-dim)] mr-auto">
-            {allRows.length} چت کل · {filtered.length} نمایش
-          </span>
+
+          <input
+            type="search"
+            dir="auto"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="🔍 جستجو بر اساس اسم یا chatId"
+            aria-label="جستجو بر اساس اسم یا chatId"
+            className="mt-3 w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-4"
+          />
+
+          <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+            {presets.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                onClick={() => setActive(p.key)}
+                className={`${CHIP} ${active === p.key ? p.toneClass : chipOff}`}
+              >
+                {p.label} <span className="opacity-70">{fa(p.count)}</span>
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 text-xs text-[var(--color-text-dim)]">
+            {fa(allRows.length)} چت کل، {fa(filtered.length)} نمایش
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          {(() => {
-            const needsReplyCount = NEEDS_REPLY_DECIDED.reduce(
-              (n, k) => n + (aggBuckets[k] ?? 0),
-              0,
-            );
-            const presets: Array<{
-              key: FilterKey;
-              label: string;
-              count: number;
-              toneClass: string;
-            }> = [
-              {
-                key: "needs_reply",
-                label: "🔔 نیاز به جواب",
-                count: needsReplyCount,
-                toneClass: TONE_CLASSES.candidate ?? "",
-              },
-              {
-                key: "all",
-                label: "🌐 همه",
-                count: allRows.length,
-                toneClass: TONE_CLASSES.neutral ?? "",
-              },
-            ];
-            return presets.map((p) => {
-              const isOn = active === p.key;
+        <Section
+          icon="🎚"
+          title="فیلتر بر اساس وضعیت"
+          summary={specific ? DECIDED_LABELS[specific] : "یک وضعیت مشخص را انتخاب کن"}
+          badge={specific ? <Pill tone="warn">فعال</Pill> : undefined}
+        >
+          <div className="flex flex-wrap justify-center gap-1.5">
+            {orderedKeys.map((k) => {
+              const cnt = aggBuckets[k] ?? 0;
+              if (cnt === 0) return null;
+              const isOn = active === k;
               return (
                 <button
-                  key={p.key}
-                  onClick={() => setActive(p.key)}
-                  className={`text-[11px] px-2 py-1 rounded-md border font-medium ${
-                    isOn
-                      ? p.toneClass
-                      : "text-[var(--color-text-dim)] bg-transparent border-[var(--color-border)] opacity-60"
-                  }`}
+                  key={k}
+                  type="button"
+                  onClick={() => setActive(k)}
+                  className={`${CHIP} ${isOn ? TONE_CLASSES[DECIDED_TONES[k]] : chipOff}`}
                 >
-                  {p.label} · {p.count}
+                  {DECIDED_LABELS[k]} <span className="opacity-70">{fa(cnt)}</span>
                 </button>
               );
-            });
-          })()}
-          <div className="w-full" />
-          {orderedKeys.map((k) => {
-            const cnt = aggBuckets[k] ?? 0;
-            if (cnt === 0) return null;
-            const isOn = active === k;
-            const tone = DECIDED_TONES[k];
-            return (
-              <button
-                key={k}
-                onClick={() => setActive(k)}
-                className={`text-[10px] px-2 py-1 rounded-md border transition ${
-                  isOn
-                    ? TONE_CLASSES[tone]
-                    : "text-[var(--color-text-dim)] bg-transparent border-[var(--color-border)] opacity-60"
-                }`}
-              >
-                {DECIDED_LABELS[k]} · {cnt}
-              </button>
-            );
-          })}
-        </div>
-
-        <input
-          type="text"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="🔍 جستجو بر اساس اسم یا chatId"
-          className="w-full text-xs bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5"
-        />
-      </Card>
-
-      {err && (
-        <Card className="mb-4">
-          <div className="text-xs text-red-300">خطا: {err}</div>
-        </Card>
-      )}
-
-      {sorted.length === 0 && !loading ? (
-        <Card>
-          <div className="text-xs text-center text-[var(--color-text-dim)] py-4">
-            چیزی برای نمایش نیست.
+            })}
           </div>
-        </Card>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {visible.map((r) => {
-            const tone = DECIDED_TONES[r.decided];
-            const customerStale =
-              r.lastAnyMessageAt &&
-              r.lastCustomerMessageAt &&
-              new Date(r.lastAnyMessageAt).getTime() -
-                new Date(r.lastCustomerMessageAt).getTime() >
-                3600_000;
-            const urgencyEmoji =
-              r.aiUrgency === "high"
-                ? "🔥"
-                : r.aiUrgency === "low"
-                  ? "🟢"
-                  : "🟡";
-            return (
-              <Card key={r.chatId} className="p-3">
-                {/* Top row: name + status + actions */}
-                <div className="flex items-start justify-between gap-2 mb-1.5">
-                  <div className="min-w-0">
-                    <Link
-                      href={`/chats/${r.chatId}`}
-                      className="text-sm font-medium text-[var(--color-accent)] hover:underline"
-                    >
-                      {r.name || `chat ${r.chatId}`}
-                    </Link>
-                    <div className="text-[10px] text-[var(--color-text-dim)]">
-                      {r.chatId}
-                    </div>
-                  </div>
-                  <span
-                    className={`inline-block text-[10px] px-1.5 py-0.5 rounded-md border ${TONE_CLASSES[tone]} shrink-0`}
-                  >
-                    {DECIDED_LABELS[r.decided]}
-                  </span>
-                </div>
+        </Section>
 
-                {/* AI reason — the WHY this chat needs (or doesn't) a reply.
-                    Cached reasons from before the "use کاربر" prompt
-                    change still say "مشتری" — rewrite at display time
-                    until they're naturally refreshed by a new customer
-                    message. */}
-                {r.aiReason ? (
-                  <div className="text-xs leading-relaxed mb-2 p-2 rounded-md bg-amber-500/5 border border-amber-500/20">
-                    <span className="text-[10px] text-amber-300 mr-1">
-                      🤖 دلیل AI {urgencyEmoji}
+        {err && (
+          <div role="alert" className="mb-3 rounded-2xl border border-rose-400/50 bg-rose-500/10 px-4 py-3 text-center">
+            <p className="text-sm text-rose-200 leading-6">خطا: {err}</p>
+            <div className="mt-2 flex">
+              <button type="button" onClick={load} className="min-h-10 px-4 rounded-xl border border-rose-400/50 text-sm text-rose-100">تلاش دوباره</button>
+            </div>
+          </div>
+        )}
+
+        {loading && !data ? (
+          <Card>
+            <div className="text-sm text-[var(--color-text-dim)]">در حال بارگذاری…</div>
+          </Card>
+        ) : sorted.length === 0 ? (
+          err ? null : (
+            <EmptyState
+              icon="⏰"
+              title="چیزی برای نمایش نیست"
+              hint={allRows.length === 0 ? "هنوز چتی برای بررسی وجود ندارد." : "با این فیلتر یا جستجو چتی نیست."}
+              action={
+                allRows.length > 0 && (active !== "all" || q) ? (
+                  <button type="button" onClick={() => { setActive("all"); setQ(""); }} className="min-h-10 px-4 rounded-xl border border-[var(--color-border)] text-sm">نمایش همه</button>
+                ) : undefined
+              }
+            />
+          )
+        ) : (
+          <div className="flex flex-col gap-2">
+            {visible.map((r) => {
+              const tone = DECIDED_TONES[r.decided];
+              const customerStale =
+                r.lastAnyMessageAt &&
+                r.lastCustomerMessageAt &&
+                new Date(r.lastAnyMessageAt).getTime() -
+                  new Date(r.lastCustomerMessageAt).getTime() >
+                  3600_000;
+              const urgencyEmoji =
+                r.aiUrgency === "high"
+                  ? "🔥"
+                  : r.aiUrgency === "low"
+                    ? "🟢"
+                    : "🟡";
+              const statsOpen = moreStats.has(r.chatId);
+              return (
+                <Card key={r.chatId} className="!p-3">
+                  {/* Top: name + status */}
+                  <Link
+                    href={`/chats/${r.chatId}`}
+                    className="min-h-10 inline-flex max-w-full items-center justify-center text-sm font-medium leading-6 text-[var(--color-accent)] hover:underline break-words"
+                  >
+                    {r.name || `chat ${r.chatId}`}
+                  </Link>
+                  <div className="flex items-center justify-center gap-2 flex-wrap">
+                    <span
+                      className={`inline-block text-xs px-2 py-0.5 rounded-md border ${TONE_CLASSES[tone]}`}
+                    >
+                      {DECIDED_LABELS[r.decided]}
                     </span>
-                    <span dir="auto">
-                      {r.aiReason.replace(/مشتری/g, "کاربر")}
+                    <span dir="ltr" className="text-xs text-[var(--color-text-dim)]">
+                      {r.chatId}
                     </span>
                   </div>
-                ) : r.decided === "ai_pending" ? (
-                  <div className="text-[10px] leading-relaxed mb-2 p-2 rounded-md bg-sky-500/5 border border-sky-500/20 flex items-center gap-2">
-                    <span className="text-sky-200 flex-1">
-                      🤖 هنوز AI این چت رو ارزیابی نکرده. cron هر ۳۰
-                      دقیقه ۱۰ تای قدیمی‌ترین رو می‌گیره — این چت
-                      احتمالاً توی صف‌های بعدیه. می‌تونی الان دستی
-                      اجرا کنی:
+
+                  {/* AI reason — the WHY this chat needs (or doesn't) a reply.
+                      Cached reasons from before the "use کاربر" prompt
+                      change still say "مشتری" — rewrite at display time
+                      until they're naturally refreshed by a new customer
+                      message. */}
+                  {r.aiReason ? (
+                    <div className="mt-3 text-sm leading-7 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+                      <span className="block text-xs text-amber-300 mb-1">
+                        🤖 دلیل AI {urgencyEmoji}
+                      </span>
+                      <span dir="auto">
+                        {r.aiReason.replace(/مشتری/g, "کاربر")}
+                      </span>
+                    </div>
+                  ) : r.decided === "ai_pending" ? (
+                    <div className="mt-3 text-xs leading-6 p-3 rounded-xl bg-sky-500/5 border border-sky-500/20">
+                      <p className="text-sky-200">
+                        🤖 هنوز AI این چت رو ارزیابی نکرده. cron هر ۳۰
+                        دقیقه ۱۰ تای قدیمی‌ترین رو می‌گیره — این چت
+                        احتمالاً توی صف‌های بعدیه. می‌تونی الان دستی
+                        اجرا کنی:
+                      </p>
+                      <div className="mt-2 flex">
+                        <button
+                          type="button"
+                          onClick={() => analyzeChat(r.chatId)}
+                          disabled={analyzing.has(r.chatId)}
+                          className="min-h-10 text-xs px-3 rounded-xl bg-sky-500/15 border border-sky-500/40 text-sky-200 active:bg-sky-500/25 disabled:opacity-50"
+                        >
+                          {analyzing.has(r.chatId)
+                            ? "..."
+                            : "🤖 الان تحلیل کن"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Headline stats; the rest sits behind "آمار بیشتر" */}
+                  <div className="mt-3 text-xs leading-6 text-[var(--color-text-dim)]">
+                    <span>آخرین پیام: </span>
+                    <span className="text-white">{fmtHours(r.hoursSinceCustomer)}</span>
+                    {r.lastCustomerMessageAt && (
+                      <span className="opacity-60"> ({relTime(new Date(r.lastCustomerMessageAt))})</span>
+                    )}
+                    <span className="mx-1.5 opacity-40">|</span>
+                    <span>جواب تو: </span>
+                    <span className="text-white">
+                      {r.lastOwnerMessageAt ? relTime(new Date(r.lastOwnerMessageAt)) : "—"}
                     </span>
-                    <button
-                      onClick={() => analyzeChat(r.chatId)}
-                      disabled={analyzing.has(r.chatId)}
-                      className="text-[10px] px-2 py-1 rounded-md bg-sky-500/15 border border-sky-500/40 text-sky-200 hover:bg-sky-500/25 disabled:opacity-50 shrink-0"
+                  </div>
+                  {statsOpen && (
+                    <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-[var(--color-text-dim)]">
+                      <div>
+                        <span className="opacity-70">پیام‌های ۲۴h: </span>
+                        <span className="text-white">{fa(r.messagesLast24h)}</span>
+                      </div>
+                      <div>
+                        <span className="opacity-70">آستانه: </span>
+                        <span className="text-white" dir="ltr">
+                          {fa(r.thresholdHours)}h / {fa(r.escalateHours)}h
+                        </span>
+                      </div>
+                      {r.lastPingAt && (
+                        <div className="col-span-2">
+                          <span className="opacity-70">آخرین ping: </span>
+                          <span className="text-white">
+                            {relTime(new Date(r.lastPingAt))} ({r.lastPingKind})
+                          </span>
+                        </div>
+                      )}
+                      {r.lastReactionAt && (
+                        <div className="col-span-2">
+                          <span className="opacity-70">🌜 ری‌اکشن: </span>
+                          <span className="text-white">{relTime(new Date(r.lastReactionAt))}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {customerStale && (
+                    <div
+                      className="mt-2 text-xs leading-6 text-amber-300"
+                      title="یه پیام جدیدتر توی این چت لاگ شده ولی به‌عنوان «کاربر» شناخته نشده — احتمالاً from_owner اشتباه ست شده."
                     >
-                      {analyzing.has(r.chatId)
-                        ? "..."
-                        : "🤖 الان تحلیل کن"}
+                      ⚠ آخرین پیام چت {relTime(new Date(r.lastAnyMessageAt!))} — ولی
+                      from_owner=customer نیست
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => ackChat(r.chatId)}
+                      className="min-h-10 text-xs px-3 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] active:bg-[var(--color-surface)]"
+                      title="مارک کن به‌عنوان «متوجه شدم» — تا پیام جدید بعدی، دیگه ping نمی‌شه"
+                    >
+                      👌 ack
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => disableFollowUp(r.chatId)}
+                      className="min-h-10 text-xs px-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 active:bg-rose-500/20"
+                      title="فالو‌آپ این چت رو خاموش کن — حتی برای پیام‌های بعدی، توی لاگ‌ها نمیاد"
+                    >
+                      🙈 بیخیال
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMoreStats((cur) => {
+                          const next = new Set(cur);
+                          if (next.has(r.chatId)) next.delete(r.chatId);
+                          else next.add(r.chatId);
+                          return next;
+                        })
+                      }
+                      aria-expanded={statsOpen}
+                      className="min-h-10 text-xs px-3 rounded-xl border border-[var(--color-border)] text-[var(--color-text-dim)]"
+                    >
+                      آمار بیشتر {statsOpen ? "▴" : "▾"}
                     </button>
                   </div>
-                ) : null}
+                </Card>
+              );
+            })}
 
-                {/* Compact stats row */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-1 text-[10px] text-[var(--color-text-dim)] mb-2">
-                  <div>
-                    <span className="opacity-70">آخرین پیام: </span>
-                    <span className="text-white">
-                      {fmtHours(r.hoursSinceCustomer)}
-                    </span>
-                    {r.lastCustomerMessageAt && (
-                      <span className="opacity-60">
-                        {" "}
-                        ({relTime(new Date(r.lastCustomerMessageAt))})
-                      </span>
-                    )}
-                  </div>
-                  <div>
-                    <span className="opacity-70">جواب تو: </span>
-                    <span className="text-white">
-                      {r.lastOwnerMessageAt
-                        ? relTime(new Date(r.lastOwnerMessageAt))
-                        : "—"}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="opacity-70">پیام‌های ۲۴h: </span>
-                    <span className="text-white">{r.messagesLast24h}</span>
-                  </div>
-                  <div>
-                    <span className="opacity-70">آستانه: </span>
-                    <span className="text-white">
-                      {r.thresholdHours}h / {r.escalateHours}h
-                    </span>
-                  </div>
-                  {r.lastPingAt && (
-                    <div>
-                      <span className="opacity-70">آخرین ping: </span>
-                      <span className="text-white">
-                        {relTime(new Date(r.lastPingAt))} (
-                        {r.lastPingKind})
-                      </span>
-                    </div>
-                  )}
-                  {r.lastReactionAt && (
-                    <div>
-                      <span className="opacity-70">🌜 ری‌اکشن: </span>
-                      <span className="text-white">
-                        {relTime(new Date(r.lastReactionAt))}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {customerStale && (
-                  <div
-                    className="text-[10px] text-amber-300 mb-2"
-                    title="یه پیام جدیدتر توی این چت لاگ شده ولی به‌عنوان «کاربر» شناخته نشده — احتمالاً from_owner اشتباه ست شده."
-                  >
-                    ⚠ آخرین پیام چت {relTime(new Date(r.lastAnyMessageAt!))} — ولی
-                    from_owner=customer نیست
-                  </div>
-                )}
-
-                {/* Action buttons */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => ackChat(r.chatId)}
-                    className="text-[10px] px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-surface)]"
-                    title="مارک کن به‌عنوان «متوجه شدم» — تا پیام جدید بعدی، دیگه ping نمی‌شه"
-                  >
-                    👌 ack
-                  </button>
-                  <button
-                    onClick={() => disableFollowUp(r.chatId)}
-                    className="text-[10px] px-2 py-1 rounded-md bg-rose-500/10 border border-rose-500/30 text-rose-200 hover:bg-rose-500/20"
-                    title="فالو‌آپ این چت رو خاموش کن — حتی برای پیام‌های بعدی، توی لاگ‌ها نمیاد"
-                  >
-                    🙈 بیخیال
-                  </button>
-                </div>
-              </Card>
-            );
-          })}
-
-          {hasMore && (
-            <div
-              ref={sentinelRef}
-              className="text-[10px] text-center text-[var(--color-text-dim)] py-3"
-            >
-              ...
-            </div>
-          )}
-          {!hasMore && sorted.length > PAGE_SIZE && (
-            <div className="text-[10px] text-center text-[var(--color-text-dim)] py-3">
-              · پایان لیست ({sorted.length} مورد) ·
-            </div>
-          )}
-        </div>
-      )}
+            {hasMore && (
+              <div
+                ref={sentinelRef}
+                className="text-xs text-center text-[var(--color-text-dim)] py-3"
+              >
+                در حال بارگذاری بیشتر…
+              </div>
+            )}
+            {!hasMore && sorted.length > PAGE_SIZE && (
+              <div className="text-xs text-center text-[var(--color-text-dim)] py-3">
+                · پایان لیست ({fa(sorted.length)} مورد) ·
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </Shell>
   );
 }
