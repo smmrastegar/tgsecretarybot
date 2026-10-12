@@ -18,7 +18,7 @@ export default function Section({ icon, title, summary, badge, defaultOpen = fal
         <span aria-hidden className="grid place-items-center w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-lg shrink-0">{icon}</span>
         <span className="min-w-0 flex-1 text-center">
           <span className="block text-sm font-semibold truncate">{title}</span>
-          {summary != null && <span className="block text-[11px] text-[var(--color-text-dim)] truncate">{summary}</span>}
+          {summary != null && <span className="block text-xs text-[var(--color-text-dim)] truncate">{summary}</span>}
         </span>
         {badge != null && <span className="shrink-0">{badge}</span>}
         <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
