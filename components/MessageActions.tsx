@@ -99,15 +99,17 @@ export default function MessageActions({
     if (!text) return;
     setSending(true);
     try {
+      // Sending ONE reply must not change the chat's mode. Handing a chat to the AI is a separate, explicit
+      // decision (the «کامل با AI» button) — never a side effect of pressing send.
       const r = await fetch(`/api/messages/${m.id}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, markHandled: true, setMode: "ai_chat" }),
+        body: JSON.stringify({ text, markHandled: true }),
       });
       const j = (await r.json()) as { error?: string };
       if (!r.ok) throw new Error(j.error ?? `failed (${r.status})`);
       setDraft(null);
-      showToast("✅ ارسال شد — از این به بعد AI این چت رو مدیریت می‌کنه");
+      showToast("✅ ارسال شد");
       onChange?.();
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err), true);
