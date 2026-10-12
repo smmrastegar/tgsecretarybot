@@ -8,7 +8,10 @@ type Hit = { id: string; name: string; followers: number; imageUrl: string | nul
 type Check = { albums: number; added: number; known: number; titles: string[]; error?: string };
 
 const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
-const when = (iso: string | null) => (iso ? new Date(iso.replace(" ", "T").replace(/\+00$/, "Z")).toLocaleString("fa-IR", { dateStyle: "medium", timeStyle: "short" }) : "هنوز نه");
+const when = (iso: string | null) => {
+  const d = iso ? new Date(iso.replace(" ", "T").replace(/\+00$/, "Z")) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleString("fa-IR", { dateStyle: "medium", timeStyle: "short" }) : "هنوز نه";
+};
 const btn = "min-h-10 px-3 rounded-xl border border-[var(--color-border)] text-xs active:bg-[var(--color-surface-2)] disabled:opacity-50";
 const post = (body: unknown) => fetch("/api/music/artists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 

@@ -12,9 +12,12 @@ export type MusicArtist = {
 
 const list = (v: string): string[] => { try { const j = JSON.parse(v) as unknown; return Array.isArray(j) ? j.map(String) : []; } catch { return []; } };
 
+// pg returns TIMESTAMPTZ as a Date (String(Date) is not parseable on the client) or, on other drivers, as text.
+const iso = (v: unknown): string => (v instanceof Date ? v.toISOString() : String(v).replace(" ", "T").replace(/\+00$/, "Z"));
+
 const map = (r: Row): MusicArtist => ({
   id: num(r, "id"), spotifyArtistId: str(r, "spotify_artist_id"), name: str(r, "name"), imageUrl: strOrNull(r, "image_url"),
-  followedAt: String(r.followed_at), lastCheckedAt: r.last_checked_at ? String(r.last_checked_at) : null, lastError: strOrNull(r, "last_error"),
+  followedAt: iso(r.followed_at), lastCheckedAt: r.last_checked_at ? iso(r.last_checked_at) : null, lastError: strOrNull(r, "last_error"),
   trackCount: num(r, "track_count"), seenAlbums: list(str(r, "seen_albums")), seenKeys: list(str(r, "seen_keys")),
 });
 

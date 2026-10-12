@@ -113,7 +113,7 @@ export async function artistWatchStep(force = false): Promise<{ artists: number;
   const lock = Number((await getAllSettings()).musicArtistsLock || 0);
   if (Date.now() - lock < 10 * 60_000) return out; // another run is still going
   const all = await listMusicArtists();
-  const dueList = all.filter((a) => force || !a.lastCheckedAt || Date.now() - new Date(a.lastCheckedAt.replace(" ", "T")).getTime() > ARTIST_CHECK_EVERY_MS);
+  const dueList = all.filter((a) => force || !a.lastCheckedAt || !(Date.now() - new Date(a.lastCheckedAt).getTime() <= ARTIST_CHECK_EVERY_MS));
   if (dueList.length === 0) return out;
   await setSetting("musicArtistsLock", String(Date.now()));
   try {
