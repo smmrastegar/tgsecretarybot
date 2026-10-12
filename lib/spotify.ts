@@ -3,7 +3,6 @@
 // personal library. Client id/secret come from the owner's own Spotify
 // developer app; the refresh token is stored in settings.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { config } from "./config";
 import { deleteSpotifyAccount, getAllSettings, getSpotifyRefreshToken, listSpotifyAccounts, setSetting, setSpotifyRefreshToken, upsertSpotifyAccount } from "./db";
 
 export const SCOPES = "user-library-read playlist-read-private playlist-read-collaborative";
