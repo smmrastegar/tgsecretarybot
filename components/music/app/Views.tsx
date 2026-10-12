@@ -209,23 +209,21 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
                     <button key={a.id} onClick={() => setAccSel((s) => (on ? s.filter((x) => x !== a.id) : [...s, a.id]))} role="checkbox" aria-checked={on}
                       className={`shrink-0 inline-flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full text-[13px] font-semibold transition ${on ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>
                       <span className={`grid place-items-center w-5 h-5 rounded-full text-[10px] font-bold ${on ? "bg-[var(--bg)] text-[var(--fg)]" : "bg-[var(--s2)]"}`}>{letter}</span>
-                      <span className="max-w-[9rem] truncate">{a.name}</span>
+                      <span className="whitespace-nowrap">{a.name}</span>
                     </button>
                   );
                 })}
               </div>
               {accSel.length > 0 && (
-                <div className="mt-2 flex items-center justify-between text-[13px] text-[var(--dim)]">
-                  <span className="flex items-center gap-2 min-w-0">
-                    <span className="tabular-nums">{songs.length} {songs.length === 1 ? "song" : "songs"}</span>
-                    {accSel.length > 1 && (
-                      <button onClick={() => setAccMode((m) => (m === "any" ? "all" : "any"))} aria-label="Match any or all selected accounts"
-                        className="shrink-0 px-2.5 py-1 rounded-full text-[12px] font-semibold border border-[var(--bd)] text-[var(--dim2)]">
-                        {accMode === "any" ? "In any of them" : "In all of them"} ⇄
-                      </button>
-                    )}
-                  </span>
-                  <span className="flex gap-3 shrink-0">
+                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-[var(--dim)]">
+                  <span className="tabular-nums whitespace-nowrap">{songs.length} {songs.length === 1 ? "song" : "songs"}</span>
+                  {accSel.length > 1 && (
+                    <button onClick={() => setAccMode((m) => (m === "any" ? "all" : "any"))} aria-label="Match any or all selected accounts"
+                      className="whitespace-nowrap px-2.5 py-1 rounded-full text-[12px] font-semibold border border-[var(--bd)] text-[var(--dim2)]">
+                      {accMode === "any" ? "In any of them" : "In all of them"} ⇄
+                    </button>
+                  )}
+                  <span className="flex items-center gap-4 ml-auto whitespace-nowrap">
                     <button onClick={() => setAccSel([])} className="font-semibold text-[var(--dim2)]">Clear</button>
                     {api.canCreate && songs.length > 0 && <button onClick={() => api.saveAccountPlaylist(accSel, accMode)} className="font-semibold text-[var(--fg)]">＋ Save as playlist</button>}
                   </span>
