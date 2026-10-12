@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import RouteProgress from "./RouteProgress";
+import { DialogHost } from "./ui/Dialogs";
 import DebugTimings from "./DebugTimings";
 import { AlertOctagon, Bell, LayoutDashboard, LogOut, MessageSquare, NotebookText, Settings, Shield, Users2 } from "lucide-react";
 
@@ -87,6 +88,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       <RouteProgress />
+      <DialogHost />
       <DebugTimings />
       <aside className="hidden md:flex w-60 shrink-0 border-l border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex-col">
         <div className="px-2 pb-4 mb-4 border-b border-[var(--color-border)]">
