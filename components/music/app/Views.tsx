@@ -7,6 +7,8 @@ import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, PlayAllButton
 // Everything the views need from the player engine.
 export type Api = {
   tq: string;
+  /** connected Spotify accounts (owner views only) — drives the tiny "who has this song" marks */
+  accounts: Array<{ id: number; name: string }>;
   tracks: Track[];
   playlists: Playlist[];
   byId: Map<number, Track>;
@@ -37,6 +39,21 @@ const albumKey = (t: Track) => `${t.album ?? "Single"}|${artistsOf(t)[0] ?? ""}`
 /* ---------- rows ---------- */
 
 type RowProps = { t: Track; api: Api; ids: number[]; index?: number };
+/** Tiny, dim initials of the Spotify account(s) a song came from; hover/long-press shows the full name. */
+export function SourceMarks({ ids, accounts }: { ids?: number[]; accounts: Array<{ id: number; name: string }> }) {
+  if (!ids?.length || accounts.length === 0) return null;
+  const clean = (n: string) => n.replace(/[^\p{L}\p{N}]/gu, "");
+  const mark = (n: string, len: number) => clean(n).slice(0, len).toUpperCase() || "?";
+  const mine = accounts.filter((a) => ids.includes(a.id));
+  if (mine.length === 0) return null;
+  const lab = (a: { name: string }) => mark(a.name, accounts.filter((x) => mark(x.name, 1) === mark(a.name, 1)).length > 1 ? 2 : 1);
+  return (
+    <span className="ml-1.5 inline-flex gap-0.5 align-middle">
+      {mine.map((a) => <span key={a.id} title={a.name} aria-label={`From ${a.name}`} className="text-[8px] leading-[10px] px-[3px] rounded-[3px] border border-current opacity-40">{lab(a)}</span>)}
+    </span>
+  );
+}
+
 function TrackRowImpl({ t, api, ids, index }: RowProps) {
   const active = api.cur === t.id;
   return (
@@ -49,7 +66,7 @@ function TrackRowImpl({ t, api, ids, index }: RowProps) {
         </span>
         <span className="min-w-0">
           <span className={`block text-[16px] leading-tight font-medium truncate ${active ? "underline decoration-2 underline-offset-4" : ""}`}>{t.title ?? "—"}</span>
-          <span className="block text-[13px] text-[var(--dim)] truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span>
+          <span className="block text-[13px] text-[var(--dim)] truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}<SourceMarks ids={t.sources} accounts={api.accounts} /></span>
         </span>
       </button>
       {t.rating > 0 && <HeartIcon size={16} filled className="text-rose-500 shrink-0" />}

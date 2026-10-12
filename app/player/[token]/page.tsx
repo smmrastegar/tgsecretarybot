@@ -33,6 +33,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const tq = `t=${encodeURIComponent(token)}`;
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [accounts, setAccounts] = useState<Array<{ id: number; name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [denied, setDenied] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
@@ -162,8 +163,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       const r = await fetch(`/api/music?${tq}`, { cache: "no-store" });
       if (r.status === 404) { setDenied(true); return; }
       if (!r.ok) return;
-      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[] };
-      setTracks(j.tracks.filter((t) => t.status === "ready")); setPlaylists(j.playlists);
+      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string }> };
+      setTracks(j.tracks.filter((t) => t.status === "ready")); setPlaylists(j.playlists); setAccounts(j.accounts ?? []);
     } finally { setLoading(false); }
   }, [tq]);
   useEffect(() => { void load(); }, [load]);
@@ -295,9 +296,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     };
   };
   const chipsFor = (id: number): string[] => {
-    const d = vibeData.tracks[id]; if (!d) return [];
+    const from = (byId.get(id)?.sources ?? []).map((sid) => accounts.find((a) => a.id === sid)?.name).filter((n): n is string => !!n).map((n) => `From ${n}`);
+    const d = vibeData.tracks[id]; if (!d) return from;
     const vibe = vibeData.vibes.find((v) => v.key === d.vibe)?.name;
-    return [`${d.bpm} BPM`, `${d.key} ${d.mode}`, d.energy < 0.35 ? "Low energy" : d.energy > 0.6 ? "High energy" : "Medium energy", d.brightness > 0.4 ? "Bright" : d.brightness < 0.2 ? "Warm" : "Balanced", ...(vibe ? [vibe] : []), ...moodChips(d.moods), ...d.genres.slice(0, 3).map((g) => g.split(" / ").map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase())).join(" / "))];
+    return [...from, `${d.bpm} BPM`, `${d.key} ${d.mode}`, d.energy < 0.35 ? "Low energy" : d.energy > 0.6 ? "High energy" : "Medium energy", d.brightness > 0.4 ? "Bright" : d.brightness < 0.2 ? "Warm" : "Balanced", ...(vibe ? [vibe] : []), ...moodChips(d.moods), ...d.genres.slice(0, 3).map((g) => g.split(" / ").map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase())).join(" / "))];
   };
   const requestDownload = (ids: number[], label: string) => {
     const todo = ids.filter((id) => !offline.has(id));
@@ -434,7 +436,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     download: (ids: number[], label: string) => fns.current.download(ids, label),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
+  const api: Api = useMemo(() => ({ tq, accounts, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, accounts, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;

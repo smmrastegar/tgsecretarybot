@@ -21,8 +21,8 @@ export async function GET(request: Request): Promise<Response> {
     const tracks = allowed ? all.filter((t) => allowed.has(t.id)) : all;
     const lists = access.kind === "link" && access.playlistIds ? pls.filter((p) => access.playlistIds!.includes(p.id)) : pls;
     const playlists = lists.map((p) => ({ id: p.id, name: p.name, trackIds: allowed ? p.trackIds.filter((id) => allowed.has(id)) : p.trackIds, smart: p.smart, ...(access.kind === "session" ? { rules: p.rules } : {}) }));
-    // The owner's own view also says which Spotify account(s) each song came from (never shown to player links).
-    if (access.kind === "session") {
+    // The owner's views (dashboard session and the Main player link) also say which Spotify account(s) each song came from; other player links never see it.
+    if (access.kind === "session" || (access.kind === "link" && access.linkId === 0)) {
       const [src, accts] = await Promise.all([listTrackSources(), listSpotifyAccounts()]);
       return NextResponse.json({
         tracks: tracks.map((t) => ({ ...t, sources: src.get(t.id) ?? [] })), playlists,
