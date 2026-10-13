@@ -8,7 +8,7 @@ import dynamic from "next/dynamic";
 import { loadLyrics, removeLyrics, saveLyrics } from "@/components/music/app/lyricsCache";
 import BackLayer from "@/components/music/app/BackLayer";
 import { memo, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartIcon, CloseIcon, MoreIcon, SettingsIcon, SparkIcon, ChevronDownIcon, FadeIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
+import { ChartIcon, CloseIcon, MoreIcon, SettingsIcon, SparkIcon, ChevronDownIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
 
 import SeekBar from "@/components/music/app/SeekBar";
 import Spectrum from "@/components/music/Spectrum";
@@ -67,7 +67,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [speed, setSpeed] = useState(1);
   const [sleepMin, setSleepMin] = useState(0);
   const [full, setFull] = useState(false);
-  const [sheet, setSheet] = useState<null | "queue" | "sleep" | "speed" | "fade" | "lyrics">(null);
+  const [sheet, setSheet] = useState<null | "queue" | "sleep" | "speed" | "lyrics">(null);
   const [menuT, setMenuT] = useState<Track | null>(null);
   const [reportT, setReportT] = useState<Track | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
@@ -633,11 +633,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <VolumeIcon size={18} className="text-[var(--dim)]" />
             </div>
 
-            <div className={`mt-3 shrink-0 grid ${hasLyrics ? "grid-cols-5" : "grid-cols-4"} gap-1.5 text-[11px]`}>
+            <div className="mt-3 shrink-0 grid grid-cols-4 gap-1.5 text-[11px]">
               <button onClick={() => setSheet("sleep")} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] ${sleepMin ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><TimerIcon size={20} />{sleepMin === -1 ? "End of track" : sleepMin > 0 ? `${sleepMin} min` : "Sleep"}</button>
               <button onClick={() => setSheet("speed")} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] ${speed !== 1 ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><span className="h-5 grid place-items-center text-[15px] font-bold">{speed}×</span>Speed</button>
-              <button onClick={() => setSheet("fade")} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] ${fade ? "text-[var(--fg)] font-semibold" : "text-[var(--dim)]"}`}><FadeIcon size={20} />{fade ? `Fade ${fade}s` : "Fade"}</button>
-              {hasLyrics && <button onClick={() => setSheet("lyrics")} className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><LyricsIcon size={20} />Lyrics</button>}
+              <button onClick={() => hasLyrics && setSheet("lyrics")} disabled={!hasLyrics} aria-label={hasLyrics ? "Lyrics" : "No lyrics for this song"} className={`flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] ${hasLyrics ? "text-[var(--dim)]" : "text-[var(--dim3)] opacity-35"}`}><LyricsIcon size={20} />Lyrics</button>
               <button onClick={() => setSheet("queue")} className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-[var(--s1)] text-[var(--dim)]"><QueueIcon size={20} />Queue {upNextCount}</button>
             </div>
           </div>
@@ -661,13 +660,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {smartT && <BackLayer onClose={() => setSmartT(null)} />}
       {dlPlan && <DownloadSheet label={dlPlan.label} count={dlPlan.ids.length} bytes={dlPlan.bytes} onAllow={() => void startDownload(dlPlan.ids)} onClose={() => setDlPlan(null)} />}
       {dlPlan && <BackLayer onClose={() => setDlPlan(null)} />}
-      {settingsOpen && <SettingsSheet accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsSheet fade={fade} fades={FADES} onFade={pickFade} accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
       {settingsOpen && <BackLayer onClose={() => setSettingsOpen(false)} />}
       {dl && <div className="fixed left-3 right-3 z-[60] max-w-2xl mx-auto rounded-2xl glass border border-[var(--bd)] px-4 py-3 flex items-center gap-3" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))" }} role="status">
         <div className="min-w-0 flex-1"><div className="text-[13px] font-semibold">Downloading {dl.done} of {dl.total}</div><div className="mt-1.5 h-1 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full bg-[rgb(var(--ac))] transition-[width]" style={{ width: `${(dl.done / dl.total) * 100}%` }} /></div></div>
         <button onClick={() => dlCtl.current?.abort()} className="px-3 py-1.5 rounded-full bg-[var(--s2)] text-[12px] font-semibold">Stop</button>
       </div>}
-      {sheet === "fade" && <OptionSheet title="Fade between tracks" options={FADES} value={fade} onPick={pickFade} onClose={() => setSheet(null)} />}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
       {menuT && <TrackMenu onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
         onArtist={() => { const a = artistsOf(menuT)[0]!; setFull(false); setTab("library"); setStack([{ kind: "artist", key: a, title: a }]); }}

@@ -353,7 +353,8 @@ export function DownloadSheet({ label, count, bytes, onAllow, onClose }: { label
 }
 
 /** App settings: storage, visualizer, install, and "sign out" so a different link can be used. */
-export function SettingsSheet({ accounts, scope, onScope, shown, total, downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onRefresh, onSignOut, onClose }: {
+export function SettingsSheet({ fade, fades, onFade, accounts, scope, onScope, shown, total, downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onRefresh, onSignOut, onClose }: {
+  fade: number; fades: Array<{ v: number; label: string }>; onFade: (v: number) => void;
   accounts: Array<{ id: number; name: string }>; scope: { ids: number[]; mode: "any" | "all" }; onScope: (v: { ids: number[]; mode: "any" | "all" }) => void; shown: number; total: number;
   downloaded: number; viz: boolean; onViz: () => void; installable: boolean; iosHint: boolean; onInstall: () => void;
   onRemoveDownloads: () => Promise<void>; onRefresh: () => Promise<void>; onSignOut: (removeDownloads: boolean) => void; onClose: () => void;
@@ -400,6 +401,16 @@ export function SettingsSheet({ accounts, scope, onScope, shown, total, download
           </div>
         );
       })()}
+      <div className="px-5 py-3.5 border-b border-[var(--bd0)]">
+        <div className="text-[15px]">Fade between songs</div>
+        <div className="text-[12px] text-[var(--dim)] mt-0.5">Softly lowers the end of a song and brings the next one in.</div>
+        <div className="mt-2.5 grid grid-cols-4 gap-1.5" role="radiogroup" aria-label="Fade between songs">
+          {fades.map((f) => (
+            <button key={f.v} role="radio" aria-checked={fade === f.v} onClick={() => onFade(f.v)}
+              className={`py-2 rounded-full text-[13px] font-semibold transition ${fade === f.v ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>{f.v === 0 ? "Off" : `${f.v}s`}</button>
+          ))}
+        </div>
+      </div>
       <Row label="Offline downloads" sub={`${downloaded} ${downloaded === 1 ? "song" : "songs"} on this phone${usage ? ` · app storage ${usage}` : ""}`}
         right={<button disabled={downloaded === 0} onClick={async () => { if (confirm("Remove every downloaded song from this phone?")) { await onRemoveDownloads(); refresh(); } }} className={`${btn} disabled:opacity-35`}>Remove all</button>} />
       <Row label="Spectrum on the cover" sub="Turn off to save battery" right={<button role="switch" aria-checked={viz} onClick={onViz} className={`shrink-0 w-[52px] h-8 rounded-full relative transition-colors ${viz ? "bg-[rgb(var(--ac))]" : "bg-[var(--s2)]"}`}><span className={`absolute top-1/2 -translate-y-1/2 left-1 w-6 h-6 rounded-full shadow transition-transform duration-200 ${viz ? "translate-x-5 bg-[var(--acfg)]" : "translate-x-0 bg-[var(--dim)]"}`} /></button>} />
