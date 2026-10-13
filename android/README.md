@@ -14,3 +14,4 @@ Build (needs JDK 17+, Gradle 8.7+, Android SDK platform 34 + build-tools 34):
 an APK signed with a different key can only replace this one after uninstalling.
 Commit the new APK: the server sends every distinct `public/downloads/MyMusic.apk` to the owner in Telegram automatically (deploy/auto-deploy.sh → apk_selfheal).
 Bump `versionCode` in `app/build.gradle` for every release you want phones to accept as an update.
+- `android/release.sh` builds, copies the APK to public/downloads and writes public/downloads/app-version.json — the installed app compares that file with its own versionCode and offers an in-app **Update** (download + install). Bump versionCode first.

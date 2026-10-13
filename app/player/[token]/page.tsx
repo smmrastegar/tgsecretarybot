@@ -163,6 +163,30 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     document.addEventListener("visibilitychange", vis); window.addEventListener("online", vis);
     return () => { clearInterval(i); document.removeEventListener("visibilitychange", vis); window.removeEventListener("online", vis); };
   }, [checkUpdate]);
+  // The Android app: a newer APK than the installed one → a banner with an in-app Update (download + install).
+  const [appUpdate, setAppUpdate] = useState<{ code: number; name: string; url: string } | null>(null);
+  useEffect(() => {
+    const nat = (window as unknown as { AndroidMusic?: { versionCode?: () => number } }).AndroidMusic;
+    if (!nat?.versionCode) return;
+    let live = true;
+    const check = async () => {
+      try {
+        const have = Number(nat.versionCode!());
+        const r = await fetch(`/downloads/app-version.json?t=${Date.now()}`, { cache: "no-store" });
+        if (!r.ok) return;
+        const j = (await r.json()) as { versionCode?: number; versionName?: string; apk?: string };
+        if (!live || !j.versionCode || !(j.versionCode > have)) return;
+        let skipped = 0; try { skipped = Number(localStorage.getItem("player.appUpdateSkipped") || 0); } catch { /* ignore */ }
+        if (skipped >= j.versionCode) return;
+        setAppUpdate({ code: j.versionCode, name: j.versionName ?? String(j.versionCode), url: new URL(j.apk ?? "/downloads/MyMusic.apk", location.origin).toString() });
+      } catch { /* offline: try again later */ }
+    };
+    void check();
+    const i = setInterval(() => void check(), 6 * 3600_000);
+    const vis = () => { if (document.visibilityState === "visible") void check(); };
+    document.addEventListener("visibilitychange", vis);
+    return () => { live = false; clearInterval(i); document.removeEventListener("visibilitychange", vis); };
+  }, []);
   // Reload into the new version as soon as nothing is playing.
   useEffect(() => { if (updateReady && !playing) window.location.reload(); }, [updateReady, playing]);
   const dismissInstall = () => { setBannerOn(false); try { localStorage.setItem("player.installDismissed", "1"); } catch {} };
@@ -614,6 +638,13 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           <div role="status" className="mb-3 flex items-center gap-3 rounded-2xl bg-amber-500/12 border border-amber-500/30 px-3.5 py-2.5 text-[13px] leading-5">
             <span className="flex-1 min-w-0">{loading ? "Connecting…" : "No connection to the server. Only downloaded songs can play."}</span>
             <button onClick={() => void retryNow()} disabled={retrying} className="shrink-0 rounded-full bg-[var(--fg)] text-[var(--bg)] px-3.5 py-1.5 font-semibold disabled:opacity-60">{retrying ? "Trying…" : "Try again"}</button>
+          </div>
+        )}
+        {appUpdate && (
+          <div role="status" className="mb-3 flex items-center gap-3 rounded-2xl bg-[var(--s2)] border border-[var(--bd)] px-3.5 py-2.5 text-[13px] leading-5">
+            <span className="flex-1 min-w-0">New app version <b>{appUpdate.name}</b> is ready.</span>
+            <button onClick={() => { try { (window as unknown as { AndroidMusic?: { installUpdate?: (u: string) => void } }).AndroidMusic?.installUpdate?.(appUpdate.url); } catch { window.open(appUpdate.url, "_blank"); } }} className="shrink-0 rounded-full bg-[var(--fg)] text-[var(--bg)] px-3.5 py-1.5 font-semibold">Update</button>
+            <button onClick={() => { try { localStorage.setItem("player.appUpdateSkipped", String(appUpdate.code)); } catch { /* ignore */ } setAppUpdate(null); }} className="shrink-0 px-1.5 py-1.5 text-[var(--dim)]" aria-label="Not now"><CloseIcon size={16} /></button>
           </div>
         )}
         {updateReady && playing && <button onClick={() => window.location.reload()} className="mb-3 w-full rounded-2xl bg-[var(--s2)] py-2.5 text-[13px] font-semibold">New version ready — tap to reload</button>}

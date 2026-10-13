@@ -2,6 +2,10 @@ package bz.text.music;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
+import android.widget.Toast;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -45,6 +49,52 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private String failedUrl;      // set while the "can't connect" page is showing
     private ConnectivityManager.NetworkCallback netCb;
+    private long updateDownloadId = -1;
+    private final BroadcastReceiver downloadDone = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) {
+            long id = i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+            if (id != -1 && id == updateDownloadId) installDownloaded(id);
+        }
+    };
+
+    /** Download the new APK with the system download manager (progress shows in the notification shade), then offer to install it. */
+    private void downloadUpdate(String url) {
+        try {
+            if (!url.startsWith("https://")) return;
+            DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+            if (dm == null) { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); return; }
+            DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
+            r.setTitle("My Music update");
+            r.setMimeType("application/vnd.android.package-archive");
+            r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            r.setDestinationInExternalFilesDir(this, android.os.Environment.DIRECTORY_DOWNLOADS, "MyMusic-update.apk");
+            java.io.File old = new java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "MyMusic-update.apk");
+            if (old.exists()) old.delete();
+            updateDownloadId = dm.enqueue(r);
+            Toast.makeText(this, "Downloading the update…", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); } catch (Exception ignored) { }
+        }
+    }
+
+    private void installDownloaded(long id) {
+        try {
+            if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+                // Android asks once per app: allow "install unknown apps" for My Music, then tap Update again.
+                Toast.makeText(this, "Allow installing updates for My Music, then tap Update again", Toast.LENGTH_LONG).show();
+                startActivity(new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+                return;
+            }
+            DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+            Uri apk = dm == null ? null : dm.getUriForDownloadedFile(id);
+            if (apk == null) return;
+            Intent i = new Intent(Intent.ACTION_VIEW).setDataAndType(apk, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not start the install — open the downloaded file from Notifications", Toast.LENGTH_LONG).show();
+        }
+    }
 
     private static final String ERROR_PAGE =
         "<!doctype html><html><head><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
@@ -123,6 +173,10 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
         }
+        try {
+            IntentFilter f = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(downloadDone, f, Context.RECEIVER_EXPORTED); else registerReceiver(downloadDone, f);
+        } catch (Exception ignored) { }
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm != null) {
             netCb = new ConnectivityManager.NetworkCallback() {
@@ -163,6 +217,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onDestroy() {
         if (netCb != null) { try { ((ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE)).unregisterNetworkCallback(netCb); } catch (Exception ignored) { } }
+        try { unregisterReceiver(downloadDone); } catch (Exception ignored) { }
         if (instance == this) instance = null;
         super.onDestroy();
     }
@@ -186,7 +241,16 @@ public class MainActivity extends Activity {
             CharSequence t = it == null ? null : it.coerceToText(MainActivity.this);
             return t == null ? "" : t.toString();
         }
-        @JavascriptInterface public String version() { return "1.2.0"; }
+        @JavascriptInterface public String version() { return "1.3.0"; }
+        /** The installed app's versionCode (the web player compares it with /downloads/app-version.json). */
+        @JavascriptInterface public int versionCode() {
+            try {
+                android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+                return (int) (Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode);
+            } catch (Exception e) { return 0; }
+        }
+        /** Download and install the new APK (https URLs only). */
+        @JavascriptInterface public void installUpdate(final String url) { runOnUiThread(() -> downloadUpdate(url)); }
         /** The stack of the last native crash (once), or "". */
         @JavascriptInterface public String lastCrash() { String c = prefs.getString("lastCrash", ""); if (!c.isEmpty()) prefs.edit().remove("lastCrash").apply(); return c; }
         /** The launcher remembers the player link here too, so it survives a change of address. */
