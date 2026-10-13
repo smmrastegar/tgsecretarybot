@@ -13,6 +13,11 @@ export type Api = {
   canCreate: boolean;
   /** open the "save this account filter as a playlist" sheet */
   saveAccountPlaylist: (ids: number[], mode: "any" | "all") => void;
+  /** multi-select: rows show a tick box; the bar at the bottom acts on the picked songs */
+  selecting: boolean;
+  sel: Set<number>;
+  toggleSel: (id: number) => void;
+  startSelect: (pool?: number[], first?: number) => void;
   tracks: Track[];
   playlists: Playlist[];
   byId: Map<number, Track>;
@@ -42,9 +47,21 @@ const albumKey = (t: Track) => `${t.album ?? "Single"}|${artistsOf(t)[0] ?? ""}`
 
 /* ---------- rows ---------- */
 
-type RowProps = { t: Track; api: Api; ids: number[]; index?: number };
-function TrackRowImpl({ t, api, ids, index }: RowProps) {
+type RowProps = { t: Track; api: Api; ids: number[]; index?: number; picked?: boolean };
+function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
   const active = api.cur === t.id;
+  if (picked !== undefined) {
+    return (
+      <button onClick={() => api.toggleSel(t.id)} role="checkbox" aria-checked={picked} className={`w-full flex items-center gap-3 py-2 text-left ${picked ? "" : "opacity-90"}`} style={{ contentVisibility: "auto", containIntrinsicSize: "0 64px" }}>
+        <span className={`grid place-items-center w-6 h-6 rounded-full border-2 shrink-0 transition ${picked ? "bg-[var(--fg)] border-[var(--fg)] text-[var(--bg)]" : "border-[var(--dim3)]"}`}>{picked && <CheckIcon size={14} />}</span>
+        <Cover t={t} tq={api.tq} size={52} radius={8} />
+        <span className="min-w-0">
+          <TitleLine title={t.title ?? "—"} ids={t.sources} className="text-[16px] leading-tight font-medium" />
+          <span className="block text-[13px] text-[var(--dim)] truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span>
+        </span>
+      </button>
+    );
+  }
   return (
     <div className={`flex items-center gap-3 py-2 ${t.rating < 0 ? "opacity-45" : ""}`} style={{ contentVisibility: "auto", containIntrinsicSize: "0 64px" }}>
       <button onClick={() => api.play(ids, t.id)} className="flex items-center gap-3 min-w-0 flex-1 text-left" aria-label={`Play ${t.title ?? ""}`}>
@@ -68,7 +85,7 @@ function TrackRowImpl({ t, api, ids, index }: RowProps) {
 // playing" state changes — not on every progress tick or unrelated update.
 export const TrackRow = memo(TrackRowImpl, (a, b) => {
   const act = a.api.cur === a.t.id;
-  return a.t === b.t && a.ids === b.ids && a.index === b.index && a.api.tq === b.api.tq && a.api.play === b.api.play
+  return a.t === b.t && a.picked === b.picked && a.ids === b.ids && a.index === b.index && a.api.tq === b.api.tq && a.api.play === b.api.play
     && act === (b.api.cur === b.t.id) && (!act || a.api.playing === b.api.playing);
 });
 
@@ -76,7 +93,7 @@ export function TrackList({ list, api, numbered }: { list: Track[]; api: Api; nu
   const ids = useMemo(() => list.map((t) => t.id), [list]);
   if (api.loading) return <Skeleton />;
   if (list.length === 0) return <Empty text="Nothing here yet." />;
-  return <div className="divide-y divide-[var(--bd0)]">{list.map((t, i) => <TrackRow key={t.id} t={t} api={api} ids={ids} index={numbered ? i + 1 : undefined} />)}</div>;
+  return <div className="divide-y divide-[var(--bd0)]">{list.map((t, i) => <TrackRow key={t.id} t={t} api={api} ids={ids} index={numbered ? i + 1 : undefined} picked={api.selecting ? api.sel.has(t.id) : undefined} />)}</div>;
 }
 
 export function Skeleton() {
@@ -197,6 +214,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
             </select>
             <button onClick={() => setLikedOnly((v) => !v)} className={`ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold ${likedOnly ? "bg-rose-500/20 text-rose-500" : "bg-[var(--s1)] text-[var(--dim2)]"}`}><HeartIcon size={14} filled={likedOnly} /> Liked</button>
             <span className="flex-1" />
+            <button onClick={() => api.startSelect(songs.map((t) => t.id))} className="p-2 text-[var(--dim2)]" aria-label="Select songs"><CheckIcon size={22} /></button>
             <button onClick={() => api.play(songs.map((t) => t.id), undefined, true)} className="p-2 text-[var(--dim2)]" aria-label="Shuffle"><ShuffleIcon size={22} /></button>
             <button onClick={() => setGrid((g) => !g)} className="p-2 text-[var(--dim2)]" aria-label={grid ? "List view" : "Grid view"}>{grid ? <ListIcon size={22} /> : <GridIcon size={22} />}</button>
           </div>
@@ -339,6 +357,7 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
             {api.dl ? `${api.dl.done}/${api.dl.total}` : allDown ? <CheckIcon size={22} /> : <DownloadIcon size={22} />}
           </button>
           <button onClick={() => void shareText(page.title, [`${page.title} — ${list.length} songs`, "", ...list.slice(0, 50).flatMap((t) => [...trackShareLines(t, api.tq), ""])])} className={iconBtn} aria-label="Share"><ShareIcon size={21} /></button>
+          <button onClick={() => api.startSelect(ids)} className={iconBtn} aria-label="Select songs"><CheckIcon size={22} /></button>
           <span className="flex-1" />
           <button onClick={() => api.play(ids, undefined, true)} className={iconBtn} aria-label="Shuffle"><ShuffleIcon size={24} /></button>
           <button onClick={() => list[0] && api.play(ids, ids[0])} disabled={!list[0]} aria-label="Play" className="w-14 h-14 grid place-items-center rounded-full bg-[rgb(var(--ac))] text-[var(--acfg)] shadow-lg active:scale-95 transition disabled:opacity-40"><PlayIcon size={26} /></button>

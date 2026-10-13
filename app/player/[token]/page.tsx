@@ -49,7 +49,14 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     return allTracks.filter((t) => matchesAccounts(t.sources, want, scope.mode));
   }, [allTracks, scope, accounts]);
   const [canLike, setCanLike] = useState(false); // may add songs to a Spotify account's Liked Songs (owner switch)
-  const [likeT, setLikeT] = useState<Track | null>(null);
+  const [likeTs, setLikeTs] = useState<Track[] | null>(null);
+  // multi-select: tick songs in any list, then act on all of them from the bar at the bottom
+  const [selecting, setSelecting] = useState(false);
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const selPool = useRef<number[]>([]);
+  const toggleSel = useCallback((id: number) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; }), []);
+  const startSelect = useCallback((pool?: number[], first?: number) => { selPool.current = pool ?? []; setSel(first != null ? new Set([first]) : new Set()); setSelecting(true); }, []);
+  const endSelect = useCallback(() => { setSelecting(false); setSel(new Set()); }, []);
   const [accPl, setAccPl] = useState<{ ids: number[]; mode: "any" | "all" } | null>(null);
   const saveAccountPlaylist = useCallback((ids: number[], mode: "any" | "all") => setAccPl({ ids, mode }), []);
   const [loading, setLoading] = useState(true);
@@ -474,7 +481,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     download: (ids: number[], label: string) => fns.current.download(ids, label),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, saveAccountPlaylist, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
+  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, saveAccountPlaylist, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -558,7 +565,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         onEnded={() => { tracker.flush(true); if (sleepMin === -1) { setSleepMin(0); setPlaying(false); flash("Sleep timer: paused"); return; } step(1, true); }} />
 
       {/* mini player */}
-      {now && !full && (
+      {now && !full && !selecting && (
         <div className="fixed inset-x-2 z-30 max-w-2xl mx-auto glass rounded-2xl border border-[var(--bd)] overflow-hidden" style={{ bottom: "calc(66px + env(safe-area-inset-bottom))", boxShadow: "0 12px 34px -14px rgba(0,0,0,.5)" }}>
           <div className="flex items-center gap-2 p-2">
             <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-left" aria-label="Open player">
@@ -575,6 +582,18 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             </div>
           </div>
           <div className="h-[3px] bg-[var(--s2)]"><div className="h-full bg-[rgb(var(--ac))]" style={{ width: `${pct}%` }} /></div>
+        </div>
+      )}
+
+      {/* multi-select bar */}
+      {selecting && !full && (
+        <div className="fixed inset-x-2 z-30 max-w-2xl mx-auto glass rounded-2xl border border-[var(--bd)] px-3 py-2 flex items-center gap-2" style={{ bottom: "calc(66px + env(safe-area-inset-bottom))", boxShadow: "0 12px 34px -14px rgba(0,0,0,.5)" }} role="toolbar" aria-label="Selected songs">
+          <span className="text-[13px] font-semibold tabular-nums whitespace-nowrap">{sel.size} selected</span>
+          {selPool.current.length > 0 && <button onClick={() => setSel(sel.size >= selPool.current.length ? new Set() : new Set(selPool.current))} className="text-[13px] font-semibold text-[var(--dim2)] px-1 py-1 whitespace-nowrap">{sel.size >= selPool.current.length ? "None" : "All"}</button>}
+          <span className="flex-1" />
+          <button disabled={sel.size === 0} onClick={() => { const ids = [...sel]; setQueue((q) => [...q, ...ids.filter((id) => !q.includes(id))]); flash(`${ids.length} added to queue`); endSelect(); }} className="px-3 py-1.5 rounded-full bg-[var(--s2)] text-[13px] font-semibold whitespace-nowrap disabled:opacity-40">＋ Queue</button>
+          {canLike && accounts.some((a) => a.id > 0) && <button disabled={sel.size === 0} onClick={() => setLikeTs([...sel].map((id) => byId.get(id)).filter((t): t is Track => !!t))} className="px-3 py-1.5 rounded-full bg-[rgb(var(--ac))] text-[var(--acfg)] text-[13px] font-semibold whitespace-nowrap disabled:opacity-40">＋ Spotify</button>}
+          <button onClick={endSelect} className="p-1.5 text-[var(--dim2)]" aria-label="Done selecting"><CloseIcon size={20} /></button>
         </div>
       )}
 
@@ -614,7 +633,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
                 <SourceChips ids={now.sources} />
               </div>
               <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={28} filled={now.rating > 0} /></button>
-              {canLike && accounts.some((a) => a.id > 0) && <button onClick={() => setLikeT(now)} className="p-2 text-[var(--dim)]" aria-label="Add to a Spotify account's likes"><PlusIcon size={24} /></button>}
+              {canLike && accounts.some((a) => a.id > 0) && <button onClick={() => setLikeTs([now])} className="p-2 text-[var(--dim)]" aria-label="Add to a Spotify account's likes"><PlusIcon size={24} /></button>}
               <button onClick={() => rate(now, -1)} className={`p-2 ${now.rating < 0 ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={24} filled={now.rating < 0} /></button>
             </div>
 
@@ -663,8 +682,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {smartT && <BackLayer onClose={() => setSmartT(null)} />}
       {dlPlan && <DownloadSheet label={dlPlan.label} count={dlPlan.ids.length} bytes={dlPlan.bytes} onAllow={() => void startDownload(dlPlan.ids)} onClose={() => setDlPlan(null)} />}
       {dlPlan && <BackLayer onClose={() => setDlPlan(null)} />}
-      {likeT && <SpotifyLikeSheet t={byId.get(likeT.id) ?? likeT} accounts={accounts} tq={tq} onClose={() => setLikeT(null)} onMessage={flash}
-        onDone={(accId) => setTracks((all) => all.map((x) => (x.id === likeT.id ? { ...x, sources: [...new Set([...(x.sources ?? []), accId])] } : x)))} />}
+      {likeTs && <SpotifyLikeSheet ts={likeTs.map((t) => byId.get(t.id) ?? t)} accounts={accounts} tq={tq} onClose={() => setLikeTs(null)} onMessage={flash}
+        onDone={(accId) => { const ids = new Set(likeTs.map((t) => t.id)); setTracks((all) => all.map((x) => (ids.has(x.id) ? { ...x, sources: [...new Set([...(x.sources ?? []), accId])] } : x))); if (selecting) endSelect(); }} />}
       {settingsOpen && <SettingsSheet fade={fade} fades={FADES} onFade={pickFade} accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
       {settingsOpen && <BackLayer onClose={() => setSettingsOpen(false)} />}
       {dl && <div className="fixed left-3 right-3 z-[60] max-w-2xl mx-auto rounded-2xl glass border border-[var(--bd)] px-4 py-3 flex items-center gap-3" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))" }} role="status">
@@ -672,7 +691,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         <button onClick={() => dlCtl.current?.abort()} className="px-3 py-1.5 rounded-full bg-[var(--s2)] text-[12px] font-semibold">Stop</button>
       </div>}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
-      {menuT && <TrackMenu onSpotify={canLike && accounts.some((a) => a.id > 0) ? () => setLikeT(menuT) : undefined} onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
+      {menuT && <TrackMenu onSelect={() => startSelect(undefined, menuT.id)} onSpotify={canLike && accounts.some((a) => a.id > 0) ? () => setLikeTs([menuT]) : undefined} onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
         onArtist={() => { const a = artistsOf(menuT)[0]!; setFull(false); setTab("library"); setStack([{ kind: "artist", key: a, title: a }]); }}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}
