@@ -18,7 +18,7 @@ import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { NetEpochCtx } from "@/components/music/app/shared";
 import { artistsOf, DetailView, DownloadedBadge, type Desc, type Vibe, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
-import { AccountPlaylistSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, SpotifyLikeSheet, TrackMenu } from "@/components/music/app/Sheets";
+import { AccountPlaylistSheet, ArtistPickSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, SpotifyLikeSheet, TrackMenu } from "@/components/music/app/Sheets";
 import { matchesAccounts } from "@/lib/music-scope";
 
 // Private personal player. The URL's 256-bit token is the credential.
@@ -51,6 +51,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     return allTracks.filter((t) => matchesAccounts(t.sources, want, scope.mode));
   }, [allTracks, scope, accounts]);
   const [canLike, setCanLike] = useState(false); // may add songs to a Spotify account's Liked Songs (owner switch)
+  // A song with several artists asks which one to open; a single artist opens straight away.
+  const [artistPick, setArtistPick] = useState<Track | null>(null);
+  const openArtist = (name: string) => { setFull(false); setTab("library"); setStack([{ kind: "artist", key: name, title: name }]); };
+  const goArtist = (t: Track) => { const list = artistsOf(t); if (list.length > 1) setArtistPick(t); else if (list[0]) openArtist(list[0]); };
   const [likeTs, setLikeTs] = useState<Track[] | null>(null);
   // multi-select: tick songs in any list, then act on all of them from the bar at the bottom
   const [selecting, setSelecting] = useState(false);
@@ -689,7 +693,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
             <div className="mt-2 shrink-0">
               <FitText max={22} min={14} lines={2} className="font-bold">{now.title}</FitText>
-              <button onClick={() => { setFull(false); setStack((s) => [...s, { kind: "artist", key: artistsOf(now)[0]!, title: artistsOf(now)[0]! }]); setTab("library"); }} className="block max-w-full text-left text-[var(--dim)] mt-0.5">
+              <button onClick={() => goArtist(now)} className="block max-w-full text-left text-[var(--dim)] mt-0.5">
                 <FitText max={15} min={12} lines={2}>{offline.has(now.id) && <><DownloadedBadge size={16} />{" "}</>}{now.artist}</FitText>
               </button>
               <div className="mt-1.5 flex items-start gap-2">
@@ -747,6 +751,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {smartT && <BackLayer onClose={() => setSmartT(null)} />}
       {dlPlan && <DownloadSheet label={dlPlan.label} count={dlPlan.ids.length} bytes={dlPlan.bytes} onAllow={() => void startDownload(dlPlan.ids)} onClose={() => setDlPlan(null)} />}
       {dlPlan && <BackLayer onClose={() => setDlPlan(null)} />}
+      {artistPick && <ArtistPickSheet artists={artistsOf(artistPick)} counts={new Map([...c.artists.entries()].map(([k, v]) => [k, v.length]))} onPick={openArtist} onClose={() => setArtistPick(null)} />}
       {likeTs && <SpotifyLikeSheet ts={likeTs.map((t) => byId.get(t.id) ?? t)} accounts={accounts} tq={tq} onClose={() => setLikeTs(null)} onMessage={flash}
         onDone={(accId) => { const ids = new Set(likeTs.map((t) => t.id)); setTracks((all) => all.map((x) => (ids.has(x.id) ? { ...x, sources: [...new Set([...(x.sources ?? []), accId])] } : x))); if (selecting) endSelect(); }} />}
       {settingsOpen && <SettingsSheet fade={fade} fades={FADES} onFade={pickFade} accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
@@ -757,7 +762,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       </div>}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
       {menuT && <TrackMenu onSelect={() => startSelect(undefined, menuT.id)} onSpotify={canLike && accounts.some((a) => a.id > 0) ? () => setLikeTs([menuT]) : undefined} onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
-        onArtist={() => { const a = artistsOf(menuT)[0]!; setFull(false); setTab("library"); setStack([{ kind: "artist", key: a, title: a }]); }}
+        onArtist={() => goArtist(menuT)}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}
       {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark chips={chipsFor(detailId)} t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}

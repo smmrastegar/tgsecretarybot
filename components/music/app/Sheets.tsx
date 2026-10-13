@@ -74,6 +74,21 @@ export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, 
   );
 }
 
+/** A song with several artists: pick which one to open. */
+export function ArtistPickSheet({ artists, counts, onPick, onClose }: { artists: string[]; counts: Map<string, number>; onPick: (artist: string) => void; onClose: () => void }) {
+  return (
+    <Sheet onClose={onClose} title="Go to artist">
+      {artists.map((a) => (
+        <button key={a} onClick={() => { onPick(a); onClose(); }} className="w-full flex items-center gap-3 px-5 py-3.5 text-left active:bg-[var(--s1)]">
+          <span className="grid place-items-center w-10 h-10 rounded-full bg-[var(--s2)] text-[15px] font-bold shrink-0">{(a.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "?").toUpperCase()}</span>
+          <span className="min-w-0 flex-1"><span className="block text-[16px] font-medium truncate">{a}</span><span className="block text-[12px] text-[var(--dim)]">{counts.get(a) ?? 0} {(counts.get(a) ?? 0) === 1 ? "song" : "songs"} in your library</span></span>
+          <ChevronRightIcon size={18} className="text-[var(--dim3)]" />
+        </button>
+      ))}
+    </Sheet>
+  );
+}
+
 export function QueueSheet({ ids, byId, cur, tq, onClose, onPlay, onRemove, onMove, onClear }: {
   ids: number[]; byId: Map<number, Track>; cur: number | null; tq: string; onClose: () => void;
   onPlay: (id: number) => void; onRemove: (id: number) => void; onMove: (id: number, d: -1 | 1) => void; onClear: () => void;
