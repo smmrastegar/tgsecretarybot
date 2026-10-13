@@ -2,7 +2,7 @@
 
 import { AccountsCtx, TitleLine } from "./SourceMarks";
 import { memo, useContext, useMemo, useState } from "react";
-import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, SearchIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
+import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
 import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
 import { matchesAccounts } from "@/lib/music-scope";
 
@@ -390,28 +390,5 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
 }
 
 /* ---------- Search ---------- */
-
-export function SearchView({ api, c }: { api: Api; c: Collections }) {
-  const [q, setQ] = useState("");
-  const s = q.trim().toLowerCase();
-  const songs = useMemo(() => (s ? c.ready.filter((t) => `${t.title ?? ""} ${t.artist ?? ""} ${t.album ?? ""}`.toLowerCase().includes(s)) : []), [c.ready, s]);
-  const artists = useMemo(() => (s ? [...c.artists.entries()].filter(([n]) => n.toLowerCase().includes(s)).slice(0, 6) : []), [c.artists, s]);
-  const albums = useMemo(() => (s ? [...c.albums.entries()].filter(([, l]) => (l[0]!.album ?? "").toLowerCase().includes(s)).slice(0, 6) : []), [c.albums, s]);
-  return (
-    <div>
-      <div className="relative mt-4">
-        <SearchIcon size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--dim)]" />
-        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Songs, artists, albums" className="w-full rounded-xl bg-[var(--s2)] pl-11 pr-4 py-3.5 text-[16px] outline-none placeholder:text-[var(--dim)]" />
-      </div>
-      {!s && <Empty text="Search your library." />}
-      {s && songs.length === 0 && artists.length === 0 && albums.length === 0 && <Empty text={`No results for “${q}”.`} />}
-      {artists.length > 0 && (<><SectionTitle>Artists</SectionTitle>{artists.map(([n, l]) => (
-        <button key={n} onClick={() => api.open({ kind: "artist", key: n, title: n })} className="w-full flex items-center gap-3 py-2 text-left"><span className="w-12 h-12 rounded-full overflow-hidden block shrink-0"><Cover t={l[0]!} tq={api.tq} size="100%" radius={0} res={128} /></span><span className="flex-1 font-medium truncate">{n}</span><ChevronRightIcon size={18} className="text-[var(--dim3)]" /></button>))}</>)}
-      {albums.length > 0 && (<><SectionTitle>Albums</SectionTitle>{albums.map(([k, l]) => (
-        <button key={k} onClick={() => api.open({ kind: "album", key: k, title: l[0]!.album ?? "Singles" })} className="w-full flex items-center gap-3 py-2 text-left"><Cover t={l[0]!} tq={api.tq} size={48} radius={8} /><span className="flex-1 min-w-0"><span className="block font-medium truncate">{l[0]!.album ?? "Singles"}</span><span className="block text-[13px] text-[var(--dim)] truncate">{artistsOf(l[0]!)[0]}</span></span><ChevronRightIcon size={18} className="text-[var(--dim3)]" /></button>))}</>)}
-      {songs.length > 0 && (<><SectionTitle>Songs</SectionTitle><TrackList list={songs.slice(0, 40)} api={api} /></>)}
-    </div>
-  );
-}
 
 export const PlayGlyph = PlayIcon;

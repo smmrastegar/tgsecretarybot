@@ -16,8 +16,9 @@ import Spectrum from "@/components/music/Spectrum";
 
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
+import { SearchView } from "@/components/music/app/Search";
 import { NetEpochCtx } from "@/components/music/app/shared";
-import { artistsOf, DetailView, DownloadedBadge, type Desc, type Vibe, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
+import { artistsOf, DetailView, DownloadedBadge, type Desc, type Vibe, HomeView, LibraryView, useCollections, type Api, type Page } from "@/components/music/app/Views";
 import { AccountPlaylistSheet, ArtistPickSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, SpotifyLikeSheet, TrackMenu } from "@/components/music/app/Sheets";
 import { matchesAccounts } from "@/lib/music-scope";
 
@@ -31,7 +32,7 @@ const SPEEDS = [0.75, 1, 1.25, 1.5, 2].map((v) => ({ v, label: v === 1 ? "Normal
 const StatsView = dynamic(() => import("@/components/music/app/StatsView"), { ssr: false });
 const TrackDetail = dynamic(() => import("@/components/music/TrackDetail"), { ssr: false });
 
-const MHome = memo(HomeView), MLibrary = memo(LibraryView), MSearch = memo(SearchView), MDetail = memo(DetailView);
+const MHome = memo(HomeView), MLibrary = memo(LibraryView), MSearch = SearchView, MDetail = memo(DetailView);
 
 export default function PlayerPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
