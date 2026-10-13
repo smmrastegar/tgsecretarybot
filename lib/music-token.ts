@@ -31,9 +31,11 @@ export async function setLegacyActive(on: boolean): Promise<void> { await setSet
 export type AccountScope = { ids: number[]; mode: "any" | "all" };
 export type MusicAccess =
   | { kind: "session" }
-  | { kind: "link"; linkId: number; name: string; playlistIds: number[] | null; canCreate: boolean; scope: AccountScope | null }; // playlistIds null = the whole library (Main link)
+  | { kind: "link"; linkId: number; name: string; playlistIds: number[] | null; canCreate: boolean; canLike: boolean; scope: AccountScope | null }; // playlistIds null = the whole library (Main link)
 
 const MAIN_SCOPE = "musicMainScope";
+const MAIN_LIKE = "musicMainCanLike";
+export async function setMainCanLike(on: boolean): Promise<void> { await setSetting(MAIN_LIKE, on ? "1" : "0"); }
 export function parseScope(raw: unknown): AccountScope | null {
   try {
     const j = (typeof raw === "string" ? JSON.parse(raw) : raw) as { ids?: unknown; mode?: unknown } | null;
@@ -50,12 +52,12 @@ async function accessForToken(presented: string | null | undefined): Promise<Mus
   const s = await getAllSettings();
   const legacy = (s[KEY] ?? "").trim();
   if (legacy.length === p.length && (s[LEGACY_ACTIVE] ?? "1") !== "0") {
-    try { if (timingSafeEqual(Buffer.from(p), Buffer.from(legacy))) return { kind: "link", linkId: 0, name: "Main link", playlistIds: null, canCreate: true, scope: parseScope(s[MAIN_SCOPE]) }; } catch { /* fall through */ }
+    try { if (timingSafeEqual(Buffer.from(p), Buffer.from(legacy))) return { kind: "link", linkId: 0, name: "Main link", playlistIds: null, canCreate: true, canLike: (s[MAIN_LIKE] ?? "1") !== "0", scope: parseScope(s[MAIN_SCOPE]) }; } catch { /* fall through */ }
   }
   const link = await findActiveLinkByToken(p).catch(() => null);
   if (!link) return null;
   void touchPlayerLink(link.id).catch(() => {});
-  return { kind: "link", linkId: link.id, name: link.name, playlistIds: link.playlistIds, canCreate: link.canCreate, scope: link.accountIds.length ? { ids: link.accountIds, mode: link.accountsMode } : null };
+  return { kind: "link", linkId: link.id, name: link.name, playlistIds: link.playlistIds, canCreate: link.canCreate, canLike: link.canLikeSpotify, scope: link.accountIds.length ? { ids: link.accountIds, mode: link.accountsMode } : null };
 }
 
 export async function isValidPlayerToken(presented: string | null | undefined): Promise<boolean> {
@@ -118,3 +120,6 @@ export async function guardTrack(request: Request, trackId: number): Promise<{ a
   if (!access || !Number.isFinite(trackId) || !(await canAccessTrack(access, trackId))) return { deny: notFound() };
   return { access };
 }
+
+/** May this access add songs to a Spotify account's Liked Songs? (dashboard login always; a link only if the owner switched it on) */
+export const canSpotifyLike = (a: MusicAccess): boolean => a.kind === "session" || a.canLike;

@@ -5,7 +5,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { deleteSpotifyAccount, getAllSettings, getSpotifyRefreshToken, listSpotifyAccounts, setSetting, setSpotifyRefreshToken, upsertSpotifyAccount } from "./db";
 
-export const SCOPES = "user-library-read playlist-read-private playlist-read-collaborative";
+export const SCOPES = "user-library-read user-library-modify playlist-read-private playlist-read-collaborative";
 
 // The redirect URI must match one registered in the Spotify app's dashboard exactly. It is deliberately NOT tied to
 // the public app URL: moving the site to a new domain must not break the Spotify sign-in until the new URI is
@@ -266,4 +266,18 @@ export async function fetchTrackArtistGenres(spotifyTrackId: string): Promise<{ 
     if (r.status === 200) for (const g of (r.json as { genres?: string[] }).genres ?? []) genres.add(g.toLowerCase());
   }
   return { genres: [...genres], artists: arts.map((a) => a.name ?? "") };
+}
+
+/** Add songs to this account's Spotify "Liked Songs". Needs the user-library-modify permission (accounts connected earlier must be connected again once). */
+export async function likeOnSpotify(accountId: number, spotifyTrackIds: string[]): Promise<void> {
+  const ids = [...new Set(spotifyTrackIds.filter(Boolean))].slice(0, 50);
+  if (!ids.length) return;
+  const token = await accessToken(accountId);
+  const call = (url: string, init: RequestInit) => fetch(url, { ...init, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+  let res = await call("https://api.spotify.com/v1/me/tracks", { method: "PUT", body: JSON.stringify({ ids }) });
+  // Spotify's 2026 revision moved saving to /me/library (by URI); use it when the old route is gone.
+  if (res.status === 404 || res.status === 405 || res.status === 410) res = await call(`https://api.spotify.com/v1/me/library?uris=${ids.map((i) => `spotify:track:${i}`).join(",")}`, { method: "PUT" });
+  if (res.status === 429) throw new Error("اسپاتیفای موقتاً محدودت کرده؛ چند دقیقه بعد دوباره امتحان کن");
+  if (res.status === 401 || res.status === 403) throw new Error("NEEDS_RECONNECT");
+  if (!res.ok) throw new Error(`spotify ${res.status}`);
 }

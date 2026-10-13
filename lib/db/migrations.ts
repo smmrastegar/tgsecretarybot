@@ -438,6 +438,13 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS accounts_mode TEXT NOT NULL DEFAULT 'any'`;
     },
   },
+  {
+    // A link may add songs to the Spotify "Liked Songs" of a connected account (off unless the owner allows it).
+    id: "2026-10-13-001-link-spotify-like",
+    up: async (q) => {
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS can_like_spotify BOOLEAN NOT NULL DEFAULT FALSE`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

@@ -5,14 +5,14 @@ function q() {
   return sql() as unknown as { query: (t: string, p?: unknown[]) => Promise<unknown[]> };
 }
 
-export type PlayerLink = { id: number; name: string; token: string; active: boolean; playlistIds: number[]; createdAt: string; lastUsedAt: string | null; canCreate: boolean; accountIds: number[]; accountsMode: "any" | "all" };
+export type PlayerLink = { id: number; name: string; token: string; active: boolean; playlistIds: number[]; createdAt: string; lastUsedAt: string | null; canCreate: boolean; accountIds: number[]; accountsMode: "any" | "all"; canLikeSpotify: boolean };
 
-const COLS = `id, name, token, active, playlist_ids, created_at::text AS created_at, last_used_at::text AS last_used_at, can_create_playlists, account_ids, accounts_mode`;
+const COLS = `id, name, token, active, playlist_ids, created_at::text AS created_at, last_used_at::text AS last_used_at, can_create_playlists, account_ids, accounts_mode, can_like_spotify`;
 const toLink = (r: Row): PlayerLink => ({
   id: num(r, "id"), name: str(r, "name"), token: str(r, "token"), active: r.active === true || r.active === "t",
   playlistIds: (Array.isArray(r.playlist_ids) ? r.playlist_ids : []).map(Number), createdAt: str(r, "created_at"),
   lastUsedAt: r.last_used_at ? str(r, "last_used_at") : null, canCreate: r.can_create_playlists !== false && r.can_create_playlists !== "f",
-  accountIds: (Array.isArray(r.account_ids) ? r.account_ids : []).map(Number), accountsMode: r.accounts_mode === "all" ? "all" : "any",
+  accountIds: (Array.isArray(r.account_ids) ? r.account_ids : []).map(Number), accountsMode: r.accounts_mode === "all" ? "all" : "any", canLikeSpotify: r.can_like_spotify === true || r.can_like_spotify === "t",
 });
 
 export async function listPlayerLinks(): Promise<PlayerLink[]> {
@@ -30,11 +30,12 @@ export async function createPlayerLink(name: string, token: string, playlistIds:
 }
 
 /** Rename / (de)activate / reassign playlists. Links are never deleted, only switched off. */
-export async function updatePlayerLink(id: number, patch: { name?: string; active?: boolean; playlistIds?: number[]; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all" }): Promise<void> {
+export async function updatePlayerLink(id: number, patch: { name?: string; active?: boolean; playlistIds?: number[]; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLikeSpotify?: boolean }): Promise<void> {
   await ensureSchema();
   if (patch.name != null) await q().query(`UPDATE player_links SET name = $2 WHERE id = $1`, [id, patch.name.slice(0, 80)]);
   if (patch.active != null) await q().query(`UPDATE player_links SET active = $2 WHERE id = $1`, [id, patch.active]);
   if (patch.canCreate != null) await q().query(`UPDATE player_links SET can_create_playlists = $2 WHERE id = $1`, [id, patch.canCreate]);
+  if (patch.canLikeSpotify != null) await q().query(`UPDATE player_links SET can_like_spotify = $2 WHERE id = $1`, [id, patch.canLikeSpotify]);
   if (patch.accountIds) await q().query(`UPDATE player_links SET account_ids = $2::bigint[] WHERE id = $1`, [id, [...new Set(patch.accountIds.filter((n) => Number.isFinite(n) && n >= 0))]]);
   if (patch.accountsMode) await q().query(`UPDATE player_links SET accounts_mode = $2 WHERE id = $1`, [id, patch.accountsMode === "all" ? "all" : "any"]);
   if (patch.playlistIds) await q().query(`UPDATE player_links SET playlist_ids = $2::bigint[] WHERE id = $1`, [id, [...new Set(patch.playlistIds.filter(Number.isFinite))]]);

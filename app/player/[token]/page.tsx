@@ -8,7 +8,7 @@ import dynamic from "next/dynamic";
 import { loadLyrics, removeLyrics, saveLyrics } from "@/components/music/app/lyricsCache";
 import BackLayer from "@/components/music/app/BackLayer";
 import { memo, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartIcon, CloseIcon, MoreIcon, SettingsIcon, SparkIcon, ChevronDownIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
+import { ChartIcon, CloseIcon, MoreIcon, SettingsIcon, SparkIcon, ChevronDownIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PlusIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
 
 import SeekBar from "@/components/music/app/SeekBar";
 import Spectrum from "@/components/music/Spectrum";
@@ -16,7 +16,7 @@ import Spectrum from "@/components/music/Spectrum";
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { artistsOf, DetailView, type Desc, type Vibe, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
-import { AccountPlaylistSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, TrackMenu } from "@/components/music/app/Sheets";
+import { AccountPlaylistSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, SpotifyLikeSheet, TrackMenu } from "@/components/music/app/Sheets";
 import { matchesAccounts } from "@/lib/music-scope";
 
 // Private personal player. The URL's 256-bit token is the credential.
@@ -48,6 +48,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     if (!want.length) return allTracks;
     return allTracks.filter((t) => matchesAccounts(t.sources, want, scope.mode));
   }, [allTracks, scope, accounts]);
+  const [canLike, setCanLike] = useState(false); // may add songs to a Spotify account's Liked Songs (owner switch)
+  const [likeT, setLikeT] = useState<Track | null>(null);
   const [accPl, setAccPl] = useState<{ ids: number[]; mode: "any" | "all" } | null>(null);
   const saveAccountPlaylist = useCallback((ids: number[], mode: "any" | "all") => setAccPl({ ids, mode }), []);
   const [loading, setLoading] = useState(true);
@@ -186,8 +188,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       const r = await fetch(`/api/music?${tq}`, { cache: "no-store" });
       if (r.status === 404) { setDenied(true); return; }
       if (!r.ok) return;
-      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string }> };
-      setTracks(j.tracks.filter((t) => t.status === "ready")); setPlaylists(j.playlists); setAccounts(j.accounts ?? []);
+      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string }>; canLike?: boolean };
+      setTracks(j.tracks.filter((t) => t.status === "ready")); setPlaylists(j.playlists); setAccounts(j.accounts ?? []); setCanLike(j.canLike === true);
     } finally { setLoading(false); }
   }, [tq]);
   useEffect(() => { void load(); }, [load]);
@@ -612,6 +614,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
                 <SourceChips ids={now.sources} />
               </div>
               <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={28} filled={now.rating > 0} /></button>
+              {canLike && accounts.some((a) => a.id > 0) && <button onClick={() => setLikeT(now)} className="p-2 text-[var(--dim)]" aria-label="Add to a Spotify account's likes"><PlusIcon size={24} /></button>}
               <button onClick={() => rate(now, -1)} className={`p-2 ${now.rating < 0 ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={24} filled={now.rating < 0} /></button>
             </div>
 
@@ -619,7 +622,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <SeekBar pos={pos} dur={dur} buffered={buf} onSeek={seek} />
             </div>
 
-            <div className="mt-1 flex items-center justify-between shrink-0">
+            <div className="mt-1 grid grid-cols-5 place-items-center shrink-0">
               <button onClick={toggleShuffle} className={`p-3 ${shuffle ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Shuffle" aria-pressed={shuffle}><ShuffleIcon size={24} /></button>
               <button onClick={() => step(-1)} className="p-3" aria-label="Previous"><PrevIcon size={34} /></button>
               <button onClick={toggle} className="w-16 h-16 rounded-full grid place-items-center text-[var(--acfg)] active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={34} /> : <PlayIcon size={34} />}</button>
@@ -660,6 +663,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {smartT && <BackLayer onClose={() => setSmartT(null)} />}
       {dlPlan && <DownloadSheet label={dlPlan.label} count={dlPlan.ids.length} bytes={dlPlan.bytes} onAllow={() => void startDownload(dlPlan.ids)} onClose={() => setDlPlan(null)} />}
       {dlPlan && <BackLayer onClose={() => setDlPlan(null)} />}
+      {likeT && <SpotifyLikeSheet t={byId.get(likeT.id) ?? likeT} accounts={accounts} tq={tq} onClose={() => setLikeT(null)} onMessage={flash}
+        onDone={(accId) => setTracks((all) => all.map((x) => (x.id === likeT.id ? { ...x, sources: [...new Set([...(x.sources ?? []), accId])] } : x)))} />}
       {settingsOpen && <SettingsSheet fade={fade} fades={FADES} onFade={pickFade} accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
       {settingsOpen && <BackLayer onClose={() => setSettingsOpen(false)} />}
       {dl && <div className="fixed left-3 right-3 z-[60] max-w-2xl mx-auto rounded-2xl glass border border-[var(--bd)] px-4 py-3 flex items-center gap-3" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))" }} role="status">
@@ -667,7 +672,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         <button onClick={() => dlCtl.current?.abort()} className="px-3 py-1.5 rounded-full bg-[var(--s2)] text-[12px] font-semibold">Stop</button>
       </div>}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
-      {menuT && <TrackMenu onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
+      {menuT && <TrackMenu onSpotify={canLike && accounts.some((a) => a.id > 0) ? () => setLikeT(menuT) : undefined} onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
         onArtist={() => { const a = artistsOf(menuT)[0]!; setFull(false); setTab("library"); setStack([{ kind: "artist", key: a, title: a }]); }}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}

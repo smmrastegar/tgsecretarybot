@@ -2,7 +2,7 @@
 
 import { TitleLine } from "./SourceMarks";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDownIcon, CheckIcon, SparkIcon, DownloadIcon, FlagIcon, ShareIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon } from "../Icons";
+import { ArrowDownIcon, CheckIcon, SparkIcon, DownloadIcon, FlagIcon, ShareIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon, PlusIcon } from "../Icons";
 import { Cover, type Track } from "./shared";
 import type { Desc } from "./Views";
 import { loadLyrics } from "./lyricsCache";
@@ -43,8 +43,8 @@ const Item = ({ icon, label, onClick, active }: { icon: ReactNode; label: string
   </button>
 );
 
-export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
-  onShare: () => void; onReport: () => void; onRadio: () => void; onSmart?: () => void;
+export function TrackMenu({ onSpotify, t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
+  onShare: () => void; onReport: () => void; onRadio: () => void; onSmart?: () => void; onSpotify?: () => void;
   offline: boolean; onOffline: () => void;
   t: Track; tq: string; onClose: () => void; onNext: () => void; onAdd: () => void; onRate: (r: number) => void;
   onArtist: () => void; onAlbum: () => void; onDetails: () => void;
@@ -58,6 +58,7 @@ export function TrackMenu({ t, tq, onClose, onNext, onAdd, onRate, onArtist, onA
       </div>
       <Item icon={<SparkIcon size={22} />} label="Start radio (similar songs)" onClick={go(onRadio)} />
       {onSmart && <Item icon={<SparkIcon size={22} />} label="Smart playlist from this song…" onClick={go(onSmart)} />}
+      {onSpotify && <Item icon={<PlusIcon size={22} />} label="Add to a Spotify account's likes…" onClick={go(onSpotify)} />}
       <Item icon={<PlayNextIcon size={22} />} label="Play next" onClick={go(onNext)} />
       <Item icon={<QueueIcon size={22} />} label="Add to queue" onClick={go(onAdd)} />
       <Item icon={<HeartIcon size={22} filled={t.rating > 0} />} label={t.rating > 0 ? "Remove from liked" : "Like"} active={t.rating > 0} onClick={go(() => onRate(1))} />
@@ -209,6 +210,45 @@ export function ReportSheet({ t, tq, context, onClose, onDone }: { t: Track; tq:
  * lets the user pick which of those parameters the new smart playlist must
  * match, with a live count. The playlist is created for THIS link only.
  */
+/** "＋": put a song into the Spotify Liked Songs of one connected account. */
+export function SpotifyLikeSheet({ t, accounts, tq, onClose, onDone, onMessage }: { t: Track; accounts: Array<{ id: number; name: string }>; tq: string; onClose: () => void; onDone: (accountId: number) => void; onMessage: (m: string) => void }) {
+  const [busy, setBusy] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const real = accounts.filter((a) => a.id > 0);
+  async function add(a: { id: number; name: string }) {
+    setBusy(a.id); setErr(null);
+    try {
+      const r = await fetch(`/api/music/${t.id}/spotify-like?${tq}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accountId: a.id }) });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (r.ok) { onDone(a.id); onMessage(`Added to ${a.name}'s Liked Songs`); onClose(); } else setErr(j.error ?? "Could not add it");
+    } catch { setErr("Could not add it"); }
+    setBusy(null);
+  }
+  return (
+    <Sheet onClose={onClose} title="Add to Spotify likes">
+      <div className="px-5 pb-5">
+        <div className="flex items-center gap-3 pb-3"><Cover t={t} tq={tq} size={48} radius={8} /><div className="min-w-0"><div className="font-semibold truncate">{t.title}</div><div className="text-sm text-[var(--dim)] truncate">{t.artist}</div></div></div>
+        {real.length === 0 && <div className="text-[14px] text-[var(--dim)]">No Spotify account is connected.</div>}
+        <div className="space-y-2">
+          {real.map((a) => {
+            const has = (t.sources ?? []).includes(a.id);
+            const letter = (a.name.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "?").toUpperCase();
+            return (
+              <button key={a.id} disabled={busy != null} onClick={() => void add(a)} className="w-full flex items-center gap-3 rounded-xl bg-[var(--s1)] px-3 py-3 text-left active:scale-[.99] transition disabled:opacity-60">
+                <span className="grid place-items-center w-8 h-8 rounded-full bg-[var(--s2)] text-[13px] font-bold">{letter}</span>
+                <span className="flex-1 min-w-0 truncate text-[15px] font-semibold">{a.name}</span>
+                <span className="text-[13px] text-[var(--dim)]">{busy === a.id ? "Adding…" : has ? "Already has it · add again" : "＋ Add"}</span>
+              </button>
+            );
+          })}
+        </div>
+        {err && <div className="mt-3 rounded-xl bg-rose-500/10 text-rose-300 text-[13px] leading-5 px-3 py-2">{err}</div>}
+        <p className="mt-3 text-[12px] text-[var(--dim3)] leading-5">The song is saved in that account on Spotify itself, and from now on counts as one of its songs here.</p>
+      </div>
+    </Sheet>
+  );
+}
+
 /** Save "songs from these Spotify accounts (any / all)" as a live playlist — it keeps following the accounts. */
 export function AccountPlaylistSheet({ ids, mode, tq, blocked, accounts, onClose, onCreated, onMessage }: { ids: number[]; mode: "any" | "all"; tq: string; blocked?: boolean; accounts: Array<{ id: number; name: string }>; onClose: () => void; onCreated: (id: number, name: string) => void; onMessage: (m: string) => void }) {
   const names = ids.map((i) => accounts.find((a) => a.id === i)?.name).filter((n): n is string => !!n);
