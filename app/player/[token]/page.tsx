@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
 import Marquee from "@/components/music/app/Marquee";
+import FitText from "@/components/music/app/FitText";
 import { AccountsCtx, SourceChips, SourceMarks } from "@/components/music/app/SourceMarks";
 import dynamic from "next/dynamic";
 import { loadLyrics, removeLyrics, saveLyrics } from "@/components/music/app/lyricsCache";
@@ -686,15 +687,19 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               </div>
             </div>
 
-            <div className="mt-2 flex items-center gap-3 shrink-0">
-              <div className="min-w-0 flex-1">
-                <div className="text-[20px] font-bold leading-tight break-words" style={{ textWrap: "balance" }}>{now.title}</div>
-                <button onClick={() => { setFull(false); setStack((s) => [...s, { kind: "artist", key: artistsOf(now)[0]!, title: artistsOf(now)[0]! }]); setTab("library"); }} className="block text-[15px] text-[var(--dim)] max-w-full break-words text-left">{offline.has(now.id) && <><DownloadedBadge size={16} />{" "}</>}{now.artist}</button>
-                <SourceChips ids={now.sources} />
+            <div className="mt-2 shrink-0">
+              <FitText max={22} min={14} lines={2} className="font-bold">{now.title}</FitText>
+              <button onClick={() => { setFull(false); setStack((s) => [...s, { kind: "artist", key: artistsOf(now)[0]!, title: artistsOf(now)[0]! }]); setTab("library"); }} className="block max-w-full text-left text-[var(--dim)] mt-0.5">
+                <FitText max={15} min={12} lines={2}>{offline.has(now.id) && <><DownloadedBadge size={16} />{" "}</>}{now.artist}</FitText>
+              </button>
+              <div className="mt-1.5 flex items-start gap-2">
+                <div className="min-w-0 flex-1"><SourceChips ids={now.sources} /></div>
+                <div className="flex items-center shrink-0 -mr-1.5">
+                  <button onClick={() => rate(now, 1)} className={`p-1.5 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={26} filled={now.rating > 0} /></button>
+                  {canLike && accounts.some((a) => a.id > 0) && <button onClick={() => setLikeTs([now])} className="p-1.5 text-[var(--dim)]" aria-label="Add to a Spotify account's likes"><PlusIcon size={22} /></button>}
+                  <button onClick={() => rate(now, -1)} className={`p-1.5 ${now.rating < 0 ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={22} filled={now.rating < 0} /></button>
+                </div>
               </div>
-              <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={28} filled={now.rating > 0} /></button>
-              {canLike && accounts.some((a) => a.id > 0) && <button onClick={() => setLikeTs([now])} className="p-2 text-[var(--dim)]" aria-label="Add to a Spotify account's likes"><PlusIcon size={24} /></button>}
-              <button onClick={() => rate(now, -1)} className={`p-2 ${now.rating < 0 ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={24} filled={now.rating < 0} /></button>
             </div>
 
             <div className="mt-2 shrink-0">
