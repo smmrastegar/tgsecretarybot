@@ -40,14 +40,14 @@ async function backfillSources(): Promise<void> {
   for (const a of await listSpotifyAccounts()) {
     const lib = await listMyPlaylists(a.id);
     for (const p of lib.playlists) if (libNames.has(p.name)) await registerSyncSource({ accountId: a.id, id: p.id, name: p.name });
-    const likedName = `لایک‌ها (${lib.me})`;
+    const likedName = `Liked (${lib.me})`;
     if (libNames.has(likedName)) await registerSyncSource({ accountId: a.id, id: "liked", name: likedName });
   }
 }
 
 /** Two or more accounts → a playlist of what every account has; three or more → also what at least two have. */
-export const SHARED_PLAYLIST_NAME = "🤝 مشترک بین همهٔ حساب‌ها";
-export const SHARED_ANY_PLAYLIST_NAME = "👥 مشترک بین حداقل دو حساب";
+export const SHARED_PLAYLIST_NAME = "🤝 Shared by all accounts";
+export const SHARED_ANY_PLAYLIST_NAME = "👥 Shared by 2+ accounts";
 export async function ensureSharedPlaylist(): Promise<void> {
   const n = (await listSpotifyAccounts()).length;
   if (n < 2) return;

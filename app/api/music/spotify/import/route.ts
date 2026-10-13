@@ -21,7 +21,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (st.scope && !st.scope.ids.includes(Number(b.accountId))) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   try {
     const items = await fetchTrackIds(Number(b.accountId), b.id);
-    const name = (b.name ?? (b.id === "liked" ? "لایک‌ها" : "Spotify")).slice(0, 100);
+    const name = (b.name ?? (b.id === "liked" ? "Liked" : "Spotify")).slice(0, 100);
     const acct = (await listSpotifyAccounts()).find((a) => a.id === Number(b.accountId));
     const plId = await ensureSpotifyPlaylist(Number(b.accountId), b.id, name, acct?.displayName ?? acct?.spotifyUserId ?? `#${b.accountId}`);
     let added = 0, already = 0, skipped = 0;

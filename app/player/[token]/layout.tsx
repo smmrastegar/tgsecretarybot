@@ -9,6 +9,12 @@ const inter = localFont({
   weight: "100 900", display: "swap", variable: "--font-inter",
 });
 
+// Persian / Arabic-script titles (the library has some): Vazirmatn's Arabic subset, fetched only when such a glyph is on screen.
+const vazir = localFont({
+  src: "../../../node_modules/@fontsource-variable/vazirmatn/files/vazirmatn-arabic-wght-normal.woff2",
+  weight: "100 900", display: "swap", variable: "--font-vazir", preload: false,
+});
+
 // Private page: no indexing, no link previews, no referrer leak. The
 // manifest + Apple tags make it installable on Android and iOS.
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
@@ -30,7 +36,7 @@ export default function PlayerLayout({ children }: { children: React.ReactNode }
   // A player is not a document: no pinch / double-tap zoom (an accidental zoom crops the controls off-screen).
   // touch-action on the root intersects with the elements' own values (the seek bar keeps pan-y).
   return (
-    <div className={inter.variable}>
+    <div className={`${inter.variable} ${vazir.variable}`}>
       <style>{"html,body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%;text-size-adjust:100%}"}</style>
       {children}
     </div>

@@ -363,7 +363,7 @@ export function SmartFromSongSheet({ t, d, tq, blocked, onClose, onCreated, onMe
     <Sheet onClose={onClose} title="Smart playlist from this song">
       <div className="px-5 pb-2 flex items-center gap-3"><Cover t={t} tq={tq} size={48} radius={8} /><div className="min-w-0"><div className="font-semibold"><TitleLine title={t.title} ids={t.sources} /></div><div className="text-xs text-[var(--dim)] truncate">{t.artist}</div></div></div>
       {blocked ? (
-        <div className="px-5 py-6 text-sm text-[var(--dim)] leading-6">This link isn&apos;t allowed to create playlists. Turn on “ساخت پلی‌لیست در پلیر” for this link in the dashboard (/music → player links).</div>
+        <div className="px-5 py-6 text-sm text-[var(--dim)] leading-6">This link isn&apos;t allowed to create playlists. Ask the owner to turn on “Create playlists in the player” for this link.</div>
       ) : !d ? (
         <div className="px-5 py-6 text-sm text-[var(--dim)]">This song hasn&apos;t been analysed yet — try again in a few minutes.</div>
       ) : (

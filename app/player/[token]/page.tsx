@@ -568,7 +568,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   return (
     <AccountsCtx.Provider value={accounts}>
       <NetEpochCtx.Provider value={netEpoch}>
-    <div dir="ltr" lang="en" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: 'var(--font-inter), -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', letterSpacing: "-0.011em", fontOpticalSizing: "auto", WebkitFontSmoothing: "antialiased" }} className="relative overflow-x-hidden">
+    <div dir="ltr" lang="en" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: 'var(--font-inter), var(--font-vazir), -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', letterSpacing: "-0.011em", fontOpticalSizing: "auto", WebkitFontSmoothing: "antialiased" }} className="relative overflow-x-hidden">
       <style>{`
         html, body { overscroll-behavior: none; }
         svg[aria-hidden] { display: block; }

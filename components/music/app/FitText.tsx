@@ -29,5 +29,5 @@ export default function FitText({ children, max, min, lines = 2, className = "",
     return () => ro.disconnect();
   }, [children, max, min, lines]);
 
-  return <div ref={ref} className={`${className}`} style={{ fontSize: max, lineHeight: 1.2, overflowWrap: "anywhere", ...style }}>{children}</div>;
+  return <div ref={ref} dir="auto" className={`${className}`} style={{ fontSize: max, lineHeight: 1.2, overflowWrap: "anywhere", ...style }}>{children}</div>;
 }

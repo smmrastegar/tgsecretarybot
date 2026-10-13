@@ -66,7 +66,7 @@ function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
         <Cover t={t} tq={api.tq} size={52} radius={8} />
         <span className="min-w-0">
           <TitleLine title={t.title ?? "—"} ids={t.sources} className="text-[16px] leading-tight font-medium" />
-          <span className="flex items-center gap-1.5 text-[13px] text-[var(--dim)] mt-0.5 min-w-0">{api.offline.has(t.id) && <DownloadedBadge />}<span className="truncate">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span></span>
+          <span className="flex items-center gap-1.5 text-[13px] text-[var(--dim)] mt-0.5 min-w-0">{api.offline.has(t.id) && <DownloadedBadge />}<span dir="auto" className="truncate">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span></span>
         </span>
       </button>
     );
@@ -81,7 +81,7 @@ function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
         </span>
         <span className="min-w-0">
           <TitleLine title={t.title ?? "—"} ids={t.sources} className={`text-[16px] leading-tight font-medium ${active ? "underline decoration-2 underline-offset-4" : ""}`} />
-          <span className="flex items-center gap-1.5 text-[13px] text-[var(--dim)] mt-0.5 min-w-0">{api.offline.has(t.id) && <DownloadedBadge />}<span className="truncate">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span></span>
+          <span className="flex items-center gap-1.5 text-[13px] text-[var(--dim)] mt-0.5 min-w-0">{api.offline.has(t.id) && <DownloadedBadge />}<span dir="auto" className="truncate">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span></span>
         </span>
       </button>
       {t.rating > 0 && <HeartIcon size={16} filled className="text-rose-500 shrink-0" />}

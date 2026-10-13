@@ -478,6 +478,15 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE music_pins ADD COLUMN IF NOT EXISTS accounts_mode TEXT NOT NULL DEFAULT 'any'`;
     },
   },
+  {
+    // The player is English-only: playlists the app generated in Persian get English names.
+    id: "2026-10-13-005-english-playlist-names",
+    up: async (q) => {
+      await q`UPDATE music_playlists SET name = regexp_replace(name, '^[^(]*', 'Liked ') WHERE name LIKE 'لایک‌ها (%'`;
+      await q`UPDATE music_playlists SET name = '🤝 Shared by all accounts' WHERE name = '🤝 مشترک بین همهٔ حساب‌ها'`;
+      await q`UPDATE music_playlists SET name = '👥 Shared by 2+ accounts' WHERE name = '👥 مشترک بین حداقل دو حساب'`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

@@ -27,7 +27,7 @@ export function SourceMarks({ ids, size = "sm" }: { ids?: number[]; size?: "sm" 
 export function TitleLine({ title, ids, className = "", size }: { title: ReactNode; ids?: number[]; className?: string; size?: "sm" | "md" }) {
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <span className={`truncate ${className}`}>{title}</span>
+      <span dir="auto" className={`truncate ${className}`}>{title}</span>
       <SourceMarks ids={ids} size={size} />
     </span>
   );

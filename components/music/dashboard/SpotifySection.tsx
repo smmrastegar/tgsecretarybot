@@ -96,7 +96,7 @@ export default function SpotifySection(p: {
                       <p className="px-4 pb-2 text-[11px] text-[var(--color-text-dim)]">روی هر لیست بزن تا آهنگ‌هایش وارد صف دانلود شود.</p>
                       <ul className="max-h-[50vh] overflow-y-auto overscroll-contain divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
                         {(!q.trim() || "لایک‌ها liked".includes(q.trim().toLowerCase())) && (
-                          <li><Row busy={p.busy === "liked"} disabled={!!p.busy} onClick={() => p.onImport("liked", `لایک‌ها (${p.spLib!.me})`)} name="♥ لایک‌ها" count={p.spLib.likedCount} accent /></li>
+                          <li><Row busy={p.busy === "liked"} disabled={!!p.busy} onClick={() => p.onImport("liked", `Liked (${p.spLib!.me})`)} name="♥ لایک‌ها" count={p.spLib.likedCount} accent /></li>
                         )}
                         {lists.map((l) => <li key={l.id}><Row busy={p.busy === l.id} disabled={!!p.busy} onClick={() => p.onImport(l.id, l.name)} name={l.name} count={l.tracks} /></li>)}
                         {lists.length === 0 && q.trim() && <li className="px-4 py-3 text-xs text-[var(--color-text-dim)]">چیزی پیدا نشد.</li>}
