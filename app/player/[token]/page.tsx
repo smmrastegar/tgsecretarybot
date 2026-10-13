@@ -530,7 +530,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {/* mini player */}
       {now && !full && (
         <div className="fixed inset-x-2 z-30 max-w-2xl mx-auto glass rounded-2xl border border-[var(--bd)] overflow-hidden" style={{ bottom: "calc(66px + env(safe-area-inset-bottom))", boxShadow: "0 12px 34px -14px rgba(0,0,0,.5)" }}>
-          <div className="flex items-center gap-3 p-2">
+          <div className="flex items-center gap-2 p-2">
             <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-left" aria-label="Open player">
               <Cover t={now} tq={tq} size={44} radius={8} />
               <span className="min-w-0 flex-1">
@@ -538,9 +538,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
                 <Marquee className="text-xs text-[var(--dim)]">{now.artist}</Marquee>
               </span>
             </button>
-            <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={22} filled={now.rating > 0} /></button>
-            <button onClick={toggle} className="w-10 h-10 grid place-items-center" aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={28} /> : <PlayIcon size={28} />}</button>
-            <button onClick={() => step(1)} className="p-2 -mr-1" aria-label="Next"><NextIcon size={24} /></button>
+            <div className="flex items-center shrink-0 -mr-0.5">
+              <button onClick={() => rate(now, 1)} className={`w-8 h-8 grid place-items-center ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={18} filled={now.rating > 0} /></button>
+              <button onClick={toggle} className="w-8 h-8 grid place-items-center" aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={22} /> : <PlayIcon size={22} />}</button>
+              <button onClick={() => step(1)} className="w-8 h-8 grid place-items-center text-[var(--dim2)]" aria-label="Next"><NextIcon size={18} /></button>
+            </div>
           </div>
           <div className="h-[3px] bg-[var(--s2)]"><div className="h-full bg-[rgb(var(--ac))]" style={{ width: `${pct}%` }} /></div>
         </div>
