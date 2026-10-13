@@ -38,7 +38,7 @@ export default function SeekBar({ pos, dur, buffered, onSeek }: { pos: number; d
   return (
     <div className="select-none">
       <div ref={box} role="slider" tabIndex={0} aria-label="Seek" aria-valuemin={0} aria-valuemax={Math.round(max)} aria-valuenow={Math.round(shown)} aria-valuetext={`${fmt(shown)} of ${fmt(max)}`}
-        className="relative h-11 -mx-1 px-1 flex items-center cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--ac))] rounded-lg"
+        className="relative h-14 -mx-1 px-1 flex items-center cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--ac))] rounded-lg"
         style={{ touchAction: "pan-y" }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => setDrag(null)} onKeyDown={key}>
         <div className="relative w-full rounded-full bg-[var(--s2)] transition-[height] duration-150" style={{ height: active ? 8 : 4 }}>
           <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--dim3)] opacity-60" style={{ width: `${bufPct}%` }} />

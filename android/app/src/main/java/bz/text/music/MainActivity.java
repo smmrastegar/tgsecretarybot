@@ -75,6 +75,17 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         instance = this;
         prefs = getSharedPreferences("mymusic", MODE_PRIVATE);
+        // Remember why the app died, so the next start can report it (the web page sends it to the System Log).
+        final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            try {
+                java.io.StringWriter sw = new java.io.StringWriter();
+                e.printStackTrace(new java.io.PrintWriter(sw));
+                String trace = sw.toString();
+                prefs.edit().putString("lastCrash", (trace.length() > 1500 ? trace.substring(0, 1500) : trace)).commit();
+            } catch (Throwable ignored) { }
+            if (previous != null) previous.uncaughtException(t, e);
+        });
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);
         web = new WebView(this);
         web.setBackgroundColor(0xFF0B0B0F);
@@ -175,7 +186,9 @@ public class MainActivity extends Activity {
             CharSequence t = it == null ? null : it.coerceToText(MainActivity.this);
             return t == null ? "" : t.toString();
         }
-        @JavascriptInterface public String version() { return "1.1.0"; }
+        @JavascriptInterface public String version() { return "1.2.0"; }
+        /** The stack of the last native crash (once), or "". */
+        @JavascriptInterface public String lastCrash() { String c = prefs.getString("lastCrash", ""); if (!c.isEmpty()) prefs.edit().remove("lastCrash").apply(); return c; }
         /** The launcher remembers the player link here too, so it survives a change of address. */
         @JavascriptInterface public void saveLink(String t) { prefs.edit().putString("link", t == null ? "" : t.trim()).putBoolean("migrated", true).apply(); }
         @JavascriptInterface public String link() { return prefs.getString("link", ""); }

@@ -180,8 +180,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const flipTheme = () => setTheme((t) => { const n = t === "dark" ? "light" : "dark"; try { localStorage.setItem("player.theme", n); } catch {} return n; });
   const accent = theme === "dark" ? "255,255,255" : "24,24,32";
   const vars: Record<string, string> = theme === "dark"
-    ? { "--acfg": "#0b0b10", "--bg": "#07070b", "--bg2": "#0f0f16", "--fg": "#ececf1", "--s0": "rgba(255,255,255,.03)", "--s1": "rgba(255,255,255,.06)", "--s2": "rgba(255,255,255,.11)", "--bd": "rgba(255,255,255,.12)", "--bd0": "rgba(255,255,255,.06)", "--dim": "#a1a1aa", "--dim2": "#d4d4d8", "--dim3": "#71717a", "--glass": "rgba(24,24,32,.82)", "--amb": ".26" }
-    : { "--acfg": "#ffffff", "--bg": "#f5f5f8", "--bg2": "#ffffff", "--fg": "#16161d", "--s0": "rgba(0,0,0,.025)", "--s1": "rgba(0,0,0,.05)", "--s2": "rgba(0,0,0,.09)", "--bd": "rgba(0,0,0,.12)", "--bd0": "rgba(0,0,0,.07)", "--dim": "#52525b", "--dim2": "#3f3f46", "--dim3": "#71717a", "--glass": "rgba(255,255,255,.86)", "--amb": ".14" };
+    ? { "--acfg": "#0b0b10", "--bg": "#07070b", "--bg2": "#0f0f16", "--fg": "#ececf1", "--s0": "rgba(255,255,255,.03)", "--s1": "rgba(255,255,255,.06)", "--s2": "rgba(255,255,255,.11)", "--bd": "rgba(255,255,255,.12)", "--bd0": "rgba(255,255,255,.06)", "--dim": "#a1a1aa", "--dim2": "#d4d4d8", "--dim3": "#71717a", "--glass": "rgba(20,20,28,.97)", "--amb": ".26" }
+    : { "--acfg": "#ffffff", "--bg": "#f5f5f8", "--bg2": "#ffffff", "--fg": "#16161d", "--s0": "rgba(0,0,0,.025)", "--s1": "rgba(0,0,0,.05)", "--s2": "rgba(0,0,0,.09)", "--bd": "rgba(0,0,0,.12)", "--bd0": "rgba(0,0,0,.07)", "--dim": "#52525b", "--dim2": "#3f3f46", "--dim3": "#71717a", "--glass": "rgba(255,255,255,.97)", "--amb": ".14" };
 
   const audio = useRef<HTMLAudioElement>(null);
   const lastPos = useRef(0);
@@ -201,7 +201,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const go = () => {
       const wa = (window as unknown as { Telegram?: { WebApp?: { ready: () => void; expand: () => void; disableVerticalSwipes?: () => void; setHeaderColor?: (c: string) => void; setBackgroundColor?: (c: string) => void } } }).Telegram?.WebApp;
       if (!wa) return;
-      try { wa.ready(); wa.expand(); wa.disableVerticalSwipes?.(); wa.setHeaderColor?.("#07070b"); wa.setBackgroundColor?.("#07070b"); } catch { /* old client */ }
+      for (const f of [() => wa.ready(), () => wa.expand(), () => wa.disableVerticalSwipes?.(), () => wa.setHeaderColor?.("#07070b"), () => wa.setBackgroundColor?.("#07070b")]) { try { f(); } catch { /* an older Telegram: skip what it does not know */ } }
     };
     if ((window as unknown as { Telegram?: unknown }).Telegram) { go(); return; }
     const s = document.createElement("script");
@@ -307,7 +307,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       const back = history.current.pop();
       if (back != null) { setCur(back); return; }
     }
-    if (auto && repeat === "one") { if (a) { a.currentTime = 0; void a.play(); } return; }
+    if (auto && repeat === "one") { if (a) { a.currentTime = 0; void a.play().catch(() => {}); } return; }
     const i = queue.indexOf(cur); let n = i + dir;
     if (n >= queue.length) { if (repeat === "all" || !auto) n = 0; else { setPlaying(false); return; } }
     if (n < 0) n = queue.length - 1;
@@ -319,6 +319,16 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     if (dir === 1) history.current.push(cur);
     setCur(queue[n]!);
   }, [cur, queue, repeat, netDown, offline]);
+
+  // A song that cannot load (no connection, file gone): say so and move on, instead of sitting silent. Gives up after 3 in a row.
+  const audioFails = useRef(0);
+  const onAudioError = useCallback(() => {
+    const a = audio.current; if (!a || !a.src || cur == null) return;
+    audioFails.current += 1;
+    if (audioFails.current > 3) { setPlaying(false); flash("Can't play right now — check your connection"); return; }
+    flash(offline.has(cur) ? "This song's saved copy could not be read" : "Can't load this song right now");
+    setTimeout(() => step(1, true), 700);
+  }, [cur, offline, step]);
 
   const rate = useCallback((t: Track, r: number) => {
     const next = t.rating === r ? 0 : r;
@@ -466,7 +476,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const ms = navigator.mediaSession;
     ms.setActionHandler("nexttrack", () => step(1));
     ms.setActionHandler("previoustrack", () => step(-1));
-    ms.setActionHandler("play", () => void audio.current?.play());
+    ms.setActionHandler("play", () => void audio.current?.play().catch(() => {}));
     ms.setActionHandler("pause", () => audio.current?.pause());
     ms.setActionHandler("seekto", (d) => { if (audio.current && d.seekTime != null) audio.current.currentTime = d.seekTime; });
     ms.setActionHandler("seekbackward", () => { if (audio.current) audio.current.currentTime -= 10; });
@@ -484,8 +494,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   useEffect(() => {
     (window as unknown as { __nativeCmd?: (c: string) => void }).__nativeCmd = (c: string) => {
       if (c === "next") step(1); else if (c === "prev") step(-1);
-      else if (c === "play") void audio.current?.play(); else if (c === "pause") audio.current?.pause();
-      else if (c === "toggle") { const a = audio.current; if (a) { if (a.paused) void a.play(); else a.pause(); } }
+      else if (c === "play") void audio.current?.play().catch(() => {}); else if (c === "pause") audio.current?.pause();
+      else if (c === "toggle") { const a = audio.current; if (a) { if (a.paused) void a.play().catch(() => {}); else a.pause(); } }
     };
   }, [step]);
 
@@ -498,7 +508,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     return () => clearInterval(i);
   }, [sleepMin]);
 
-  const toggle = useCallback(() => { const a = audio.current; if (!a) return; if (a.paused) void a.play(); else a.pause(); }, []);
+  const toggle = useCallback(() => { const a = audio.current; if (!a) return; if (a.paused) void a.play().catch(() => {}); else a.pause(); }, []);
   const seek = (v: number) => { if (audio.current) audio.current.currentTime = v; };
 
   // Keyboard
@@ -577,8 +587,14 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         @keyframes rise { from { transform: translateY(100%) } to { transform: none } }
         @keyframes fade { from { opacity: 0 } to { opacity: 1 } }
         input[type=range] { accent-color: rgb(var(--ac)); }
-        .glass { background: var(--glass); backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4); }
-        button { -webkit-tap-highlight-color: transparent; }
+        /* No live blur behind the bars: re-blurring the list under them on every scroll frame is what made touch feel laggy on mid-range phones. */
+        .glass { background: var(--glass); }
+        /* Instant taps: no double-tap-zoom wait, no grey flash. */
+        button, [role=button], a, select, summary, input[type=range] { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+        /* Bigger touch targets without changing the layout: every icon-only button reaches 8px past its drawing; text pills are at least 38px tall. */
+        button:has(> svg:only-child) { position: relative; min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; }
+        button:has(> svg:only-child)::after { content: ""; position: absolute; inset: -8px; }
+        button.rounded-full:not(:has(> svg:only-child)) { min-height: 38px; }
         button:focus-visible, input:focus-visible { outline: 2px solid rgb(var(--ac)); outline-offset: 2px; }
       `}</style>
 
@@ -623,20 +639,20 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       </div>
 
       {/* Repeat-one uses the browser's own gapless loop: seeking an ended element back to 0 by hand produced a pop and sometimes stopped. */}
-      <audio ref={audio} loop={repeat === "one"} onTimeUpdate={(e) => {
+      <audio ref={audio} loop={repeat === "one"} onError={onAudioError} onTimeUpdate={(e) => {
           const el = e.currentTarget, t = el.currentTime;
           // looped back to the start: count the finished pass as a completed listen and start a fresh one
           if (el.loop && lastPos.current - t > 1 && lastPos.current > (el.duration || 0) - 2) tracker.flush(true);
           lastPos.current = t;
           setPos(t); tracker.tick(t, el.duration);
         }}
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => { audioFails.current = 0; setPlaying(true); }} onPause={() => setPlaying(false)}
         onEnded={() => { tracker.flush(true); if (sleepMin === -1) { setSleepMin(0); setPlaying(false); flash("Sleep timer: paused"); return; } step(1, true); }} />
 
       {/* mini player */}
       {now && !full && !selecting && (
         <div className="fixed inset-x-2 z-30 max-w-2xl mx-auto glass rounded-2xl border border-[var(--bd)] overflow-hidden" style={{ bottom: "calc(66px + env(safe-area-inset-bottom))", boxShadow: "0 12px 34px -14px rgba(0,0,0,.5)" }}>
-          <div className="flex items-center gap-2 p-2">
+          <div className="flex items-center gap-1 py-1 pl-2 pr-1">
             <button onClick={() => setFull(true)} className="flex items-center gap-3 min-w-0 flex-1 text-left" aria-label="Open player">
               <Cover t={now} tq={tq} size={44} radius={8} />
               <span className="min-w-0 flex-1">
@@ -645,9 +661,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               </span>
             </button>
             <div className="flex items-center shrink-0 -mr-0.5">
-              <button onClick={() => rate(now, 1)} className={`w-8 h-8 grid place-items-center ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={18} filled={now.rating > 0} /></button>
-              <button onClick={toggle} className="w-8 h-8 grid place-items-center" aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={22} /> : <PlayIcon size={22} />}</button>
-              <button onClick={() => step(1)} className="w-8 h-8 grid place-items-center text-[var(--dim2)]" aria-label="Next"><NextIcon size={18} /></button>
+              <button onClick={() => rate(now, 1)} className={`w-11 h-11 grid place-items-center ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={18} filled={now.rating > 0} /></button>
+              <button onClick={toggle} className="w-11 h-11 grid place-items-center" aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={22} /> : <PlayIcon size={22} />}</button>
+              <button onClick={() => step(1)} className="w-11 h-11 grid place-items-center text-[var(--dim2)]" aria-label="Next"><NextIcon size={18} /></button>
             </div>
           </div>
           <div className="h-[3px] bg-[var(--s2)]"><div className="h-full bg-[rgb(var(--ac))]" style={{ width: `${pct}%` }} /></div>
@@ -670,7 +686,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       <nav className="fixed bottom-0 inset-x-0 z-20 glass border-t border-[var(--bd0)]" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         <div className="max-w-2xl mx-auto grid grid-cols-4">
           {tabs.map((x) => (
-            <button key={x.k} onClick={() => goTab(x.k)} className={`flex flex-col items-center gap-0.5 pt-2 pb-1.5 text-[11px] ${tab === x.k ? "text-[var(--fg)] font-semibold" : "text-[var(--dim3)]"}`} aria-current={tab === x.k}>{x.icon}{x.label}</button>
+            <button key={x.k} onClick={() => goTab(x.k)} className={`flex flex-col items-center gap-0.5 pt-2.5 pb-2.5 text-[11px] ${tab === x.k ? "text-[var(--fg)] font-semibold" : "text-[var(--dim3)]"}`} aria-current={tab === x.k}>{x.icon}{x.label}</button>
           ))}
         </div>
       </nav>
@@ -704,9 +720,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <div className="mt-1.5 flex items-start gap-2">
                 <div className="min-w-0 flex-1"><SourceChips ids={now.sources} /></div>
                 <div className="flex items-center shrink-0 -mr-1.5">
-                  <button onClick={() => rate(now, 1)} className={`p-1.5 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={26} filled={now.rating > 0} /></button>
-                  {canLike && accounts.some((a) => a.id > 0) && <button onClick={() => setLikeTs([now])} className="p-1.5 text-[var(--dim)]" aria-label="Add to a Spotify account's likes"><PlusIcon size={22} /></button>}
-                  <button onClick={() => rate(now, -1)} className={`p-1.5 ${now.rating < 0 ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={22} filled={now.rating < 0} /></button>
+                  <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={26} filled={now.rating > 0} /></button>
+                  {canLike && accounts.some((a) => a.id > 0) && <button onClick={() => setLikeTs([now])} className="p-2 text-[var(--dim)]" aria-label="Add to a Spotify account's likes"><PlusIcon size={22} /></button>}
+                  <button onClick={() => rate(now, -1)} className={`p-2 ${now.rating < 0 ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={22} filled={now.rating < 0} /></button>
                 </div>
               </div>
             </div>
