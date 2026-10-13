@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Section, { Pill } from "./Section";
 
-export type SpCfg = { hasCredentials: boolean; clientId: string; accounts: Array<{ id: number; displayName: string | null; spotifyUserId: string; canLike?: boolean }>; redirectUri: string };
+export type SpCfg = { scoped?: boolean; hasCredentials: boolean; clientId: string; accounts: Array<{ id: number; displayName: string | null; spotifyUserId: string; canLike?: boolean }>; redirectUri: string };
 export type SpLib = { playlists: Array<{ id: string; name: string; tracks: number; owner: string }>; likedCount: number; me: string };
 
 const fa = (v: number) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
@@ -72,7 +72,7 @@ export default function SpotifySection(p: {
           )}
 
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <button onClick={p.onConnect} className="min-h-11 px-3 rounded-xl bg-[#1db954] text-black text-sm font-semibold active:opacity-80">{accounts.length ? "+ افزودن حساب" : "ورود با اسپاتیفای"}</button>
+            {!p.sp?.scoped && <button onClick={p.onConnect} className="min-h-11 px-3 rounded-xl bg-[#1db954] text-black text-sm font-semibold active:opacity-80">{accounts.length ? "+ افزودن حساب" : "ورود با اسپاتیفای"}</button>}
             <button disabled={p.syncBusy || accounts.length === 0} onClick={p.onSync} className={btn}>{p.syncBusy ? "در حال بررسی…" : "↻ همگام‌سازی"}</button>
           </div>
           {accounts.some((a) => a.canLike === false) && <p className="mt-2 text-[11px] text-amber-300 leading-6">«وصل دوباره» اسپاتیفای را باز می‌کند. هر حساب را با خودِ همان حساب وارد کن (اگر حساب دیگری در مرورگر باز است، اول از اسپاتیفای خارج شو).</p>}

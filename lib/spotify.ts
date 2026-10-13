@@ -40,22 +40,23 @@ export const isReturnHost = (h: string): boolean => RETURN_HOSTS.has(h);
 const stateKey = () => process.env.SESSION_SECRET || process.env.WEBHOOK_SECRET_TOKEN || "dev-session-secret-change-me";
 const sign = (body: string) => createHmac("sha256", stateKey()).update(`spotify-state:${body}`).digest("base64url");
 
-export function signedState(host: string | null): string {
+export function signedState(host: string | null, allow?: number[]): string {
   const h = host && RETURN_HOSTS.has(host) ? host : "bot.text.bz";
-  const body = Buffer.from(JSON.stringify({ h, n: randomBytes(8).toString("base64url"), e: Date.now() + 10 * 60_000 })).toString("base64url");
+  const body = Buffer.from(JSON.stringify({ h, ...(allow ? { a: allow } : {}), n: randomBytes(8).toString("base64url"), e: Date.now() + 10 * 60_000 })).toString("base64url");
   return `${body}.${sign(body)}`;
 }
 
 /** The host to send the browser back to, or null when the state is forged, altered or expired. */
-export function readSignedState(state: string): { host: string } | null {
+/** `allow` is set when the sign-in was started by a numeric password limited to some accounts: only those may be (re)connected. */
+export function readSignedState(state: string): { host: string; allow?: number[] } | null {
   const [body, sig] = state.split(".");
   if (!body || !sig) return null;
   const want = Buffer.from(sign(body)), have = Buffer.from(sig);
   if (want.length !== have.length || !timingSafeEqual(want, have)) return null;
   try {
-    const j = JSON.parse(Buffer.from(body, "base64url").toString()) as { h?: string; e?: number };
+    const j = JSON.parse(Buffer.from(body, "base64url").toString()) as { h?: string; e?: number; a?: unknown };
     if (!j.h || !RETURN_HOSTS.has(j.h) || typeof j.e !== "number" || j.e < Date.now()) return null;
-    return { host: j.h };
+    return { host: j.h, ...(Array.isArray(j.a) ? { allow: j.a.map(Number).filter(Number.isFinite) } : {}) };
   } catch { return null; }
 }
 
@@ -88,10 +89,14 @@ async function tokenCall(params: Record<string, string>): Promise<{ access_token
 }
 
 /** Finish a login: store (or refresh) this account's token. Returns its id. */
-export async function exchangeCode(code: string): Promise<number> {
+export async function exchangeCode(code: string, allow?: number[]): Promise<number> {
   const t = await tokenCall({ grant_type: "authorization_code", code, redirect_uri: redirectUri() });
   if (!t.refresh_token) throw new Error("no refresh token returned");
   const me = await api<{ id: string; display_name?: string }>(t.access_token, "/me");
+  if (allow) { // a limited numeric password may only refresh the permission of an account it already has
+    const mine = (await listSpotifyAccounts()).find((a) => a.spotifyUserId === me.id);
+    if (!mine || !allow.includes(mine.id)) throw new Error("NOT_IN_SCOPE");
+  }
   return upsertSpotifyAccount(me.id, me.display_name ?? null, t.refresh_token, t.scope ?? null);
 }
 

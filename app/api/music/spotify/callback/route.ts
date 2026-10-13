@@ -25,13 +25,14 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (u.searchParams.get("error")) return back("denied");
   if (!code || !st) return back("state");
   try {
-    await exchangeCode(code);
+    await exchangeCode(code, st.allow);
     return back("connected");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     reportWarn("music", `Spotify connect failed: ${msg}`);
     await setSetting("spotifyLastError", `${new Date().toISOString()} ${msg}`.slice(0, 300)).catch(() => {});
     // In development mode Spotify only lets accounts listed under the app's User Management sign in: /me answers 403.
+    if (msg === "NOT_IN_SCOPE") return back("notyours");
     return back(/\b403\b/.test(msg) ? "notallowed" : "failed");
   }
 }
