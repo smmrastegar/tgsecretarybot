@@ -10,7 +10,7 @@ import { createMagicToken } from "../magic";
 import { reportError, reportWarn } from "../report";
 import { randomBytes } from "node:crypto";
 import { handleBusinessEdit, handleBusinessMessage } from "./business";
-import { buildMainMenu, handleAutoSummaryCallback, handleBoardAccessCallback, handleEmailCallback, handleFollowUpCallback, handleInboxReply, handleInstaCallback, handleNoteWatchCallback, handleSmsCallback, handleTranscribeCallback, menuGreeting } from "./callbacks";
+import { buildMainMenu, handleAutoSummaryCallback, handleBoardAccessCallback, handleEmailCallback, handleFollowUpCallback, handleInboxReply, handleInstaCallback, handleNoteWatchCallback, handleSmsCallback, handleTranscribeCallback, menuGreeting, MUSIC_MINI_APP_URL } from "./callbacks";
 import { handleChannelPost, handleEmailGroupMessage, handleGroupMessage } from "./group";
 import { handleSecretaryReaction, handleSecretaryReply } from "./relay";
 import { maybeReleaseGatedRules } from "./rules-apply";
@@ -467,6 +467,23 @@ function buildBot(): Bot {
       : false;
     await ctx.reply(menuGreeting(isOwner, from?.first_name ?? null), {
       reply_markup: buildMainMenu(isOwner),
+    });
+  });
+
+  // The player as a Mini App: a button that opens it inside Telegram, and the same as this chat's menu button.
+  bot.command("music", async (ctx) => {
+    const from = ctx.from;
+    if (!from || ctx.chat.type !== "private") return;
+    const isOwner = await isAllowedUser(from.id).catch(() => false);
+    if (!isOwner) {
+      await ctx.reply("پلیر موزیک فقط برای صاحب اکانت است.");
+      return;
+    }
+    await ctx.api
+      .setChatMenuButton({ chat_id: ctx.chat.id, menu_button: { type: "web_app", text: "🎵 Music", web_app: { url: MUSIC_MINI_APP_URL } } })
+      .catch((err) => reportError("bot", "[music] setChatMenuButton failed:", err));
+    await ctx.reply("🎵 پلیر موزیک — داخل خود تلگرام باز می‌شود. دکمهٔ «Music» کنار جعبهٔ پیام هم همین را باز می‌کند.", {
+      reply_markup: new InlineKeyboard().webApp("🎵 باز کردن پلیر", MUSIC_MINI_APP_URL),
     });
   });
 

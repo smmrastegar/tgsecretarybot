@@ -16,6 +16,9 @@ import { _bot, chunkText, escapeForHtml } from "./core";
 import { buildThreadSummaryHtml } from "./summary";
 import { editRichMessage } from "../telegram-rich";
 
+/** The player as a Telegram Mini App (opens inside Telegram). */
+export const MUSIC_MINI_APP_URL = `${(process.env.PLAYER_APP_URL || "https://playlist.bz").replace(/\/$/, "")}/tg`;
+
 export function buildMainMenu(isOwner: boolean): InlineKeyboard {
   const kb = new InlineKeyboard()
     .text("🔐 ورود به داشبورد", "ui:login")
@@ -23,6 +26,7 @@ export function buildMainMenu(isOwner: boolean): InlineKeyboard {
   if (isOwner) {
     kb.text("👥 ساخت دعوت‌نامه منشی", "ui:invite_secretary").row();
   }
+  if (isOwner) kb.webApp("🎵 موزیک (مینی‌اپ)", MUSIC_MINI_APP_URL).row();
   kb.text("📊 وضعیت اتصال", "ui:status")
     .text("🆘 راهنما", "ui:help");
   return kb;

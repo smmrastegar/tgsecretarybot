@@ -186,6 +186,20 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const c = useCollections(tracks, playlists, byId);
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(""), 1800); };
 
+  // Opened from the Telegram Mini App entry (/tg): fill the screen and match Telegram's chrome.
+  useEffect(() => {
+    let inMini = false;
+    try { inMini = sessionStorage.getItem("tgMini") === "1"; } catch { /* ignore */ }
+    if (!inMini) return;
+    const go = () => {
+      const wa = (window as unknown as { Telegram?: { WebApp?: { ready: () => void; expand: () => void; disableVerticalSwipes?: () => void; setHeaderColor?: (c: string) => void; setBackgroundColor?: (c: string) => void } } }).Telegram?.WebApp;
+      if (!wa) return;
+      try { wa.ready(); wa.expand(); wa.disableVerticalSwipes?.(); wa.setHeaderColor?.("#07070b"); wa.setBackgroundColor?.("#07070b"); } catch { /* old client */ }
+    };
+    if ((window as unknown as { Telegram?: unknown }).Telegram) { go(); return; }
+    const s = document.createElement("script");
+    s.src = "https://telegram.org/js/telegram-web-app.js"; s.onload = go; document.head.appendChild(s);
+  }, []);
   // Remember this link on the device so the installed launcher (/listen) can reopen it.
   useEffect(() => {
     try { localStorage.setItem("listenLink", token); } catch { /* private mode */ }

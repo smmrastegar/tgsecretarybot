@@ -61,6 +61,8 @@ const PUBLIC_PREFIXES = [
   // way of the tokenised player.
   "/player",
   "/listen",
+  "/tg", // Telegram Mini App entry (signs in with Telegram's signed initData)
+  "/api/tg",
   "/player-sw.js",
   "/robots.txt",
   "/api/music",
