@@ -3,6 +3,7 @@
 // personal library. Client id/secret come from the owner's own Spotify
 // developer app; the refresh token is stored in settings.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { reportWarn } from "./report";
 import { deleteSpotifyAccount, getAllSettings, getSpotifyRefreshToken, listSpotifyAccounts, setSetting, setSpotifyRefreshToken, upsertSpotifyAccount } from "./db";
 
 export const SCOPES = "user-library-read user-library-modify playlist-read-private playlist-read-collaborative";
@@ -279,10 +280,23 @@ export async function likeOnSpotify(accountId: number, spotifyTrackIds: string[]
   if (!ids.length) return;
   const token = await accessToken(accountId);
   const call = (url: string, init: RequestInit) => fetch(url, { ...init, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
-  let res = await call("https://api.spotify.com/v1/me/tracks", { method: "PUT", body: JSON.stringify({ ids }) });
-  // Spotify's 2026 revision moved saving to /me/library (by URI); use it when the old route is gone.
-  if (res.status === 404 || res.status === 405 || res.status === 410) res = await call(`https://api.spotify.com/v1/me/library?uris=${ids.map((i) => `spotify:track:${i}`).join(",")}`, { method: "PUT" });
-  if (res.status === 429) throw new Error("اسپاتیفای موقتاً محدودت کرده؛ چند دقیقه بعد دوباره امتحان کن");
-  if (res.status === 401 || res.status === 403) throw new Error("NEEDS_RECONNECT");
-  if (!res.ok) throw new Error(`spotify ${res.status}`);
+  const detail = async (r: Response) => { const t = await r.text().catch(() => ""); try { const j = JSON.parse(t) as { error?: { message?: string } | string }; return typeof j.error === "string" ? j.error : j.error?.message ?? t.slice(0, 160); } catch { return t.slice(0, 160); } };
+  // Spotify's 2026 API revision replaced PUT /me/tracks with PUT /me/library (by URI, at most 40 per call): try the old route, then the new one, whatever the first one answers.
+  const first = await call("https://api.spotify.com/v1/me/tracks", { method: "PUT", body: JSON.stringify({ ids }) });
+  if (first.ok) return;
+  if (first.status === 429) throw new Error("اسپاتیفای موقتاً محدودت کرده؛ چند دقیقه بعد دوباره امتحان کن");
+  const firstWhy = await detail(first);
+  let failed: { status: number; why: string } | null = null;
+  for (let i = 0; i < ids.length; i += 40) {
+    const r = await call(`https://api.spotify.com/v1/me/library?uris=${ids.slice(i, i + 40).map((x) => `spotify:track:${x}`).join(",")}`, { method: "PUT" });
+    if (r.ok) continue;
+    if (r.status === 429) throw new Error("اسپاتیفای موقتاً محدودت کرده؛ چند دقیقه بعد دوباره امتحان کن");
+    failed = { status: r.status, why: await detail(r) };
+    break;
+  }
+  if (!failed) return;
+  reportWarn("music", `Spotify save failed for account ${accountId}: /me/tracks ${first.status} "${firstWhy}" · /me/library ${failed.status} "${failed.why}"`);
+  // Only a genuinely missing permission means "connect again"; anything else is shown as Spotify said it.
+  if (/scope/i.test(`${firstWhy} ${failed.why}`)) throw new Error("NEEDS_RECONNECT");
+  throw new Error(`Spotify ${failed.status}: ${failed.why || firstWhy || "refused"}`);
 }
