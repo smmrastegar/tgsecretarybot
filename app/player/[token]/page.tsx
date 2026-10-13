@@ -156,6 +156,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     : { "--acfg": "#ffffff", "--bg": "#f5f5f8", "--bg2": "#ffffff", "--fg": "#16161d", "--s0": "rgba(0,0,0,.025)", "--s1": "rgba(0,0,0,.05)", "--s2": "rgba(0,0,0,.09)", "--bd": "rgba(0,0,0,.12)", "--bd0": "rgba(0,0,0,.07)", "--dim": "#52525b", "--dim2": "#3f3f46", "--dim3": "#71717a", "--glass": "rgba(255,255,255,.86)", "--amb": ".14" };
 
   const audio = useRef<HTMLAudioElement>(null);
+  const lastPos = useRef(0);
   const history = useRef<number[]>([]);
   const tracker = useListenTracker(tq);
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
@@ -247,7 +248,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   useEffect(() => {
     const a = audio.current; if (!a || cur == null) return;
     let dead = false;
-    tracker.begin(cur);
+    tracker.begin(cur); lastPos.current = 0;
     const start = (src: string) => { if (dead) return; a.src = src; a.playbackRate = speed; void a.play().catch(() => {}); };
     // &v=<size> changes when a file is replaced, so a stale copy in the HTTP cache is never reused
     const net = `/api/music/stream/${cur}?${tq}&v=${byIdRef.current.get(cur)?.sizeBytes ?? 0}`;
@@ -523,7 +524,14 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           : <StatsView api={api} />}
       </div>
 
-      <audio ref={audio} onTimeUpdate={(e) => { setPos(e.currentTarget.currentTime); tracker.tick(e.currentTarget.currentTime, e.currentTarget.duration); }}
+      {/* Repeat-one uses the browser's own gapless loop: seeking an ended element back to 0 by hand produced a pop and sometimes stopped. */}
+      <audio ref={audio} loop={repeat === "one"} onTimeUpdate={(e) => {
+          const el = e.currentTarget, t = el.currentTime;
+          // looped back to the start: count the finished pass as a completed listen and start a fresh one
+          if (el.loop && lastPos.current - t > 1 && lastPos.current > (el.duration || 0) - 2) tracker.flush(true);
+          lastPos.current = t;
+          setPos(t); tracker.tick(t, el.duration);
+        }}
         onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
         onEnded={() => { tracker.flush(true); if (sleepMin === -1) { setSleepMin(0); setPlaying(false); flash("Sleep timer: paused"); return; } step(1, true); }} />
 
