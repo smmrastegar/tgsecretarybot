@@ -1,11 +1,12 @@
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { getAllSettings, setSetting } from "@/lib/db";
+import { createHash, scryptSync, timingSafeEqual } from "node:crypto";
+import { getAllSettings, listMusicPins, setSetting, touchMusicPin } from "@/lib/db";
 import type { Session } from "@/lib/session";
 
 // The numeric password for the music pages (playlist.bz). It only ever yields a session with
 // scope "music" — the owner's account, but limited to the player — so a guessed PIN cannot reach
-// the rest of the dashboard. Stored as a salted scrypt hash in settings.musicPin; wrong guesses
-// are throttled per address and overall.
+// the rest of the dashboard. Passwords live in music_pins (readable by the owner on purpose, each one
+// switchable on/off); the old single hashed one in settings.musicPin still works. Wrong guesses are
+// throttled per address and overall.
 export const PIN_RE = /^\d{6,10}$/;
 
 type Stored = { salt: string; hash: string; userId: number; username: string | null; firstName: string | null };
@@ -13,18 +14,15 @@ type Stored = { salt: string; hash: string; userId: number; username: string | n
 const digest = (pin: string, salt: string) => scryptSync(pin, Buffer.from(salt, "hex"), 32);
 
 export async function pinConfigured(): Promise<boolean> {
-  return Boolean((await getAllSettings()).musicPin);
+  return (await listMusicPins()).some((p) => p.active) || Boolean((await getAllSettings()).musicPin);
 }
 
-export async function setPin(pin: string, owner: Session): Promise<void> {
-  const salt = randomBytes(16).toString("hex");
-  const stored: Stored = { salt, hash: digest(pin, salt).toString("hex"), userId: owner.userId, username: owner.username ?? null, firstName: owner.firstName ?? null };
-  await setSetting("musicPin", JSON.stringify(stored), owner.userId);
-}
-
-export async function clearPin(actorId?: number): Promise<void> {
+/** Older installs kept a single hashed password in settings; it still works until it is removed. */
+export async function clearLegacyPin(actorId?: number): Promise<void> {
   await setSetting("musicPin", "", actorId);
 }
+
+const same = (a: string, b: string) => timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
 
 // In-memory throttle (a restart resets it, which only helps the owner).
 const byIp = new Map<string, { n: number; until: number }>();
@@ -35,11 +33,15 @@ export async function checkPin(pin: string, ip: string): Promise<{ ok: true; ses
   const now = Date.now();
   const rec = byIp.get(ip);
   if ((rec && rec.until > now) || global.until > now) return { ok: false, error: "تلاش‌های زیاد؛ کمی بعد دوباره امتحان کن", status: 429 };
+  const pins = (await listMusicPins()).filter((p) => p.active);
   const raw = (await getAllSettings()).musicPin;
   let st: Stored | null = null;
   try { st = raw ? (JSON.parse(raw) as Stored) : null; } catch { st = null; }
-  if (!st) return { ok: false, error: "رمز عددی هنوز تنظیم نشده (از داشبورد اصلی تنظیمش کن)", status: 404 };
-  const good = PIN_RE.test(pin) && timingSafeEqual(digest(pin, st.salt), Buffer.from(st.hash, "hex"));
+  if (pins.length === 0 && !st) return { ok: false, error: "رمز عددی فعالی نیست (از داشبورد اصلی تنظیمش کن)", status: 404 };
+  const valid = PIN_RE.test(pin);
+  const hit = valid ? pins.find((p) => same(p.pin, pin)) : undefined;
+  const legacy = valid && !hit && st != null && timingSafeEqual(digest(pin, st.salt), Buffer.from(st.hash, "hex"));
+  const good = Boolean(hit) || legacy;
   if (!good) {
     const r = rec && rec.until <= now && rec.n < IP_MAX ? rec : { n: 0, until: 0 };
     r.n += 1; if (r.n >= IP_MAX) { r.until = now + IP_LOCK; r.n = 0; }
@@ -49,5 +51,6 @@ export async function checkPin(pin: string, ip: string): Promise<{ ok: true; ses
     return { ok: false, error: "رمز اشتباه است", status: 401 };
   }
   byIp.delete(ip);
-  return { ok: true, session: { userId: st.userId, username: st.username, firstName: st.firstName, scope: "music" } };
+  if (hit) { void touchMusicPin(hit.id).catch(() => {}); return { ok: true, session: { userId: hit.userId, username: hit.username, firstName: hit.firstName, scope: "music" } }; }
+  return { ok: true, session: { userId: st!.userId, username: st!.username, firstName: st!.firstName, scope: "music" } };
 }

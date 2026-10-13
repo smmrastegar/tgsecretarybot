@@ -452,6 +452,24 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE spotify_accounts ADD COLUMN IF NOT EXISTS scopes TEXT`;
     },
   },
+  {
+    // Several numeric passwords for playlist.bz, kept readable on purpose (the owner wants to see and copy them) and switchable one by one.
+    id: "2026-10-13-003-music-pins",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_pins (
+          id            BIGSERIAL PRIMARY KEY,
+          label         TEXT NOT NULL DEFAULT '',
+          pin           TEXT NOT NULL UNIQUE,
+          active        BOOLEAN NOT NULL DEFAULT TRUE,
+          user_id       BIGINT NOT NULL,
+          username      TEXT,
+          first_name    TEXT,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_used_at  TIMESTAMPTZ
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;
