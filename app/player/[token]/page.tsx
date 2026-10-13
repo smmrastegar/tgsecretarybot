@@ -59,8 +59,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
   const [dur, setDur] = useState(0);
-  const [shuffle, setShuffle] = useState(false);
-  const [repeat, setRepeat] = useState<"off" | "all" | "one">("off");
+  const [shuffle, setShuffleState] = useState(false);
+  const [repeat, setRepeatState] = useState<"off" | "all" | "one">("off");
+  const setRepeat = useCallback((v: "off" | "all" | "one") => { setRepeatState(v); try { localStorage.setItem("player.repeat", v); } catch {} }, []);
+  const origQueue = useRef<number[] | null>(null); // the queue in its natural order, to go back to when shuffle is switched off
   const [vol, setVol] = useState(1);
   const [speed, setSpeed] = useState(1);
   const [sleepMin, setSleepMin] = useState(0);
@@ -98,6 +100,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     } catch { /* storage blocked: stay dark */ }
   }, []);
   useEffect(() => {
+    try {
+      const r = localStorage.getItem("player.repeat"); if (r === "all" || r === "one") setRepeatState(r);
+      if (localStorage.getItem("player.shuffle") === "1") setShuffleState(true);
+    } catch {}
     try { const f = Number(localStorage.getItem("player.fade")); if ([3, 6, 10].includes(f)) setFade(f); } catch {}
     // The visualizer routes audio through Web Audio, which iOS can suspend in
     // the background — so it defaults to off there.
@@ -200,9 +206,23 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     if (ids.length === 0) return;
     const start = startId ?? (sh ? ids[Math.floor(Math.random() * ids.length)]! : ids[0]!);
     const doShuffle = sh || shuffle;
+    origQueue.current = ids;
+    if (sh && !shuffle) { setShuffleState(true); try { localStorage.setItem("player.shuffle", "1"); } catch {} } // the Shuffle button on a page turns shuffle on, so the toggle never disagrees with the queue
     setQueue(doShuffle ? [start, ...ids.filter((x) => x !== start).sort(() => Math.random() - 0.5)] : ids);
     history.current = []; setCur(start); setPlaying(true);
   }, [shuffle]);
+
+  const toggleShuffle = useCallback(() => {
+    const next = !shuffle;
+    setShuffleState(next); try { localStorage.setItem("player.shuffle", next ? "1" : "0"); } catch {}
+    setQueue((q) => {
+      const i = cur != null ? q.indexOf(cur) : -1;
+      if (next) return [...q.slice(0, i + 1), ...q.slice(i + 1).sort(() => Math.random() - 0.5)]; // what plays next is shuffled; the current song keeps playing
+      const orig = origQueue.current; if (!orig) return q;
+      const have = new Set(q), back = orig.filter((x) => have.has(x));
+      return [...back, ...q.filter((x) => !back.includes(x))];
+    });
+  }, [shuffle, cur]);
 
   const smartMix = useCallback((ids: number[]) => {
     const now = Date.now();
@@ -600,11 +620,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             </div>
 
             <div className="mt-1 flex items-center justify-between shrink-0">
-              <button onClick={() => setShuffle((s) => !s)} className={`p-3 ${shuffle ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Shuffle" aria-pressed={shuffle}><ShuffleIcon size={24} /></button>
+              <button onClick={toggleShuffle} className={`p-3 ${shuffle ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Shuffle" aria-pressed={shuffle}><ShuffleIcon size={24} /></button>
               <button onClick={() => step(-1)} className="p-3" aria-label="Previous"><PrevIcon size={34} /></button>
               <button onClick={toggle} className="w-16 h-16 rounded-full grid place-items-center text-[var(--acfg)] active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={34} /> : <PlayIcon size={34} />}</button>
               <button onClick={() => step(1)} className="p-3" aria-label="Next"><NextIcon size={34} /></button>
-              <button onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))} className={`p-3 ${repeat !== "off" ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label={`Repeat ${repeat}`}><RepeatIcon size={24} one={repeat === "one"} /></button>
+              <button onClick={() => setRepeat(repeat === "off" ? "all" : repeat === "all" ? "one" : "off")} className={`p-3 ${repeat !== "off" ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label={`Repeat ${repeat}`}><RepeatIcon size={24} one={repeat === "one"} /></button>
             </div>
 
             <div className="mt-2 flex items-center gap-3 shrink-0 [@media(pointer:coarse)]:hidden">
