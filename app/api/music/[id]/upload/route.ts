@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { requireSessionOr401 } from "@/lib/auth";
+import { requireUnscopedOr403 } from "@/lib/auth";
 import { getMusicTrack, updateMusicTrack } from "@/lib/db";
 import { MUSIC_DIR } from "@/lib/music";
 
@@ -15,7 +15,7 @@ const EXT: Record<string, string> = { mp3: "audio/mpeg", m4a: "audio/mp4", aac: 
 // POST multipart (field "file"): the owner supplies the audio of a track the downloaders could
 // not find. Dashboard session only. The track becomes "ready" with Spotify's own length.
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const id = Number((await ctx.params).id);
   const t = Number.isFinite(id) ? await getMusicTrack(id) : null;

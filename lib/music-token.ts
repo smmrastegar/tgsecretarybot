@@ -9,6 +9,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { getCurrentSession } from "./auth";
 import { applyLinkView, findActiveLinkByToken, getAllSettings, listMusicTracks, listTrackSources, setSetting, touchPlayerLink } from "./db";
 import { resolvedPlaylists } from "./music-playlists";
+import { pinState } from "./pin-session";
 import { matchesAccounts } from "./music-scope";
 
 const KEY = "musicPlayerToken";
@@ -30,7 +31,7 @@ export async function setLegacyActive(on: boolean): Promise<void> { await setSet
 /** "Only songs from these Spotify accounts" — enforced on the server for a link, not just hidden in the UI. */
 export type AccountScope = { ids: number[]; mode: "any" | "all" };
 export type MusicAccess =
-  | { kind: "session" }
+  | { kind: "session"; scope: AccountScope | null } // the dashboard login (scope null) or a numeric password limited to some accounts
   | { kind: "link"; linkId: number; name: string; playlistIds: number[] | null; canCreate: boolean; canLike: boolean; scope: AccountScope | null }; // playlistIds null = the whole library (Main link)
 
 const MAIN_SCOPE = "musicMainScope";
@@ -71,7 +72,8 @@ export async function musicAccess(request: Request): Promise<MusicAccess | null>
   const url = new URL(request.url);
   const presented = url.searchParams.get("t") ?? request.headers.get("x-player-token");
   if (presented) return accessForToken(presented);
-  if (await getCurrentSession().catch(() => null)) return { kind: "session" };
+  const s = await getCurrentSession().catch(() => null);
+  if (s) { const st = await pinState(s).catch(() => ({ ok: false, scope: null })); return st.ok ? { kind: "session", scope: st.scope } : null; }
   return null;
 }
 
@@ -83,18 +85,20 @@ export async function authorizeMusic(request: Request): Promise<boolean> {
 /** null = everything; otherwise the track ids this access may see (union of the link's playlists). */
 const allowedCache = new Map<string, { at: number; ids: Set<number> }>();
 export async function allowedTrackIds(access: MusicAccess): Promise<Set<number> | null> {
-  if (access.kind === "session" || (access.playlistIds == null && !access.scope)) return null;
+  const playlistIds = access.kind === "link" ? access.playlistIds : null;
+  if (!access.scope && playlistIds == null) return null;
+  const linkId = access.kind === "link" ? access.linkId : 0;
   // Cached for 20 s: this runs on every stream/cover request, and smart playlists are a computation.
-  const key = `${access.linkId}:${access.playlistIds?.join(",") ?? "*"}:${access.scope ? `${access.scope.mode}${access.scope.ids.join(",")}` : ""}`;
+  const key = `${access.kind === "link" ? access.linkId : "s"}:${playlistIds?.join(",") ?? "*"}:${access.scope ? `${access.scope.mode}${access.scope.ids.join(",")}` : ""}`;
   const hit = allowedCache.get(key);
   if (hit && Date.now() - hit.at < 20_000) return hit.ids;
-  const tracks = await applyLinkView(await listMusicTracks(), access.linkId);
+  const tracks = await applyLinkView(await listMusicTracks(), linkId);
   let ids: Set<number>;
-  if (access.playlistIds) {
+  if (playlistIds) {
     // Smart "liked" rules mean THIS link's likes.
     const pls = await resolvedPlaylists(tracks);
     ids = new Set<number>();
-    for (const p of pls) if (access.playlistIds.includes(p.id)) for (const id of p.trackIds) ids.add(id);
+    for (const p of pls) if (playlistIds.includes(p.id)) for (const id of p.trackIds) ids.add(id);
   } else ids = new Set(tracks.map((t) => t.id));
   if (access.scope) {
     const src = await listTrackSources();
@@ -123,3 +127,6 @@ export async function guardTrack(request: Request, trackId: number): Promise<{ a
 
 /** May this access add songs to a Spotify account's Liked Songs? (dashboard login always; a link only if the owner switched it on) */
 export const canSpotifyLike = (a: MusicAccess): boolean => a.kind === "session" || a.canLike;
+
+/** May this access use Spotify account `id`? (a numeric password limited to some accounts may only touch those) */
+export const accountAllowed = (a: MusicAccess, id: number): boolean => !a.scope || a.scope.ids.includes(id);

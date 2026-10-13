@@ -5,7 +5,8 @@ import Section, { Pill } from "./Section";
 
 // Numeric passwords for signing in to the music pages on playlist.bz (they open the player only).
 // Several can exist; each is shown on request, can be copied, switched off and on, or removed.
-type Pin = { id: number; label: string; pin: string; active: boolean; createdAt: string; lastUsedAt: string | null };
+type Pin = { id: number; label: string; pin: string; active: boolean; createdAt: string; lastUsedAt: string | null; accountIds: number[]; accountsMode: "any" | "all" };
+type Acc = { id: number; name: string };
 
 const fa = (v: number | string) => String(v).replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹".charAt(Number(d)));
 const when = (iso: string | null) => (iso ? new Date(iso.replace(" ", "T").replace(/\+00$/, "Z")).toLocaleString("fa-IR", { dateStyle: "medium", timeStyle: "short" }) : "—");
@@ -13,20 +14,23 @@ const btn = "min-h-10 px-3 rounded-lg border border-[var(--color-border)] text-x
 const randomPin = () => { const a = new Uint32Array(1); crypto.getRandomValues(a); return String(100000 + (a[0]! % 900000)); };
 
 export default function PinCard({ onMessage }: { onMessage: (m: string) => void }) {
-  const [state, setState] = useState<{ configured: boolean; canManage: boolean; pins?: Pin[] } | null>(null);
+  const [state, setState] = useState<{ configured: boolean; canManage: boolean; pins?: Pin[]; accounts?: Acc[] } | null>(null);
   const [pin, setPin] = useState("");
   const [label, setLabel] = useState("");
+  const [openAcc, setOpenAcc] = useState<number | null>(null);
   const [shown, setShown] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const r = await fetch("/api/auth/pin", { cache: "no-store" });
-    if (r.ok) setState((await r.json()) as { configured: boolean; canManage: boolean; pins?: Pin[] });
+    if (r.ok) setState((await r.json()) as { configured: boolean; canManage: boolean; pins?: Pin[]; accounts?: Acc[] });
   }, []);
   useEffect(() => { void load(); }, [load]);
 
   if (!state?.canManage) return null;
   const pins = state.pins ?? [];
+  const accts = state.accounts ?? [];
+  const nameOf = (id: number) => accts.find((a) => a.id === id)?.name ?? `#${id}`;
   const activeCount = pins.filter((p) => p.active).length;
 
   async function call(method: string, body?: unknown, qs = ""): Promise<{ ok: boolean; error?: string }> {
@@ -72,14 +76,32 @@ export default function PinCard({ onMessage }: { onMessage: (m: string) => void 
                 <Pill tone={p.active ? "ok" : undefined}>{p.active ? "فعال" : "غیرفعال"}</Pill>
               </div>
               <div dir="ltr" className="mt-2 text-center font-mono text-lg tracking-[0.3em] tabular-nums select-all">{shown.has(p.id) ? p.pin : "•".repeat(p.pin.length)}</div>
+              <div className="mt-1 text-[11px] text-center" dir="auto"><span className={p.accountIds.length ? "text-sky-200" : "text-[var(--color-text-dim)]"}>{p.accountIds.length ? `فقط آهنگ‌های: ${p.accountIds.map(nameOf).join(p.accountsMode === "all" ? " ∩ " : " ∪ ")}` : "همهٔ حساب‌ها"}</span></div>
               <div className="mt-1 text-[11px] text-[var(--color-text-dim)] text-center">ساخته‌شده: {when(p.createdAt)} · آخرین ورود: {when(p.lastUsedAt)}</div>
               <div className="mt-2 flex flex-wrap gap-2 justify-end">
+                <button onClick={() => setOpenAcc(openAcc === p.id ? null : p.id)} className={`${btn} ${p.accountIds.length ? "border-[var(--color-accent)]" : ""}`}>👤 چه حساب‌هایی؟ {openAcc === p.id ? "▴" : "▾"}</button>
                 <button onClick={() => toggleShow(p.id)} className={btn}>{shown.has(p.id) ? "🙈 پنهان" : "👁 نمایش"}</button>
                 <button onClick={() => void copy(p)} className={btn}>⧉ کپی</button>
                 <button onClick={() => { const n = prompt("نام این رمز (مثلاً: ماشین، پرنیان):", p.label); if (n != null) void patch(p.id, { label: n }); }} className={btn}>نام</button>
                 <button onClick={() => void patch(p.id, { active: !p.active })} className={`${btn} ${p.active ? "text-amber-200" : "text-emerald-200"}`}>{p.active ? "خاموش کردن" : "روشن کردن"}</button>
                 <button onClick={() => void remove(p)} className={`${btn} text-rose-300`}>حذف</button>
               </div>
+              {openAcc === p.id && (
+                <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+                  <div className="text-[11px] text-[var(--color-text-dim)] leading-6 mb-2 text-center">این رمز فقط آهنگ‌های حساب‌های انتخابی را می‌بیند و فقط با همان حساب‌ها کار می‌کند (لایک، وارد کردن لیست‌ها). هیچ‌کدام انتخاب نشود = همه. «Direct» یعنی آهنگ‌هایی که از هیچ حسابی نیامده‌اند (هنرمندان دنبال‌شده، لینک چسبانده‌شده).</div>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {accts.map((a) => {
+                      const on = p.accountIds.includes(a.id);
+                      return <button key={a.id} onClick={() => void patch(p.id, { accountIds: on ? p.accountIds.filter((x) => x !== a.id) : [...p.accountIds, a.id], accountsMode: p.accountsMode })}
+                        className={`${btn} ${on ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : ""}`}>{on ? "✓ " : ""}{a.name}</button>;
+                    })}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 justify-end">
+                    {p.accountIds.length > 1 && <button onClick={() => void patch(p.id, { accountIds: p.accountIds, accountsMode: p.accountsMode === "all" ? "any" : "all" })} className={btn}>{p.accountsMode === "all" ? "مشترکِ همه‌شان ⇄" : "هر کدام از آن‌ها ⇄"}</button>}
+                    {p.accountIds.length > 0 && <button onClick={() => void patch(p.id, { accountIds: [] })} className={btn}>همه</button>}
+                  </div>
+                </div>
+              )}
             </li>
           ))}
         </ul>

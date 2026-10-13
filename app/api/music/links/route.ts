@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSessionOr401 } from "@/lib/auth";
+import { requireUnscopedOr403 } from "@/lib/auth";
 import { createPlayerLink, getAllSettings, listPlayerLinks, listSpotifyAccounts } from "@/lib/db";
 import { getLegacyToken, getMainScope, isLegacyActive, newLinkToken } from "@/lib/music-token";
 import { DIRECT_ACCOUNT } from "@/lib/music-scope";
@@ -13,7 +13,7 @@ const url = (t: string) => `${(process.env.PLAYER_APP_URL || "https://playlist.b
 
 // GET → every player link (the original "Main link" first) + the playlists they can be given.
 export async function GET(): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const [links, pls, accts, mainScope] = await Promise.all([listPlayerLinks(), resolvedPlaylists(), listSpotifyAccounts(), getMainScope()]);
   return NextResponse.json({
@@ -28,7 +28,7 @@ export async function GET(): Promise<NextResponse> {
 
 // POST { name, playlistIds } → a NEW link. Existing links are never touched.
 export async function POST(request: Request): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const b = (await request.json().catch(() => ({}))) as { name?: string; playlistIds?: number[] };
   const name = String(b.name ?? "").trim() || `Link ${new Date().toISOString().slice(0, 10)}`;

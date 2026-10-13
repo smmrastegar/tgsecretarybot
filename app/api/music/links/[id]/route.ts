@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSessionOr401 } from "@/lib/auth";
+import { requireUnscopedOr403 } from "@/lib/auth";
 import { updatePlayerLink } from "@/lib/db";
 import { setLegacyActive, setMainCanLike, setMainScope } from "@/lib/music-token";
 
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 // PATCH { name?, active?, playlistIds?, accountIds?, accountsMode? }. Links are switched on/off, never deleted.
 // id 0 is the original Main link: only its on/off switch and account scope can change.
 export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const id = Number((await ctx.params).id);
   const b = (await request.json().catch(() => ({}))) as { name?: string; active?: boolean; playlistIds?: number[]; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLikeSpotify?: boolean };

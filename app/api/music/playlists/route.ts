@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSessionOr401 } from "@/lib/auth";
+import { requireUnscopedOr403 } from "@/lib/auth";
 import { createMusicPlaylist } from "@/lib/db";
 import { sanitizeRules } from "@/lib/music-playlists";
 
@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const b = (await request.json().catch(() => ({}))) as { name?: string; rules?: unknown };
   const name = String(b.name ?? "").trim();

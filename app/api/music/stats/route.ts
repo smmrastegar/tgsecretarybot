@@ -9,7 +9,7 @@ export async function GET(request: Request): Promise<Response> {
   if (!access) return notFound();
   const headers = { "Cache-Control": "no-store" };
   // Dashboard: everything. A player link: only its own listening, likes and songs.
-  if (access.kind === "session") return Response.json(await getMusicStats(null), { headers });
+  if (access.kind === "session" && !access.scope) return Response.json(await getMusicStats(null), { headers });
   const allowed = await allowedTrackIds(access);
-  return Response.json(await getLinkStats(access.linkId, allowed ? [...allowed] : null), { headers });
+  return Response.json(await getLinkStats(access.kind === "link" ? access.linkId : 0, allowed ? [...allowed] : null), { headers });
 }

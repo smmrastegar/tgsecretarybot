@@ -470,6 +470,14 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // Each numeric password can be limited to the songs of chosen Spotify accounts (none chosen = everything).
+    id: "2026-10-13-004-pin-accounts",
+    up: async (q) => {
+      await q`ALTER TABLE music_pins ADD COLUMN IF NOT EXISTS account_ids BIGINT[] NOT NULL DEFAULT '{}'`;
+      await q`ALTER TABLE music_pins ADD COLUMN IF NOT EXISTS accounts_mode TEXT NOT NULL DEFAULT 'any'`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

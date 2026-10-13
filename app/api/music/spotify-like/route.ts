@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { allowedTrackIds, canSpotifyLike, musicAccess, notFound } from "@/lib/music-token";
+import { accountAllowed, allowedTrackIds, canSpotifyLike, musicAccess, notFound } from "@/lib/music-token";
 import { listMusicTracks, listSpotifyAccounts, recordTrackSources } from "@/lib/db";
 import { likeOnSpotify } from "@/lib/spotify";
 
@@ -17,6 +17,7 @@ export async function POST(request: Request): Promise<Response> {
   const accountId = Number(b.accountId);
   const want = Array.isArray(b.trackIds) ? [...new Set(b.trackIds.map(Number).filter(Number.isFinite))].slice(0, MAX) : [];
   const [all, accounts, allowed] = await Promise.all([listMusicTracks(), listSpotifyAccounts(), allowedTrackIds(access)]);
+  if (!accountAllowed(access, accountId)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   const acc = accounts.find((a) => a.id === accountId);
   if (!acc || want.length === 0) return NextResponse.json({ error: "songs or account not found" }, { status: 404 });
   const byId = new Map(all.map((t) => [t.id, t]));

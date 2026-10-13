@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSessionOr401 } from "@/lib/auth";
+import { requireUnscopedOr403 } from "@/lib/auth";
 import { deleteMusicTrack, getAllSettings, getMusicTrack, setSetting, updateMusicTrack } from "@/lib/db";
 import { kickMusicQueue, removeMusicFiles } from "@/lib/music";
 
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function DELETE(_r: Request, ctx: Ctx): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const id = Number((await ctx.params).id);
   const gone = await deleteMusicTrack(id);
@@ -18,7 +18,7 @@ export async function DELETE(_r: Request, ctx: Ctx): Promise<NextResponse> {
 
 // POST = retry a failed track.
 export async function POST(request: Request, ctx: Ctx): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const id = Number((await ctx.params).id);
   // ?via=spotsaver: skip the Telegram bot and fetch a fresh copy through the SpotSaver subscription

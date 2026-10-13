@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireSessionOr401 } from "@/lib/auth";
+import { getCurrentSession, requireSessionOr401 } from "@/lib/auth";
+import { pinState } from "@/lib/pin-session";
 import { addMusicTrack, ensureSpotifyPlaylist, recordTrackSources, setPlaylistTrack } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
 import { ensureSharedPlaylist, registerSyncSource } from "@/lib/music-sync";
@@ -16,6 +17,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (guard) return guard;
   const b = (await request.json().catch(() => ({}))) as { id?: string; name?: string; accountId?: number };
   if (!b.id) return NextResponse.json({ error: "id required" }, { status: 400 });
+  const st = await pinState(await getCurrentSession());
+  if (st.scope && !st.scope.ids.includes(Number(b.accountId))) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   try {
     const items = await fetchTrackIds(Number(b.accountId), b.id);
     const name = (b.name ?? (b.id === "liked" ? "لایک‌ها" : "Spotify")).slice(0, 100);

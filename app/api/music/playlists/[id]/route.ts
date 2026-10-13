@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSessionOr401 } from "@/lib/auth";
+import { requireUnscopedOr403 } from "@/lib/auth";
 import { deleteMusicPlaylist, renameMusicPlaylist, setPlaylistTrack, setPlaylistTracks } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -9,7 +9,7 @@ type Ctx = { params: Promise<{ id: string }> };
 // PATCH { name } renames; { trackId, present } or { trackIds, present }
 // adds/removes one or many tracks.
 export async function PATCH(request: Request, ctx: Ctx): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const id = Number((await ctx.params).id);
   const b = (await request.json().catch(() => ({}))) as { name?: string; trackId?: number; trackIds?: number[]; present?: boolean };
@@ -27,7 +27,7 @@ export async function PATCH(request: Request, ctx: Ctx): Promise<NextResponse> {
 }
 
 export async function DELETE(_r: Request, ctx: Ctx): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   await deleteMusicPlaylist(Number((await ctx.params).id));
   return NextResponse.json({ ok: true });

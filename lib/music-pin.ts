@@ -51,6 +51,6 @@ export async function checkPin(pin: string, ip: string): Promise<{ ok: true; ses
     return { ok: false, error: "رمز اشتباه است", status: 401 };
   }
   byIp.delete(ip);
-  if (hit) { void touchMusicPin(hit.id).catch(() => {}); return { ok: true, session: { userId: hit.userId, username: hit.username, firstName: hit.firstName, scope: "music" } }; }
+  if (hit) { void touchMusicPin(hit.id).catch(() => {}); return { ok: true, session: { userId: hit.userId, username: hit.username, firstName: hit.firstName, scope: "music", pinId: hit.id } }; }
   return { ok: true, session: { userId: st!.userId, username: st!.username, firstName: st!.firstName, scope: "music" } };
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSessionOr401 } from "@/lib/auth";
+import { requireUnscopedOr403 } from "@/lib/auth";
 import { allowedTrackIds, canSpotifyLike, musicAccess, notFound } from "@/lib/music-token";
 import { resolvedPlaylists } from "@/lib/music-playlists";
 import { addMusicTrack, applyLinkView, listMusicTracks, listSpotifyAccounts, listTrackSources, parseSpotifyTrackUrl } from "@/lib/db";
@@ -21,12 +21,12 @@ export async function GET(request: Request): Promise<Response> {
     // A player link only ever sees its own playlists and the songs in them.
     const tracks = allowed ? all.filter((t) => allowed.has(t.id)) : all;
     const lists = access.kind === "link" && access.playlistIds ? pls.filter((p) => access.playlistIds!.includes(p.id)) : pls;
-    const playlists = lists.map((p) => ({ id: p.id, name: p.name, trackIds: allowed ? p.trackIds.filter((id) => allowed.has(id)) : p.trackIds, smart: p.smart, ...(access.kind === "session" ? { rules: p.rules } : {}) }));
+    const playlists = lists.map((p) => ({ id: p.id, name: p.name, trackIds: allowed ? p.trackIds.filter((id) => allowed.has(id)) : p.trackIds, smart: p.smart, ...(access.kind === "session" && !access.scope ? { rules: p.rules } : {}) }));
     // Every view (dashboard and all player links, by the owner's choice) says which Spotify account(s) each song came from.
     {
       const [src, accts] = await Promise.all([listTrackSources(), listSpotifyAccounts()]);
       // A scoped link only learns about the accounts it is scoped to.
-      const scope = access.kind === "link" ? access.scope : null;
+      const scope = access.scope;
       const keep = (id: number) => !scope || scope.ids.includes(id);
       return NextResponse.json({
         canLike: canSpotifyLike(access),
@@ -43,7 +43,7 @@ export async function GET(request: Request): Promise<Response> {
 
 // POST { text }: any text containing Spotify track links (one or many).
 export async function POST(request: Request): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const body = (await request.json().catch(() => ({}))) as { text?: string };
   const links = [...new Set((String(body.text ?? "").match(/https?:\/\/open\.spotify\.com\/\S+/g) ?? []))];

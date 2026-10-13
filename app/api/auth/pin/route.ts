@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/auth";
-import { audit, createMusicPin, deleteMusicPin, listMusicPins, updateMusicPin } from "@/lib/db";
+import { audit, createMusicPin, deleteMusicPin, listMusicPins, listSpotifyAccounts, updateMusicPin } from "@/lib/db";
+import { DIRECT_ACCOUNT } from "@/lib/music-scope";
 import { PIN_RE, pinConfigured } from "@/lib/music-pin";
 
 export const runtime = "nodejs";
@@ -18,18 +19,20 @@ export async function GET(): Promise<NextResponse> {
   const s = await getCurrentSession();
   if (!s) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (s.scope) return NextResponse.json({ configured: await pinConfigured(), canManage: false });
-  const pins = await listMusicPins();
-  return NextResponse.json({ configured: await pinConfigured(), canManage: true, pins }, { headers: { "Cache-Control": "no-store" } });
+  const [pins, accts] = await Promise.all([listMusicPins(), listSpotifyAccounts()]);
+  const accounts = [...accts.map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })), DIRECT_ACCOUNT];
+  return NextResponse.json({ configured: await pinConfigured(), canManage: true, pins, accounts }, { headers: { "Cache-Control": "no-store" } });
 }
 
 // POST { pin, label? } → a new password (several can exist).
 export async function POST(request: Request): Promise<NextResponse> {
   const s = await owner();
   if (!s) return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  const b = (await request.json().catch(() => ({}))) as { pin?: unknown; label?: unknown };
+  const b = (await request.json().catch(() => ({}))) as { pin?: unknown; label?: unknown; accountIds?: unknown; accountsMode?: unknown };
   const pin = typeof b.pin === "string" ? b.pin.trim() : "";
   if (!PIN_RE.test(pin)) return NextResponse.json({ error: BAD }, { status: 400 });
   const made = await createMusicPin(pin, typeof b.label === "string" ? b.label.trim() : "", { userId: s.userId, username: s.username ?? null, firstName: s.firstName ?? null });
+  if (made && Array.isArray(b.accountIds)) await updateMusicPin(made.id, { accountIds: b.accountIds.map(Number), accountsMode: b.accountsMode === "all" ? "all" : "any" });
   if (!made) return NextResponse.json({ error: "این رمز از قبل هست" }, { status: 409 });
   await audit({ ...who(s), action: "auth.pin-add" });
   return NextResponse.json({ ok: true, id: made.id });
@@ -39,7 +42,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 export async function PATCH(request: Request): Promise<NextResponse> {
   const s = await owner();
   if (!s) return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  const b = (await request.json().catch(() => ({}))) as { id?: unknown; active?: unknown; label?: unknown; pin?: unknown };
+  const b = (await request.json().catch(() => ({}))) as { id?: unknown; active?: unknown; label?: unknown; pin?: unknown; accountIds?: unknown; accountsMode?: unknown };
   const id = Number(b.id);
   if (!Number.isFinite(id)) return NextResponse.json({ error: "id required" }, { status: 400 });
   if (typeof b.pin === "string" && !PIN_RE.test(b.pin.trim())) return NextResponse.json({ error: BAD }, { status: 400 });
@@ -47,6 +50,8 @@ export async function PATCH(request: Request): Promise<NextResponse> {
     active: typeof b.active === "boolean" ? b.active : undefined,
     label: typeof b.label === "string" ? b.label.trim() : undefined,
     pin: typeof b.pin === "string" ? b.pin.trim() : undefined,
+    accountIds: Array.isArray(b.accountIds) ? b.accountIds.map(Number) : undefined,
+    accountsMode: b.accountsMode === "all" || b.accountsMode === "any" ? b.accountsMode : undefined,
   });
   if (!ok) return NextResponse.json({ error: "این رمز از قبل هست" }, { status: 409 });
   await audit({ ...who(s), action: "auth.pin-update" });

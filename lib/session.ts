@@ -11,6 +11,8 @@ export type Session = {
   photoUrl?: string | null;
   /** "music": signed in with the numeric password — the music pages only, never the rest of the dashboard. */
   scope?: "music";
+  /** which numeric password this session came from (its account limits are looked up live; deleting / switching it off ends the session) */
+  pinId?: number;
 };
 
 function sessionSecret(): string {
@@ -52,6 +54,7 @@ export async function readSessionFromToken(
       lastName: (payload.lastName as string) ?? null,
       photoUrl: (payload.photoUrl as string) ?? null,
       scope: payload.scope === "music" ? "music" : undefined,
+      pinId: typeof payload.pinId === "number" ? payload.pinId : undefined,
     };
   } catch {
     return null;

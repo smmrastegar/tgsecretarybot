@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentSession, requireSessionOr401 } from "@/lib/auth";
+import { pinState } from "@/lib/pin-session";
 import { disconnectSpotify, getSpotifyConfig, listSpotifyAccounts, redirectUri, saveSpotifyCredentials } from "@/lib/spotify";
 
 export const runtime = "nodejs";
@@ -9,7 +10,10 @@ export async function GET(): Promise<NextResponse> {
   const guard = await requireSessionOr401();
   if (guard) return guard;
   const c = await getSpotifyConfig();
-  return NextResponse.json({ hasCredentials: Boolean(c.clientId && c.clientSecret), clientId: c.clientId, accounts: await listSpotifyAccounts(), redirectUri: redirectUri() });
+  // A numeric password limited to some accounts only sees those accounts.
+  const st = await pinState(await getCurrentSession());
+  const accounts = (await listSpotifyAccounts()).filter((a) => !st.scope || st.scope.ids.includes(a.id));
+  return NextResponse.json({ hasCredentials: Boolean(c.clientId && c.clientSecret), clientId: st.scope ? "" : c.clientId, accounts, redirectUri: redirectUri() });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {

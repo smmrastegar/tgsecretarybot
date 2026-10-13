@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { isAllowedUser } from "./db";
+import { forbidScopedPin, pinState } from "./pin-session";
 import { SESSION_COOKIE_NAME, SESSION_TTL, readSessionFromToken, type Session } from "./session";
 
 export type { Session };
@@ -24,8 +25,13 @@ export async function getCurrentSession(): Promise<Session | null> {
 // now collapse to:  const guard = await requireSessionOr401(); if (guard) return guard;
 export async function requireSessionOr401(): Promise<NextResponse | null> {
   const s = await getCurrentSession();
-  if (s) return null;
+  if (s && (s.pinId == null || (await pinState(s)).ok)) return null; // a numeric password that was switched off / deleted no longer signs in
   return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+}
+
+/** Like requireSessionOr401, but a numeric password limited to some Spotify accounts is refused too. */
+export async function requireUnscopedOr403(): Promise<NextResponse | null> {
+  return forbidScopedPin(await getCurrentSession());
 }
 
 export async function requireSession(): Promise<Session> {

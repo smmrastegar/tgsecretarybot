@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSessionOr401 } from "@/lib/auth";
+import { requireUnscopedOr403 } from "@/lib/auth";
 import { config } from "@/lib/config";
 import { authorizeUrl, isReturnHost, signedState } from "@/lib/spotify";
 
@@ -13,7 +13,7 @@ function publicBase(): string {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  const guard = await requireSessionOr401();
+  const guard = await requireUnscopedOr403();
   if (guard) return guard;
   // Remember which host started this (playlist.bz or bot.text.bz) so the callback can return there.
   const host = (request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "").split(":")[0] ?? "";
