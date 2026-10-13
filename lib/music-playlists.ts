@@ -1,4 +1,5 @@
 import { listMusicPlaylists, listMusicTracks, listTrackSources, sharedTrackIds, type MusicPlaylist, type MusicTrack } from "@/lib/db";
+import { matchesAccounts } from "./music-scope";
 import { descriptors, similarTo, type Descriptor } from "@/lib/music-analysis";
 
 // Smart playlists: membership is computed from rules every time it is asked
@@ -39,7 +40,7 @@ export function sanitizeRules(raw: unknown): SmartRules {
   if (r.sharedByAll === true) out.sharedByAll = true;
   if (r.sharedByAny === true) out.sharedByAny = true;
   if (Array.isArray(r.accounts)) {
-    const ids = [...new Set(r.accounts.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 20);
+    const ids = [...new Set(r.accounts.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n >= 0))].slice(0, 20);
     if (ids.length) { out.accounts = ids; out.accountsMode = r.accountsMode === "all" ? "all" : "any"; }
   }
   if (strs(r.genres).length) out.genres = strs(r.genres);
@@ -85,7 +86,7 @@ export async function resolveRules(rawRules: unknown, tracks?: MusicTrack[]): Pr
   if (r.accounts?.length) {
     const src = await listTrackSources();
     const want = r.accounts;
-    all = all.filter((t) => { const have = src.get(t.id) ?? []; return r.accountsMode === "all" ? want.every((a) => have.includes(a)) : want.some((a) => have.includes(a)); });
+    all = all.filter((t) => matchesAccounts(src.get(t.id), want, r.accountsMode === "all" ? "all" : "any"));
   }
   if (r.sharedByAll || r.sharedByAny) { const shared = new Set(await sharedTrackIds(r.sharedByAll ? "all" : "any")); all = all.filter((t) => shared.has(t.id)); }
   const desc = await descriptors().catch(() => new Map<number, Descriptor>());

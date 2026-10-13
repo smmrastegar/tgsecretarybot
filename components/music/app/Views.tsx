@@ -4,6 +4,7 @@ import { AccountsCtx, TitleLine } from "./SourceMarks";
 import { memo, useContext, useMemo, useState } from "react";
 import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, SearchIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
 import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
+import { matchesAccounts } from "@/lib/music-scope";
 
 // Everything the views need from the player engine.
 export type Api = {
@@ -168,7 +169,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
   const [accMode, setAccMode] = useState<"any" | "all">("any");
   const songs = useMemo(() => {
     let base = likedOnly ? c.liked : c.ready;
-    if (accSel.length) base = base.filter((t) => { const h = t.sources ?? []; return accMode === "all" ? accSel.every((a) => h.includes(a)) : accSel.some((a) => h.includes(a)); });
+    if (accSel.length) base = base.filter((t) => matchesAccounts(t.sources, accSel, accMode));
     const cmp: Record<Sort, (a: Track, b: Track) => number> = {
       recent: (a, b) => ts(b.readyAt ?? b.createdAt) - ts(a.readyAt ?? a.createdAt),
       az: (a, b) => (a.title ?? "").localeCompare(b.title ?? ""),

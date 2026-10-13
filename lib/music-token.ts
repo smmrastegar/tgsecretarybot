@@ -9,6 +9,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { getCurrentSession } from "./auth";
 import { applyLinkView, findActiveLinkByToken, getAllSettings, listMusicTracks, listTrackSources, setSetting, touchPlayerLink } from "./db";
 import { resolvedPlaylists } from "./music-playlists";
+import { matchesAccounts } from "./music-scope";
 
 const KEY = "musicPlayerToken";
 const LEGACY_ACTIVE = "musicPlayerLegacyActive";
@@ -36,13 +37,12 @@ const MAIN_SCOPE = "musicMainScope";
 export function parseScope(raw: unknown): AccountScope | null {
   try {
     const j = (typeof raw === "string" ? JSON.parse(raw) : raw) as { ids?: unknown; mode?: unknown } | null;
-    const ids = Array.isArray(j?.ids) ? [...new Set(j!.ids.map(Number).filter((n) => Number.isFinite(n) && n > 0))] : [];
+    const ids = Array.isArray(j?.ids) ? [...new Set(j!.ids.map(Number).filter((n) => Number.isFinite(n) && n >= 0))] : [];
     return ids.length ? { ids, mode: j?.mode === "all" ? "all" : "any" } : null;
   } catch { return null; }
 }
 export async function getMainScope(): Promise<AccountScope | null> { return parseScope((await getAllSettings())[MAIN_SCOPE]); }
 export async function setMainScope(s: AccountScope | null): Promise<void> { await setSetting(MAIN_SCOPE, s ? JSON.stringify(s) : ""); }
-const inScope = (scope: AccountScope, have: number[]) => (scope.mode === "all" ? scope.ids.every((a) => have.includes(a)) : scope.ids.some((a) => have.includes(a)));
 
 async function accessForToken(presented: string | null | undefined): Promise<MusicAccess | null> {
   const p = (presented ?? "").trim();
@@ -96,7 +96,7 @@ export async function allowedTrackIds(access: MusicAccess): Promise<Set<number> 
   } else ids = new Set(tracks.map((t) => t.id));
   if (access.scope) {
     const src = await listTrackSources();
-    for (const id of [...ids]) if (!inScope(access.scope, src.get(id) ?? [])) ids.delete(id);
+    for (const id of [...ids]) if (!matchesAccounts(src.get(id), access.scope.ids, access.scope.mode)) ids.delete(id);
   }
   allowedCache.set(key, { at: Date.now(), ids });
   return ids;

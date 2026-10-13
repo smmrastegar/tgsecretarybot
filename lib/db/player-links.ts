@@ -35,7 +35,7 @@ export async function updatePlayerLink(id: number, patch: { name?: string; activ
   if (patch.name != null) await q().query(`UPDATE player_links SET name = $2 WHERE id = $1`, [id, patch.name.slice(0, 80)]);
   if (patch.active != null) await q().query(`UPDATE player_links SET active = $2 WHERE id = $1`, [id, patch.active]);
   if (patch.canCreate != null) await q().query(`UPDATE player_links SET can_create_playlists = $2 WHERE id = $1`, [id, patch.canCreate]);
-  if (patch.accountIds) await q().query(`UPDATE player_links SET account_ids = $2::bigint[] WHERE id = $1`, [id, [...new Set(patch.accountIds.filter((n) => Number.isFinite(n) && n > 0))]]);
+  if (patch.accountIds) await q().query(`UPDATE player_links SET account_ids = $2::bigint[] WHERE id = $1`, [id, [...new Set(patch.accountIds.filter((n) => Number.isFinite(n) && n >= 0))]]);
   if (patch.accountsMode) await q().query(`UPDATE player_links SET accounts_mode = $2 WHERE id = $1`, [id, patch.accountsMode === "all" ? "all" : "any"]);
   if (patch.playlistIds) await q().query(`UPDATE player_links SET playlist_ids = $2::bigint[] WHERE id = $1`, [id, [...new Set(patch.playlistIds.filter(Number.isFinite))]]);
 }

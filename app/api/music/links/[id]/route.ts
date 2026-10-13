@@ -13,7 +13,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   if (guard) return guard;
   const id = Number((await ctx.params).id);
   const b = (await request.json().catch(() => ({}))) as { name?: string; active?: boolean; playlistIds?: number[]; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all" };
-  const ids = Array.isArray(b.accountIds) ? b.accountIds.map(Number).filter((n) => Number.isFinite(n) && n > 0) : undefined;
+  const ids = Array.isArray(b.accountIds) ? b.accountIds.map(Number).filter((n) => Number.isFinite(n) && n >= 0) : undefined;
   if (id === 0) {
     if (typeof b.active === "boolean") await setLegacyActive(b.active);
     if (ids) await setMainScope(ids.length ? { ids, mode: b.accountsMode === "all" ? "all" : "any" } : null);

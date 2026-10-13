@@ -17,6 +17,7 @@ import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { artistsOf, DetailView, type Desc, type Vibe, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
 import { AccountPlaylistSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, TrackMenu } from "@/components/music/app/Sheets";
+import { matchesAccounts } from "@/lib/music-scope";
 
 // Private personal player. The URL's 256-bit token is the credential.
 type Tab = "home" | "search" | "library" | "stats";
@@ -45,7 +46,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const tracks = useMemo(() => {
     const want = scope.ids.filter((id) => accounts.some((a) => a.id === id)); // ignore accounts this link can't see any more
     if (!want.length) return allTracks;
-    return allTracks.filter((t) => { const h = t.sources ?? []; return scope.mode === "all" ? want.every((a) => h.includes(a)) : want.some((a) => h.includes(a)); });
+    return allTracks.filter((t) => matchesAccounts(t.sources, want, scope.mode));
   }, [allTracks, scope, accounts]);
   const [accPl, setAccPl] = useState<{ ids: number[]; mode: "any" | "all" } | null>(null);
   const saveAccountPlaylist = useCallback((ids: number[], mode: "any" | "all") => setAccPl({ ids, mode }), []);

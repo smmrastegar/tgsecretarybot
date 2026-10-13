@@ -5,6 +5,7 @@ import { resolvedPlaylists } from "@/lib/music-playlists";
 import { addMusicTrack, applyLinkView, listMusicTracks, listSpotifyAccounts, listTrackSources, parseSpotifyTrackUrl } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
 import { reportError } from "@/lib/report";
+import { DIRECT_ACCOUNT } from "@/lib/music-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ export async function GET(request: Request): Promise<Response> {
       const keep = (id: number) => !scope || scope.ids.includes(id);
       return NextResponse.json({
         tracks: tracks.map((t) => ({ ...t, sources: (src.get(t.id) ?? []).filter(keep) })), playlists,
-        accounts: accts.filter((a) => keep(a.id)).map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })),
+        accounts: [...accts.filter((a) => keep(a.id)).map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })), ...(keep(0) && tracks.some((t) => !(src.get(t.id)?.length)) ? [DIRECT_ACCOUNT] : [])],
       });
     }
     return NextResponse.json({ tracks, playlists });

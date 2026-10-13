@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSessionOr401 } from "@/lib/auth";
 import { createPlayerLink, listPlayerLinks, listSpotifyAccounts } from "@/lib/db";
 import { getLegacyToken, getMainScope, isLegacyActive, newLinkToken } from "@/lib/music-token";
+import { DIRECT_ACCOUNT } from "@/lib/music-scope";
 import { resolvedPlaylists } from "@/lib/music-playlists";
 
 export const runtime = "nodejs";
@@ -20,7 +21,7 @@ export async function GET(): Promise<NextResponse> {
       { id: 0, name: "Main link (everything)", url: url(await getLegacyToken()), active: await isLegacyActive(), playlistIds: null, legacy: true, canCreate: true, accountIds: mainScope?.ids ?? [], accountsMode: mainScope?.mode ?? "any", createdAt: null, lastUsedAt: null },
       ...links.map((l) => ({ id: l.id, name: l.name, url: url(l.token), active: l.active, playlistIds: l.playlistIds, legacy: false, canCreate: l.canCreate, accountIds: l.accountIds, accountsMode: l.accountsMode, createdAt: l.createdAt, lastUsedAt: l.lastUsedAt })),
     ],
-    accounts: accts.map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })),
+    accounts: [...accts.map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })), DIRECT_ACCOUNT],
     playlists: pls.map((p) => ({ id: p.id, name: p.name, smart: p.smart, count: p.trackIds.length })),
   }, { headers: { "Cache-Control": "no-store" } });
 }
