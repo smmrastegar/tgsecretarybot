@@ -1,6 +1,6 @@
 # My Music — Android app
 
-A thin native shell (WebView) around `https://bot.text.bz/listen`, plus a foreground
+A thin native shell (WebView) around `https://playlist.bz/listen`, plus a foreground
 service + MediaSession so playback continues with the screen off and shows
 lock-screen / notification / headset controls. All player logic lives in the web app.
 

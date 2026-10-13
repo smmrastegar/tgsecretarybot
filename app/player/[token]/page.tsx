@@ -61,6 +61,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const saveAccountPlaylist = useCallback((ids: number[], mode: "any" | "all") => setAccPl({ ids, mode }), []);
   const [loading, setLoading] = useState(true);
   const [denied, setDenied] = useState(false);
+  // The server cannot be reached (or we are looking at a cached copy of the library): only downloaded songs can play.
+  const [netDown, setNetDown] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
   const [stack, setStack] = useState<Page[]>([]);
   const [queue, setQueue] = useState<number[]>([]);
@@ -181,7 +184,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(""), 1800); };
 
   // Remember this link on the device so the installed launcher (/listen) can reopen it.
-  useEffect(() => { try { localStorage.setItem("listenLink", token); } catch { /* private mode */ } }, [token]);
+  useEffect(() => {
+    try { localStorage.setItem("listenLink", token); } catch { /* private mode */ }
+    try { (window as unknown as { AndroidMusic?: { saveLink?: (t: string) => void } }).AndroidMusic?.saveLink?.(token); } catch { /* not the app */ }
+  }, [token]);
 
   // Full refresh: drop the service worker and its cached app shell / list / covers, then reload from the server.
   // Downloaded songs and lyrics (Cache API "player-audio") are deliberately left alone.
@@ -194,12 +200,22 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     try {
       const r = await fetch(`/api/music?${tq}`, { cache: "no-store" });
       if (r.status === 404) { setDenied(true); return; }
-      if (!r.ok) return;
+      if (!r.ok) { setNetDown(true); return; }
+      setNetDown(r.headers.get("x-sw-cache") === "1"); // the service worker answered from its old copy
       const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string }>; canLike?: boolean };
       setTracks(j.tracks.filter((t) => t.status === "ready")); setPlaylists(j.playlists); setAccounts(j.accounts ?? []); setCanLike(j.canLike === true);
-    } finally { setLoading(false); }
+    } catch { setNetDown(true); } finally { setLoading(false); }
   }, [tq]);
   useEffect(() => { void load(); }, [load]);
+  // Reconnect by itself: when the phone says it is online again, and every 15 s while the server is unreachable.
+  useEffect(() => {
+    const on = () => void load(), off = () => setNetDown(true);
+    window.addEventListener("online", on); window.addEventListener("offline", off);
+    if (!navigator.onLine) setNetDown(true);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, [load]);
+  useEffect(() => { if (!netDown) return; const i = setInterval(() => void load(), 15000); return () => clearInterval(i); }, [netDown, load]);
+  const retryNow = useCallback(async () => { setRetrying(true); await load(); setRetrying(false); }, [load]);
   useEffect(() => {
     let tries = 0;
     const go = () => void fetch(`/api/music/vibes?${tq}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((j) => {
@@ -212,6 +228,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, [tq]);
 
   const play = useCallback((ids: number[], startId?: number, sh = false) => {
+    if (netDown) {
+      const ok = ids.filter((x) => offline.has(x));
+      if (ok.length === 0) { flash("No connection — download songs to play them offline"); return; }
+      if (startId != null && !offline.has(startId)) { flash("Not downloaded — needs a connection"); return; }
+      ids = ok;
+    }
     if (ids.length === 0) return;
     const start = startId ?? (sh ? ids[Math.floor(Math.random() * ids.length)]! : ids[0]!);
     const doShuffle = sh || shuffle;
@@ -219,7 +241,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     if (sh && !shuffle) { setShuffleState(true); try { localStorage.setItem("player.shuffle", "1"); } catch {} } // the Shuffle button on a page turns shuffle on, so the toggle never disagrees with the queue
     setQueue(doShuffle ? [start, ...ids.filter((x) => x !== start).sort(() => Math.random() - 0.5)] : ids);
     history.current = []; setCur(start); setPlaying(true);
-  }, [shuffle]);
+  }, [shuffle, netDown, offline]);
 
   const toggleShuffle = useCallback(() => {
     const next = !shuffle;
@@ -256,9 +278,14 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const i = queue.indexOf(cur); let n = i + dir;
     if (n >= queue.length) { if (repeat === "all" || !auto) n = 0; else { setPlaying(false); return; } }
     if (n < 0) n = queue.length - 1;
+    if (netDown) { // offline: skip what is not saved on this phone
+      let guard = queue.length;
+      while (guard-- > 0 && !offline.has(queue[n]!)) { n += dir; if (n >= queue.length) n = 0; if (n < 0) n = queue.length - 1; }
+      if (!offline.has(queue[n]!)) { setPlaying(false); flash("No connection — the rest is not downloaded"); return; }
+    }
     if (dir === 1) history.current.push(cur);
     setCur(queue[n]!);
-  }, [cur, queue, repeat]);
+  }, [cur, queue, repeat, netDown, offline]);
 
   const rate = useCallback((t: Track, r: number) => {
     const next = t.rating === r ? 0 : r;
@@ -481,7 +508,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     download: (ids: number[], label: string) => fns.current.download(ids, label),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, saveAccountPlaylist, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
+  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, offlineMode: netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, saveAccountPlaylist, netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -531,6 +558,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             </div>
             {installEvt && <button onClick={() => void doInstall()} className="px-4 py-2 rounded-full bg-[rgb(var(--ac))] text-[var(--acfg)] text-[13px] font-semibold">Install</button>}
             <button onClick={dismissInstall} className="p-1.5 text-[var(--dim)]" aria-label="Dismiss"><CloseIcon size={16} /></button>
+          </div>
+        )}
+        {netDown && (
+          <div role="status" className="mb-3 flex items-center gap-3 rounded-2xl bg-amber-500/12 border border-amber-500/30 px-3.5 py-2.5 text-[13px] leading-5">
+            <span className="flex-1 min-w-0">{loading ? "Connecting…" : "No connection to the server. Only downloaded songs can play."}</span>
+            <button onClick={() => void retryNow()} disabled={retrying} className="shrink-0 rounded-full bg-[var(--fg)] text-[var(--bg)] px-3.5 py-1.5 font-semibold disabled:opacity-60">{retrying ? "Trying…" : "Try again"}</button>
           </div>
         )}
         {updateReady && playing && <button onClick={() => window.location.reload()} className="mb-3 w-full rounded-2xl bg-[var(--s2)] py-2.5 text-[13px] font-semibold">New version ready — tap to reload</button>}

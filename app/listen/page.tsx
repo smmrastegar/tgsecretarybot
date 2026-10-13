@@ -40,6 +40,10 @@ function Launcher() {
       // Any other answer (even offline) is good enough: the player itself handles the rest.
     } catch { /* offline: trust the stored link */ }
     try { localStorage.setItem(KEY, tok); } catch { /* private mode */ }
+    const nat = (window as unknown as { AndroidMusic?: { saveLink?: (t: string) => void } }).AndroidMusic;
+    try { nat?.saveLink?.(tok); } catch { /* old app */ }
+    // The Android app lives on playlist.bz now: move there (the link is kept by the app itself).
+    if (nat && window.location.hostname !== "playlist.bz") { window.location.replace(`https://playlist.bz/player/${tok}`); return; }
     window.location.replace(`/player/${tok}`);
   }, []);
 
@@ -54,6 +58,11 @@ function Launcher() {
     const fromUrl = params.get("link");
     let saved: string | null = null;
     try { saved = localStorage.getItem(KEY); } catch { /* ignore */ }
+    const nat = (window as unknown as { AndroidMusic?: { link?: () => string; saveLink?: (t: string) => void; markMigrated?: () => void } }).AndroidMusic;
+    if (!saved) { try { saved = nat?.link?.() || null; } catch { /* old app */ } }
+    if (params.get("signedout") === "1") { try { nat?.saveLink?.(""); } catch { /* old app */ } }
+    // One-time hop from the old address: nothing saved there means nothing to carry over, so go on to the new address.
+    if (params.get("migrate") === "1" && !saved && !fromUrl) { try { nat?.markMigrated?.(); } catch { /* old app */ } window.location.replace("https://playlist.bz/listen"); return; }
     if (fromUrl) void go(fromUrl);
     else if (saved && params.get("signedout") !== "1") void go(saved);
     else setState("ask");

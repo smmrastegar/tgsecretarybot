@@ -14,6 +14,8 @@ export type Api = {
   /** open the "save this account filter as a playlist" sheet */
   saveAccountPlaylist: (ids: number[], mode: "any" | "all") => void;
   /** multi-select: rows show a tick box; the bar at the bottom acts on the picked songs */
+  /** the server cannot be reached: songs that are not downloaded cannot play */
+  offlineMode: boolean;
   selecting: boolean;
   sel: Set<number>;
   toggleSel: (id: number) => void;
@@ -63,7 +65,7 @@ function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
     );
   }
   return (
-    <div className={`flex items-center gap-3 py-2 ${t.rating < 0 ? "opacity-45" : ""}`} style={{ contentVisibility: "auto", containIntrinsicSize: "0 64px" }}>
+    <div className={`flex items-center gap-3 py-2 ${t.rating < 0 || (api.offlineMode && !api.offline.has(t.id)) ? "opacity-40" : ""}`} style={{ contentVisibility: "auto", containIntrinsicSize: "0 64px" }}>
       <button onClick={() => api.play(ids, t.id)} className="flex items-center gap-3 min-w-0 flex-1 text-left" aria-label={`Play ${t.title ?? ""}`}>
         {index != null && <span className="w-5 text-center text-sm text-[var(--dim3)] tabular-nums shrink-0">{active ? <Eq on={api.playing} /> : index}</span>}
         <span className="relative shrink-0">
@@ -85,7 +87,7 @@ function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
 // playing" state changes — not on every progress tick or unrelated update.
 export const TrackRow = memo(TrackRowImpl, (a, b) => {
   const act = a.api.cur === a.t.id;
-  return a.t === b.t && a.picked === b.picked && a.ids === b.ids && a.index === b.index && a.api.tq === b.api.tq && a.api.play === b.api.play
+  return a.t === b.t && a.picked === b.picked && a.ids === b.ids && a.index === b.index && a.api.tq === b.api.tq && a.api.offlineMode === b.api.offlineMode && a.api.play === b.api.play
     && act === (b.api.cur === b.t.id) && (!act || a.api.playing === b.api.playing);
 });
 
@@ -180,12 +182,14 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
   const [sort, setSort] = useState<Sort>("recent");
   const [grid, setGrid] = useState(false);
   const [likedOnly, setLikedOnly] = useState(false);
+  const [savedOnly, setSavedOnly] = useState(false);
   // Filter by the Spotify account(s) a song came from: songs from ANY of the chosen accounts, or from ALL of them.
   const accounts = useContext(AccountsCtx);
   const [accSel, setAccSel] = useState<number[]>([]);
   const [accMode, setAccMode] = useState<"any" | "all">("any");
   const songs = useMemo(() => {
     let base = likedOnly ? c.liked : c.ready;
+    if (savedOnly || api.offlineMode) base = base.filter((t) => api.offline.has(t.id));
     if (accSel.length) base = base.filter((t) => matchesAccounts(t.sources, accSel, accMode));
     const cmp: Record<Sort, (a: Track, b: Track) => number> = {
       recent: (a, b) => ts(b.readyAt ?? b.createdAt) - ts(a.readyAt ?? a.createdAt),
@@ -194,7 +198,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
       artist: (a, b) => (a.artist ?? "").localeCompare(b.artist ?? "") || (a.title ?? "").localeCompare(b.title ?? ""),
     };
     return [...base].sort(cmp[sort]);
-  }, [c, sort, likedOnly, accSel, accMode]);
+  }, [c, sort, likedOnly, savedOnly, accSel, accMode, api.offline, api.offlineMode]);
   const artists = useMemo(() => [...c.artists.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])), [c.artists]);
   const albums = useMemo(() => [...c.albums.entries()].sort((a, b) => a[0].localeCompare(b[0])), [c.albums]);
   const segBtn = (k: typeof seg, label: string) => (
@@ -208,11 +212,12 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
 
       {seg === "songs" && (
         <>
-          <div className="flex items-center gap-2 mt-4">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-4">
             <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="bg-transparent text-[14px] font-semibold text-[var(--dim2)] outline-none">
               {SORTS.map(([k, l]) => <option key={k} value={k} className="text-black">{l}</option>)}
             </select>
             <button onClick={() => setLikedOnly((v) => !v)} className={`ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold ${likedOnly ? "bg-rose-500/20 text-rose-500" : "bg-[var(--s1)] text-[var(--dim2)]"}`}><HeartIcon size={14} filled={likedOnly} /> Liked</button>
+            {api.offline.size > 0 && !api.offlineMode && <button onClick={() => setSavedOnly((v) => !v)} aria-pressed={savedOnly} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold ${savedOnly ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}><DownloadIcon size={14} /> Saved</button>}
             <span className="flex-1" />
             <button onClick={() => api.startSelect(songs.map((t) => t.id))} className="p-2 text-[var(--dim2)]" aria-label="Select songs"><CheckIcon size={22} /></button>
             <button onClick={() => api.play(songs.map((t) => t.id), undefined, true)} className="p-2 text-[var(--dim2)]" aria-label="Shuffle"><ShuffleIcon size={22} /></button>
