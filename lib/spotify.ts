@@ -72,7 +72,7 @@ export async function authorizeUrl(state: string): Promise<string | null> {
   return u.toString();
 }
 
-async function tokenCall(params: Record<string, string>): Promise<{ access_token: string; refresh_token?: string }> {
+async function tokenCall(params: Record<string, string>): Promise<{ access_token: string; refresh_token?: string; scope?: string }> {
   const c = await getSpotifyConfig();
   const res = await fetch("https://accounts.spotify.com/api/token", {
     method: "POST",
@@ -82,9 +82,9 @@ async function tokenCall(params: Record<string, string>): Promise<{ access_token
     },
     body: new URLSearchParams(params).toString(),
   });
-  const j = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; error_description?: string; error?: string };
+  const j = (await res.json().catch(() => ({}))) as { access_token?: string; refresh_token?: string; scope?: string; error_description?: string; error?: string };
   if (!res.ok || !j.access_token) throw new Error(j.error_description ?? j.error ?? `spotify token ${res.status}`);
-  return { access_token: j.access_token, refresh_token: j.refresh_token };
+  return { access_token: j.access_token, refresh_token: j.refresh_token, scope: j.scope };
 }
 
 /** Finish a login: store (or refresh) this account's token. Returns its id. */
@@ -92,7 +92,7 @@ export async function exchangeCode(code: string): Promise<number> {
   const t = await tokenCall({ grant_type: "authorization_code", code, redirect_uri: redirectUri() });
   if (!t.refresh_token) throw new Error("no refresh token returned");
   const me = await api<{ id: string; display_name?: string }>(t.access_token, "/me");
-  return upsertSpotifyAccount(me.id, me.display_name ?? null, t.refresh_token);
+  return upsertSpotifyAccount(me.id, me.display_name ?? null, t.refresh_token, t.scope ?? null);
 }
 
 async function accessToken(accountId: number): Promise<string> {

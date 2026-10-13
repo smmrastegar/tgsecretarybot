@@ -268,22 +268,22 @@ export async function setPlaylistTrack(playlistId: number, trackId: number, pres
   }
 }
 
-export type SpotifyAccount = { id: number; spotifyUserId: string; displayName: string | null };
+export type SpotifyAccount = { id: number; spotifyUserId: string; displayName: string | null; canLike: boolean };
 
 export async function listSpotifyAccounts(): Promise<SpotifyAccount[]> {
   if (!hasDb()) return [];
   await ensureSchema();
-  const rows = (await q().query(`SELECT id, spotify_user_id, display_name FROM spotify_accounts ORDER BY id`)) as Row[];
-  return rows.map((r) => ({ id: num(r, "id"), spotifyUserId: str(r, "spotify_user_id"), displayName: strOrNull(r, "display_name") }));
+  const rows = (await q().query(`SELECT id, spotify_user_id, display_name, scopes FROM spotify_accounts ORDER BY id`)) as Row[];
+  return rows.map((r) => ({ id: num(r, "id"), spotifyUserId: str(r, "spotify_user_id"), displayName: strOrNull(r, "display_name"), canLike: (strOrNull(r, "scopes") ?? "").split(/[\s,]+/).includes("user-library-modify") }));
 }
 
-export async function upsertSpotifyAccount(spotifyUserId: string, name: string | null, refreshToken: string): Promise<number> {
+export async function upsertSpotifyAccount(spotifyUserId: string, name: string | null, refreshToken: string, scopes: string | null = null): Promise<number> {
   await ensureSchema();
   const rows = (await q().query(
-    `INSERT INTO spotify_accounts (spotify_user_id, display_name, refresh_token) VALUES ($1, $2, $3)
-       ON CONFLICT (spotify_user_id) DO UPDATE SET display_name = EXCLUDED.display_name, refresh_token = EXCLUDED.refresh_token
+    `INSERT INTO spotify_accounts (spotify_user_id, display_name, refresh_token, scopes) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (spotify_user_id) DO UPDATE SET display_name = EXCLUDED.display_name, refresh_token = EXCLUDED.refresh_token, scopes = EXCLUDED.scopes
        RETURNING id`,
-    [spotifyUserId, name, refreshToken],
+    [spotifyUserId, name, refreshToken, scopes],
   )) as Row[];
   return num(rows[0]!, "id");
 }

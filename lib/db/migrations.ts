@@ -445,6 +445,13 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS can_like_spotify BOOLEAN NOT NULL DEFAULT FALSE`;
     },
   },
+  {
+    // Which permissions each Spotify account granted (so the dashboard can say "connect again" when saving songs is not allowed yet).
+    id: "2026-10-13-002-spotify-scopes",
+    up: async (q) => {
+      await q`ALTER TABLE spotify_accounts ADD COLUMN IF NOT EXISTS scopes TEXT`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;
