@@ -101,11 +101,11 @@ export default function TrackDetail({ t, tq, onClose, onRate, live, lang = "fa",
         className="relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto rounded-t-[2rem] sm:rounded-[2rem] border border-[var(--bd)] shadow-2xl">
         <style>{`@keyframes rise{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}} @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
         <div className="relative overflow-hidden rounded-t-[2rem] px-5 pt-16 pb-5">
-          {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="absolute inset-0 w-full h-full object-cover scale-125 blur-2xl opacity-60" /> : <div className="absolute inset-0 bg-[var(--s2)]" />}
+          {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} className="absolute inset-0 w-full h-full object-cover scale-125 blur-2xl opacity-60" /> : <div className="absolute inset-0 bg-[var(--s2)]" />}
           <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, transparent, var(--bg2, #0d0d13))" }} />
           <button onClick={onClose} className="absolute top-3 left-3 w-10 h-10 rounded-full bg-black/45 text-white grid place-items-center" aria-label={T.close}><CloseIcon size={18} /></button>
           <div className="relative flex items-center gap-4">
-            {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" className="w-24 h-24 shrink-0 rounded-2xl object-cover shadow-2xl ring-1 ring-white/10" /> : <div className="w-24 h-24 shrink-0 rounded-2xl bg-[var(--s2)]" />}
+            {t.hasCover ? <img src={`/api/music/cover/${t.id}${q}`} alt="" onError={(e) => { e.currentTarget.style.visibility = "hidden"; }} className="w-24 h-24 shrink-0 rounded-2xl object-cover shadow-2xl ring-1 ring-white/10" /> : <div className="w-24 h-24 shrink-0 rounded-2xl bg-[var(--s2)]" />}
             <div className="min-w-0 flex-1">
               <div className="text-xl font-extrabold leading-tight" style={{ textWrap: "balance" }}>{t.title ?? "—"}</div>
               <SourceChips ids={(t as { sources?: number[] }).sources} />

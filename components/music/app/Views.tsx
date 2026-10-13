@@ -42,12 +42,19 @@ export type Api = {
 };
 export type Desc = { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[]; moods?: Record<string, number>; vocal?: number };
 export type Vibe = { key: string; name: string; trackIds: number[]; bpm: number; energy: number; brightness: number; minorShare: number; genres: string[]; moods?: Record<string, number> };
-export type Page = { kind: "artist" | "album" | "playlist" | "liked" | "recent" | "top" | "vibe"; key: string; title: string };
+export type Page = { kind: "artist" | "album" | "playlist" | "liked" | "recent" | "top" | "vibe" | "offline"; key: string; title: string };
 
 export const artistsOf = (t: Track): string[] => (t.artist ?? "Unknown").split(/,\s*/).filter(Boolean);
 const albumKey = (t: Track) => `${t.album ?? "Single"}|${artistsOf(t)[0] ?? ""}`;
 
 /* ---------- rows ---------- */
+
+/** Spotify's "downloaded" mark: a small green disc with a white arrow. */
+export const DownloadedBadge = ({ size = 14 }: { size?: number }) => (
+  <span role="img" aria-label="Downloaded" title="Downloaded for offline" className="inline-grid place-items-center rounded-full bg-[#1ed760] text-black shrink-0 align-[-2px]" style={{ width: size, height: size }}>
+    <svg viewBox="0 0 24 24" width={size * 0.64} height={size * 0.64} fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 4v14M6 12.5l6 6 6-6" /></svg>
+  </span>
+);
 
 type RowProps = { t: Track; api: Api; ids: number[]; index?: number; picked?: boolean };
 function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
@@ -59,7 +66,7 @@ function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
         <Cover t={t} tq={api.tq} size={52} radius={8} />
         <span className="min-w-0">
           <TitleLine title={t.title ?? "—"} ids={t.sources} className="text-[16px] leading-tight font-medium" />
-          <span className="block text-[13px] text-[var(--dim)] truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span>
+          <span className="flex items-center gap-1.5 text-[13px] text-[var(--dim)] mt-0.5 min-w-0">{api.offline.has(t.id) && <DownloadedBadge />}<span className="truncate">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span></span>
         </span>
       </button>
     );
@@ -74,7 +81,7 @@ function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
         </span>
         <span className="min-w-0">
           <TitleLine title={t.title ?? "—"} ids={t.sources} className={`text-[16px] leading-tight font-medium ${active ? "underline decoration-2 underline-offset-4" : ""}`} />
-          <span className="block text-[13px] text-[var(--dim)] truncate mt-0.5">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span>
+          <span className="flex items-center gap-1.5 text-[13px] text-[var(--dim)] mt-0.5 min-w-0">{api.offline.has(t.id) && <DownloadedBadge />}<span className="truncate">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span></span>
         </span>
       </button>
       {t.rating > 0 && <HeartIcon size={16} filled className="text-rose-500 shrink-0" />}
@@ -87,7 +94,7 @@ function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
 // playing" state changes — not on every progress tick or unrelated update.
 export const TrackRow = memo(TrackRowImpl, (a, b) => {
   const act = a.api.cur === a.t.id;
-  return a.t === b.t && a.picked === b.picked && a.ids === b.ids && a.index === b.index && a.api.tq === b.api.tq && a.api.offlineMode === b.api.offlineMode && a.api.play === b.api.play
+  return a.t === b.t && a.picked === b.picked && a.ids === b.ids && a.index === b.index && a.api.tq === b.api.tq && a.api.offlineMode === b.api.offlineMode && a.api.offline.has(a.t.id) === b.api.offline.has(b.t.id) && a.api.play === b.api.play
     && act === (b.api.cur === b.t.id) && (!act || a.api.playing === b.api.playing);
 });
 
@@ -140,6 +147,7 @@ export type Collections = ReturnType<typeof useCollections>;
 export function HomeView({ api, c }: { api: Api; c: Collections }) {
   const quick = [
     { title: "Liked Songs", sub: `${c.liked.length} ${c.liked.length === 1 ? "song" : "songs"}`, cover: <span className="grid place-items-center w-full h-full bg-gradient-to-br from-rose-500 to-fuchsia-700 text-white"><HeartIcon size={26} filled /></span>, go: () => api.open({ kind: "liked", key: "liked", title: "Liked Songs" }) },
+    ...(api.offline.size > 0 ? [{ title: "Downloaded", sub: `${c.ready.filter((t) => api.offline.has(t.id)).length} songs`, cover: <span className="grid place-items-center w-full h-full bg-gradient-to-br from-[#1ed760] to-emerald-800 text-black"><DownloadIcon size={26} /></span>, go: () => api.open({ kind: "offline", key: "offline", title: "Downloaded" }) }] : []),
     { title: "Smart Mix", sub: "Made for you", cover: <span className="grid place-items-center w-full h-full bg-gradient-to-br from-indigo-500 to-sky-600 text-white"><SparkIcon size={26} /></span>, go: () => api.smartMix(c.ready.map((t) => t.id)) },
     ...c.lists.slice(0, 4).map(({ p, tracks }) => ({ title: p.name, sub: `${tracks.length} songs`, cover: <Mosaic tracks={tracks} tq={api.tq} size="100%" radius={0} />, go: () => api.open({ kind: "playlist", key: String(p.id), title: p.name }) })),
   ];
@@ -299,6 +307,12 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
             <span className="w-14 h-14 rounded-lg shrink-0 grid place-items-center bg-gradient-to-br from-rose-500 to-fuchsia-700 text-white"><HeartIcon size={24} filled /></span>
             <span className="min-w-0 flex-1"><span className="block text-[16px] font-medium">Liked Songs</span><span className="block text-[13px] text-[var(--dim)]">{c.liked.length} songs</span></span>
           </button>
+          {api.offline.size > 0 && (
+            <button onClick={() => api.open({ kind: "offline", key: "offline", title: "Downloaded" })} className="w-full flex items-center gap-3 py-2.5 text-left">
+              <span className="w-14 h-14 rounded-lg shrink-0 grid place-items-center bg-gradient-to-br from-[#1ed760] to-emerald-800 text-black"><DownloadIcon size={24} /></span>
+              <span className="min-w-0 flex-1"><span className="block text-[16px] font-medium">Downloaded</span><span className="block text-[13px] text-[var(--dim)]">{c.ready.filter((t) => api.offline.has(t.id)).length} songs · play without internet</span></span>
+            </button>
+          )}
           {c.lists.map(({ p, tracks }) => (
             <button key={p.id} onClick={() => api.open({ kind: "playlist", key: String(p.id), title: p.name })} className="w-full flex items-center gap-3 py-2.5 text-left">
               <Mosaic tracks={tracks} tq={api.tq} size={56} radius={8} />
@@ -323,10 +337,11 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
       case "playlist": return c.lists.find((l) => String(l.p.id) === page.key)?.tracks ?? [];
       case "liked": return c.liked;
       case "recent": return c.recent;
+      case "offline": return c.ready.filter((t) => api.offline.has(t.id));
       case "top": return c.top;
       case "vibe": return (api.vibes.find((v) => v.key === page.key)?.trackIds ?? []).map((id) => api.byId.get(id)).filter((t): t is Track => !!t);
     }
-  }, [page, c, api.vibes, api.byId]);
+  }, [page, c, api.vibes, api.byId, api.offline]);
   const ids = list.map((t) => t.id);
   const vb = page.kind === "vibe" ? api.vibes.find((v) => v.key === page.key) : null;
     const totalS = list.reduce((n, t) => n + (t.durationS ?? 0), 0);
@@ -345,6 +360,7 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
       <div className="-mx-4 -mt-1 px-4 pt-4 pb-1" style={{ background: "linear-gradient(to bottom, rgba(var(--ac), .38), rgba(var(--ac), .10) 70%, transparent)" }}>
         <div className="mx-auto w-[min(68vw,18rem)] aspect-square overflow-hidden shadow-2xl" style={{ borderRadius: page.kind === "artist" ? "9999px" : "6px" }}>
           {page.kind === "liked" ? <span className="grid place-items-center w-full h-full bg-gradient-to-br from-rose-500 to-fuchsia-700 text-white"><HeartIcon size={72} filled /></span>
+            : page.kind === "offline" ? <span className="grid place-items-center w-full h-full bg-gradient-to-br from-[#1ed760] to-emerald-800 text-black"><DownloadIcon size={84} /></span>
             : page.kind === "playlist" || page.kind === "top" || page.kind === "recent" || page.kind === "vibe" ? <Mosaic tracks={list} tq={api.tq} size="100%" radius={0} />
             : list[0] ? <Cover t={list[0]} tq={api.tq} size="100%" radius={0} /> : null}
         </div>

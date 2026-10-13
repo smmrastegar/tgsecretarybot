@@ -15,7 +15,8 @@ import Spectrum from "@/components/music/Spectrum";
 
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
-import { artistsOf, DetailView, type Desc, type Vibe, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
+import { NetEpochCtx } from "@/components/music/app/shared";
+import { artistsOf, DetailView, DownloadedBadge, type Desc, type Vibe, HomeView, LibraryView, SearchView, useCollections, type Api, type Page } from "@/components/music/app/Views";
 import { AccountPlaylistSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, SpotifyLikeSheet, TrackMenu } from "@/components/music/app/Sheets";
 import { matchesAccounts } from "@/lib/music-scope";
 
@@ -64,6 +65,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   // The server cannot be reached (or we are looking at a cached copy of the library): only downloaded songs can play.
   const [netDown, setNetDown] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [netEpoch, setNetEpoch] = useState(0); // +1 each time the connection comes back: covers retry, a stalled song restarts
+  const wasDown = useRef(false);
   const [tab, setTab] = useState<Tab>("home");
   const [stack, setStack] = useState<Page[]>([]);
   const [queue, setQueue] = useState<number[]>([]);
@@ -215,6 +218,15 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
   }, [load]);
   useEffect(() => { if (!netDown) return; const i = setInterval(() => void load(), 15000); return () => clearInterval(i); }, [netDown, load]);
+  useEffect(() => {
+    if (netDown) { wasDown.current = true; return; }
+    if (!wasDown.current) return;
+    wasDown.current = false;
+    setNetEpoch((n) => n + 1);
+    const a = audio.current; // a song that stalled when the connection dropped: reload it and carry on from where it was
+    if (a && a.src && (a.error || a.networkState === HTMLMediaElement.NETWORK_NO_SOURCE)) { const at = a.currentTime; const was = playing; a.load(); a.currentTime = at; if (was) void a.play().catch(() => {}); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on the connection coming back
+  }, [netDown]);
   const retryNow = useCallback(async () => { setRetrying(true); await load(); setRetrying(false); }, [load]);
   useEffect(() => {
     let tries = 0;
@@ -535,6 +547,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
   return (
     <AccountsCtx.Provider value={accounts}>
+      <NetEpochCtx.Provider value={netEpoch}>
     <div dir="ltr" lang="en" style={{ ["--ac" as string]: accent, ...vars, background: "var(--bg)", color: "var(--fg)", minHeight: "100dvh", fontFamily: 'var(--font-inter), -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif', letterSpacing: "-0.011em", fontOpticalSizing: "auto", WebkitFontSmoothing: "antialiased" }} className="relative overflow-x-hidden">
       <style>{`
         html, body { overscroll-behavior: none; }
@@ -642,7 +655,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {/* full screen player */}
       {now && full && (
         <div className="fixed inset-0 z-50 overflow-y-auto" style={{ background: "var(--bg)", animation: "rise .25s ease-out" }} onTouchStart={(e) => { touch.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }; }} onTouchEnd={(e) => onTouchEnd(e, "sheet")}>
-          {now.hasCover && <img src={cover(now)} alt="" className="fixed inset-0 w-full h-full object-cover blur-3xl scale-125 pointer-events-none" style={{ opacity: "var(--amb)" }} />}
+          {now.hasCover && <img src={cover(now)} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} className="fixed inset-0 w-full h-full object-cover blur-3xl scale-125 pointer-events-none" style={{ opacity: "var(--amb)" }} />}
           <div className="relative max-w-md mx-auto px-6 pt-[max(14px,env(safe-area-inset-top))] pb-[max(16px,env(safe-area-inset-bottom))] h-full min-h-[520px] flex flex-col">
             <div className="flex items-center justify-between h-11 shrink-0">
               <button onClick={() => setFull(false)} className="p-2 -ml-2" aria-label="Minimise"><ChevronDownIcon size={28} /></button>
@@ -662,7 +675,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             <div className="mt-2 flex items-center gap-3 shrink-0">
               <div className="min-w-0 flex-1">
                 <div className="text-[20px] font-bold leading-tight break-words" style={{ textWrap: "balance" }}>{now.title}</div>
-                <button onClick={() => { setFull(false); setStack((s) => [...s, { kind: "artist", key: artistsOf(now)[0]!, title: artistsOf(now)[0]! }]); setTab("library"); }} className="block text-[15px] text-[var(--dim)] max-w-full break-words text-left">{now.artist}</button>
+                <button onClick={() => { setFull(false); setStack((s) => [...s, { kind: "artist", key: artistsOf(now)[0]!, title: artistsOf(now)[0]! }]); setTab("library"); }} className="block text-[15px] text-[var(--dim)] max-w-full break-words text-left">{offline.has(now.id) && <><DownloadedBadge size={16} />{" "}</>}{now.artist}</button>
                 <SourceChips ids={now.sources} />
               </div>
               <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={28} filled={now.rating > 0} /></button>
@@ -731,6 +744,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark chips={chipsFor(detailId)} t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
       {toast && <div className="fixed left-1/2 -translate-x-1/2 z-[80] px-4 py-2 rounded-full text-sm bg-[rgb(var(--ac))] text-[var(--acfg)] shadow-lg" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))", animation: "fade .15s" }} role="status">{toast}</div>}
     </div>
+      </NetEpochCtx.Provider>
     </AccountsCtx.Provider>
   );
 }

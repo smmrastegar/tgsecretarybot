@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element -- private covers from our own API */
 
+import { createContext, useContext, useState } from "react";
 import { TitleLine } from "./SourceMarks";
 import { PlayIcon } from "../Icons";
 
@@ -29,13 +30,29 @@ export const coverUrl = (t: Pick<Track, "id">, tq: string, size?: number | strin
   return `/api/music/cover/${t.id}?${tq}${w ? `&w=${w}` : ""}`;
 };
 
-/** Cover art, or a tinted letter tile when the track has none. */
+/** Bumped whenever the connection comes back, so covers that failed to load try again. */
+export const NetEpochCtx = createContext(0);
+
+/** The music logo: shown instead of a broken picture (offline, server error) so a missing cover still looks intentional. */
+export function CoverFallback({ size, radius, className = "" }: { size: number | string; radius: number; className?: string }) {
+  return (
+    <span role="img" aria-label="No cover" className={`grid place-items-center shrink-0 text-white/55 ${className}`} style={{ width: size, height: size, borderRadius: radius, background: "linear-gradient(135deg, #2a2a38, #14141c)" }}>
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden style={{ width: "46%", height: "46%" }}><path d="M9 18V6l11-2v12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /><circle cx="6.5" cy="18" r="3" /><circle cx="17.5" cy="16" r="3" /></svg>
+    </span>
+  );
+}
+
+/** Cover art, or a tinted letter tile when the track has none; the music logo while the picture cannot load. */
 export function Cover({ t, tq, size, radius = 10, className = "", res }: { t: Pick<Track, "id" | "title" | "hasCover">; tq: string; size: number | string; radius?: number; className?: string; res?: 128 | 320 }) {
   const hue = (t.id * 47) % 360;
   const box = { width: size, height: size, borderRadius: radius };
-  return t.hasCover ? (
-    <img src={coverUrl(t, tq, size, res)} alt="" loading="lazy" decoding="async" className={`object-cover bg-[var(--s2)] shrink-0 ${className}`} style={box} />
-  ) : (
+  const epoch = useContext(NetEpochCtx);
+  const [failed, setFailed] = useState(-1); // the epoch in which the picture failed
+  if (t.hasCover && failed !== epoch) {
+    return <img key={epoch} src={coverUrl(t, tq, size, res)} alt="" loading="lazy" decoding="async" onError={() => setFailed(epoch)} className={`object-cover bg-[var(--s2)] shrink-0 ${className}`} style={box} />;
+  }
+  if (t.hasCover) return <CoverFallback size={size} radius={radius} className={className} />;
+  return (
     <span className={`grid place-items-center shrink-0 font-bold text-white/85 ${className}`} style={{ ...box, background: `linear-gradient(135deg, hsl(${hue} 50% 36%), hsl(${(hue + 40) % 360} 55% 20%))`, fontSize: typeof size === "number" ? size * 0.4 : undefined }}>
       {(t.title ?? "♪").trim().charAt(0).toUpperCase() || "♪"}
     </span>
