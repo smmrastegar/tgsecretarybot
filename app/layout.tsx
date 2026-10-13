@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import ClientErrorHooks from "@/components/ui/ClientErrorHooks";
 
 export const metadata: Metadata = {
   title: "tgsecretarybot",
@@ -16,7 +17,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="fa" dir="rtl">
-      <body>{children}</body>
+      <body><ClientErrorHooks />{children}</body>
     </html>
   );
 }

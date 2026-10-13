@@ -2,7 +2,7 @@
 // and its static assets, falling back to the last cached copy. Audio is
 // cached by the page itself (Cache API "player-audio"), never here.
 // A cached library answer is tagged "x-sw-cache: 1" so the page knows it is looking at an old copy.
-const SHELL = "player-shell-v3";
+const SHELL = "player-shell-v4";
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil((async () => {
   for (const k of await caches.keys()) if (k.startsWith("player-shell-") && k !== SHELL) await caches.delete(k);
@@ -36,17 +36,29 @@ self.addEventListener("fetch", (e) => {
       const h = new Headers(hit.headers); h.set("x-sw-cache", "1");
       return new Response(await hit.blob(), { status: hit.status, headers: h });
     };
-    try {
-      const res = await fetch(req);
-      if (res.ok) cache.put(req, res.clone());
-      // The server answered but is broken (502/503/504…): an old copy beats an error page.
-      else if (res.status >= 500) { const old = await stale(); if (old) return old; }
-      return res;
-    } catch {
-      const old = await stale();
-      if (old) return old;
-      if (nav) return new Response(OFFLINE_PAGE, { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } });
-      return Response.error();
+    // Hashed build files never change: serve the copy we have. A page opened before a deploy keeps working with ITS OWN
+    // files even after the server has replaced them (that mismatch was the "Application error: a client-side exception").
+    if (url.pathname.startsWith("/_next/static/")) {
+      const hit = await cache.match(req);
+      if (hit) return hit;
     }
+    // The server restarts for a few seconds on every deploy: try again a few times before giving up.
+    const tries = self.navigator.onLine === false ? [0] : [0, 700, 1500, 3000];
+    let last = null;
+    for (const wait of tries) {
+      if (wait) await new Promise((r) => setTimeout(r, wait));
+      try {
+        const res = await fetch(req);
+        if (res.ok) { cache.put(req, res.clone()); return res; }
+        if (res.status < 500) { last = res; break; } // a real answer (404 …): no point retrying
+        last = res;
+      } catch { last = null; }
+    }
+    // Still failing: an old copy beats an error page.
+    const old = await stale();
+    if (old) return old;
+    if (last) return last;
+    if (nav) return new Response(OFFLINE_PAGE, { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } });
+    return Response.error();
   })());
 });

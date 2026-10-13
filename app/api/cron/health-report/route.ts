@@ -4,6 +4,7 @@ import { hasDb, sql } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { getBudgetState } from "@/lib/hikerapi-budget";
 import { faNum, sendRichMessage } from "@/lib/telegram-rich";
+import { addRoadmapItem, listRoadmap } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,6 +53,24 @@ async function run(request: Request): Promise<NextResponse> {
      WHERE created_at < NOW() - INTERVAL '10 minutes'`);
   const budget = await getBudgetState(1).catch(() => null);
 
+  // Daily triage of what broke: the same error seen again and again becomes a roadmap item (once), and the top ones are listed below.
+  const top = (await sql()`
+    SELECT source, left(message, 140) AS msg, COUNT(*)::int AS n
+      FROM system_errors
+     WHERE created_at > NOW() - INTERVAL '24 hours' AND level = 'error'
+     GROUP BY source, left(message, 140) ORDER BY n DESC LIMIT 5`.catch(() => [])) as Array<{ source: string; msg: string; n: number }>;
+  const triaged: string[] = [];
+  try {
+    const open = new Set((await listRoadmap({ limit: 500 })).filter((i) => i.status !== "done" && i.status !== "dropped").map((i) => i.title));
+    for (const e of top) {
+      if (e.n < 3) continue;
+      const title = `Fix recurring ${e.source} error: ${e.msg}`.slice(0, 200);
+      if (open.has(title)) continue;
+      await addRoadmapItem({ kind: "fix", title, details: `Seen ${e.n} times in the last 24 hours (System Log, source "${e.source}").`, priority: e.source === "client" ? 1 : 2, source: "auto-triage", createdBy: "health-report" });
+      triaged.push(title);
+    }
+  } catch { /* triage is best effort */ }
+
   const num = (v: unknown): number => (Number.isFinite(Number(v)) ? Number(v) : 0);
   // Rich message: one status table, then a short note list. The
   // classic fallback flattens the table to "k | v" rows.
@@ -74,6 +93,8 @@ async function run(request: Request): Promise<NextResponse> {
       `${faNum(num(matches24.total))} — ارسال‌شده: ${faNum(num(matches24.forwarded))}`,
     ],
   );
+  for (const e of top.slice(0, 3)) rows.push([e.n >= 3 ? "🔴" : "🟡", `${e.source}: ${e.msg.replace(/[<>&]/g, " ").slice(0, 70)}`, `×${faNum(e.n)}`]);
+  if (triaged.length > 0) rows.push(["📝", "به نقشه‌ی راه اضافه شد", faNum(triaged.length)]);
   if (num(stuckAlbums.n) > 0) {
     rows.push(["🔴", "آلبوم‌های گیرکرده در بافر آینه", faNum(num(stuckAlbums.n))]);
   }

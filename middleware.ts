@@ -63,6 +63,7 @@ const PUBLIC_PREFIXES = [
   "/listen",
   "/tg", // Telegram Mini App entry (signs in with Telegram's signed initData)
   "/api/tg",
+  "/api/client-error", // crash reports from any page, signed in or not (small, rate-limited)
   "/player-sw.js",
   "/robots.txt",
   "/api/music",

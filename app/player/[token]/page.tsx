@@ -17,6 +17,7 @@ import Spectrum from "@/components/music/Spectrum";
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { SearchView } from "@/components/music/app/Search";
+import SafeBoundary from "@/components/ui/SafeBoundary";
 import { NetEpochCtx } from "@/components/music/app/shared";
 import { artistsOf, DetailView, DownloadedBadge, type Desc, type Vibe, HomeView, LibraryView, useCollections, type Api, type Page } from "@/components/music/app/Views";
 import { AccountPlaylistSheet, ArtistPickSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, SpotifyLikeSheet, TrackMenu } from "@/components/music/app/Sheets";
@@ -612,11 +613,13 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           </span>
         </header>
 
-        {page ? <MDetail page={page} api={api} c={c} />
-          : tab === "home" ? <MHome api={api} c={c} />
-          : tab === "search" ? <MSearch api={api} c={c} />
-          : tab === "library" ? <MLibrary api={api} c={c} />
-          : <StatsView api={api} />}
+        <SafeBoundary name="view" resetKey={`${tab}:${stack.length}:${page?.key ?? ""}`}>
+          {page ? <MDetail page={page} api={api} c={c} />
+            : tab === "home" ? <MHome api={api} c={c} />
+            : tab === "search" ? <MSearch api={api} c={c} />
+            : tab === "library" ? <MLibrary api={api} c={c} />
+            : <StatsView api={api} />}
+        </SafeBoundary>
       </div>
 
       {/* Repeat-one uses the browser's own gapless loop: seeking an ended element back to 0 by hand produced a pop and sometimes stopped. */}
@@ -673,6 +676,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       </nav>
 
       {/* full screen player */}
+      <SafeBoundary name="now-playing" resetKey={`${now?.id}:${full}`} onClose={() => setFull(false)}>
       {now && full && (
         <div className="fixed inset-0 z-50 overflow-y-auto" style={{ background: "var(--bg)", animation: "rise .25s ease-out" }} onTouchStart={(e) => { touch.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }; }} onTouchEnd={(e) => onTouchEnd(e, "sheet")}>
           {now.hasCover && <img src={cover(now)} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} className="fixed inset-0 w-full h-full object-cover blur-3xl scale-125 pointer-events-none" style={{ opacity: "var(--amb)" }} />}
@@ -734,6 +738,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           </div>
         </div>
       )}
+      </SafeBoundary>
 
       {full && <BackLayer onClose={() => setFull(false)} />}
       {stack.map((_, i) => <BackLayer key={i} onClose={() => setStack((s) => s.slice(0, i))} />)}
@@ -741,6 +746,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {menuT && <BackLayer onClose={() => setMenuT(null)} />}
       {reportT && <BackLayer onClose={() => setReportT(null)} />}
       {detailId != null && <BackLayer onClose={() => setDetailId(null)} />}
+      <SafeBoundary name="sheet" resetKey={`${sheet}:${menuT?.id}:${detailId}:${likeTs?.length}`} onClose={() => { setSheet(null); setMenuT(null); setDetailId(null); setLikeTs(null); }}>
       {sheet === "queue" && <QueueSheet ids={queue} byId={byId} cur={cur} tq={tq} onClose={() => setSheet(null)} onPlay={(id) => { history.current.push(cur ?? id); setCur(id); }} onRemove={(id) => setQueue((q) => q.filter((x) => x !== id))} onMove={moveQ} onClear={() => setQueue((q) => (cur != null ? [cur] : q.slice(0, 0)))} />}
       {sheet === "sleep" && <OptionSheet title="Sleep timer" options={SLEEP} value={sleepMin} onPick={(v) => { setSleepMin(v); if (v === 0) sleepEnd.current = 0; }} onClose={() => setSheet(null)} />}
       {sheet === "speed" && <OptionSheet title="Playback speed" options={SPEEDS} value={speed} onPick={setSpeed} onClose={() => setSheet(null)} />}
@@ -767,6 +773,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}
       {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark chips={chipsFor(detailId)} t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
+      </SafeBoundary>
       {toast && <div className="fixed left-1/2 -translate-x-1/2 z-[80] px-4 py-2 rounded-full text-sm bg-[rgb(var(--ac))] text-[var(--acfg)] shadow-lg" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))", animation: "fade .15s" }} role="status">{toast}</div>}
     </div>
       </NetEpochCtx.Provider>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { reportClient } from "@/lib/client-report";
 
 // A deploy swaps the JS chunk files; a page that was opened just before it
 // asks for chunks that no longer exist and Next shows "Application error: a
@@ -8,6 +9,7 @@ import { useEffect } from "react";
 // automatically (at most once per 30 s, to never loop) and otherwise offer a button.
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   const stale = /ChunkLoadError|Loading chunk|Failed to fetch dynamically imported|Importing a module script failed|error loading dynamically imported/i.test(`${error?.name} ${error?.message}`);
+  useEffect(() => { reportClient("global-error", error); }, [error]);
   useEffect(() => {
     if (!stale) return;
     try {
