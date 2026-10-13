@@ -5,6 +5,7 @@ import { memo, useContext, useMemo, useState } from "react";
 import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
 import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
 import { matchesAccounts } from "@/lib/music-scope";
+import { setByKey } from "./sets";
 
 // Everything the views need from the player engine.
 export type Api = {
@@ -42,7 +43,7 @@ export type Api = {
 };
 export type Desc = { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[]; moods?: Record<string, number>; vocal?: number };
 export type Vibe = { key: string; name: string; trackIds: number[]; bpm: number; energy: number; brightness: number; minorShare: number; genres: string[]; moods?: Record<string, number> };
-export type Page = { kind: "artist" | "album" | "playlist" | "liked" | "recent" | "top" | "vibe" | "offline"; key: string; title: string };
+export type Page = { kind: "artist" | "album" | "playlist" | "liked" | "recent" | "top" | "vibe" | "offline" | "set"; key: string; title: string };
 
 export const artistsOf = (t: Track): string[] => (t.artist ?? "Unknown").split(/,\s*/).filter(Boolean);
 const albumKey = (t: Track) => `${t.album ?? "Single"}|${artistsOf(t)[0] ?? ""}`;
@@ -338,10 +339,11 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
       case "liked": return c.liked;
       case "recent": return c.recent;
       case "offline": return c.ready.filter((t) => api.offline.has(t.id));
+      case "set": { const st = setByKey(page.key); return st ? c.ready.filter((t) => st.test(t, api.desc[t.id])) : []; }
       case "top": return c.top;
       case "vibe": return (api.vibes.find((v) => v.key === page.key)?.trackIds ?? []).map((id) => api.byId.get(id)).filter((t): t is Track => !!t);
     }
-  }, [page, c, api.vibes, api.byId, api.offline]);
+  }, [page, c, api.vibes, api.byId, api.offline, api.desc]);
   const ids = list.map((t) => t.id);
   const vb = page.kind === "vibe" ? api.vibes.find((v) => v.key === page.key) : null;
     const totalS = list.reduce((n, t) => n + (t.durationS ?? 0), 0);
@@ -361,7 +363,7 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
         <div className="mx-auto w-[min(68vw,18rem)] aspect-square overflow-hidden shadow-2xl" style={{ borderRadius: page.kind === "artist" ? "9999px" : "6px" }}>
           {page.kind === "liked" ? <span className="grid place-items-center w-full h-full bg-gradient-to-br from-rose-500 to-fuchsia-700 text-white"><HeartIcon size={72} filled /></span>
             : page.kind === "offline" ? <span className="grid place-items-center w-full h-full bg-gradient-to-br from-[#1ed760] to-emerald-800 text-black"><DownloadIcon size={84} /></span>
-            : page.kind === "playlist" || page.kind === "top" || page.kind === "recent" || page.kind === "vibe" ? <Mosaic tracks={list} tq={api.tq} size="100%" radius={0} />
+            : page.kind === "playlist" || page.kind === "top" || page.kind === "recent" || page.kind === "vibe" || page.kind === "set" ? <Mosaic tracks={list} tq={api.tq} size="100%" radius={0} />
             : list[0] ? <Cover t={list[0]} tq={api.tq} size="100%" radius={0} /> : null}
         </div>
         <h2 className="mt-5 text-[26px] font-extrabold tracking-tight leading-[1.15] break-words" style={{ textWrap: "balance" }}>{page.title}</h2>

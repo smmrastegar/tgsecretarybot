@@ -4,6 +4,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRightIcon, CloseIcon, DownloadIcon, HeartIcon, PlayIcon, SearchIcon } from "../Icons";
 import { Cover, Mosaic, SectionTitle, Shelf, type Track } from "./shared";
 import { TitleLine } from "./SourceMarks";
+import { SONG_SETS } from "./sets";
 import { artistsOf, TrackList, type Api, type Collections } from "./Views";
 
 // Search, Spotify style: a big white search box; with nothing typed, "Browse all" colour tiles (your collections, vibes, genres,
@@ -21,7 +22,7 @@ type Filter = "all" | "songs" | "artists" | "albums" | "playlists";
 function Tile({ tq, title, sub, color, art, onClick, children }: { tq: string; title: string; sub?: string; color: string; art?: Track | Track[]; onClick: () => void; children?: React.ReactNode }) {
   return (
     <button onClick={onClick} className="relative h-[92px] rounded-lg overflow-hidden text-left p-3 active:scale-[.97] transition" style={{ background: color }}>
-      <span className="block text-[17px] font-bold leading-tight text-white pr-14 break-words [text-wrap:balance]">{title}</span>
+      <span className={`block font-bold leading-tight text-white pr-14 break-words [text-wrap:balance] line-clamp-3 ${title.length > 14 ? "text-[15px]" : "text-[17px]"}`}>{title}</span>
       {sub && <span className="block text-[11px] text-white/80 mt-1">{sub}</span>}
       <span className="absolute -right-3 -bottom-2 w-[68px] h-[68px] rotate-[25deg] rounded-md overflow-hidden shadow-[0_6px_16px_rgba(0,0,0,.4)] grid place-items-center bg-black/25 text-white">
         {Array.isArray(art) ? <Mosaic tracks={art} tq={tq} size="100%" radius={0} /> : art ? <Cover t={art} tq={tq} size="100%" radius={0} res={128} /> : children}
@@ -88,10 +89,11 @@ function SearchViewImpl({ api, c }: { api: Api; c: Collections }) {
   const genres = useMemo(() => {
     const n = new Map<string, number>();
     for (const t of c.ready) for (const g of api.desc[t.id]?.genres ?? []) n.set(g, (n.get(g) ?? 0) + 1);
-    return [...n.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+    return [...n.entries()].filter(([g, k]) => g.length <= 16 && k >= 4).sort((a, b) => b[1] - a[1]).slice(0, 12);
   }, [c.ready, api.desc]);
+  // Short, plain names only: moods, tempo and decades that have enough songs (the auto-named "vibes" live on the Home tab).
+  const sets = useMemo(() => SONG_SETS.map((set) => ({ set, list: c.ready.filter((t) => set.test(t, api.desc[t.id])) })).filter((x) => x.list.length >= 4), [c.ready, api.desc]);
   const topArtists = useMemo(() => [...c.artists.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 10), [c.artists]);
-  const byTrack = (id: number) => api.byId.get(id);
 
   const chip = (k: Filter, label: string, n: number) => (n > 0 || k === "all") && (
     <button key={k} onClick={() => setFilter(k)} aria-pressed={filter === k} className={`shrink-0 px-4 py-1.5 rounded-full text-[14px] font-semibold ${filter === k ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>{label}</button>
@@ -138,13 +140,13 @@ function SearchViewImpl({ api, c }: { api: Api; c: Collections }) {
             {c.top.length > 0 && <Tile tq={api.tq} title="Most played" color="#e13300" art={c.top.slice(0, 4)} onClick={() => api.open({ kind: "top", key: "top", title: "Most played" })} />}
             {c.lists.map(({ p, tracks }) => <Tile tq={api.tq} key={`p${p.id}`} title={p.name} sub={`${tracks.length} songs`} color={tileColor(p.name)} art={tracks.slice(0, 4)} onClick={() => api.open({ kind: "playlist", key: String(p.id), title: p.name })} />)}
           </div>
-          {api.vibes.length > 0 && (<>
-            <SectionTitle>Vibes</SectionTitle>
-            <div className="grid grid-cols-2 gap-3">{api.vibes.map((v) => { const list = v.trackIds.map(byTrack).filter((t): t is Track => !!t); return <Tile tq={api.tq} key={v.key} title={v.name} sub={`${list.length} songs`} color={tileColor(v.key)} art={list.slice(0, 4)} onClick={() => api.open({ kind: "vibe", key: v.key, title: v.name })} />; })}</div>
+          {sets.length > 0 && (<>
+            <SectionTitle>Moods &amp; more</SectionTitle>
+            <div className="grid grid-cols-2 gap-3">{sets.map(({ set, list }) => <Tile key={set.key} tq={api.tq} title={set.label} sub={`${list.length} songs`} color={tileColor(set.key)} art={list.slice(0, 4)} onClick={() => api.open({ kind: "set", key: set.key, title: set.label })} />)}</div>
           </>)}
           {genres.length > 0 && (<>
             <SectionTitle>Genres</SectionTitle>
-            <div className="grid grid-cols-2 gap-3">{genres.map(([g, n]) => <Tile tq={api.tq} key={g} title={g} sub={`${n} songs`} color={tileColor(g)} art={c.ready.filter((t) => api.desc[t.id]?.genres.includes(g)).slice(0, 1)[0]} onClick={() => setQ(g)} />)}</div>
+            <div className="grid grid-cols-2 gap-3">{genres.map(([g, n]) => <Tile tq={api.tq} key={g} title={g.charAt(0).toUpperCase() + g.slice(1)} sub={`${n} songs`} color={tileColor(g)} art={c.ready.filter((t) => api.desc[t.id]?.genres.includes(g)).slice(0, 1)[0]} onClick={() => setQ(g)} />)}</div>
           </>)}
           {topArtists.length > 0 && (<>
             <SectionTitle>Your artists</SectionTitle>
