@@ -21,7 +21,7 @@ export async function POST(request: Request): Promise<Response> {
   const acc = accounts.find((a) => a.id === accountId);
   if (!acc || want.length === 0) return NextResponse.json({ error: "songs or account not found" }, { status: 404 });
   const byId = new Map(all.map((t) => [t.id, t]));
-  const tracks = want.filter((id) => (!allowed || allowed.has(id)) && byId.get(id)?.spotifyId).map((id) => byId.get(id)!);
+  const tracks = want.filter((id) => (!allowed || allowed.has(id)) && byId.get(id)?.spotifyId && byId.get(id)?.source !== "manual").map((id) => byId.get(id)!);
   if (tracks.length === 0) return NextResponse.json({ error: "songs not found" }, { status: 404 });
   try {
     for (let i = 0; i < tracks.length; i += 50) await likeOnSpotify(accountId, tracks.slice(i, i + 50).map((t) => t.spotifyId!));
