@@ -241,6 +241,7 @@ function cardText(row: IntakeRow): string {
   else if (c.source === "audd") src += " ✅";
   else if (c.source !== "tags") src += " · صدا قابل مقایسه نبود";
   lines.push(src);
+  if (c.spotifyId) lines.push(`🎧 <a href="https://open.spotify.com/track/${c.spotifyId}">https://open.spotify.com/track/${c.spotifyId}</a>`);
   if (c.source === "library" && (c.audio ?? 0) >= PREVIEW_OK) lines.push("♻️ این فایل از نظر صدا همان آهنگِ موجود در کتابخانه است؛ نام و کاور از همان گرفته شده و فایل تازه به‌عنوان نسخهٔ جدا (Single) اضافه می‌شود.");
   if (c.source === "tags") lines.push("⚠️ در اسپاتیفای/کاتالوگ‌ها چیزی مطمئن پیدا نشد؛ فقط همین نام‌ها از خود فایل است.");
   else if (!c.spotifyId) lines.push("ℹ️ در اسپاتیفای پیدا نشد؛ نام و کاور از " + SRC_LABEL[c.source] + ".");
@@ -255,6 +256,7 @@ async function cardKeyboard(row: IntakeRow): Promise<InlineKeyboard> {
   const c = cands[row.idx % Math.max(1, cands.length)];
   const dup = c?.spotifyId ? await trackBySpotifyId(c.spotifyId) : null;
   const kb = new InlineKeyboard();
+  if (c?.spotifyId) kb.url("🔗 باز کردن در اسپاتیفای (چک دستی)", `https://open.spotify.com/track/${c.spotifyId}`).row();
   if (dup) kb.text("➕ نسخهٔ جدا اضافه کن (از قبل در کتابخانه هست)", `mi:${row.id}:dup`).row();
   else kb.text("✅ تأیید و اضافه کن", `mi:${row.id}:ok`).row();
   if (cands.length > 1) kb.text("➡️ پیشنهاد بعدی", `mi:${row.id}:next`);
