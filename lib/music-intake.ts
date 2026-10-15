@@ -130,7 +130,7 @@ async function findCandidates(row: IntakeRow, file: string, known: Known, querie
   let checked = 0;
   for (const c of cands) {
     if (checked >= 5 || Date.now() - started > 150_000) break;
-    if (c.name < 0.25 && cands.length > 3) continue;
+    if (c.name < 0.4 && cands.length > 3) continue;
     let url = c.previewUrl;
     if (!url && c.spotifyId) url = (await pageMeta(`https://open.spotify.com/track/${c.spotifyId}`).catch(() => null))?.previewUrl || null;
     if (!url) continue;
@@ -144,7 +144,7 @@ async function findCandidates(row: IntakeRow, file: string, known: Known, querie
   void row;
   const knowsSomething = !!(known.title || known.artist);
   // Unrelated search noise (the names do not agree and the audio did not confirm it) is not shown.
-  return cands.filter((c) => (c.audio ?? -1) >= PREVIEW_OK || c.source === "audd" || !knowsSomething || c.name >= 0.2)
+  return cands.filter((c) => (c.audio ?? -1) >= PREVIEW_OK || c.source === "audd" || !knowsSomething || c.name >= 0.4)
     .filter((c) => !(c.audio != null && c.audio < PREVIEW_BAD && c.name < 0.6)).slice(0, 8);
 }
 

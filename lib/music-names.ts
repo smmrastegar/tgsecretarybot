@@ -56,6 +56,8 @@ export function guessFromFileName(fileName: string): NameGuess {
 /** How well a candidate's names agree with what we know about the file (0–1). */
 export function nameScore(cand: { title: string; artist: string }, known: { title?: string | null; artist?: string | null; text?: string }): number {
   const ct = nameWords(cand.title), ca = nameWords(cand.artist);
+  // The title decides (an artist's other songs share the artist but are not this song): 65 % title, 35 % artist.
+  if (known.title && known.artist) return wordOverlap(nameWords(known.title), ct) * 0.65 + wordOverlap(nameWords(known.artist), ca) * 0.35;
   const parts: number[] = [];
   if (known.title) parts.push(wordOverlap(nameWords(known.title), ct));
   if (known.artist) parts.push(wordOverlap(nameWords(known.artist), ca));
