@@ -8,7 +8,7 @@ import { PlayIcon } from "../Icons";
 
 export type Track = {
   id: number; title: string | null; artist: string | null; album: string | null; durationS: number | null;
-  spotifyUrl?: string; hasCover: boolean; status: string; rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
+  spotifyUrl?: string; source?: "spotify" | "manual"; hasCover: boolean; status: string; rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
   releaseDate: string | null; mime: string | null; readyAt: string | null; createdAt: string; listenSeconds: number; sizeBytes: number | null;
   /** ids of the connected Spotify accounts this song came from (owner views only) */
   sources?: number[];

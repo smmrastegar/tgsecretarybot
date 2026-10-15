@@ -1,0 +1,415 @@
+// Songs the owner sends BY HAND to the intake channel (settings.musicIntakeChat): each audio file is analysed, the bot
+// proposes what song it is (Spotify first, confirmed by comparing the audio with the song's 30 s preview; otherwise iTunes /
+// Deezer names and covers), the owner confirms in the bot, the song joins the library as a "Single" (source "manual"), and the
+// channel keeps ONE tidy copy (right name, artist, cover) instead of the original upload.
+import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { Bot, InlineKeyboard, InputFile } from "grammy";
+import type { Context } from "grammy";
+import type { Message } from "grammy/types";
+import { config } from "./config";
+import {
+  claimNextIntake, createManualTrack, getAllSettings, getIntake, insertIntake, isAllowedUser, listBusinessConnections,
+  setSetting, trackBySpotifyId, updateIntake, updateMusicTrack, type IntakeRow,
+} from "./db";
+import { MUSIC_DIR } from "./music";
+import { ffmpegPath } from "./music-analysis";
+import { lookupDeezer, lookupItunes, lookupSpotify, recognizeAudd, type Candidate } from "./music-lookup";
+import { guessFromFileName, nameScore, nameWords, parseTitleArtist } from "./music-names";
+import { PREVIEW_BAD, PREVIEW_OK, previewScore } from "./music-preview";
+import { pageMeta } from "./music-spotsaver";
+import { reportWarn } from "./report";
+import { downloadTelegramFile } from "./stt";
+
+const INTAKE_DIR = path.join(MUSIC_DIR, "intake");
+const MAX_BYTES = 20 * 1024 * 1024; // what a bot may download from Telegram
+const AUDIO_EXT = /\.(mp3|flac|m4a|aac|ogg|opus|wav)$/i;
+const esc = (s: string) => s.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
+const SRC_LABEL: Record<Candidate["source"], string> = { spotify: "Spotify", itunes: "iTunes", deezer: "Deezer", audd: "AudD (شناسایی صدا)", tags: "تگ فایل / نام فایل" };
+
+// ---------------------------------------------------------------- receiving
+
+export async function intakeChatId(): Promise<number | null> {
+  const v = Number(((await getAllSettings()).musicIntakeChat ?? "").trim());
+  return Number.isFinite(v) && v !== 0 ? v : null;
+}
+
+/** A channel post with an audio file in the intake channel → queued for analysis. Returns true when it was one. */
+export async function maybeEnqueueIntake(msg: Message): Promise<boolean> {
+  const chat = await intakeChatId();
+  if (!chat || msg.chat.id !== chat) return false;
+  const a = msg.audio, d = msg.document;
+  const doc = d && ((d.mime_type ?? "").startsWith("audio/") || AUDIO_EXT.test(d.file_name ?? "")) ? d : null;
+  const file = a ?? doc;
+  if (!file) return false;
+  const id = await insertIntake({
+    chatId: msg.chat.id, messageId: msg.message_id, fileId: file.file_id, fileName: file.file_name ?? null, fileSize: file.file_size ?? null,
+    durationS: a?.duration ?? null, tgTitle: a?.title ?? null, tgPerformer: a?.performer ?? null,
+  });
+  if (id) { const { background } = await import("./background"); background("musicIntake", intakeStep(1)); }
+  return true;
+}
+
+// ---------------------------------------------------------------- analysis
+
+type Tags = { title: string | null; artist: string | null; album: string | null; date: string | null; durationS: number | null };
+
+function probe(file: string): Promise<Tags> {
+  return new Promise(async (resolve) => {
+    const child = spawn(await ffmpegPath(), ["-hide_banner", "-i", file, "-f", "ffmetadata", "-"], { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "", err = "";
+    child.stdout.on("data", (b) => { out += b.toString(); });
+    child.stderr.on("data", (b) => { err += b.toString(); });
+    const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
+    const done = () => {
+      clearTimeout(timer);
+      const g = (k: string) => new RegExp(`^${k}=(.*)$`, "im").exec(out)?.[1]?.trim() || null;
+      const dm = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(err);
+      resolve({ title: g("title"), artist: g("artist"), album: g("album"), date: g("date") ?? g("year"), durationS: dm ? Math.round(Number(dm[1]) * 3600 + Number(dm[2]) * 60 + Number(dm[3])) : null });
+    };
+    child.on("close", done); child.on("error", done);
+  });
+}
+
+async function runFfmpeg(args: string[], ms = 120_000): Promise<boolean> {
+  return new Promise(async (resolve) => {
+    const child = spawn(await ffmpegPath(), ["-hide_banner", "-loglevel", "error", "-y", ...args], { stdio: "ignore" });
+    const timer = setTimeout(() => child.kill("SIGKILL"), ms);
+    child.on("close", (c) => { clearTimeout(timer); resolve(c === 0); });
+    child.on("error", () => { clearTimeout(timer); resolve(false); });
+  });
+}
+
+const exists = async (p: string) => fs.stat(p).then((s) => s.size > 0).catch(() => false);
+
+const keyOf = (c: Candidate) => `${nameWords(c.title).join(" ")}|${nameWords(c.artist).slice(0, 2).join(" ")}`;
+const PRIORITY: Record<Candidate["source"], number> = { audd: 0, spotify: 1, itunes: 2, deezer: 3, tags: 9 };
+
+/** Merge look-alikes (same song from several catalogues): the best source keeps the lead, covers and preview are pooled. */
+function merge(list: Candidate[]): Candidate[] {
+  const by = new Map<string, Candidate>();
+  for (const c of list) {
+    const k = c.spotifyId ? `sp:${c.spotifyId}` : keyOf(c);
+    const alt = [...by.entries()].find(([kk, v]) => kk === k || keyOf(v) === keyOf(c));
+    if (!alt) { by.set(k, { ...c, covers: [...c.covers] }); continue; }
+    const cur = alt[1];
+    const better = PRIORITY[c.source] < PRIORITY[cur.source];
+    const lead = better ? { ...c, covers: [...c.covers] } : cur;
+    const other = better ? cur : c;
+    lead.covers = [...new Set([...lead.covers, ...other.covers])];
+    lead.previewUrl = lead.previewUrl ?? other.previewUrl;
+    lead.spotifyId = lead.spotifyId ?? other.spotifyId;
+    lead.album = lead.album ?? other.album; lead.releaseDate = lead.releaseDate ?? other.releaseDate; lead.durationS = lead.durationS ?? other.durationS;
+    lead.name = Math.max(lead.name, other.name);
+    by.set(alt[0], lead);
+  }
+  return [...by.values()];
+}
+
+type Known = { title: string | null; artist: string | null; text: string };
+
+/** Search the catalogues, score names, and confirm by audio where a preview exists. */
+async function findCandidates(row: IntakeRow, file: string, known: Known, queries: string[], opts: { spotify: boolean }): Promise<Candidate[]> {
+  const found: Candidate[] = [];
+  if (opts.spotify) found.push(...(await recognizeAudd(file)));
+  for (const q of queries.slice(0, 3)) {
+    if (opts.spotify) found.push(...(await lookupSpotify(q).catch((e) => { reportWarn("music", "intake: spotify search failed:", e); return []; })));
+  }
+  for (const q of queries.slice(0, 2)) {
+    found.push(...(await lookupItunes(q)), ...(await lookupDeezer(q)));
+  }
+  const cands = merge(found);
+  for (const c of cands) if (c.source !== "audd") c.name = nameScore(c, known);
+  cands.sort((a, b) => b.name - a.name || PRIORITY[a.source] - PRIORITY[b.source]);
+  // Audio check of the most promising ones (a preview that matches the file = it IS that recording).
+  const started = Date.now();
+  let checked = 0;
+  for (const c of cands) {
+    if (checked >= 5 || Date.now() - started > 150_000) break;
+    if (c.name < 0.25 && cands.length > 3) continue;
+    let url = c.previewUrl;
+    if (!url && c.spotifyId) url = (await pageMeta(`https://open.spotify.com/track/${c.spotifyId}`).catch(() => null))?.previewUrl || null;
+    if (!url) continue;
+    c.previewUrl = url;
+    c.audio = await previewScore(file, url).catch(() => null);
+    checked++;
+  }
+  // verified by audio first (best match first), then unchecked, then weak audio; ties by name agreement and source.
+  const rank = (c: Candidate) => ((c.audio ?? -1) >= PREVIEW_OK ? 3 : c.audio == null ? 2 : c.audio >= PREVIEW_BAD ? 1 : 0);
+  cands.sort((a, b) => rank(b) - rank(a) || (rank(a) === 3 ? (b.audio ?? 0) - (a.audio ?? 0) : 0) || b.name - a.name || PRIORITY[a.source] - PRIORITY[b.source]);
+  void row;
+  return cands.filter((c) => !(c.audio != null && c.audio < PREVIEW_BAD && c.name < 0.6)).slice(0, 8);
+}
+
+/** The "I only know what the file says" fallback, always the last choice. */
+function tagsCandidate(known: Known, tags: Tags, hasEmbedded: boolean, durationS: number | null): Candidate | null {
+  const title = known.title ?? known.text;
+  if (!title) return null;
+  return { source: "tags", title, artist: known.artist ?? "Unknown", album: tags.album, releaseDate: tags.date?.slice(0, 10) ?? null, durationS, spotifyId: null, previewUrl: null, covers: hasEmbedded ? ["embedded"] : [], audio: null, name: 0 };
+}
+
+function knownFrom(row: IntakeRow, tags: Tags): Known {
+  const g = guessFromFileName(row.fileName ?? "");
+  const title = tags.title ?? row.tgTitle ?? g.title;
+  const artist = tags.artist ?? row.tgPerformer ?? g.artist;
+  return { title, artist, text: [artist, title].filter(Boolean).join(" ") || (row.fileName ?? "").replace(/\.[a-z0-9]+$/i, "") };
+}
+
+function queriesFor(row: IntakeRow, known: Known): string[] {
+  const g = guessFromFileName(row.fileName ?? "");
+  const q = [
+    known.title && known.artist ? `track:"${known.title}" artist:"${known.artist.split(/[,&]/)[0]!.trim()}"` : null,
+    known.title && known.artist ? `${known.title} ${known.artist}` : null,
+    ...g.queries, known.title, known.text,
+  ].filter((x): x is string => !!x && x.trim().length >= 2);
+  return [...new Set(q)];
+}
+
+async function analyze(row: IntakeRow): Promise<void> {
+  if ((row.fileSize ?? 0) > MAX_BYTES) { await updateIntake(row.id, { status: "failed", error: `فایل ${Math.round((row.fileSize ?? 0) / 1048576)}MB است؛ ربات فقط تا ۲۰MB می‌تواند فایل را از تلگرام بگیرد. نسخهٔ کم‌حجم‌تر (MP3) بفرست.` }); return; }
+  await fs.mkdir(INTAKE_DIR, { recursive: true });
+  const f = await downloadTelegramFile(config.telegramBotToken, row.fileId);
+  const ext = (/\.([a-z0-9]{2,5})$/i.exec(row.fileName ?? f.name)?.[1] ?? "mp3").toLowerCase();
+  const file = path.join(INTAKE_DIR, `${row.id}.${ext}`);
+  await fs.writeFile(file, f.data);
+  const tags = await probe(file);
+  const embedded = path.join(INTAKE_DIR, `${row.id}.embedded.jpg`);
+  const hasEmbedded = await runFfmpeg(["-i", file, "-an", "-frames:v", "1", embedded], 30_000) && (await exists(embedded));
+  const known = knownFrom(row, tags);
+  const cands = await findCandidates(row, file, known, queriesFor(row, known), { spotify: true });
+  const fallback = tagsCandidate(known, tags, hasEmbedded, tags.durationS ?? row.durationS);
+  if (hasEmbedded) for (const c of cands) if (!c.covers.includes("embedded")) c.covers.push("embedded");
+  if (fallback) cands.push(fallback);
+  await updateIntake(row.id, { localPath: file, coverPath: hasEmbedded ? embedded : null, tags, candidates: cands, idx: 0, coverIdx: 0, status: "pending", error: null });
+  await sendCard(row.id);
+}
+
+/** Cron / right after a post: analyse queued files. Never throws. */
+export async function intakeStep(max = 2): Promise<number> {
+  let n = 0;
+  try {
+    for (; n < max; n++) {
+      const row = await claimNextIntake();
+      if (!row) break;
+      try { await analyze(row); }
+      catch (err) {
+        reportWarn("music", `intake ${row.id} failed:`, err);
+        await updateIntake(row.id, { status: "failed", error: String(err instanceof Error ? err.message : err).slice(0, 300) });
+        await sendCard(row.id);
+      }
+    }
+  } catch (err) { reportWarn("music", "intake step failed:", err); }
+  return n;
+}
+
+// ---------------------------------------------------------------- the owner's card
+
+async function ownerChat(): Promise<number | null> {
+  const v = Number((await getAllSettings()).ownerNotifyChatId);
+  if (Number.isFinite(v) && v !== 0) return v;
+  return (await listBusinessConnections().catch(() => []))[0]?.userChatId ?? null;
+}
+
+const getBot = async () => (await import("./bot")).getBot();
+
+function cardText(row: IntakeRow): string {
+  const cands = row.candidates as Candidate[];
+  const c = cands[row.idx % Math.max(1, cands.length)];
+  if (!c) return "";
+  const lines: string[] = [`🎵 <b>آهنگ تازه در «My Music»</b> — تأیید کن`, "", `<b>${esc(c.title)}</b>`, `👤 ${esc(c.artist)}`];
+  const meta = [c.album && c.album !== c.title ? `💿 ${esc(c.album)}` : null, c.releaseDate ? esc(c.releaseDate.slice(0, 4)) : null].filter(Boolean).join(" · ");
+  if (meta) lines.push(meta);
+  let src = `🔗 منبع: ${SRC_LABEL[c.source]}`;
+  if (c.audio != null) src += c.audio >= PREVIEW_OK ? ` ✅ صدا با نمونهٔ ۳۰ثانیه‌ای می‌خواند (${Math.round(c.audio * 100)}٪)` : c.audio >= PREVIEW_BAD ? ` 🟡 شباهت صدا کم است (${Math.round(c.audio * 100)}٪)` : ` ❌ صدا نمی‌خواند (${Math.round(c.audio * 100)}٪)`;
+  else if (c.source === "audd") src += " ✅";
+  else if (c.source !== "tags") src += " · صدا قابل مقایسه نبود";
+  lines.push(src);
+  if (c.source === "tags") lines.push("⚠️ در اسپاتیفای/کاتالوگ‌ها چیزی مطمئن پیدا نشد؛ فقط همین نام‌ها از خود فایل است.");
+  else if (!c.spotifyId) lines.push("ℹ️ در اسپاتیفای پیدا نشد؛ نام و کاور از " + SRC_LABEL[c.source] + ".");
+  const covers = c.covers;
+  lines.push(covers.length ? `🖼 کاور ${(row.coverIdx % covers.length) + 1} از ${covers.length}${covers[row.coverIdx % covers.length] === "embedded" ? " (داخل خود فایل)" : ""}` : "🖼 کاوری پیدا نشد");
+  lines.push(`پیشنهاد ${(row.idx % cands.length) + 1} از ${cands.length}`);
+  return lines.join("\n");
+}
+
+async function cardKeyboard(row: IntakeRow): Promise<InlineKeyboard> {
+  const cands = row.candidates as Candidate[];
+  const c = cands[row.idx % Math.max(1, cands.length)];
+  const dup = c?.spotifyId ? await trackBySpotifyId(c.spotifyId) : null;
+  const kb = new InlineKeyboard();
+  if (dup) kb.text("➕ نسخهٔ جدا اضافه کن (از قبل در کتابخانه هست)", `mi:${row.id}:dup`).row();
+  else kb.text("✅ تأیید و اضافه کن", `mi:${row.id}:ok`).row();
+  if (cands.length > 1) kb.text("➡️ پیشنهاد بعدی", `mi:${row.id}:next`);
+  if ((c?.covers.length ?? 0) > 1) kb.text("🖼 کاور بعدی", `mi:${row.id}:cover`);
+  if (cands.length > 1 || (c?.covers.length ?? 0) > 1) kb.row();
+  kb.text("✏️ ویرایش نام", `mi:${row.id}:edit`).text("🔎 اینها نیست", `mi:${row.id}:indep`).row();
+  kb.text("🗑 رد کن", `mi:${row.id}:rej`);
+  return kb;
+}
+
+async function fetchImage(url: string): Promise<Uint8Array | null> {
+  try { const r = await fetch(url, { signal: AbortSignal.timeout(20_000) }); return r.ok ? new Uint8Array(await r.arrayBuffer()) : null; } catch { return null; }
+}
+
+export async function sendCard(id: number): Promise<void> {
+  const row = await getIntake(id);
+  const chat = await ownerChat();
+  if (!row || !chat) return;
+  const bot = await getBot();
+  if (row.cardChat && row.cardMessageId) await bot.api.deleteMessage(row.cardChat, row.cardMessageId).catch(() => {});
+  let sent: { message_id: number } | null = null;
+  if (row.status === "failed") {
+    sent = await bot.api.sendMessage(chat, `⚠️ آهنگ جدیدِ «${esc(row.fileName ?? "بدون نام")}» در My Music بررسی نشد:\n${esc(row.error ?? "")}`, {
+      parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🔄 دوباره تلاش کن", `mi:${id}:retry`).text("🗑 رد کن", `mi:${id}:rej`),
+    }).catch(() => null);
+  } else {
+    const cands = row.candidates as Candidate[];
+    const c = cands[row.idx % Math.max(1, cands.length)];
+    if (!c) { await bot.api.sendMessage(chat, "برای این فایل هیچ پیشنهادی نساختم.").catch(() => {}); return; }
+    const caption = cardText(row), kb = await cardKeyboard(row);
+    const cover = c.covers.length ? c.covers[row.coverIdx % c.covers.length]! : null;
+    const opts = { caption, parse_mode: "HTML" as const, reply_markup: kb };
+    if (cover === "embedded" && row.coverPath) sent = await bot.api.sendPhoto(chat, new InputFile(row.coverPath), opts).catch(() => null);
+    else if (cover) {
+      sent = await bot.api.sendPhoto(chat, cover, opts).catch(() => null);
+      if (!sent) { const img = await fetchImage(cover); if (img) sent = await bot.api.sendPhoto(chat, new InputFile(img, "cover.jpg"), opts).catch(() => null); }
+    }
+    if (!sent) sent = await bot.api.sendMessage(chat, caption, { parse_mode: "HTML", reply_markup: kb }).catch(() => null);
+  }
+  if (sent) await updateIntake(id, { cardChat: chat, cardMessageId: sent.message_id });
+}
+
+// ---------------------------------------------------------------- confirming
+
+async function tidyFile(src: string, ext: string, cover: string | null, c: Candidate, outBase: string): Promise<string> {
+  const out = `${outBase}.${ext}`;
+  const args = ["-i", src, ...(cover ? ["-i", cover] : []), "-map", "0:a", ...(cover ? ["-map", "1:v"] : []), "-map_metadata", "-1", "-c", "copy",
+    ...(cover ? ["-disposition:v:0", "attached_pic"] : []), "-metadata", `title=${c.title}`, "-metadata", `artist=${c.artist}`, "-metadata", "album=Single",
+    ...(ext === "mp3" ? ["-id3v2_version", "3"] : []), out];
+  return (await runFfmpeg(args)) && (await exists(out)) ? out : src;
+}
+
+async function finalize(row: IntakeRow, bot: Bot, force: boolean): Promise<string> {
+  const cands = row.candidates as Candidate[];
+  const c = cands[row.idx % Math.max(1, cands.length)];
+  if (!c || !row.localPath) throw new Error("nothing to add");
+  const ext = (/\.([a-z0-9]{2,5})$/i.exec(row.localPath)?.[1] ?? "mp3").toLowerCase();
+  const spotifyId = force ? null : c.spotifyId;
+  const mime = ext === "flac" ? "audio/flac" : ext === "ogg" || ext === "opus" ? "audio/ogg" : ext === "m4a" || ext === "aac" ? "audio/mp4" : ext === "wav" ? "audio/wav" : "audio/mpeg";
+  // cover: the chosen picture (downloaded), else the one inside the file
+  const pick = c.covers.length ? c.covers[row.coverIdx % c.covers.length]! : null;
+  let coverFile: string | null = null;
+  if (pick && pick !== "embedded") {
+    const img = await fetchImage(pick);
+    if (img) { coverFile = path.join(INTAKE_DIR, `${row.id}.chosen.jpg`); await fs.writeFile(coverFile, img); }
+  }
+  if (!coverFile && row.coverPath && (await exists(row.coverPath))) coverFile = row.coverPath;
+  const tidy = await tidyFile(row.localPath, ext, coverFile, c, path.join(INTAKE_DIR, `${row.id}.tidy`));
+  const size = (await fs.stat(tidy)).size;
+  const trackId = await createManualTrack({ spotifyId, title: c.title, artist: c.artist, album: "Single", releaseDate: c.releaseDate, durationS: c.durationS ?? row.durationS, filePath: tidy, mime, sizeBytes: size });
+  const finalPath = path.join(MUSIC_DIR, `${trackId}.${ext}`);
+  await fs.copyFile(tidy, finalPath);
+  let coverPath: string | null = null;
+  if (coverFile) { coverPath = path.join(MUSIC_DIR, `${trackId}.cover.jpg`); await fs.copyFile(coverFile, coverPath); }
+  await updateMusicTrack(trackId, { filePath: finalPath, coverPath });
+  // The channel keeps one tidy copy: send it, then remove the original upload.
+  try {
+    let thumb: InputFile | undefined;
+    if (coverFile) {
+      const t = path.join(INTAKE_DIR, `${row.id}.thumb.jpg`);
+      if (await runFfmpeg(["-i", coverFile, "-vf", "scale=320:320:force_original_aspect_ratio=decrease", "-q:v", "5", t], 30_000) && (await exists(t))) thumb = new InputFile(t);
+    }
+    await bot.api.sendAudio(row.chatId, new InputFile(finalPath, `${c.artist} - ${c.title}.${ext}`), { title: c.title, performer: c.artist, duration: c.durationS ?? row.durationS ?? undefined, thumbnail: thumb, caption: `🎵 ${c.title}\n👤 ${c.artist}` });
+    await bot.api.deleteMessage(row.chatId, row.messageId).catch((e) => reportWarn("music", "intake: original not deleted:", e));
+  } catch (err) { reportWarn("music", `intake ${row.id}: channel copy failed (original kept):`, err); }
+  await updateIntake(row.id, { status: "confirmed", trackId });
+  for (const p of [row.localPath, row.coverPath, tidy, coverFile, path.join(INTAKE_DIR, `${row.id}.thumb.jpg`)]) if (p && p !== finalPath) await fs.unlink(p).catch(() => {});
+  return `✅ «${c.title}» — ${c.artist} به کتابخانه اضافه شد (Single${spotifyId ? " · اسپاتیفای" : ""}).`;
+}
+
+// ---------------------------------------------------------------- callbacks / typed edits
+
+export async function handleIntakeCallback(ctx: Context, data: string, bot: Bot): Promise<void> {
+  const from = ctx.from;
+  const m = /^mi:(\d+):(\w+)$/.exec(data);
+  if (!from || !m) { await ctx.answerCallbackQuery().catch(() => {}); return; }
+  if (!(await isAllowedUser(from.id).catch(() => false))) { await ctx.answerCallbackQuery({ text: "فقط صاحب اکانت" }).catch(() => {}); return; }
+  const id = Number(m[1]), act = m[2]!;
+  const row = await getIntake(id);
+  if (!row) { await ctx.answerCallbackQuery({ text: "پیدا نشد" }).catch(() => {}); return; }
+  if (row.status === "confirmed") { await ctx.answerCallbackQuery({ text: "قبلاً اضافه شده" }).catch(() => {}); return; }
+  const n = Math.max(1, (row.candidates as Candidate[]).length);
+  try {
+    if (act === "ok" || act === "dup") {
+      await ctx.answerCallbackQuery({ text: "در حال اضافه کردن…" }).catch(() => {});
+      const msg = await finalize(row, bot, act === "dup");
+      if (row.cardChat && row.cardMessageId) await bot.api.deleteMessage(row.cardChat, row.cardMessageId).catch(() => {});
+      await bot.api.sendMessage(row.cardChat ?? from.id, msg);
+      return;
+    }
+    if (act === "next") { await updateIntake(id, { idx: (row.idx + 1) % n, coverIdx: 0 }); }
+    else if (act === "cover") { await updateIntake(id, { coverIdx: row.coverIdx + 1 }); }
+    else if (act === "rej") {
+      await updateIntake(id, { status: "rejected" });
+      for (const p of [row.localPath, row.coverPath]) if (p) await fs.unlink(p).catch(() => {});
+      if (row.cardChat && row.cardMessageId) await bot.api.deleteMessage(row.cardChat, row.cardMessageId).catch(() => {});
+      await ctx.answerCallbackQuery({ text: "رد شد؛ فایل در کانال دست‌نخورده ماند" }).catch(() => {});
+      return;
+    } else if (act === "retry") {
+      await updateIntake(id, { status: "new", error: null });
+      await ctx.answerCallbackQuery({ text: "دوباره بررسی می‌شود" }).catch(() => {});
+      await intakeStep(1);
+      return;
+    } else if (act === "edit") {
+      await setSetting("musicIntakeEdit", `${id}:${Date.now()}`);
+      await ctx.answerCallbackQuery().catch(() => {});
+      await bot.api.sendMessage(from.id, "✏️ نام درست را به این شکل بفرست:\n«نام آهنگ - خواننده»\nمثلاً: Kooche Tanhaei - Martik");
+      return;
+    } else if (act === "indep") {
+      await ctx.answerCallbackQuery({ text: "در حال جستجوی مستقل…" }).catch(() => {});
+      await rebuild(row, await knownOf(row), false);
+    }
+    await ctx.answerCallbackQuery().catch(() => {});
+    await sendCard(id);
+  } catch (err) {
+    reportWarn("music", `intake callback ${act} failed:`, err);
+    await ctx.answerCallbackQuery({ text: "ناموفق بود؛ لاگ را ببین" }).catch(() => {});
+    await bot.api.sendMessage(from.id, `⚠️ انجام نشد: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`).catch(() => {});
+  }
+}
+
+async function knownOf(row: IntakeRow): Promise<Known> {
+  return knownFrom(row, { title: row.tags?.title ?? null, artist: row.tags?.artist ?? null, album: row.tags?.album ?? null, date: row.tags?.date ?? null, durationS: null });
+}
+
+/** New candidate list for known names (typed by the owner, or "not these": without Spotify). */
+async function rebuild(row: IntakeRow, known: Known, withSpotify: boolean): Promise<void> {
+  if (!row.localPath) throw new Error("file is gone");
+  const queries = known.title && known.artist ? [`${known.title} ${known.artist}`, known.title] : [known.text];
+  const cands = await findCandidates(row, row.localPath, known, queries, { spotify: withSpotify });
+  const have = !!row.coverPath;
+  if (have) for (const c of cands) if (!c.covers.includes("embedded")) c.covers.push("embedded");
+  const fallback = tagsCandidate(known, { title: null, artist: null, album: null, date: null, durationS: null }, have, row.durationS);
+  if (fallback) cands.push(fallback);
+  await updateIntake(row.id, { candidates: cands, idx: 0, coverIdx: 0 });
+}
+
+/** The owner's next private message after "✏️ ویرایش نام" is the corrected name. Returns true when it was consumed. */
+export async function handleIntakeText(m: Message, bot: Bot): Promise<boolean> {
+  if (m.chat.type !== "private" || !m.from || !m.text || m.text.startsWith("/")) return false;
+  const pend = (await getAllSettings()).musicIntakeEdit ?? "";
+  const [idStr, at] = pend.split(":");
+  if (!idStr || Date.now() - Number(at) > 15 * 60_000) return false;
+  if (!(await isAllowedUser(m.from.id).catch(() => false))) return false;
+  const row = await getIntake(Number(idStr));
+  await setSetting("musicIntakeEdit", "");
+  if (!row || row.status === "confirmed") return false;
+  const p = parseTitleArtist(m.text);
+  await bot.api.sendMessage(m.chat.id, "🔎 دارم با این نام می‌گردم…").catch(() => {});
+  try {
+    await rebuild(row, { title: p.title, artist: p.artist, text: [p.artist, p.title].filter(Boolean).join(" ") }, true);
+    await sendCard(row.id);
+  } catch (err) { await bot.api.sendMessage(m.chat.id, `⚠️ جستجو نشد: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`).catch(() => {}); }
+  return true;
+}

@@ -213,6 +213,23 @@ function toMeta(t: RawTrack): SpotifyTrackMeta {
   return { id: t.id, title: t.name, artist: t.artists.map((a) => a.name).join(", "), album: t.album.name, releaseDate: t.album.release_date ?? null, durationS: Math.round(t.duration_ms / 1000), coverUrl: img?.url ?? null };
 }
 
+/** Spotify catalogue search for songs (the page size is tried down because Spotify has cut it for app tokens). */
+export async function searchSpotifyTracks(query: string): Promise<SpotifyTrackMeta[]> {
+  const q = query.trim().slice(0, 200);
+  if (!q) return [];
+  let lastErr: unknown = null;
+  for (const limit of [10, 5, 3]) {
+    try {
+      const j = await catalogGet<{ tracks?: { items?: RawTrack[] } }>(`/search?type=track&limit=${limit}&q=${encodeURIComponent(q)}`);
+      return (j.tracks?.items ?? []).filter(Boolean).map(toMeta);
+    } catch (e) {
+      if (e instanceof SpotifyRateLimited) throw e;
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("spotify search failed");
+}
+
 async function spGet(token: string, url: string): Promise<{ status: number; json: unknown; message: string; retryAfter: number }> {
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   const text = await res.text();

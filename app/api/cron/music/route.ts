@@ -4,6 +4,7 @@ import { getAllSettings, setSetting } from "@/lib/db";
 import { fillMissingMeta, kickMusicQueue, repairLibrary, verifyLibraryLocal } from "@/lib/music";
 import { verifyStep } from "@/lib/music-verify";
 import { analysisStep } from "@/lib/music-analysis";
+import { intakeStep } from "@/lib/music-intake";
 import { spotdlFallbackStep } from "@/lib/music-spotdl";
 import { artistWatchStep } from "@/lib/music-artists";
 import { runSync, SYNC_EVERY_MS } from "@/lib/music-sync";
@@ -87,6 +88,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   // Fallback: one "Track not found" track per tick via spotDL (runs in the
   // background; guarded by its own lock).
   void verifyStep().catch((err) => reportWarn("music", "verify step failed:", err));
+  void intakeStep(1).catch((err) => reportWarn("music", "intake step failed:", err));
   void analysisStep().catch((err) => reportWarn("music", "analysis step failed:", err));
   void spotdlFallbackStep().catch((err) => reportWarn("music", "spotDL fallback failed:", err));
   return NextResponse.json({ ok: true, ...(await kickMusicQueue()), repair, verify, fill, sync });

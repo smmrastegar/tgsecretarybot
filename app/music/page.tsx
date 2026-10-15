@@ -23,7 +23,7 @@ type Track = {
   id: number; spotifyUrl: string; title: string | null; artist: string | null; album: string | null;
   durationS: number | null; hasCover: boolean; status: "queued" | "downloading" | "ready" | "failed";
   error: string | null; sizeBytes: number | null;
-  sources?: number[]; rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
+  sources?: number[]; source?: "spotify" | "manual"; rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
   releaseDate: string | null; mime: string | null; readyAt: string | null; createdAt: string; listenSeconds: number;
 };
 type Playlist = { id: number; name: string; trackIds: number[]; smart?: boolean };
@@ -528,7 +528,7 @@ export default function MusicPage() {
                   <div role="menu" className="absolute end-0 top-full mt-1 z-40 w-60 max-w-[calc(100vw-2rem)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-1.5 text-sm">
                     <MenuItem onClick={() => { setMenuFor(null); setDetailId(t.id); }}>ℹ️ جزئیات</MenuItem>
                     {t.status === "ready" && <MenuItem onClick={() => { setMenuFor(null); rate(t, -1); }}>{t.rating < 0 ? "↩ برداشتن دیسلایک" : "👎 دیسلایک (هرگز پخش نشود)"}</MenuItem>}
-                    {t.status === "ready" && <MenuItem onClick={async () => { setMenuFor(null); if (!confirm(`«${t.title ?? "آهنگ"}» دوباره از SpotSaver گرفته شود؟`)) return; await fetch(`/api/music/${t.id}?via=spotsaver`, { method: "POST" }); setMsg("در صف SpotSaver؛ تا یکی دو دقیقه دیگر جایگزین می‌شود"); void load(); }}>↻ فایل اشتباه است؟ از SpotSaver بگیر</MenuItem>}
+                    {t.status === "ready" && t.source !== "manual" && <MenuItem onClick={async () => { setMenuFor(null); if (!confirm(`«${t.title ?? "آهنگ"}» دوباره از SpotSaver گرفته شود؟`)) return; await fetch(`/api/music/${t.id}?via=spotsaver`, { method: "POST" }); setMsg("در صف SpotSaver؛ تا یکی دو دقیقه دیگر جایگزین می‌شود"); void load(); }}>↻ فایل اشتباه است؟ از SpotSaver بگیر</MenuItem>}
                     {t.status === "failed" && (
                       <label className="block w-full min-h-11 px-3 py-2.5 rounded-xl hover:bg-[var(--color-surface-2)] cursor-pointer">
                         ⬆ آپلود فایل صوتی

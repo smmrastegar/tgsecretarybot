@@ -13,7 +13,7 @@ export async function nextTrackToVerify(): Promise<{ id: number; title: string |
   const r = (await q().query(
     `SELECT t.id, t.title, t.artist, t.file_path, t.spotify_url, COALESCE(t.size_bytes, 0) AS size_bytes, COALESCE(v.fixes, 0) AS fixes
        FROM music_tracks t LEFT JOIN music_verify v ON v.track_id = t.id
-      WHERE t.status = 'ready' AND t.file_path IS NOT NULL
+      WHERE t.status = 'ready' AND t.file_path IS NOT NULL AND t.source <> 'manual'
         AND (v.track_id IS NULL OR v.size_bytes IS DISTINCT FROM t.size_bytes OR v.tags IS NULL OR (v.status = 'error' AND v.checked_at < NOW() - interval '6 hours'))
       ORDER BY (v.track_id IS NOT NULL), t.id LIMIT 1`,
   )) as Row[];

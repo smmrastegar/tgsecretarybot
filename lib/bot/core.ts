@@ -10,6 +10,7 @@ import { createMagicToken } from "../magic";
 import { reportError, reportWarn } from "../report";
 import { randomBytes } from "node:crypto";
 import { handleBusinessEdit, handleBusinessMessage } from "./business";
+import { handleIntakeCallback, handleIntakeText, maybeEnqueueIntake } from "../music-intake";
 import { buildMainMenu, handleAutoSummaryCallback, handleBoardAccessCallback, handleEmailCallback, handleFollowUpCallback, handleInboxReply, handleInstaCallback, handleNoteWatchCallback, handleSmsCallback, handleTranscribeCallback, menuGreeting, MUSIC_MINI_APP_URL } from "./callbacks";
 import { handleChannelPost, handleEmailGroupMessage, handleGroupMessage } from "./group";
 import { handleSecretaryReaction, handleSecretaryReply } from "./relay";
@@ -494,6 +495,12 @@ function buildBot(): Bot {
       await ctx.answerCallbackQuery().catch(() => {});
       return;
     }
+    if (data.startsWith("mi:")) {
+      await handleIntakeCallback(ctx, data, bot).catch((err) =>
+        reportError("bot", "[music-intake] callback failed:", err),
+      );
+      return;
+    }
     if (data.startsWith("as:")) {
       await handleAutoSummaryCallback(ctx, data, bot).catch((err) =>
         reportError("bot", "[as_callback] failed:", err),
@@ -716,6 +723,8 @@ function buildBot(): Bot {
       );
       return;
     }
+    // The owner correcting a song name after "✏️ ویرایش نام" on an intake card.
+    if (await handleIntakeText(m, bot).catch(() => false)) return;
     // Private chats: existing secretary-reply relay (a registered
     // secretary replying to a forwarded message in their DM with the
     // bot). For anything else this no-ops.
@@ -767,6 +776,8 @@ function buildBot(): Bot {
       return false;
     });
     if (routed) return;
+    // Songs sent by hand to the music intake channel are queued for identification (they are still logged below).
+    await maybeEnqueueIntake(m).catch((err) => reportError("bot", "[music-intake] enqueue failed:", err));
     await handleChannelPost(m, bot).catch((err) =>
       reportError("bot", "[channel_post] handler error:", err),
     );

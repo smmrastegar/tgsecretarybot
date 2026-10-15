@@ -487,6 +487,39 @@ export const MIGRATIONS: Migration[] = [
       await q`UPDATE music_playlists SET name = '👥 Shared by 2+ accounts' WHERE name = '👥 مشترک بین حداقل دو حساب'`;
     },
   },
+  {
+    // Songs sent by hand to the intake channel: marked source 'manual' (no re-download, no Spotify repair), plus the intake queue.
+    id: "2026-10-15-001-music-intake",
+    up: async (q) => {
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'spotify'`;
+      await q`
+        CREATE TABLE IF NOT EXISTS music_intake (
+          id              BIGSERIAL PRIMARY KEY,
+          chat_id         BIGINT NOT NULL,
+          message_id      BIGINT NOT NULL,
+          file_id         TEXT NOT NULL,
+          file_name       TEXT,
+          file_size       BIGINT,
+          duration_s      INT,
+          tg_title        TEXT,
+          tg_performer    TEXT,
+          status          TEXT NOT NULL DEFAULT 'new',
+          candidates      JSONB NOT NULL DEFAULT '[]',
+          idx             INT NOT NULL DEFAULT 0,
+          cover_idx       INT NOT NULL DEFAULT 0,
+          local_path      TEXT,
+          cover_path      TEXT,
+          tags            JSONB,
+          card_chat       BIGINT,
+          card_message_id BIGINT,
+          track_id        BIGINT,
+          error           TEXT,
+          created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (chat_id, message_id)
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

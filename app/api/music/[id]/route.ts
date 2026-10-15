@@ -21,6 +21,8 @@ export async function POST(request: Request, ctx: Ctx): Promise<NextResponse> {
   const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const id = Number((await ctx.params).id);
+  // A song the owner sent by hand has no source to download again.
+  if ((await getMusicTrack(id))?.source === "manual") return NextResponse.json({ error: "این آهنگ دستی است؛ دانلود دوباره ندارد" }, { status: 400 });
   // ?via=spotsaver: skip the Telegram bot and fetch a fresh copy through the SpotSaver subscription
   // (the background fallback picks it up within a minute and replaces the file).
   if (new URL(request.url).searchParams.get("via") === "spotsaver") {

@@ -28,11 +28,13 @@ export type MusicTrack = {
   listenSeconds: number;
   /** Spotify's own length of the track, when known */
   spotifyDurationS: number | null;
+  /** "spotify" (downloaded through the bots) or "manual" (a file the owner sent by hand: no re-download, no Spotify repair) */
+  source: "spotify" | "manual";
 };
 
 const COLS = `id, spotify_id, spotify_url, title, artist, album, release_date, duration_s,
   (cover_path IS NOT NULL) AS has_cover, status, error, size_bytes, created_at::text AS created_at,
-  rating, play_count, skip_count, last_played_at::text AS last_played_at, mime, ready_at::text AS ready_at, spotify_duration_s,
+  rating, play_count, skip_count, last_played_at::text AS last_played_at, mime, ready_at::text AS ready_at, spotify_duration_s, source,
   (SELECT COALESCE(SUM(seconds), 0)::int FROM music_events e WHERE e.track_id = music_tracks.id) AS listen_s`;
 
 function map(r: Row): MusicTrack {
@@ -59,6 +61,7 @@ function map(r: Row): MusicTrack {
     readyAt: strOrNull(r, "ready_at"),
     listenSeconds: num(r, "listen_s"),
     spotifyDurationS: numOrNull(r, "spotify_duration_s"),
+    source: str(r, "source") === "manual" ? "manual" : "spotify",
   };
 }
 
@@ -465,7 +468,7 @@ export type MetaRow = { id: number; spotifyId: string; status: string; durationS
 
 export async function listTracksForMeta(): Promise<MetaRow[]> {
   await ensureSchema();
-  const rows = (await q().query(`SELECT id, spotify_id, status, duration_s, spotify_duration_s, size_bytes, file_path, cover_path FROM music_tracks WHERE spotify_id IS NOT NULL ORDER BY id`)) as Row[];
+  const rows = (await q().query(`SELECT id, spotify_id, status, duration_s, spotify_duration_s, size_bytes, file_path, cover_path FROM music_tracks WHERE spotify_id IS NOT NULL AND source <> 'manual' ORDER BY id`)) as Row[];
   return rows.map((r) => ({ id: num(r, "id"), spotifyId: str(r, "spotify_id"), status: str(r, "status"), durationS: numOrNull(r, "duration_s"), spotifyDurationS: numOrNull(r, "spotify_duration_s"), sizeBytes: numOrNull(r, "size_bytes"), filePath: strOrNull(r, "file_path"), coverPath: strOrNull(r, "cover_path") }));
 }
 
@@ -562,4 +565,25 @@ export async function getLinkStats(linkId: number, trackIds: number[] | null): P
     days: days.map((r) => ({ day: str(r, "day"), minutes: Math.round(num(r, "sec") / 60), plays: num(r, "plays") })),
     recent: recent.map((r) => ({ id: num(r, "id"), title: strOrNull(r, "title"), artist: strOrNull(r, "artist"), at: str(r, "at"), seconds: num(r, "seconds"), completed: r.completed === true || r.completed === "t" })),
   };
+}
+
+/** A song the owner sent by hand: already downloaded, so it is inserted ready (source 'manual'). */
+export async function createManualTrack(t: {
+  spotifyId: string | null; title: string; artist: string; album: string | null; releaseDate: string | null; durationS: number | null;
+  filePath: string; mime: string; sizeBytes: number;
+}): Promise<number> {
+  await ensureSchema();
+  const url = t.spotifyId ? `https://open.spotify.com/track/${t.spotifyId}` : "";
+  const r = (await q().query(
+    `INSERT INTO music_tracks (spotify_id, spotify_url, title, artist, album, release_date, duration_s, file_path, mime, size_bytes, status, created_at, ready_at, source)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ready', NOW(), NOW(), 'manual') RETURNING id`,
+    [t.spotifyId, url, t.title, t.artist, t.album, t.releaseDate, t.durationS, t.filePath, t.mime, t.sizeBytes],
+  )) as Row[];
+  return num(r[0]!, "id");
+}
+
+export async function trackBySpotifyId(spotifyId: string): Promise<{ id: number; title: string | null } | null> {
+  await ensureSchema();
+  const r = (await q().query(`SELECT id, title FROM music_tracks WHERE spotify_id = $1`, [spotifyId])) as Row[];
+  return r[0] ? { id: num(r[0], "id"), title: strOrNull(r[0], "title") } : null;
 }

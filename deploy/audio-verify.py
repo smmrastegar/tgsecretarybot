@@ -7,6 +7,7 @@ prints one JSON line: {"ok":true,"score":0.93,"offset":57.2}
 Both files are turned into log-mel spectrogram frames; the 30 s preview is slid over the
 whole file with an FFT cross-correlation and the best cosine similarity is reported.
 The same recording scores ≳0.8; a different song stays far below 0.5.
+A file shorter than the preview (a fragment) is slid over the preview instead.
 """
 import json, subprocess, sys
 import numpy as np
@@ -69,8 +70,10 @@ if __name__ == "__main__":
     try:
         ff = sys.argv[3] if len(sys.argv) > 3 else "ffmpeg"
         full, prev = decode(sys.argv[1], ff), decode(sys.argv[2], ff)
-        if full.size < SR * 20 or prev.size < SR * 10: raise RuntimeError("audio too short or undecodable")
-        s, off = best_match(frames(full), frames(prev))
+        if full.size < SR * 8 or prev.size < SR * 10: raise RuntimeError("audio too short or undecodable")
+        ff_, fp_ = frames(full), frames(prev)
+        # A clip shorter than the preview (a fragment of the song): slide the clip over the preview instead.
+        s, off = best_match(ff_, fp_) if ff_.shape[0] >= fp_.shape[0] else best_match(fp_, ff_)
         print(json.dumps({"ok": True, "score": round(s, 3), "offset": round(off, 1)}))
     except Exception as e:  # noqa: BLE001
         print(json.dumps({"ok": False, "error": str(e)[:200]}))
