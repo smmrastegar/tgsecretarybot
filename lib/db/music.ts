@@ -587,3 +587,10 @@ export async function trackBySpotifyId(spotifyId: string): Promise<{ id: number;
   const r = (await q().query(`SELECT id, title FROM music_tracks WHERE spotify_id = $1`, [spotifyId])) as Row[];
   return r[0] ? { id: num(r[0], "id"), title: strOrNull(r[0], "title") } : null;
 }
+
+/** Every ready song with its file, for matching a hand-sent file against what the library already has. */
+export async function listTracksForLookup(): Promise<Array<{ id: number; title: string; artist: string; album: string | null; spotifyId: string | null; durationS: number | null; releaseDate: string | null; filePath: string; coverPath: string | null }>> {
+  await ensureSchema();
+  const rows = (await q().query(`SELECT id, title, artist, album, spotify_id, duration_s, release_date, file_path, cover_path FROM music_tracks WHERE status = 'ready' AND file_path IS NOT NULL AND title IS NOT NULL`)) as Row[];
+  return rows.map((r) => ({ id: num(r, "id"), title: str(r, "title"), artist: str(r, "artist"), album: strOrNull(r, "album"), spotifyId: strOrNull(r, "spotify_id"), durationS: numOrNull(r, "duration_s"), releaseDate: strOrNull(r, "release_date"), filePath: str(r, "file_path"), coverPath: strOrNull(r, "cover_path") }));
+}

@@ -31,3 +31,9 @@ export async function previewScore(file: string, previewUrl: string): Promise<nu
     return v.ok && v.score != null ? v.score : null;
   } finally { await fs.unlink(tmp).catch(() => {}); }
 }
+
+/** Similarity (0–1) of two audio files (a hand-sent file against a song already in the library); null when it cannot be judged. */
+export async function fileScore(file: string, other: string): Promise<number | null> {
+  const v = await run(file, other);
+  return v.ok && v.score != null ? v.score : null;
+}

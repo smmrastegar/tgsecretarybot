@@ -15,9 +15,9 @@ import {
 } from "./db";
 import { MUSIC_DIR } from "./music";
 import { ffmpegPath } from "./music-analysis";
-import { lookupDeezer, lookupItunes, lookupSpotify, recognizeAudd, type Candidate } from "./music-lookup";
+import { lookupDeezer, lookupItunes, lookupLibrary, lookupSpotify, recognizeAudd, type Candidate } from "./music-lookup";
 import { guessFromFileName, nameScore, nameWords, parseTitleArtist } from "./music-names";
-import { PREVIEW_BAD, PREVIEW_OK, previewScore } from "./music-preview";
+import { fileScore, PREVIEW_BAD, PREVIEW_OK, previewScore } from "./music-preview";
 import { pageMeta } from "./music-spotsaver";
 import { reportWarn } from "./report";
 import { downloadTelegramFile } from "./stt";
@@ -26,7 +26,7 @@ const INTAKE_DIR = path.join(MUSIC_DIR, "intake");
 const MAX_BYTES = 20 * 1024 * 1024; // what a bot may download from Telegram
 const AUDIO_EXT = /\.(mp3|flac|m4a|aac|ogg|opus|wav)$/i;
 const esc = (s: string) => s.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
-const SRC_LABEL: Record<Candidate["source"], string> = { spotify: "Spotify", itunes: "iTunes", deezer: "Deezer", audd: "AudD (شناسایی صدا)", tags: "تگ فایل / نام فایل" };
+const SRC_LABEL: Record<Candidate["source"], string> = { library: "کتابخانهٔ خودمان", spotify: "Spotify", itunes: "iTunes", deezer: "Deezer", audd: "AudD (شناسایی صدا)", tags: "تگ فایل / نام فایل" };
 
 // ---------------------------------------------------------------- receiving
 
@@ -84,7 +84,7 @@ async function runFfmpeg(args: string[], ms = 120_000): Promise<boolean> {
 const exists = async (p: string) => fs.stat(p).then((s) => s.size > 0).catch(() => false);
 
 const keyOf = (c: Candidate) => `${nameWords(c.title).join(" ")}|${nameWords(c.artist).slice(0, 2).join(" ")}`;
-const PRIORITY: Record<Candidate["source"], number> = { audd: 0, spotify: 1, itunes: 2, deezer: 3, tags: 9 };
+const PRIORITY: Record<Candidate["source"], number> = { audd: 0, library: 0.5, spotify: 1, itunes: 2, deezer: 3, tags: 9 };
 
 /** Merge look-alikes (same song from several catalogues): the best source keeps the lead, covers and preview are pooled. */
 function merge(list: Candidate[]): Candidate[] {
@@ -107,13 +107,15 @@ function merge(list: Candidate[]): Candidate[] {
   return [...by.values()];
 }
 
-type Known = { title: string | null; artist: string | null; text: string };
+type Known = { title: string | null; artist: string | null; text: string; album?: string | null };
 
 /** Search the catalogues, score names, and confirm by audio where a preview exists. */
 async function findCandidates(row: IntakeRow, file: string, known: Known, queries: string[], opts: { spotify: boolean }, trace: string[] = []): Promise<Candidate[]> {
   const found: Candidate[] = [];
   const note = (src: string, q: string, r: Candidate[], err?: unknown) => trace.push(`${src} «${q}» → ${err ? `error ${String(err instanceof Error ? err.message : err).slice(0, 80)}` : `${r.length}: ${r.slice(0, 3).map((x) => `${x.title}—${x.artist}`).join(" | ")}`}`);
   if (opts.spotify) { const a = await recognizeAudd(file); note("audd", "(file)", a); found.push(...a); }
+  // Our own library first: the same song is often already here (imported from an account) with the right names, album and cover.
+  const lib = await lookupLibrary(known); note("library", known.text, lib); found.push(...lib);
   for (const q of queries.slice(0, 4)) {
     if (!opts.spotify) break;
     try { const r = await lookupSpotify(q); note("spotify", q, r); found.push(...r); } catch (e) { note("spotify", q, [], e); reportWarn("music", "intake: spotify search failed:", e); }
@@ -123,7 +125,7 @@ async function findCandidates(row: IntakeRow, file: string, known: Known, querie
     note("itunes", q, i); note("deezer", q, d); found.push(...i, ...d);
   }
   const cands = merge(found);
-  for (const c of cands) if (c.source !== "audd") c.name = nameScore(c, known);
+  for (const c of cands) if (c.source !== "audd" && c.source !== "library") c.name = nameScore(c, known);
   cands.sort((a, b) => b.name - a.name || PRIORITY[a.source] - PRIORITY[b.source]);
   // Audio check of the most promising ones (a preview that matches the file = it IS that recording).
   const started = Date.now();
@@ -131,6 +133,7 @@ async function findCandidates(row: IntakeRow, file: string, known: Known, querie
   for (const c of cands) {
     if (checked >= 5 || Date.now() - started > 150_000) break;
     if (c.name < 0.4 && cands.length > 3) continue;
+    if (c.localPath) { c.audio = await fileScore(file, c.localPath).catch(() => null); checked++; continue; } // our own copy: compare the whole audio
     let url = c.previewUrl;
     if (!url && c.spotifyId) url = (await pageMeta(`https://open.spotify.com/track/${c.spotifyId}`).catch(() => null))?.previewUrl || null;
     if (!url) continue;
@@ -159,7 +162,7 @@ function knownFrom(row: IntakeRow, tags: Tags): Known {
   const g = guessFromFileName(row.fileName ?? "");
   const title = tags.title ?? row.tgTitle ?? g.title;
   const artist = tags.artist ?? row.tgPerformer ?? g.artist;
-  return { title, artist, text: [artist, title].filter(Boolean).join(" ") || (row.fileName ?? "").replace(/\.[a-z0-9]+$/i, "") };
+  return { title, artist, album: tags.album, text: [artist, title].filter(Boolean).join(" ") || (row.fileName ?? "").replace(/\.[a-z0-9]+$/i, "") };
 }
 
 function queriesFor(row: IntakeRow, known: Known): string[] {
@@ -233,11 +236,12 @@ function cardText(row: IntakeRow): string {
   const lines: string[] = [`🎵 <b>آهنگ تازه در «My Music»</b> — تأیید کن`, "", `<b>${esc(c.title)}</b>`, `👤 ${esc(c.artist)}`];
   const meta = [c.album && c.album !== c.title ? `💿 ${esc(c.album)}` : null, c.releaseDate ? esc(c.releaseDate.slice(0, 4)) : null].filter(Boolean).join(" · ");
   if (meta) lines.push(meta);
-  let src = `🔗 منبع: ${SRC_LABEL[c.source]}`;
+  let src = `🔗 منبع: ${SRC_LABEL[c.source]}${c.libraryId ? ` (آهنگ #${c.libraryId})` : ""}`;
   if (c.audio != null) src += c.audio >= PREVIEW_OK ? ` ✅ صدا با نمونهٔ ۳۰ثانیه‌ای می‌خواند (${Math.round(c.audio * 100)}٪)` : c.audio >= PREVIEW_BAD ? ` 🟡 شباهت صدا کم است (${Math.round(c.audio * 100)}٪)` : ` ❌ صدا نمی‌خواند (${Math.round(c.audio * 100)}٪)`;
   else if (c.source === "audd") src += " ✅";
   else if (c.source !== "tags") src += " · صدا قابل مقایسه نبود";
   lines.push(src);
+  if (c.source === "library" && (c.audio ?? 0) >= PREVIEW_OK) lines.push("♻️ این فایل از نظر صدا همان آهنگِ موجود در کتابخانه است؛ نام و کاور از همان گرفته شده و فایل تازه به‌عنوان نسخهٔ جدا (Single) اضافه می‌شود.");
   if (c.source === "tags") lines.push("⚠️ در اسپاتیفای/کاتالوگ‌ها چیزی مطمئن پیدا نشد؛ فقط همین نام‌ها از خود فایل است.");
   else if (!c.spotifyId) lines.push("ℹ️ در اسپاتیفای پیدا نشد؛ نام و کاور از " + SRC_LABEL[c.source] + ".");
   const covers = c.covers;
@@ -284,6 +288,7 @@ export async function sendCard(id: number): Promise<void> {
     const cover = c.covers.length ? c.covers[row.coverIdx % c.covers.length]! : null;
     const opts = { caption, parse_mode: "HTML" as const, reply_markup: kb };
     if (cover === "embedded" && row.coverPath) sent = await bot.api.sendPhoto(chat, new InputFile(row.coverPath), opts).catch(() => null);
+    else if (cover?.startsWith("file:")) sent = await bot.api.sendPhoto(chat, new InputFile(cover.slice(5)), opts).catch(() => null);
     else if (cover) {
       sent = await bot.api.sendPhoto(chat, cover, opts).catch(() => null);
       if (!sent) { const img = await fetchImage(cover); if (img) sent = await bot.api.sendPhoto(chat, new InputFile(img, "cover.jpg"), opts).catch(() => null); }
@@ -313,7 +318,10 @@ async function finalize(row: IntakeRow, bot: Bot, force: boolean): Promise<strin
   // cover: the chosen picture (downloaded), else the one inside the file
   const pick = c.covers.length ? c.covers[row.coverIdx % c.covers.length]! : null;
   let coverFile: string | null = null;
-  if (pick && pick !== "embedded") {
+  if (pick?.startsWith("file:")) {
+    coverFile = path.join(INTAKE_DIR, `${row.id}.chosen.jpg`);
+    await fs.copyFile(pick.slice(5), coverFile).catch(() => { coverFile = null; });
+  } else if (pick && pick !== "embedded") {
     const img = await fetchImage(pick);
     if (img) { coverFile = path.join(INTAKE_DIR, `${row.id}.chosen.jpg`); await fs.writeFile(coverFile, img); }
   }

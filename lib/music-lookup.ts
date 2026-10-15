@@ -2,11 +2,12 @@
 // of songs Spotify does not have, and — when a token is configured — AudD's audio recognition, which can name a song from a
 // short fragment of it.
 import { promises as fs } from "node:fs";
-import { getAllSettings } from "./db";
+import { getAllSettings, listTracksForLookup } from "./db";
+import { nameScore, nameWords, wordOverlap } from "./music-names";
 import { searchSpotifyTracks } from "./spotify";
 
 export type Candidate = {
-  source: "spotify" | "itunes" | "deezer" | "audd" | "tags";
+  source: "library" | "spotify" | "itunes" | "deezer" | "audd" | "tags";
   title: string;
   artist: string;
   album: string | null;
@@ -20,6 +21,9 @@ export type Candidate = {
   audio: number | null;
   /** 0–1 agreement of the names with what the file / its name says */
   name: number;
+  /** library source only: the song's file here (the audio is compared with it) and its id */
+  localPath?: string | null;
+  libraryId?: number | null;
 };
 
 const UA = "Mozilla/5.0 (compatible; tgsecretarybot-music/1.0)";
@@ -76,4 +80,19 @@ export async function recognizeAudd(file: string): Promise<Candidate[]> {
     return [{ source: "audd", title: x.title, artist: x.artist, album: x.album ?? null, releaseDate: x.release_date ?? null, durationS: x.spotify?.duration_ms ? Math.round(x.spotify.duration_ms / 1000) : null,
       spotifyId: x.spotify?.id ?? null, previewUrl: x.apple_music?.previews?.[0]?.url ?? x.deezer?.preview ?? null, covers, audio: null, name: 1 }];
   } catch { return []; }
+}
+
+/** Songs the library already has that look like this file (names agree). The match is then confirmed against OUR copy of the audio. */
+export async function lookupLibrary(known: { title: string | null; artist: string | null; text: string; album?: string | null }): Promise<Candidate[]> {
+  const out: Array<{ c: Candidate; s: number }> = [];
+  for (const t of await listTracksForLookup().catch(() => [])) {
+    let s = nameScore(t, known);
+    if (known.album && t.album && s >= 0.3 && wordOverlap(nameWords(known.album), nameWords(t.album)) >= 0.7) s = Math.min(1, s + 0.2);
+    if (s < 0.5) continue;
+    out.push({ s, c: {
+      source: "library", title: t.title, artist: t.artist, album: t.album, releaseDate: t.releaseDate, durationS: t.durationS, spotifyId: t.spotifyId, previewUrl: null,
+      covers: t.coverPath ? [`file:${t.coverPath}`] : [], audio: null, name: s, localPath: t.filePath, libraryId: t.id,
+    } });
+  }
+  return out.sort((a, b) => b.s - a.s).slice(0, 3).map((x) => x.c);
 }
