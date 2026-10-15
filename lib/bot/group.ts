@@ -98,7 +98,9 @@ export async function handleChannelPost(msg: Message, bot: Bot): Promise<void> {
 
 export async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> {
   if (msg.chat.type !== "group" && msg.chat.type !== "supergroup") return;
-  if (msg.from?.is_bot) return;
+  // Another bot's message (Telegram delivers these only when Bot-to-Bot Communication is on in @BotFather and this bot is an admin
+  // with Group Privacy off). No AI, no alerts, no replies: it is logged and offered to the message rules, so a rule can forward it.
+  if (msg.from?.is_bot) { await handleBotGroupMessage(msg, bot); return; }
   // Forum topic harvest. Telegram delivers forum_topic_created on the
   // very first message of a new topic and forum_topic_edited when the
   // operator renames one. Both arrive as regular messages with the
@@ -161,6 +163,27 @@ export async function handleGroupMessage(msg: Message, bot: Bot): Promise<void> 
     }
   }
   await handleAnyChatPost(msg, bot);
+}
+
+async function handleBotGroupMessage(msg: Message, bot: Bot): Promise<void> {
+  if (!hasDb()) return;
+  if (msg.from?.id === bot.botInfo?.id) return;
+  const text = describeMessage(msg);
+  if (!text || !text.trim()) return;
+  if (await isChatIgnored(msg.chat.id).catch(() => false)) return;
+  const chatTitle = "title" in msg.chat && typeof msg.chat.title === "string" ? msg.chat.title : null;
+  const senderName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ").trim() || msg.from?.username || "bot";
+  const logId = await logMessage({
+    businessConnectionId: null, ownerUserId: null, chatId: msg.chat.id, chatType: msg.chat.type, chatTitle,
+    senderId: msg.from?.id ?? null, senderUsername: msg.from?.username ?? null, senderName, messageId: msg.message_id,
+    messageText: text, importance: 0, urgent: false, concernsOwner: false, reason: "bot message (logged, rules only)",
+    alerted: false, autoReplied: false, fromOwner: false, messageThreadId: msg.message_thread_id ?? null,
+  }).catch((err) => { reportWarn("bot", "[group-bot] log failed:", err); return 0; });
+  if (!logId) return;
+  await maybeApplyMessageRules({
+    logId, chatId: msg.chat.id, chatTitle, messageThreadId: msg.message_thread_id ?? null, senderName,
+    messageText: text, businessConnectionId: null, fromOwner: false, bot,
+  }).catch((err) => reportWarn("bot", "[group-bot] rules failed:", err));
 }
 
 async function handleAnyChatPost(msg: Message, bot: Bot): Promise<void> {
