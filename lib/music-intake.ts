@@ -375,7 +375,10 @@ export async function handleIntakeCallback(ctx: Context, data: string, bot: Bot)
       await updateIntake(id, { status: "rejected" });
       for (const p of [row.localPath, row.coverPath]) if (p) await fs.unlink(p).catch(() => {});
       if (row.cardChat && row.cardMessageId) await bot.api.deleteMessage(row.cardChat, row.cardMessageId).catch(() => {});
-      await ctx.answerCallbackQuery({ text: "رد شد؛ فایل در کانال دست‌نخورده ماند" }).catch(() => {});
+      // Rejected = not needed: it goes from the channel too.
+      const gone = await bot.api.deleteMessage(row.chatId, row.messageId).then(() => true).catch((e) => { reportWarn("music", `intake ${id}: rejected file not deleted from the channel:`, e); return false; });
+      await ctx.answerCallbackQuery({ text: gone ? "رد شد و از کانال پاک شد" : "رد شد (از کانال پاک نشد)" }).catch(() => {});
+      await bot.api.sendMessage(from.id, gone ? `🗑 «${row.fileName ?? "فایل"}» رد شد و از کانال My Music پاک شد؛ نیازی به آن نداریم.` : `🗑 «${row.fileName ?? "فایل"}» رد شد، ولی ربات اجازهٔ پاک‌کردن پیام در کانال را ندارد؛ «Delete messages» را برای ربات در ادمین‌های کانال روشن کن یا دستی پاکش کن.`).catch(() => {});
       return;
     } else if (act === "retry") {
       await updateIntake(id, { status: "new", error: null });
