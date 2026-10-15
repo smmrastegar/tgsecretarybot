@@ -188,7 +188,12 @@ async function analyze(row: IntakeRow): Promise<void> {
   const cands = await findCandidates(row, file, known, queriesFor(row, known), { spotify: true }, trace);
   const fallback = tagsCandidate(known, tags, hasEmbedded, tags.durationS ?? row.durationS);
   if (hasEmbedded) for (const c of cands) if (!c.covers.includes("embedded")) c.covers.push("embedded");
-  if (fallback) cands.push(fallback);
+  if (fallback) {
+    // A file whose own tags name BOTH the title and the artist already says what it is: those names lead, unless a catalogue entry
+    // is clearly the same song (names agree, or the audio matched its preview) — then that richer entry stays first.
+    const strong = cands[0] && ((cands[0].audio ?? -1) >= PREVIEW_OK || cands[0].source === "audd" || cands[0].name >= 0.85);
+    if (tags.title && tags.artist && !strong) cands.unshift(fallback); else cands.push(fallback);
+  }
   await updateIntake(row.id, { localPath: file, coverPath: hasEmbedded ? embedded : null, tags: { ...tags, debug: trace }, candidates: cands, idx: 0, coverIdx: 0, status: "pending", error: null });
   await sendCard(row.id);
 }
