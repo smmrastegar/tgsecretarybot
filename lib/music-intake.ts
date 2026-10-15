@@ -110,14 +110,17 @@ function merge(list: Candidate[]): Candidate[] {
 type Known = { title: string | null; artist: string | null; text: string };
 
 /** Search the catalogues, score names, and confirm by audio where a preview exists. */
-async function findCandidates(row: IntakeRow, file: string, known: Known, queries: string[], opts: { spotify: boolean }): Promise<Candidate[]> {
+async function findCandidates(row: IntakeRow, file: string, known: Known, queries: string[], opts: { spotify: boolean }, trace: string[] = []): Promise<Candidate[]> {
   const found: Candidate[] = [];
-  if (opts.spotify) found.push(...(await recognizeAudd(file)));
+  const note = (src: string, q: string, r: Candidate[], err?: unknown) => trace.push(`${src} «${q}» → ${err ? `error ${String(err instanceof Error ? err.message : err).slice(0, 80)}` : `${r.length}: ${r.slice(0, 3).map((x) => `${x.title}—${x.artist}`).join(" | ")}`}`);
+  if (opts.spotify) { const a = await recognizeAudd(file); note("audd", "(file)", a); found.push(...a); }
   for (const q of queries.slice(0, 3)) {
-    if (opts.spotify) found.push(...(await lookupSpotify(q).catch((e) => { reportWarn("music", "intake: spotify search failed:", e); return []; })));
+    if (!opts.spotify) break;
+    try { const r = await lookupSpotify(q); note("spotify", q, r); found.push(...r); } catch (e) { note("spotify", q, [], e); reportWarn("music", "intake: spotify search failed:", e); }
   }
   for (const q of queries.slice(0, 2)) {
-    found.push(...(await lookupItunes(q)), ...(await lookupDeezer(q)));
+    const [i, d] = [await lookupItunes(q), await lookupDeezer(q)];
+    note("itunes", q, i); note("deezer", q, d); found.push(...i, ...d);
   }
   const cands = merge(found);
   for (const c of cands) if (c.source !== "audd") c.name = nameScore(c, known);
@@ -139,7 +142,10 @@ async function findCandidates(row: IntakeRow, file: string, known: Known, querie
   const rank = (c: Candidate) => ((c.audio ?? -1) >= PREVIEW_OK ? 3 : c.audio == null ? 2 : c.audio >= PREVIEW_BAD ? 1 : 0);
   cands.sort((a, b) => rank(b) - rank(a) || (rank(a) === 3 ? (b.audio ?? 0) - (a.audio ?? 0) : 0) || b.name - a.name || PRIORITY[a.source] - PRIORITY[b.source]);
   void row;
-  return cands.filter((c) => !(c.audio != null && c.audio < PREVIEW_BAD && c.name < 0.6)).slice(0, 8);
+  const knowsSomething = !!(known.title || known.artist);
+  // Unrelated search noise (the names do not agree and the audio did not confirm it) is not shown.
+  return cands.filter((c) => (c.audio ?? -1) >= PREVIEW_OK || c.source === "audd" || !knowsSomething || c.name >= 0.2)
+    .filter((c) => !(c.audio != null && c.audio < PREVIEW_BAD && c.name < 0.6)).slice(0, 8);
 }
 
 /** The "I only know what the file says" fallback, always the last choice. */
@@ -177,11 +183,12 @@ async function analyze(row: IntakeRow): Promise<void> {
   const embedded = path.join(INTAKE_DIR, `${row.id}.embedded.jpg`);
   const hasEmbedded = await runFfmpeg(["-i", file, "-an", "-frames:v", "1", embedded], 30_000) && (await exists(embedded));
   const known = knownFrom(row, tags);
-  const cands = await findCandidates(row, file, known, queriesFor(row, known), { spotify: true });
+  const trace: string[] = [];
+  const cands = await findCandidates(row, file, known, queriesFor(row, known), { spotify: true }, trace);
   const fallback = tagsCandidate(known, tags, hasEmbedded, tags.durationS ?? row.durationS);
   if (hasEmbedded) for (const c of cands) if (!c.covers.includes("embedded")) c.covers.push("embedded");
   if (fallback) cands.push(fallback);
-  await updateIntake(row.id, { localPath: file, coverPath: hasEmbedded ? embedded : null, tags, candidates: cands, idx: 0, coverIdx: 0, status: "pending", error: null });
+  await updateIntake(row.id, { localPath: file, coverPath: hasEmbedded ? embedded : null, tags: { ...tags, debug: trace }, candidates: cands, idx: 0, coverIdx: 0, status: "pending", error: null });
   await sendCard(row.id);
 }
 
