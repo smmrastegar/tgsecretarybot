@@ -114,7 +114,7 @@ async function findCandidates(row: IntakeRow, file: string, known: Known, querie
   const found: Candidate[] = [];
   const note = (src: string, q: string, r: Candidate[], err?: unknown) => trace.push(`${src} «${q}» → ${err ? `error ${String(err instanceof Error ? err.message : err).slice(0, 80)}` : `${r.length}: ${r.slice(0, 3).map((x) => `${x.title}—${x.artist}`).join(" | ")}`}`);
   if (opts.spotify) { const a = await recognizeAudd(file); note("audd", "(file)", a); found.push(...a); }
-  for (const q of queries.slice(0, 3)) {
+  for (const q of queries.slice(0, 4)) {
     if (!opts.spotify) break;
     try { const r = await lookupSpotify(q); note("spotify", q, r); found.push(...r); } catch (e) { note("spotify", q, [], e); reportWarn("music", "intake: spotify search failed:", e); }
   }
@@ -167,6 +167,7 @@ function queriesFor(row: IntakeRow, known: Known): string[] {
   const q = [
     known.title && known.artist ? `track:"${known.title}" artist:"${known.artist.split(/[,&]/)[0]!.trim()}"` : null,
     known.title && known.artist ? `${known.title} ${known.artist}` : null,
+    known.artist ? `artist:"${known.artist.split(/[,&]/)[0]!.trim()}"` : null, // the artist's own songs: a differently spelled title is still found
     ...g.queries, known.title, known.text,
   ].filter((x): x is string => !!x && x.trim().length >= 2);
   return [...new Set(q)];

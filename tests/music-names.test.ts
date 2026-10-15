@@ -28,6 +28,13 @@ describe("nameScore", () => {
   });
 });
 
+describe("fuzzy spelling", () => {
+  it("accepts transliteration variants but not unrelated words", () => {
+    expect(nameScore({ title: "Mibinamet", artist: "Balzan" }, { title: "Mibinamat", artist: "Balzan" })).toBeGreaterThan(0.85);
+    expect(nameScore({ title: "Minimale", artist: "Roshan Sani" }, { title: "Mibinamat", artist: "Balzan" })).toBeLessThan(0.3);
+  });
+});
+
 describe("parseTitleArtist", () => {
   it("reads 'Title - Artist'", () => {
     expect(parseTitleArtist("Kooche Tanhaei - Martik")).toEqual({ title: "Kooche Tanhaei", artist: "Martik" });

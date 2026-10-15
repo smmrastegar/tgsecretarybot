@@ -8,11 +8,29 @@ export function nameWords(v: string): string[] {
     .split(/[^\p{L}\p{N}]+/u).filter((x) => x.length >= 2);
 }
 
-/** share (0–1) of the words in `want` that also appear (or are contained) in `have` */
+/** similarity (0–1) of two words by edit distance — transliterated names are spelled differently ("mibinamat" / "mibinamet") */
+export function wordSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  const n = Math.max(a.length, b.length);
+  if (n < 4 || Math.abs(a.length - b.length) > 2) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return 1 - prev[b.length]! / n;
+}
+
+/** share (0–1) of the words in `want` that also appear in `have` — exactly, contained in a longer word, or spelled almost the same (counts 0.85) */
 export function wordOverlap(want: string[], have: string[]): number {
   if (!want.length) return 0;
   const set = new Set(have);
-  const hit = want.filter((w) => set.has(w) || have.some((h) => h.length > 3 && w.length > 3 && (h.includes(w) || w.includes(h)))).length;
+  let hit = 0;
+  for (const w of want) {
+    if (set.has(w) || have.some((h) => h.length > 3 && w.length > 3 && (h.includes(w) || w.includes(h)))) hit += 1;
+    else if (have.some((h) => wordSimilarity(w, h) >= 0.78)) hit += 0.85;
+  }
   return hit / want.length;
 }
 
