@@ -11,6 +11,8 @@ export type IntakeRow = {
   tgTitle: string | null; tgPerformer: string | null; status: IntakeStatus; candidates: unknown[]; idx: number; coverIdx: number;
   localPath: string | null; coverPath: string | null; tags: { title?: string | null; artist?: string | null; album?: string | null; date?: string | null } | null;
   cardChat: number | null; cardMessageId: number | null; trackId: number | null; error: string | null;
+  /** "audio" (a song file) or "voice" (a short clip to identify) */
+  kind: "audio" | "voice";
 };
 
 const map = (r: Row): IntakeRow => ({
@@ -18,15 +20,15 @@ const map = (r: Row): IntakeRow => ({
   fileSize: numOrNull(r, "file_size"), durationS: numOrNull(r, "duration_s"), tgTitle: strOrNull(r, "tg_title"), tgPerformer: strOrNull(r, "tg_performer"),
   status: str(r, "status") as IntakeStatus, candidates: Array.isArray(r.candidates) ? (r.candidates as unknown[]) : [], idx: num(r, "idx"), coverIdx: num(r, "cover_idx"),
   localPath: strOrNull(r, "local_path"), coverPath: strOrNull(r, "cover_path"), tags: (r.tags as IntakeRow["tags"]) ?? null,
-  cardChat: numOrNull(r, "card_chat"), cardMessageId: numOrNull(r, "card_message_id"), trackId: numOrNull(r, "track_id"), error: strOrNull(r, "error"),
+  cardChat: numOrNull(r, "card_chat"), cardMessageId: numOrNull(r, "card_message_id"), trackId: numOrNull(r, "track_id"), error: strOrNull(r, "error"), kind: str(r, "kind") === "voice" ? "voice" : "audio",
 });
 
-export async function insertIntake(a: { chatId: number; messageId: number; fileId: string; fileName: string | null; fileSize: number | null; durationS: number | null; tgTitle: string | null; tgPerformer: string | null }): Promise<number | null> {
+export async function insertIntake(a: { chatId: number; messageId: number; fileId: string; fileName: string | null; fileSize: number | null; durationS: number | null; tgTitle: string | null; tgPerformer: string | null; kind?: "audio" | "voice" }): Promise<number | null> {
   await ensureSchema();
   const r = (await q().query(
-    `INSERT INTO music_intake (chat_id, message_id, file_id, file_name, file_size, duration_s, tg_title, tg_performer)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (chat_id, message_id) DO NOTHING RETURNING id`,
-    [a.chatId, a.messageId, a.fileId, a.fileName, a.fileSize, a.durationS, a.tgTitle, a.tgPerformer],
+    `INSERT INTO music_intake (chat_id, message_id, file_id, file_name, file_size, duration_s, tg_title, tg_performer, kind)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (chat_id, message_id) DO NOTHING RETURNING id`,
+    [a.chatId, a.messageId, a.fileId, a.fileName, a.fileSize, a.durationS, a.tgTitle, a.tgPerformer, a.kind ?? "audio"],
   )) as Row[];
   return r[0] ? num(r[0], "id") : null;
 }

@@ -70,7 +70,7 @@ if __name__ == "__main__":
     try:
         ff = sys.argv[3] if len(sys.argv) > 3 else "ffmpeg"
         full, prev = decode(sys.argv[1], ff), decode(sys.argv[2], ff)
-        if full.size < SR * 8 or prev.size < SR * 10: raise RuntimeError("audio too short or undecodable")
+        if full.size < SR * 5 or prev.size < SR * 10: raise RuntimeError("audio too short or undecodable")
         ff_, fp_ = frames(full), frames(prev)
         # A clip shorter than the preview (a fragment of the song): slide the clip over the preview instead.
         s, off = best_match(ff_, fp_) if ff_.shape[0] >= fp_.shape[0] else best_match(fp_, ff_)

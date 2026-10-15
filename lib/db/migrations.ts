@@ -520,6 +520,13 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // A short voice clip in the intake channel is a question ("which song is this?"), not a song to keep.
+    id: "2026-10-15-002-intake-kind",
+    up: async (q) => {
+      await q`ALTER TABLE music_intake ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'audio'`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

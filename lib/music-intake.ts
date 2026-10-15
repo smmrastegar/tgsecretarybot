@@ -40,6 +40,13 @@ export async function maybeEnqueueIntake(msg: Message): Promise<boolean> {
   const chat = await intakeChatId();
   if (!chat || msg.chat.id !== chat) return false;
   const a = msg.audio, d = msg.document;
+  // A voice message is a short clip to identify ("which song is this?"), not a song to keep.
+  if (msg.voice) {
+    const v = msg.voice;
+    const vid = await insertIntake({ chatId: msg.chat.id, messageId: msg.message_id, fileId: v.file_id, fileName: null, fileSize: v.file_size ?? null, durationS: v.duration ?? null, tgTitle: null, tgPerformer: null, kind: "voice" });
+    if (vid) { const { background } = await import("./background"); background("musicIntake", intakeStep(1)); }
+    return true;
+  }
   const doc = d && ((d.mime_type ?? "").startsWith("audio/") || AUDIO_EXT.test(d.file_name ?? "")) ? d : null;
   const file = a ?? doc;
   if (!file) return false;
@@ -176,6 +183,22 @@ function queriesFor(row: IntakeRow, known: Known): string[] {
   return [...new Set(q)];
 }
 
+/** A voice clip: identified by audio recognition only (it carries no names). Needs settings.auddToken for clips shorter than the previews. */
+async function analyzeVoice(row: IntakeRow, file: string): Promise<void> {
+  const clip = path.join(INTAKE_DIR, `${row.id}.clip.mp3`);
+  const ok = await runFfmpeg(["-i", file, "-t", "30", "-ac", "1", "-ar", "44100", clip], 60_000) && (await exists(clip));
+  const hasToken = !!((await getAllSettings()).auddToken ?? "").trim();
+  const cands = hasToken ? await recognizeAudd(ok ? clip : file) : [];
+  const trace = [`audd ${hasToken ? "→ " + cands.length : "(no token configured)"}`];
+  // confirm Spotify ones against the 30 s preview (the clip slides over it)
+  for (const c of cands) {
+    const url = c.previewUrl || (c.spotifyId ? (await pageMeta(`https://open.spotify.com/track/${c.spotifyId}`).catch(() => null))?.previewUrl : null);
+    if (url) { c.previewUrl = url; c.audio = await previewScore(ok ? clip : file, url).catch(() => null); }
+  }
+  await updateIntake(row.id, { localPath: file, tags: { debug: trace, voice: true }, candidates: cands, idx: 0, coverIdx: 0, status: "pending", error: null });
+  await sendCard(row.id);
+}
+
 async function analyze(row: IntakeRow): Promise<void> {
   if ((row.fileSize ?? 0) > MAX_BYTES) { await updateIntake(row.id, { status: "failed", error: `فایل ${Math.round((row.fileSize ?? 0) / 1048576)}MB است؛ ربات فقط تا ۲۰MB می‌تواند فایل را از تلگرام بگیرد. نسخهٔ کم‌حجم‌تر (MP3) بفرست.` }); return; }
   await fs.mkdir(INTAKE_DIR, { recursive: true });
@@ -183,6 +206,7 @@ async function analyze(row: IntakeRow): Promise<void> {
   const ext = (/\.([a-z0-9]{2,5})$/i.exec(row.fileName ?? f.name)?.[1] ?? "mp3").toLowerCase();
   const file = path.join(INTAKE_DIR, `${row.id}.${ext}`);
   await fs.writeFile(file, f.data);
+  if (row.kind === "voice") { await analyzeVoice(row, file); return; }
   const tags = await probe(file);
   const embedded = path.join(INTAKE_DIR, `${row.id}.embedded.jpg`);
   const hasEmbedded = await runFfmpeg(["-i", file, "-an", "-frames:v", "1", embedded], 30_000) && (await exists(embedded));
@@ -233,7 +257,7 @@ function cardText(row: IntakeRow): string {
   const cands = row.candidates as Candidate[];
   const c = cands[row.idx % Math.max(1, cands.length)];
   if (!c) return "";
-  const lines: string[] = [`🎵 <b>آهنگ تازه در «My Music»</b> — تأیید کن`, "", `<b>${esc(c.title)}</b>`, `👤 ${esc(c.artist)}`];
+  const lines: string[] = [row.kind === "voice" ? `🎙 <b>ویس کانال «My Music» شناسایی شد</b> — درست است؟` : `🎵 <b>آهنگ تازه در «My Music»</b> — تأیید کن`, "", `<b>${esc(c.title)}</b>`, `👤 ${esc(c.artist)}`];
   const meta = [c.album && c.album !== c.title ? `💿 ${esc(c.album)}` : null, c.releaseDate ? esc(c.releaseDate.slice(0, 4)) : null].filter(Boolean).join(" · ");
   if (meta) lines.push(meta);
   let src = `🔗 منبع: ${SRC_LABEL[c.source]}${c.libraryId ? ` (آهنگ #${c.libraryId})` : ""}`;
@@ -257,8 +281,9 @@ async function cardKeyboard(row: IntakeRow): Promise<InlineKeyboard> {
   const dup = c?.spotifyId ? await trackBySpotifyId(c.spotifyId) : null;
   const kb = new InlineKeyboard();
   if (c?.spotifyId) kb.url("🔗 باز کردن در اسپاتیفای (چک دستی)", `https://open.spotify.com/track/${c.spotifyId}`).row();
-  if (dup) kb.text("➕ نسخهٔ جدا اضافه کن (از قبل در کتابخانه هست)", `mi:${row.id}:dup`).row();
-  else kb.text("✅ تأیید و اضافه کن", `mi:${row.id}:ok`).row();
+  if (dup && row.kind === "voice") kb.text("ℹ️ از قبل در کتابخانه هست؛ ویس را پاک کن", `mi:${row.id}:ok`).row();
+  else if (dup) kb.text("➕ نسخهٔ جدا اضافه کن (از قبل در کتابخانه هست)", `mi:${row.id}:dup`).row();
+  else kb.text(row.kind === "voice" ? "✅ درست است؛ آهنگ کامل را اضافه کن" : "✅ تأیید و اضافه کن", `mi:${row.id}:ok`).row();
   if (cands.length > 1) kb.text("➡️ پیشنهاد بعدی", `mi:${row.id}:next`);
   if ((c?.covers.length ?? 0) > 1) kb.text("🖼 کاور بعدی", `mi:${row.id}:cover`);
   if (cands.length > 1 || (c?.covers.length ?? 0) > 1) kb.row();
@@ -285,7 +310,16 @@ export async function sendCard(id: number): Promise<void> {
   } else {
     const cands = row.candidates as Candidate[];
     const c = cands[row.idx % Math.max(1, cands.length)];
-    if (!c) { await bot.api.sendMessage(chat, "برای این فایل هیچ پیشنهادی نساختم.").catch(() => {}); return; }
+    if (!c) {
+      const voice = row.kind === "voice";
+      const hasToken = !!((await getAllSettings()).auddToken ?? "").trim();
+      const why = voice
+        ? (hasToken ? "این تکه‌صدا شناسایی نشد." : "برای شناسایی یک تکهٔ کوتاه به سرویس شناسایی صدا (AudD) نیاز است و توکنش هنوز در تنظیمات نیست.") + "\nاگر نام آهنگ را می‌دانی، «ویرایش نام» را بزن."
+        : "برای این فایل هیچ پیشنهادی نساختم.";
+      sent = await bot.api.sendMessage(chat, `🎙 ${voice ? "ویس کانال My Music" : "فایل کانال My Music"}: ${why}`, { reply_markup: new InlineKeyboard().text("✏️ ویرایش نام", `mi:${id}:edit`).text("🗑 رد کن", `mi:${id}:rej`) }).catch(() => null);
+      if (sent) await updateIntake(id, { cardChat: chat, cardMessageId: sent.message_id });
+      return;
+    }
     const caption = cardText(row), kb = await cardKeyboard(row);
     const cover = c.covers.length ? c.covers[row.coverIdx % c.covers.length]! : null;
     const opts = { caption, parse_mode: "HTML" as const, reply_markup: kb };
@@ -310,7 +344,23 @@ async function tidyFile(src: string, ext: string, cover: string | null, c: Candi
   return (await runFfmpeg(args)) && (await exists(out)) ? out : src;
 }
 
+/** A voice clip was identified: the SONG (not the clip) is queued for download through the normal Spotify route. */
+async function finalizeVoice(row: IntakeRow, bot: Bot): Promise<string> {
+  const cands = row.candidates as Candidate[];
+  const c = cands[row.idx % Math.max(1, cands.length)];
+  if (!c?.spotifyId) throw new Error("این پیشنهاد شناسهٔ اسپاتیفای ندارد؛ فقط آهنگ‌های اسپاتیفای از روی ویس اضافه می‌شوند");
+  const { addMusicTrack } = await import("./db");
+  const r = await addMusicTrack(c.spotifyId, `https://open.spotify.com/track/${c.spotifyId}`);
+  const { kickMusicQueue } = await import("./music");
+  if (r.created) await kickMusicQueue().catch(() => {});
+  await updateIntake(row.id, { status: "confirmed", trackId: r.track?.id ?? null });
+  await bot.api.deleteMessage(row.chatId, row.messageId).catch(() => {});
+  if (row.localPath) await fs.unlink(row.localPath).catch(() => {});
+  return r.removed ? "این آهنگ قبلاً از کتابخانه حذف شده بود و دوباره اضافه نشد." : r.created ? `✅ «${c.title}» — ${c.artist} به صف دانلود اضافه شد؛ ویس از کانال پاک شد.` : `ℹ️ «${c.title}» از قبل در کتابخانه هست؛ ویس از کانال پاک شد.`;
+}
+
 async function finalize(row: IntakeRow, bot: Bot, force: boolean): Promise<string> {
+  if (row.kind === "voice") return finalizeVoice(row, bot);
   const cands = row.candidates as Candidate[];
   const c = cands[row.idx % Math.max(1, cands.length)];
   if (!c || !row.localPath) throw new Error("nothing to add");
@@ -416,7 +466,8 @@ async function rebuild(row: IntakeRow, known: Known, withSpotify: boolean): Prom
   const cands = await findCandidates(row, row.localPath, known, queries, { spotify: withSpotify });
   const have = !!row.coverPath;
   if (have) for (const c of cands) if (!c.covers.includes("embedded")) c.covers.push("embedded");
-  const fallback = tagsCandidate(known, { title: null, artist: null, album: null, date: null, durationS: null }, have, row.durationS);
+  // a voice clip is only ever a question: its answer must be a real song, never "just these names"
+  const fallback = row.kind === "voice" ? null : tagsCandidate(known, { title: null, artist: null, album: null, date: null, durationS: null }, have, row.durationS);
   if (fallback) cands.push(fallback);
   await updateIntake(row.id, { candidates: cands, idx: 0, coverIdx: 0 });
 }
