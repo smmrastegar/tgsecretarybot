@@ -188,7 +188,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     return () => { live = false; clearInterval(i); document.removeEventListener("visibilitychange", vis); };
   }, []);
   // Reload into the new version as soon as nothing is playing.
-  useEffect(() => { if (updateReady && !playing) window.location.reload(); }, [updateReady, playing]);
+  // A song is loaded (even paused for a moment by a phone call or another app's sound): never reload under it — that ended playback and reset the player.
+  // Only when nothing is loaded does the new version load itself; otherwise the banner below offers it.
+  useEffect(() => { if (updateReady && cur == null) window.location.reload(); }, [updateReady, cur]);
   const dismissInstall = () => { setBannerOn(false); try { localStorage.setItem("player.installDismissed", "1"); } catch {} };
   const doInstall = async () => { await installEvt?.prompt(); setInstallEvt(null); };
   // Only offer lyrics when the track has some (the server caches lookups).
@@ -335,14 +337,16 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const i = queue.indexOf(cur); let n = i + dir;
     if (n >= queue.length) { if (repeat === "all" || !auto) n = 0; else { setPlaying(false); return; } }
     if (n < 0) n = queue.length - 1;
-    if (netDown) { // offline: skip what is not saved on this phone
+    if (navigator.onLine === false) { // truly offline (the phone says so): skip what is not saved on this phone — a slow or failed library refresh must NOT stop the music
       let guard = queue.length;
       while (guard-- > 0 && !offline.has(queue[n]!)) { n += dir; if (n >= queue.length) n = 0; if (n < 0) n = queue.length - 1; }
       if (!offline.has(queue[n]!)) { setPlaying(false); flash("No connection — the rest is not downloaded"); return; }
     }
+    // The next song IS this one (a queue of one with "repeat all"): setting the same id would change nothing and the music would just end.
+    if (queue[n] === cur) { if (a) { a.currentTime = 0; void a.play().catch(() => {}); } return; }
     if (dir === 1) history.current.push(cur);
     setCur(queue[n]!);
-  }, [cur, queue, repeat, netDown, offline]);
+  }, [cur, queue, repeat, offline]);
 
   // A song that cannot load (no connection, file gone): say so and move on, instead of sitting silent. Gives up after 3 in a row.
   const audioFails = useRef(0);
@@ -353,6 +357,25 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     flash(offline.has(cur) ? "This song's saved copy could not be read" : "Can't load this song right now");
     setTimeout(() => step(1, true), 700);
   }, [cur, offline, step]);
+
+  // Safety net for songs that never reach "ended" (a file whose real length is shorter than its header says, a stalled stream): if the clock has not moved
+  // while we are supposed to be playing, finish the song (near its end) or kick the stream, and move on if it is still stuck.
+  const stuck = useRef({ at: 0, t: -1, kicks: 0 });
+  useEffect(() => {
+    const i = setInterval(() => {
+      const a = audio.current; if (!a || !playing || a.paused || a.seeking || cur == null) { stuck.current = { at: Date.now(), t: -1, kicks: 0 }; return; }
+      const s = stuck.current;
+      if (Math.abs(a.currentTime - s.t) > 0.2) { stuck.current = { at: Date.now(), t: a.currentTime, kicks: 0 }; return; }
+      const idle = Date.now() - s.at;
+      const near = Number.isFinite(a.duration) && a.duration - a.currentTime < 6;
+      if (near && idle > 2500) { stuck.current = { at: Date.now(), t: a.currentTime, kicks: 0 }; tracker.flush(true); step(1, true); return; }
+      if (idle > 10_000 && !near) {
+        if (s.kicks < 1) { const at = a.currentTime; stuck.current = { at: Date.now(), t: at, kicks: s.kicks + 1 }; a.load(); a.currentTime = at; void a.play().catch(() => {}); }
+        else if (idle > 25_000) { stuck.current = { at: Date.now(), t: a.currentTime, kicks: 0 }; step(1, true); }
+      }
+    }, 1000);
+    return () => clearInterval(i);
+  }, [playing, cur, step, tracker]);
 
   const rate = useCallback((t: Track, r: number) => {
     const next = t.rating === r ? 0 : r;
@@ -647,7 +670,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             <button onClick={() => { try { localStorage.setItem("player.appUpdateSkipped", String(appUpdate.code)); } catch { /* ignore */ } setAppUpdate(null); }} className="shrink-0 px-1.5 py-1.5 text-[var(--dim)]" aria-label="Not now"><CloseIcon size={16} /></button>
           </div>
         )}
-        {updateReady && playing && <button onClick={() => window.location.reload()} className="mb-3 w-full rounded-2xl bg-[var(--s2)] py-2.5 text-[13px] font-semibold">New version ready — tap to reload</button>}
+        {updateReady && cur != null && <button onClick={() => window.location.reload()} className="mb-3 w-full rounded-2xl bg-[var(--s2)] py-2.5 text-[13px] font-semibold">New version ready — tap to reload</button>}
         <header className="flex items-center justify-between h-12 mb-2">
           {page ? (
             <button onClick={() => setStack((s) => s.slice(0, -1))} className="flex items-center gap-1 -ml-2 px-2 py-2 text-[15px]"><ChevronDownIcon size={22} className="rotate-90" />Back</button>
