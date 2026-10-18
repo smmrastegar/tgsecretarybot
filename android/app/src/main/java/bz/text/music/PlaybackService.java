@@ -13,7 +13,9 @@ import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.os.Build;
+import android.net.wifi.WifiManager;
 import android.os.IBinder;
+import android.os.PowerManager;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -31,6 +33,23 @@ public class PlaybackService extends Service {
     private static Bitmap art;
     private static PlaybackService live;
     private MediaSession session;
+    private PowerManager.WakeLock wake;
+    private WifiManager.WifiLock wifi;
+
+    /** While playing: keep the CPU (and Wi-Fi) awake so the web player can hand over to the next song with the screen off. */
+    private void holdLocks(boolean on) {
+        try {
+            if (on) {
+                if (wake == null) { PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE); if (pm != null) { wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "mymusic:playback"); wake.setReferenceCounted(false); } }
+                if (wake != null && !wake.isHeld()) wake.acquire(4 * 60 * 60 * 1000L);
+                if (wifi == null) { WifiManager wm = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE); if (wm != null) { wifi = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "mymusic:wifi"); wifi.setReferenceCounted(false); } }
+                if (wifi != null && !wifi.isHeld()) wifi.acquire();
+            } else {
+                if (wake != null && wake.isHeld()) wake.release();
+                if (wifi != null && wifi.isHeld()) wifi.release();
+            }
+        } catch (Exception ignored) { }
+    }
 
     static void update(Context c, boolean p, String t, String a, String cv) {
         boolean coverChanged = !cv.equals(cover);
@@ -114,6 +133,7 @@ public class PlaybackService extends Service {
     }
 
     void refresh() {
+        holdLocks(playing);
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         nm.notify(ID, build());
         if (!playing && Build.VERSION.SDK_INT >= 24) stopForeground(Service.STOP_FOREGROUND_DETACH); // paused: swipeable
@@ -123,6 +143,7 @@ public class PlaybackService extends Service {
     @Override public void onTaskRemoved(Intent rootIntent) { stopForeground(true); stopSelf(); }
 
     @Override public void onDestroy() {
+        holdLocks(false);
         if (live == this) live = null;
         if (session != null) { session.setActive(false); session.release(); }
         super.onDestroy();

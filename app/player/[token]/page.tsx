@@ -18,6 +18,7 @@ import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { SearchView } from "@/components/music/app/Search";
 import SafeBoundary from "@/components/ui/SafeBoundary";
+import { reportClient } from "@/lib/client-report";
 import { NetEpochCtx } from "@/components/music/app/shared";
 import { artistsOf, DetailView, DownloadedBadge, type Desc, type Vibe, HomeView, LibraryView, useCollections, type Api, type Page } from "@/components/music/app/Views";
 import { AccountPlaylistSheet, ArtistPickSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, SpotifyLikeSheet, TrackMenu } from "@/components/music/app/Sheets";
@@ -299,7 +300,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     origQueue.current = ids;
     if (sh && !shuffle) { setShuffleState(true); try { localStorage.setItem("player.shuffle", "1"); } catch {} } // the Shuffle button on a page turns shuffle on, so the toggle never disagrees with the queue
     setQueue(doShuffle ? [start, ...ids.filter((x) => x !== start).sort(() => Math.random() - 0.5)] : ids);
-    history.current = []; setCur(start); setPlaying(true);
+    history.current = []; chain.current = 0;
+    if (start === curRef.current && audio.current) { audio.current.currentTime = 0; void audio.current.play().catch(() => {}); setPlaying(true); return; }
+    setCur(start); setPlaying(true);
   }, [shuffle, netDown, offline]);
 
   const toggleShuffle = useCallback(() => {
@@ -324,6 +327,62 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     if (pool.length === 0) return;
     setQueue(pool); history.current = []; setCur(pool[0]!); flash("Smart mix started");
   }, []);
+
+  // ---- Hand-over to the next song, done BY THE AUDIO EVENT ITSELF (not by React) ----
+  // With the screen locked the page is "hidden": React may not render or run effects until it is visible again, which is exactly when the music used
+  // to resume ("it starts when I open the screen"). So the next song is chosen from refs and loaded straight inside the ended handler, from a copy
+  // that was already downloaded while the previous song played (no network at the hand-over: Wi-Fi power-save and signal dips cannot stall it).
+  const queueRef = useRef<number[]>([]); queueRef.current = queue;
+  const curRef = useRef<number | null>(null); curRef.current = cur;
+  const repeatRef = useRef(repeat); repeatRef.current = repeat;
+  const speedRef = useRef(speed); speedRef.current = speed;
+  const offlineRef = useRef(offline); offlineRef.current = offline;
+  const loadedId = useRef<number | null>(null); // the song the audio element currently holds
+  const beganId = useRef<number | null>(null); // the song the listen tracker was started for
+  const nextBlob = useRef<{ id: number; url: string } | null>(null); // the next song, fetched ahead of time
+  const endedAt = useRef(0);
+  const chain = useRef(0); // songs handed over in a row without the user touching anything
+
+  const streamUrl = (id: number) => `/api/music/stream/${id}?${tq}&v=${byIdRef.current.get(id)?.sizeBytes ?? 0}`;
+  const nextAutoId = (): number | null => {
+    const q = queueRef.current, c = curRef.current;
+    if (c == null || q.length === 0) return null;
+    if (repeatRef.current === "one") return c;
+    let n = q.indexOf(c) + 1;
+    if (n >= q.length) { if (repeatRef.current === "all") n = 0; else return null; }
+    if (navigator.onLine === false) { // truly offline: only what is saved on this phone
+      let guard = q.length;
+      while (guard-- > 0 && !offlineRef.current.has(q[n]!)) { n = (n + 1) % q.length; if (n === 0 && repeatRef.current !== "all") return null; }
+      if (!offlineRef.current.has(q[n]!)) return null;
+    }
+    return q[n]!;
+  };
+  const publishNow = (id: number, isPlaying: boolean) => {
+    const t = byIdRef.current.get(id); if (!t) return;
+    try { if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: t.title ?? "—", artist: t.artist ?? "", album: t.album ?? "", artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}?${tq}`, sizes: "640x640", type: "image/jpeg" }] : [] }); } catch { /* unsupported */ }
+    try { (window as unknown as { AndroidMusic?: { state: (p: boolean, t: string, a: string, c: string) => void } }).AndroidMusic?.state(isPlaying, t.title ?? "", t.artist ?? "", t.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}&w=320` : ""); } catch { /* not the app */ }
+  };
+  const advanceNow = () => {
+    const a = audio.current; if (!a) return;
+    tracker.flush(true);
+    if (sleepMin === -1) { setSleepMin(0); setPlaying(false); flash("Sleep timer: paused"); return; }
+    const id = nextAutoId();
+    if (id == null) { setPlaying(false); return; }
+    const prev = curRef.current;
+    if (id === prev) { a.currentTime = 0; void a.play().catch(() => {}); return; }
+    if (prev != null) history.current.push(prev);
+    curRef.current = id; loadedId.current = id; beganId.current = id; lastPos.current = 0;
+    tracker.begin(id);
+    const ready = nextBlob.current?.id === id ? nextBlob.current : null;
+    if (blobUrl.current) URL.revokeObjectURL(blobUrl.current);
+    blobUrl.current = ready?.url ?? null; nextBlob.current = ready ? null : nextBlob.current;
+    a.src = ready?.url ?? streamUrl(id);
+    a.playbackRate = speedRef.current;
+    endedAt.current = Date.now(); chain.current += 1;
+    void a.play().catch(() => {});
+    publishNow(id, true);
+    setCur(id); setPlaying(true); // React catches up whenever the page is visible again
+  };
 
   const step = useCallback((dir: 1 | -1, auto = false) => {
     if (cur == null || queue.length === 0) return;
@@ -394,8 +453,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   useEffect(() => {
     const a = audio.current; if (!a || cur == null) return;
     let dead = false;
-    tracker.begin(cur); lastPos.current = 0;
-    const start = (src: string) => { if (dead) return; a.src = src; a.playbackRate = speed; void a.play().catch(() => {}); };
+    if (beganId.current !== cur) { tracker.begin(cur); beganId.current = cur; lastPos.current = 0; }
+    if (loadedId.current === cur && a.src) { // already loaded by the ended handler: only refresh the surroundings
+      publishNow(cur, !a.paused);
+      return;
+    }
+    const start = (src: string) => { if (dead) return; loadedId.current = cur; a.src = src; a.playbackRate = speed; void a.play().catch(() => {}); };
     // &v=<size> changes when a file is replaced, so a stale copy in the HTTP cache is never reused
     const net = `/api/music/stream/${cur}?${tq}&v=${byIdRef.current.get(cur)?.sizeBytes ?? 0}`;
     if (blobUrl.current) { URL.revokeObjectURL(blobUrl.current); blobUrl.current = null; }
@@ -413,15 +476,33 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     // eslint-disable-next-line react-hooks/exhaustive-deps -- speed is applied by its own effect
   }, [cur, tq, tracker]);
 
-  // Warm the HTTP cache with the next track so the hand-over is instant.
-  const preload = useRef<HTMLAudioElement | null>(null);
+  // Fetch the next song while this one plays, so the hand-over needs no network (a saved offline copy is used directly).
   useEffect(() => {
-    if (cur == null || offline.size && offline.has(cur)) return;
-    const i = queue.indexOf(cur); const nid = queue[i + 1];
-    if (nid == null || offline.has(nid)) return;
-    const p = preload.current ?? (preload.current = new Audio());
-    p.preload = "auto"; p.src = `/api/music/stream/${nid}?${tq}&v=${byIdRef.current.get(nid)?.sizeBytes ?? 0}`;
-  }, [cur, queue, tq, offline]);
+    if (cur == null) return;
+    const i = queue.indexOf(cur);
+    const nid = repeat === "one" ? null : queue[i + 1] ?? (repeat === "all" ? queue[0] : undefined);
+    if (nid == null || nid === cur || nextBlob.current?.id === nid) return;
+    let dead = false;
+    const keep = (blob: Blob) => {
+      if (dead) return;
+      const url = URL.createObjectURL(blob);
+      if (nextBlob.current) URL.revokeObjectURL(nextBlob.current.url);
+      nextBlob.current = { id: nid, url };
+    };
+    void (async () => {
+      try {
+        if ("caches" in window) { const hit = await (await caches.open("player-audio")).match(`/api/music/stream/${nid}`); if (hit) { keep(await hit.blob()); return; } }
+        const conn = (navigator as unknown as { connection?: { saveData?: boolean } }).connection;
+        if (conn?.saveData || navigator.onLine === false) return;
+        const r = await fetch(streamUrl(nid));
+        if (r.ok) keep(await r.blob());
+      } catch { /* the hand-over falls back to streaming */ }
+    })();
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- streamUrl only reads refs and tq
+  }, [cur, queue, repeat, tq, offline]);
+
+
 
   // Fade out the tail and fade in the head of tracks (volume dip crossfade).
   useEffect(() => {
@@ -700,8 +781,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           lastPos.current = t;
           setPos(t); tracker.tick(t, el.duration);
         }}
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => { audioFails.current = 0; setPlaying(true); }} onPause={() => setPlaying(false)}
-        onEnded={() => { tracker.flush(true); if (sleepMin === -1) { setSleepMin(0); setPlaying(false); flash("Sleep timer: paused"); return; } step(1, true); }} />
+        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => { audioFails.current = 0; setPlaying(true); }} onPlaying={() => { if (endedAt.current) { const ms = Date.now() - endedAt.current; endedAt.current = 0; if (ms > 4000) reportClient("advance-slow", `next song took ${ms} ms to start`, `hidden=${document.hidden} online=${navigator.onLine} chain=${chain.current}`); } }} onPause={() => setPlaying(false)}
+        onEnded={advanceNow} />
 
       {/* mini player */}
       {now && !full && !selecting && (
