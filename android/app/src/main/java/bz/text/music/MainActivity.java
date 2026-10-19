@@ -106,6 +106,29 @@ public class MainActivity extends Activity {
         + "<button onclick='AndroidMusic.retry()'>Try again</button></main>"
         + "<script>setInterval(function(){if(navigator.onLine)AndroidMusic.retry()},10000)</script></body></html>";
 
+    /** Why did the previous run of the app end? (Android 11+ keeps the reason; the web page reports it to the System Log.) */
+    private void recordLastExit() {
+        try {
+            if (Build.VERSION.SDK_INT < 30) return;
+            android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (am == null) return;
+            java.util.List<android.app.ApplicationExitInfo> l = am.getHistoricalProcessExitReasons(getPackageName(), 0, 3);
+            long seen = prefs.getLong("exitSeen", 0);
+            for (android.app.ApplicationExitInfo i : l) {
+                if (i.getTimestamp() <= seen) continue;
+                prefs.edit().putLong("exitSeen", i.getTimestamp()).apply();
+                int r = i.getReason();
+                if (r == 10 || r == 11 || r == 16) continue; // the user closed it / stopped it / the package was updated
+                String[] names = {"?", "EXIT_SELF", "SIGNALED", "LOW_MEMORY", "CRASH", "CRASH_NATIVE", "ANR", "INITIALIZATION_FAILURE", "PERMISSION_CHANGE", "EXCESSIVE_RESOURCE_USAGE", "USER_REQUESTED", "USER_STOPPED", "DEPENDENCY_DIED", "OTHER", "FREEZER", "PACKAGE_STATE_CHANGE", "PACKAGE_UPDATED"};
+                String was = prefs.getBoolean("playing", false) ? " · was playing" : "";
+                prefs.edit().putString("lastCrash", "app process ended: " + (r < names.length ? names[r] : "reason " + r) + " (importance " + i.getImportance() + ")" + was + "\n" + String.valueOf(i.getDescription())).apply();
+                break;
+            }
+        } catch (Throwable ignored) { }
+    }
+
+    static void markCleanExit(Context c) { try { c.getSharedPreferences("mymusic", MODE_PRIVATE).edit().putBoolean("playing", false).apply(); } catch (Throwable ignored) { } }
+
     private void showError(String url) {
         if (failedUrl != null) return;
         failedUrl = url;
@@ -125,6 +148,7 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         instance = this;
         prefs = getSharedPreferences("mymusic", MODE_PRIVATE);
+        recordLastExit();
         // Remember why the app died, so the next start can report it (the web page sends it to the System Log).
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
@@ -232,7 +256,7 @@ public class MainActivity extends Activity {
     /** window.AndroidMusic in the page. */
     class Bridge {
         @JavascriptInterface public void state(boolean playing, String title, String artist, String cover) {
-            PlaybackService.update(getApplicationContext(), playing, title, artist, cover);
+            try { prefs.edit().putBoolean("playing", playing).apply(); PlaybackService.update(getApplicationContext(), playing, title, artist, cover); } catch (Throwable ignored) { }
         }
         @JavascriptInterface public String clipboard() {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
@@ -241,7 +265,7 @@ public class MainActivity extends Activity {
             CharSequence t = it == null ? null : it.coerceToText(MainActivity.this);
             return t == null ? "" : t.toString();
         }
-        @JavascriptInterface public String version() { return "1.4.0"; }
+        @JavascriptInterface public String version() { return "1.5.0"; }
         /** The installed app's versionCode (the web player compares it with /downloads/app-version.json). */
         @JavascriptInterface public int versionCode() {
             try {

@@ -617,7 +617,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const n = (window as unknown as { AndroidMusic?: { state: (p: boolean, t: string, a: string, c: string) => void } }).AndroidMusic;
     if (!n) return;
     const t = cur != null ? byIdRef.current.get(cur) : null;
-    n.state(playing, t?.title ?? "", t?.artist ?? "", t?.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}&w=320` : "");
+    try { n.state(playing, t?.title ?? "", t?.artist ?? "", t?.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}&w=320` : ""); } catch { /* the app side hiccuped: never take the player down with it */ }
   }, [playing, cur, tq]);
   useEffect(() => {
     (window as unknown as { __nativeCmd?: (c: string) => void }).__nativeCmd = (c: string) => {
@@ -781,7 +781,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           lastPos.current = t;
           setPos(t); tracker.tick(t, el.duration);
         }}
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => { audioFails.current = 0; setPlaying(true); }} onPlaying={() => { if (endedAt.current) { const ms = Date.now() - endedAt.current; endedAt.current = 0; if (ms > 4000) reportClient("advance-slow", `next song took ${ms} ms to start`, `hidden=${document.hidden} online=${navigator.onLine} chain=${chain.current}`); } }} onPause={() => setPlaying(false)}
+        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => { audioFails.current = 0; setPlaying(true); }} onPlaying={() => { if (endedAt.current) { const ms = Date.now() - endedAt.current; endedAt.current = 0; if (ms > 4000) reportClient("advance-slow", `next song took ${ms} ms to start`, `hidden=${document.hidden} online=${navigator.onLine} chain=${chain.current}`); } }} onPause={(e) => { const el = e.currentTarget; if (el.ended || (Number.isFinite(el.duration) && el.duration - el.currentTime < 0.6)) return; /* the pause that comes right before "ended" is not a stop: the hand-over follows */ setPlaying(false); }}
         onEnded={advanceNow} />
 
       {/* mini player */}

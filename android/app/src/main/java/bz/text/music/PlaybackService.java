@@ -14,7 +14,9 @@ import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.os.Build;
 import android.net.wifi.WifiManager;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -33,6 +35,9 @@ public class PlaybackService extends Service {
     private static Bitmap art;
     private static PlaybackService live;
     private MediaSession session;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    /** A pause is often just a song change: stay a foreground service (and keep the process) for a while before letting go. */
+    private final Runnable detachLater = () -> { try { if (!playing && Build.VERSION.SDK_INT >= 24) stopForeground(Service.STOP_FOREGROUND_DETACH); } catch (Throwable ignored) { } };
     private PowerManager.WakeLock wake;
     private WifiManager.WifiLock wifi;
 
@@ -52,6 +57,10 @@ public class PlaybackService extends Service {
     }
 
     static void update(Context c, boolean p, String t, String a, String cv) {
+        try { updateUnsafe(c, p, t, a, cv); } catch (Throwable ignored) { } // never let a notification problem reach the web page (or kill the app)
+    }
+
+    private static void updateUnsafe(Context c, boolean p, String t, String a, String cv) {
         boolean coverChanged = !cv.equals(cover);
         playing = p; title = t; artist = a; cover = cv;
         if (coverChanged) art = null;
@@ -60,7 +69,8 @@ public class PlaybackService extends Service {
             Intent i = new Intent(c, PlaybackService.class);
             try { if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i); else c.startService(i); } catch (Exception ignored) { }
         } else {
-            live.refresh();
+            final PlaybackService s = live;
+            s.main.post(() -> { if (live == s) s.refresh(); });
         }
         if (coverChanged && !cv.isEmpty()) fetchArt(cv);
     }
@@ -91,7 +101,7 @@ public class PlaybackService extends Service {
             @Override public void onSkipToPrevious() { MainActivity.command("prev"); }
         });
         session.setActive(true);
-        startForeground(ID, build());
+        try { startForeground(ID, build()); } catch (Throwable e) { stopSelf(); }
     }
 
     @Override public int onStartCommand(Intent i, int f, int id) {
@@ -133,17 +143,21 @@ public class PlaybackService extends Service {
     }
 
     void refresh() {
-        holdLocks(playing);
-        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        nm.notify(ID, build());
-        if (!playing && Build.VERSION.SDK_INT >= 24) stopForeground(Service.STOP_FOREGROUND_DETACH); // paused: swipeable
-        else if (playing) { try { startForeground(ID, build()); } catch (Exception ignored) { } }
+        try {
+            holdLocks(playing);
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            nm.notify(ID, build());
+            main.removeCallbacks(detachLater);
+            if (playing) startForeground(ID, build());
+            else main.postDelayed(detachLater, 90_000); // paused: swipeable, but only after a grace period
+        } catch (Throwable ignored) { }
     }
 
-    @Override public void onTaskRemoved(Intent rootIntent) { stopForeground(true); stopSelf(); }
+    @Override public void onTaskRemoved(Intent rootIntent) { MainActivity.markCleanExit(this); stopForeground(true); stopSelf(); }
 
     @Override public void onDestroy() {
         holdLocks(false);
+        main.removeCallbacks(detachLater);
         if (live == this) live = null;
         if (session != null) { session.setActive(false); session.release(); }
         super.onDestroy();
