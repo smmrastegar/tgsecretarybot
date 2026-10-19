@@ -197,7 +197,9 @@ public class MainActivity extends Activity {
             try { android.view.ViewGroup p = (android.view.ViewGroup) dead.getParent(); if (p != null) p.removeView(dead); dead.destroy(); } catch (Throwable ignored) { }
             web = makeWebView();
             setContentView(web);
-            web.loadUrl(lastUrl != null ? lastUrl : startUrl(getIntent()));
+            String u = lastUrl != null ? lastUrl : startUrl(getIntent());
+            if (u.contains("/player/")) u += (u.contains("?") ? "&" : "?") + "resume=1"; // the player carries on from the second it was cut off
+            web.loadUrl(u);
         } catch (Throwable t) { recreate(); }
     }
 
@@ -292,7 +294,7 @@ public class MainActivity extends Activity {
             CharSequence t = it == null ? null : it.coerceToText(MainActivity.this);
             return t == null ? "" : t.toString();
         }
-        @JavascriptInterface public String version() { return "1.5.1"; }
+        @JavascriptInterface public String version() { return "1.5.2"; }
         /** The installed app's versionCode (the web player compares it with /downloads/app-version.json). */
         @JavascriptInterface public int versionCode() {
             try {

@@ -344,6 +344,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const endedAt = useRef(0);
   const resumeAt = useRef<{ id: number; pos: number } | null>(null); // the last song of the previous visit: loaded paused, at its position
   const restored = useRef(false);
+  const autoResume = useRef(false); // the app rebuilt its web view under a playing song: carry on by itself
   const chain = useRef(0); // songs handed over in a row without the user touching anything
 
   const streamUrl = (id: number) => `/api/music/stream/${id}?${tq}&v=${byIdRef.current.get(id)?.sizeBytes ?? 0}`;
@@ -408,6 +409,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       if (!q.includes(id)) q.unshift(id);
       const pp = JSON.parse(localStorage.getItem("player.lastPos") || "null") as { id?: number; pos?: number } | null;
       resumeAt.current = { id, pos: pp?.id === id ? Number(pp.pos) || 0 : 0 };
+      const sp = new URLSearchParams(location.search);
+      if (sp.get("resume") === "1") {
+        autoResume.current = localStorage.getItem("player.playing") === "1";
+        sp.delete("resume"); try { window.history.replaceState(window.history.state, "", location.pathname + (sp.toString() ? `?${sp}` : "")); } catch { /* ignore */ }
+      }
       setQueue(q); setCur(id);
     } catch { /* nothing to restore */ }
   }, [tracks]);
@@ -493,8 +499,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       if (ra && ra.id === cur) { // the song from the last visit: show it in the mini player, ready where it was, but do not play
         resumeAt.current = null;
         a.preload = "metadata";
-        a.addEventListener("loadedmetadata", () => { try { if (ra.pos > 1) a.currentTime = ra.pos; } catch { /* not seekable yet */ } }, { once: true });
-        a.pause();
+        const carryOn = autoResume.current; autoResume.current = false;
+        a.addEventListener("loadedmetadata", () => { try { if (ra.pos > 1) a.currentTime = ra.pos; } catch { /* not seekable yet */ } if (carryOn) { a.preload = "auto"; void a.play().catch(() => {}); } }, { once: true });
+        if (!carryOn) a.pause();
         return;
       }
       a.preload = "auto";
@@ -820,10 +827,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           // looped back to the start: count the finished pass as a completed listen and start a fresh one
           if (el.loop && lastPos.current - t > 1 && lastPos.current > (el.duration || 0) - 2) tracker.flush(true);
           lastPos.current = t;
-          if (Date.now() - posSaved.current > 5000 && curRef.current != null) { posSaved.current = Date.now(); try { localStorage.setItem("player.lastPos", JSON.stringify({ id: curRef.current, pos: Math.floor(t) })); } catch { /* private mode */ } }
+          if (Date.now() - posSaved.current > 1000 && curRef.current != null) { posSaved.current = Date.now(); try { localStorage.setItem("player.lastPos", JSON.stringify({ id: curRef.current, pos: Math.floor(t) })); } catch { /* private mode */ } }
           setPos(t); tracker.tick(t, el.duration);
         }}
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => { audioFails.current = 0; setPlaying(true); }} onPlaying={() => { if (endedAt.current) { const ms = Date.now() - endedAt.current; endedAt.current = 0; if (ms > 4000) reportClient("advance-slow", `next song took ${ms} ms to start`, `hidden=${document.hidden} online=${navigator.onLine} chain=${chain.current}`); } }} onPause={(e) => { const el = e.currentTarget; if (el.ended || (Number.isFinite(el.duration) && el.duration - el.currentTime < 0.6)) return; /* the pause that comes right before "ended" is not a stop: the hand-over follows */ setPlaying(false); }}
+        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => { audioFails.current = 0; setPlaying(true); try { localStorage.setItem("player.playing", "1"); } catch { /* private mode */ } }} onPlaying={() => { if (endedAt.current) { const ms = Date.now() - endedAt.current; endedAt.current = 0; if (ms > 4000) reportClient("advance-slow", `next song took ${ms} ms to start`, `hidden=${document.hidden} online=${navigator.onLine} chain=${chain.current}`); } }} onPause={(e) => { const el = e.currentTarget; if (el.ended || (Number.isFinite(el.duration) && el.duration - el.currentTime < 0.6)) return; /* the pause that comes right before "ended" is not a stop: the hand-over follows */ setPlaying(false); try { localStorage.setItem("player.playing", "0"); } catch { /* private mode */ } }}
         onEnded={advanceNow} />
 
       {/* mini player */}
