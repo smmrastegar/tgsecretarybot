@@ -118,6 +118,8 @@ public class MainActivity extends Activity {
                 if (i.getTimestamp() <= seen) continue;
                 prefs.edit().putLong("exitSeen", i.getTimestamp()).apply();
                 int r = i.getReason();
+                // only the app's own process counts: the WebView renderer ("isolated" process) is handled by onRenderProcessGone
+                if (!getPackageName().equals(i.getProcessName()) || String.valueOf(i.getDescription()).contains("isolated")) continue;
                 if (r == 10 || r == 11 || r == 16) continue; // the user closed it / stopped it / the package was updated
                 String[] names = {"?", "EXIT_SELF", "SIGNALED", "LOW_MEMORY", "CRASH", "CRASH_NATIVE", "ANR", "INITIALIZATION_FAILURE", "PERMISSION_CHANGE", "EXCESSIVE_RESOURCE_USAGE", "USER_REQUESTED", "USER_STOPPED", "DEPENDENCY_DIED", "OTHER", "FREEZER", "PACKAGE_STATE_CHANGE", "PACKAGE_UPDATED"};
                 String was = prefs.getBoolean("playing", false) ? " · was playing" : "";
@@ -143,6 +145,62 @@ public class MainActivity extends Activity {
         web.loadUrl(u);
     }
 
+    private String lastUrl;
+
+    private WebView makeWebView() {
+        final WebView w = new WebView(this);
+        w.setBackgroundColor(0xFF0B0B0F);
+        WebSettings s = w.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setDatabaseEnabled(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false);
+        s.setSupportMultipleWindows(false);
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setUserAgentString(s.getUserAgentString() + " MyMusicApp/1.1");
+        w.addJavascriptInterface(new Bridge(), "AndroidMusic");
+        w.setWebViewClient(new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                Uri u = r.getUrl();
+                if (ours(u.getHost()) && "https".equals(u.getScheme())) return false;
+                try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception ignored) { }
+                return true;
+            }
+            @Override public void onPageStarted(WebView v, String url, Bitmap f) { v.setBackgroundColor(0xFF0B0B0F); if (url != null && url.startsWith("https://")) lastUrl = url; }
+            // The WebView's renderer process was killed (memory) or crashed. Unhandled, Android would take the whole app down with it ("the app closed by itself"):
+            // build a fresh WebView on the page we were on instead. The music service keeps running.
+            @Override public boolean onRenderProcessGone(WebView v, android.webkit.RenderProcessGoneDetail d) {
+                try { prefs.edit().putString("lastCrash", "web renderer gone (" + (d.didCrash() ? "crashed" : "killed by the system") + ", priority " + d.rendererPriorityAtExit() + ")").apply(); } catch (Throwable ignored) { }
+                runOnUiThread(() -> rebuildWebView(v));
+                return true;
+            }
+            // The page itself failed to load (no internet, server down): show a retry screen instead of the browser's error.
+            @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
+                if (r.isForMainFrame()) showError(r.getUrl().toString());
+            }
+            @Override public void onReceivedHttpError(WebView v, WebResourceRequest r, WebResourceResponse e) {
+                if (r.isForMainFrame() && e.getStatusCode() >= 500) showError(r.getUrl().toString());
+            }
+        });
+        w.setWebChromeClient(new WebChromeClient() {
+            @Override public void onPermissionRequest(PermissionRequest r) { r.deny(); }
+        });
+        return w;
+    }
+
+    private void rebuildWebView(WebView dead) {
+        try {
+            if (dead != web) return;
+            failedUrl = null;
+            try { android.view.ViewGroup p = (android.view.ViewGroup) dead.getParent(); if (p != null) p.removeView(dead); dead.destroy(); } catch (Throwable ignored) { }
+            web = makeWebView();
+            setContentView(web);
+            web.loadUrl(lastUrl != null ? lastUrl : startUrl(getIntent()));
+        } catch (Throwable t) { recreate(); }
+    }
+
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -161,39 +219,8 @@ public class MainActivity extends Activity {
             if (previous != null) previous.uncaughtException(t, e);
         });
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED);
-        web = new WebView(this);
-        web.setBackgroundColor(0xFF0B0B0F);
+        web = makeWebView();
         setContentView(web);
-        WebSettings s = web.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setDatabaseEnabled(true);
-        s.setMediaPlaybackRequiresUserGesture(false);
-        s.setAllowFileAccess(false);
-        s.setAllowContentAccess(false);
-        s.setSupportMultipleWindows(false);
-        s.setCacheMode(WebSettings.LOAD_DEFAULT);
-        s.setUserAgentString(s.getUserAgentString() + " MyMusicApp/1.1");
-        web.addJavascriptInterface(new Bridge(), "AndroidMusic");
-        web.setWebViewClient(new WebViewClient() {
-            @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
-                Uri u = r.getUrl();
-                if (ours(u.getHost()) && "https".equals(u.getScheme())) return false;
-                try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception ignored) { }
-                return true;
-            }
-            @Override public void onPageStarted(WebView v, String url, Bitmap f) { v.setBackgroundColor(0xFF0B0B0F); }
-            // The page itself failed to load (no internet, server down): show a retry screen instead of the browser's error.
-            @Override public void onReceivedError(WebView v, WebResourceRequest r, WebResourceError e) {
-                if (r.isForMainFrame()) showError(r.getUrl().toString());
-            }
-            @Override public void onReceivedHttpError(WebView v, WebResourceRequest r, WebResourceResponse e) {
-                if (r.isForMainFrame() && e.getStatusCode() >= 500) showError(r.getUrl().toString());
-            }
-        });
-        web.setWebChromeClient(new WebChromeClient() {
-            @Override public void onPermissionRequest(PermissionRequest r) { r.deny(); }
-        });
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
         }
@@ -265,7 +292,7 @@ public class MainActivity extends Activity {
             CharSequence t = it == null ? null : it.coerceToText(MainActivity.this);
             return t == null ? "" : t.toString();
         }
-        @JavascriptInterface public String version() { return "1.5.0"; }
+        @JavascriptInterface public String version() { return "1.5.1"; }
         /** The installed app's versionCode (the web player compares it with /downloads/app-version.json). */
         @JavascriptInterface public int versionCode() {
             try {

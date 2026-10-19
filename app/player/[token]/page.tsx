@@ -212,6 +212,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
   const audio = useRef<HTMLAudioElement>(null);
   const lastPos = useRef(0);
+  const posSaved = useRef(0);
   const history = useRef<number[]>([]);
   const tracker = useListenTracker(tq);
   const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks]);
@@ -341,6 +342,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const beganId = useRef<number | null>(null); // the song the listen tracker was started for
   const nextBlob = useRef<{ id: number; url: string } | null>(null); // the next song, fetched ahead of time
   const endedAt = useRef(0);
+  const resumeAt = useRef<{ id: number; pos: number } | null>(null); // the last song of the previous visit: loaded paused, at its position
+  const restored = useRef(false);
   const chain = useRef(0); // songs handed over in a row without the user touching anything
 
   const streamUrl = (id: number) => `/api/music/stream/${id}?${tq}&v=${byIdRef.current.get(id)?.sizeBytes ?? 0}`;
@@ -383,6 +386,31 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     publishNow(id, true);
     setCur(id); setPlaying(true); // React catches up whenever the page is visible again
   };
+
+  useEffect(() => { // keep the exact position when the page goes away or the phone locks
+    const save = () => { const el = audio.current, id = curRef.current; if (!el || id == null || !(el.currentTime > 0)) return; try { localStorage.setItem("player.lastPos", JSON.stringify({ id, pos: Math.floor(el.currentTime) })); } catch { /* private mode */ } };
+    const vis = () => { if (document.visibilityState === "hidden") save(); };
+    document.addEventListener("visibilitychange", vis); window.addEventListener("pagehide", save);
+    return () => { document.removeEventListener("visibilitychange", vis); window.removeEventListener("pagehide", save); };
+  }, []);
+  // Remember what was playing: the next visit starts with it in the mini player, paused where it stopped.
+  useEffect(() => { if (cur == null) return; try { localStorage.setItem("player.last", JSON.stringify({ cur, queue: queue.slice(0, 400) })); } catch { /* private mode */ } }, [cur, queue]);
+  useEffect(() => {
+    if (restored.current || tracks.length === 0 || curRef.current != null) return;
+    restored.current = true;
+    try {
+      if (new URLSearchParams(location.search).get("track")) return; // a shared link opens its own song
+      const j = JSON.parse(localStorage.getItem("player.last") || "null") as { cur?: number; queue?: number[] } | null;
+      const have = new Set(tracks.map((t) => t.id));
+      if (!j || !have.has(Number(j.cur))) return;
+      const id = Number(j.cur);
+      const q = (Array.isArray(j.queue) ? j.queue : []).map(Number).filter((x) => have.has(x));
+      if (!q.includes(id)) q.unshift(id);
+      const pp = JSON.parse(localStorage.getItem("player.lastPos") || "null") as { id?: number; pos?: number } | null;
+      resumeAt.current = { id, pos: pp?.id === id ? Number(pp.pos) || 0 : 0 };
+      setQueue(q); setCur(id);
+    } catch { /* nothing to restore */ }
+  }, [tracks]);
 
   const step = useCallback((dir: 1 | -1, auto = false) => {
     if (cur == null || queue.length === 0) return;
@@ -458,7 +486,20 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       publishNow(cur, !a.paused);
       return;
     }
-    const start = (src: string) => { if (dead) return; loadedId.current = cur; a.src = src; a.playbackRate = speed; void a.play().catch(() => {}); };
+    const start = (src: string) => {
+      if (dead) return;
+      loadedId.current = cur; a.src = src; a.playbackRate = speed;
+      const ra = resumeAt.current;
+      if (ra && ra.id === cur) { // the song from the last visit: show it in the mini player, ready where it was, but do not play
+        resumeAt.current = null;
+        a.preload = "metadata";
+        a.addEventListener("loadedmetadata", () => { try { if (ra.pos > 1) a.currentTime = ra.pos; } catch { /* not seekable yet */ } }, { once: true });
+        a.pause();
+        return;
+      }
+      a.preload = "auto";
+      void a.play().catch(() => {});
+    };
     // &v=<size> changes when a file is replaced, so a stale copy in the HTTP cache is never reused
     const net = `/api/music/stream/${cur}?${tq}&v=${byIdRef.current.get(cur)?.sizeBytes ?? 0}`;
     if (blobUrl.current) { URL.revokeObjectURL(blobUrl.current); blobUrl.current = null; }
@@ -779,6 +820,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           // looped back to the start: count the finished pass as a completed listen and start a fresh one
           if (el.loop && lastPos.current - t > 1 && lastPos.current > (el.duration || 0) - 2) tracker.flush(true);
           lastPos.current = t;
+          if (Date.now() - posSaved.current > 5000 && curRef.current != null) { posSaved.current = Date.now(); try { localStorage.setItem("player.lastPos", JSON.stringify({ id: curRef.current, pos: Math.floor(t) })); } catch { /* private mode */ } }
           setPos(t); tracker.tick(t, el.duration);
         }}
         onLoadedMetadata={(e) => setDur(e.currentTarget.duration)} onProgress={(e) => { const a = e.currentTarget; let end = 0; for (let i = 0; i < a.buffered.length; i++) if (a.buffered.start(i) <= a.currentTime + 0.5) end = Math.max(end, a.buffered.end(i)); setBuf(end); }} onPlay={() => { audioFails.current = 0; setPlaying(true); }} onPlaying={() => { if (endedAt.current) { const ms = Date.now() - endedAt.current; endedAt.current = 0; if (ms > 4000) reportClient("advance-slow", `next song took ${ms} ms to start`, `hidden=${document.hidden} online=${navigator.onLine} chain=${chain.current}`); } }} onPause={(e) => { const el = e.currentTarget; if (el.ended || (Number.isFinite(el.duration) && el.duration - el.currentTime < 0.6)) return; /* the pause that comes right before "ended" is not a stop: the hand-over follows */ setPlaying(false); }}
