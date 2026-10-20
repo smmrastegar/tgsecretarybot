@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUnscopedOr403 } from "@/lib/auth";
 import { deleteScAccount, listScAccounts } from "@/lib/db";
-import { SC_REDIRECT, saveScCredentials, scConfig } from "@/lib/soundcloud";
+import { saveScCredentials, scConfig, scRedirect } from "@/lib/soundcloud";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export async function GET(): Promise<NextResponse> {
   const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const c = await scConfig();
-  return NextResponse.json({ hasCredentials: Boolean(c.clientId && c.clientSecret), clientId: c.clientId, accounts: await listScAccounts(), redirectUri: SC_REDIRECT });
+  return NextResponse.json({ hasCredentials: Boolean(c.clientId && c.clientSecret), clientId: c.clientId, accounts: await listScAccounts(), redirectUri: await scRedirect() });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {

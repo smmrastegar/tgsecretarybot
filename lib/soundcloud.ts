@@ -11,7 +11,9 @@ import { reportWarn } from "./report";
 
 const API = "https://api.soundcloud.com";
 const AUTH = "https://secure.soundcloud.com";
-export const SC_REDIRECT = process.env.SOUNDCLOUD_REDIRECT_URI || "https://playlist.bz/soundcloud";
+const SC_REDIRECT_DEFAULT = process.env.SOUNDCLOUD_REDIRECT_URI || "https://playlist.bz/soundcloud";
+/** SoundCloud compares the redirect URI character for character (even the case of "https"), so it can be set to exactly what the app has registered (settings.soundcloudRedirectUri). */
+export async function scRedirect(): Promise<string> { return ((await getAllSettings()).soundcloudRedirectUri ?? "").trim() || SC_REDIRECT_DEFAULT; }
 
 export async function scConfig(): Promise<{ clientId: string; clientSecret: string }> {
   const s = await getAllSettings();
@@ -69,7 +71,7 @@ export async function scAuthorizeUrl(host: string): Promise<string | null> {
   await savePkce(nonce, verifier, host);
   const u = new URL(`${AUTH}/authorize`);
   u.searchParams.set("client_id", c.clientId);
-  u.searchParams.set("redirect_uri", SC_REDIRECT);
+  u.searchParams.set("redirect_uri", await scRedirect());
   u.searchParams.set("response_type", "code");
   u.searchParams.set("code_challenge", createHash("sha256").update(verifier).digest("base64url"));
   u.searchParams.set("code_challenge_method", "S256");
@@ -85,7 +87,7 @@ export async function scFinishSignIn(code: string, state: string): Promise<{ acc
   if (want.length !== have.length || !timingSafeEqual(want, have)) throw new Error("bad state");
   const pk = await takePkce(nonce);
   if (!pk) throw new Error("sign-in expired");
-  const t = await tokenCall({ grant_type: "authorization_code", code, redirect_uri: SC_REDIRECT, code_verifier: pk.verifier });
+  const t = await tokenCall({ grant_type: "authorization_code", code, redirect_uri: await scRedirect(), code_verifier: pk.verifier });
   if (!t.refresh_token) throw new Error("no refresh token returned");
   const me = await scGet<{ urn?: string; id?: number; username?: string }>("/me", t.access_token);
   const urn = me.urn ?? `soundcloud:users:${me.id}`;
