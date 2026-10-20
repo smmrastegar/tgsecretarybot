@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUnscopedOr403 } from "@/lib/auth";
 import { allowedTrackIds, canSpotifyLike, musicAccess, notFound } from "@/lib/music-token";
 import { resolvedPlaylists } from "@/lib/music-playlists";
-import { addMusicTrack, applyLinkView, listMusicTracks, listSpotifyAccounts, listTrackSources, parseSpotifyTrackUrl } from "@/lib/db";
+import { addMusicTrack, applyLinkView, listMusicTracks, listScAccountEntries, listSpotifyAccounts, listTrackSources, parseSpotifyTrackUrl } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
 import { reportError } from "@/lib/report";
 import { DIRECT_ACCOUNT } from "@/lib/music-scope";
@@ -24,14 +24,14 @@ export async function GET(request: Request): Promise<Response> {
     const playlists = lists.map((p) => ({ id: p.id, name: p.name, trackIds: allowed ? p.trackIds.filter((id) => allowed.has(id)) : p.trackIds, smart: p.smart, ...(access.kind === "session" && !access.scope ? { rules: p.rules } : {}) }));
     // Every view (dashboard and all player links, by the owner's choice) says which Spotify account(s) each song came from.
     {
-      const [src, accts] = await Promise.all([listTrackSources(), listSpotifyAccounts()]);
+      const [src, accts, scAccts] = await Promise.all([listTrackSources(), listSpotifyAccounts(), listScAccountEntries()]);
       // A scoped link only learns about the accounts it is scoped to.
       const scope = access.scope;
       const keep = (id: number) => !scope || scope.ids.includes(id);
       return NextResponse.json({
         canLike: canSpotifyLike(access),
         tracks: tracks.map((t) => ({ ...t, sources: (src.get(t.id) ?? []).filter(keep) })), playlists,
-        accounts: [...accts.filter((a) => keep(a.id)).map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })), ...(keep(0) && tracks.some((t) => !(src.get(t.id)?.length)) ? [DIRECT_ACCOUNT] : [])],
+        accounts: [...accts.filter((a) => keep(a.id)).map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })), ...scAccts.filter((a) => keep(a.id)), ...(keep(0) && tracks.some((t) => !(src.get(t.id)?.length)) ? [DIRECT_ACCOUNT] : [])],
       });
     }
     return NextResponse.json({ tracks, playlists });

@@ -232,6 +232,9 @@ export async function listTrackSources(): Promise<Map<number, number[]>> {
   )) as Row[];
   const out = new Map<number, number[]>();
   for (const r of rows) { const k = num(r, "track_id"); (out.get(k) ?? out.set(k, []).get(k)!).push(num(r, "account_id")); }
+  // SoundCloud accounts count too, under ids offset by 1 000 000 (lib/music-scope.ts)
+  const sc = (await q().query(`SELECT track_id, account_id + 1000000 AS account_id FROM music_track_sc_sources ORDER BY track_id, account_id`)) as Row[];
+  for (const r of sc) { const k = num(r, "track_id"); (out.get(k) ?? out.set(k, []).get(k)!).push(num(r, "account_id")); }
   return out;
 }
 

@@ -17,6 +17,7 @@ import Spectrum from "@/components/music/Spectrum";
 import { useListenTracker } from "@/components/music/useListenTracker";
 import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { SearchView } from "@/components/music/app/Search";
+import { isSpotifyAccountId } from "@/lib/music-scope";
 import SafeBoundary from "@/components/ui/SafeBoundary";
 import { reportClient } from "@/lib/client-report";
 import { NetEpochCtx } from "@/components/music/app/shared";
@@ -861,7 +862,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
           {selPool.current.length > 0 && <button onClick={() => setSel(sel.size >= selPool.current.length ? new Set() : new Set(selPool.current))} className="text-[13px] font-semibold text-[var(--dim2)] px-1 py-1 whitespace-nowrap">{sel.size >= selPool.current.length ? "None" : "All"}</button>}
           <span className="flex-1" />
           <button disabled={sel.size === 0} onClick={() => { const ids = [...sel]; setQueue((q) => [...q, ...ids.filter((id) => !q.includes(id))]); flash(`${ids.length} added to queue`); endSelect(); }} className="px-3 py-1.5 rounded-full bg-[var(--s2)] text-[13px] font-semibold whitespace-nowrap disabled:opacity-40">＋ Queue</button>
-          {canLike && accounts.some((a) => a.id > 0) && <button disabled={![...sel].some((id) => byId.get(id)?.source !== "manual")} onClick={() => setLikeTs([...sel].map((id) => byId.get(id)).filter((t): t is Track => !!t && t.source !== "manual"))} className="px-3 py-1.5 rounded-full bg-[rgb(var(--ac))] text-[var(--acfg)] text-[13px] font-semibold whitespace-nowrap disabled:opacity-40">＋ Spotify</button>}
+          {canLike && accounts.some((a) => isSpotifyAccountId(a.id)) && <button disabled={![...sel].some((id) => byId.get(id)?.source !== "manual")} onClick={() => setLikeTs([...sel].map((id) => byId.get(id)).filter((t): t is Track => !!t && t.source !== "manual"))} className="px-3 py-1.5 rounded-full bg-[rgb(var(--ac))] text-[var(--acfg)] text-[13px] font-semibold whitespace-nowrap disabled:opacity-40">＋ Spotify</button>}
           <button onClick={endSelect} className="p-1.5 text-[var(--dim2)]" aria-label="Done selecting"><CloseIcon size={20} /></button>
         </div>
       )}
@@ -905,7 +906,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
                 <div className="min-w-0 flex-1"><SourceChips ids={now.sources} /></div>
                 <div className="flex items-center shrink-0 -mr-1.5">
                   <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={26} filled={now.rating > 0} /></button>
-                  {canLike && now.source !== "manual" && accounts.some((a) => a.id > 0) && <button onClick={() => setLikeTs([now])} className="p-2 text-[var(--dim)]" aria-label="Add to a Spotify account's likes"><PlusIcon size={22} /></button>}
+                  {canLike && now.source !== "manual" && accounts.some((a) => isSpotifyAccountId(a.id)) && <button onClick={() => setLikeTs([now])} className="p-2 text-[var(--dim)]" aria-label="Add to a Spotify account's likes"><PlusIcon size={22} /></button>}
                   <button onClick={() => rate(now, -1)} className={`p-2 ${now.rating < 0 ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={22} filled={now.rating < 0} /></button>
                 </div>
               </div>
@@ -968,7 +969,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         <button onClick={() => dlCtl.current?.abort()} className="px-3 py-1.5 rounded-full bg-[var(--s2)] text-[12px] font-semibold">Stop</button>
       </div>}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
-      {menuT && <TrackMenu onSelect={() => startSelect(undefined, menuT.id)} onSpotify={canLike && (byId.get(menuT.id) ?? menuT).source !== "manual" && accounts.some((a) => a.id > 0) ? () => setLikeTs([menuT]) : undefined} onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
+      {menuT && <TrackMenu onSelect={() => startSelect(undefined, menuT.id)} onSpotify={canLike && (byId.get(menuT.id) ?? menuT).source !== "manual" && accounts.some((a) => isSpotifyAccountId(a.id)) ? () => setLikeTs([menuT]) : undefined} onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
         onArtist={() => goArtist(menuT)}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}

@@ -1,5 +1,6 @@
 "use client";
 
+import { isSpotifyAccountId } from "@/lib/music-scope";
 import { TitleLine } from "./SourceMarks";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDownIcon, CheckIcon, SparkIcon, DownloadIcon, FlagIcon, ShareIcon, ArrowUpIcon, CloseIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon, PlusIcon } from "../Icons";
@@ -230,7 +231,7 @@ export function ReportSheet({ t, tq, context, onClose, onDone }: { t: Track; tq:
 export function SpotifyLikeSheet({ ts, accounts, tq, onClose, onDone, onMessage }: { ts: Track[]; accounts: Array<{ id: number; name: string }>; tq: string; onClose: () => void; onDone: (accountId: number) => void; onMessage: (m: string) => void }) {
   const [busy, setBusy] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const real = accounts.filter((a) => a.id > 0);
+  const real = accounts.filter((a) => isSpotifyAccountId(a.id)); // saving songs works on Spotify accounts only
   const one = ts.length === 1 ? ts[0]! : null;
   async function add(a: { id: number; name: string }) {
     setBusy(a.id); setErr(null);

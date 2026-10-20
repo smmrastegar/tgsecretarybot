@@ -4,7 +4,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { addScTrack, getAllSettings, getScTokens, listMusicPlaylists, listScAccounts, nextScTrack, saveScTokens, savePkce, setPlaylistTrack, createMusicPlaylist, setSetting, takePkce, updateMusicTrack, upsertScAccount, type ScTrackIn } from "./db";
+import { addScTrack, recordScSources, getAllSettings, getScTokens, listMusicPlaylists, listScAccounts, nextScTrack, saveScTokens, savePkce, setPlaylistTrack, createMusicPlaylist, setSetting, takePkce, updateMusicTrack, upsertScAccount, type ScTrackIn } from "./db";
 import { MUSIC_DIR } from "./music";
 import { ffmpegPath } from "./music-analysis";
 import { reportWarn } from "./report";
@@ -142,10 +142,11 @@ export async function scResolve(url: string, accountId: number | null): Promise<
 }
 
 /** Queue tracks and mirror them into a library playlist. Returns counts. */
-export async function scImport(tracks: RawTrack[], playlistName: string | null): Promise<{ total: number; added: number; already: number; removed: number; unavailable: number }> {
+export async function scImport(tracks: RawTrack[], playlistName: string | null, accountId: number | null = null): Promise<{ total: number; added: number; already: number; removed: number; unavailable: number }> {
   const rep = { total: tracks.length, added: 0, already: 0, removed: 0, unavailable: 0 };
   let plId: number | null = null;
   if (playlistName) plId = (await listMusicPlaylists()).find((p) => p.name === playlistName && !p.rules)?.id ?? (await createMusicPlaylist(playlistName));
+  const ids: number[] = [];
   for (const raw of tracks) {
     const t = toScTrack(raw);
     if (!t) continue;
@@ -153,7 +154,9 @@ export async function scImport(tracks: RawTrack[], playlistName: string | null):
     const r = await addScTrack(t);
     if (r.removed) rep.removed++; else if (r.created) rep.added++; else rep.already++;
     if (plId && r.id) await setPlaylistTrack(plId, r.id, true);
+    if (r.id) ids.push(r.id);
   }
+  if (accountId) await recordScSources(accountId, ids);
   return rep;
 }
 

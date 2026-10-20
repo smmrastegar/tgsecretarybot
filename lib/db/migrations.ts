@@ -553,6 +553,18 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // Which SoundCloud account each imported song came from (shown as account marks, like Spotify's).
+    id: "2026-10-20-002-soundcloud-sources",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_track_sc_sources (
+          track_id   BIGINT NOT NULL REFERENCES music_tracks(id) ON DELETE CASCADE,
+          account_id BIGINT NOT NULL REFERENCES soundcloud_accounts(id) ON DELETE CASCADE,
+          PRIMARY KEY (track_id, account_id)
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

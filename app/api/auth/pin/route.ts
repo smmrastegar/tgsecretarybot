@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/auth";
-import { audit, createMusicPin, deleteMusicPin, listMusicPins, listSpotifyAccounts, updateMusicPin } from "@/lib/db";
+import { audit, createMusicPin, deleteMusicPin, listMusicPins, listScAccountEntries, listSpotifyAccounts, updateMusicPin } from "@/lib/db";
 import { DIRECT_ACCOUNT } from "@/lib/music-scope";
 import { PIN_RE, pinConfigured } from "@/lib/music-pin";
 
@@ -19,8 +19,8 @@ export async function GET(): Promise<NextResponse> {
   const s = await getCurrentSession();
   if (!s) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (s.scope) return NextResponse.json({ configured: await pinConfigured(), canManage: false });
-  const [pins, accts] = await Promise.all([listMusicPins(), listSpotifyAccounts()]);
-  const accounts = [...accts.map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })), DIRECT_ACCOUNT];
+  const [pins, accts, scAccts] = await Promise.all([listMusicPins(), listSpotifyAccounts(), listScAccountEntries()]);
+  const accounts = [...accts.map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })), ...scAccts, DIRECT_ACCOUNT];
   return NextResponse.json({ configured: await pinConfigured(), canManage: true, pins, accounts }, { headers: { "Cache-Control": "no-store" } });
 }
 

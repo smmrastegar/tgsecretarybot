@@ -8,3 +8,7 @@ export function matchesAccounts(sources: number[] | undefined, ids: number[], mo
   const have = sources && sources.length ? sources : [0];
   return mode === "all" ? ids.every((a) => have.includes(a)) : ids.some((a) => have.includes(a));
 }
+
+/** SoundCloud accounts share the account lists with Spotify's: their ids are offset by this much (Spotify ids stay as they are). */
+export const SC_ID_BASE = 1_000_000;
+export const isSpotifyAccountId = (id: number): boolean => id > 0 && id < SC_ID_BASE;

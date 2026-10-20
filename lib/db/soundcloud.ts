@@ -71,3 +71,16 @@ export async function nextScTrack(): Promise<{ id: number; scId: string; coverUr
   const r = (await q().query(`SELECT id, soundcloud_id, source_cover_url FROM music_tracks WHERE source = 'soundcloud' AND status = 'queued' ORDER BY id LIMIT 1`)) as Row[];
   return r[0] ? { id: num(r[0], "id"), scId: str(r[0], "soundcloud_id"), coverUrl: strOrNull(r[0], "source_cover_url") } : null;
 }
+
+/** Remember that these songs are in this SoundCloud account's likes / lists. */
+export async function recordScSources(accountId: number, trackIds: number[]): Promise<void> {
+  const ids = [...new Set(trackIds.filter((n) => Number.isFinite(n)))];
+  if (!ids.length) return;
+  await ensureSchema();
+  await q().query(`INSERT INTO music_track_sc_sources (track_id, account_id) SELECT unnest($1::bigint[]), $2 ON CONFLICT DO NOTHING`, [ids, accountId]);
+}
+
+/** SoundCloud accounts as entries of the shared account lists (ids offset by SC_ID_BASE, names marked). */
+export async function listScAccountEntries(): Promise<Array<{ id: number; name: string }>> {
+  return (await listScAccounts()).map((a) => ({ id: 1_000_000 + a.id, name: `${a.username ?? "SoundCloud"} (SoundCloud)` }));
+}
