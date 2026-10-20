@@ -28,13 +28,14 @@ export type MusicTrack = {
   listenSeconds: number;
   /** Spotify's own length of the track, when known */
   spotifyDurationS: number | null;
-  /** "spotify" (downloaded through the bots) or "manual" (a file the owner sent by hand: no re-download, no Spotify repair) */
-  source: "spotify" | "manual";
+  /** "spotify" (downloaded through the bots), "manual" (a file the owner sent by hand) or "soundcloud" — only "spotify" songs are ever re-downloaded / repaired through Spotify */
+  source: "spotify" | "manual" | "soundcloud";
+  soundcloudId: string | null;
 };
 
 const COLS = `id, spotify_id, spotify_url, title, artist, album, release_date, duration_s,
   (cover_path IS NOT NULL) AS has_cover, status, error, size_bytes, created_at::text AS created_at,
-  rating, play_count, skip_count, last_played_at::text AS last_played_at, mime, ready_at::text AS ready_at, spotify_duration_s, source,
+  rating, play_count, skip_count, last_played_at::text AS last_played_at, mime, ready_at::text AS ready_at, spotify_duration_s, source, soundcloud_id,
   (SELECT COALESCE(SUM(seconds), 0)::int FROM music_events e WHERE e.track_id = music_tracks.id) AS listen_s`;
 
 function map(r: Row): MusicTrack {
@@ -61,7 +62,8 @@ function map(r: Row): MusicTrack {
     readyAt: strOrNull(r, "ready_at"),
     listenSeconds: num(r, "listen_s"),
     spotifyDurationS: numOrNull(r, "spotify_duration_s"),
-    source: str(r, "source") === "manual" ? "manual" : "spotify",
+    source: str(r, "source") === "manual" ? "manual" : str(r, "source") === "soundcloud" ? "soundcloud" : "spotify",
+    soundcloudId: strOrNull(r, "soundcloud_id"),
   };
 }
 
@@ -154,9 +156,10 @@ export async function deleteMusicTrack(id: number): Promise<{ filePath: string |
   const t = await getMusicTrack(id);
   if (!t) return null;
   // Remember it first: a later sync / import / paste must not resurrect it.
-  if (t.spotifyId) {
+  const key = t.spotifyId ?? (t.soundcloudId ? `sc:${t.soundcloudId}` : null); // SoundCloud songs are remembered under "sc:<id>"
+  if (key) {
     await ensureSchema();
-    await q().query(`INSERT INTO music_removed (spotify_id, title, artist) VALUES ($1, $2, $3) ON CONFLICT (spotify_id) DO UPDATE SET removed_at = NOW()`, [t.spotifyId, t.title, t.artist]);
+    await q().query(`INSERT INTO music_removed (spotify_id, title, artist) VALUES ($1, $2, $3) ON CONFLICT (spotify_id) DO UPDATE SET removed_at = NOW()`, [key, t.title, t.artist]);
   }
   await q().query(`DELETE FROM music_tracks WHERE id = $1`, [id]);
   return { filePath: t.filePath, coverPath: t.coverPath };
@@ -165,7 +168,7 @@ export async function deleteMusicTrack(id: number): Promise<{ filePath: string |
 export async function nextQueuedTrack(): Promise<MusicTrack | null> {
   if (!hasDb()) return null;
   await ensureSchema();
-  const rows = (await q().query(`SELECT ${COLS} FROM music_tracks WHERE status = 'queued' ORDER BY id ASC LIMIT 1`)) as Row[];
+  const rows = (await q().query(`SELECT ${COLS} FROM music_tracks WHERE status = 'queued' AND source = 'spotify' ORDER BY id ASC LIMIT 1`)) as Row[];
   return rows[0] ? map(rows[0]) : null;
 }
 
@@ -468,7 +471,7 @@ export type MetaRow = { id: number; spotifyId: string; status: string; durationS
 
 export async function listTracksForMeta(): Promise<MetaRow[]> {
   await ensureSchema();
-  const rows = (await q().query(`SELECT id, spotify_id, status, duration_s, spotify_duration_s, size_bytes, file_path, cover_path FROM music_tracks WHERE spotify_id IS NOT NULL AND source <> 'manual' ORDER BY id`)) as Row[];
+  const rows = (await q().query(`SELECT id, spotify_id, status, duration_s, spotify_duration_s, size_bytes, file_path, cover_path FROM music_tracks WHERE spotify_id IS NOT NULL AND source = 'spotify' ORDER BY id`)) as Row[];
   return rows.map((r) => ({ id: num(r, "id"), spotifyId: str(r, "spotify_id"), status: str(r, "status"), durationS: numOrNull(r, "duration_s"), spotifyDurationS: numOrNull(r, "spotify_duration_s"), sizeBytes: numOrNull(r, "size_bytes"), filePath: strOrNull(r, "file_path"), coverPath: strOrNull(r, "cover_path") }));
 }
 

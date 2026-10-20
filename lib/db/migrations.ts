@@ -527,6 +527,32 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE music_intake ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'audio'`;
     },
   },
+  {
+    // SoundCloud: connected accounts, the one-time PKCE verifiers of sign-ins in progress, and SoundCloud songs in the library.
+    id: "2026-10-20-001-soundcloud",
+    up: async (q) => {
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS soundcloud_id TEXT`;
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS source_cover_url TEXT`;
+      await q`CREATE UNIQUE INDEX IF NOT EXISTS music_tracks_soundcloud_id_idx ON music_tracks (soundcloud_id) WHERE soundcloud_id IS NOT NULL`;
+      await q`
+        CREATE TABLE IF NOT EXISTS soundcloud_accounts (
+          id            BIGSERIAL PRIMARY KEY,
+          sc_user_urn   TEXT NOT NULL UNIQUE,
+          username      TEXT,
+          refresh_token TEXT NOT NULL,
+          access_token  TEXT,
+          expires_at    TIMESTAMPTZ,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`;
+      await q`
+        CREATE TABLE IF NOT EXISTS soundcloud_pkce (
+          nonce      TEXT PRIMARY KEY,
+          verifier   TEXT NOT NULL,
+          host       TEXT NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;
