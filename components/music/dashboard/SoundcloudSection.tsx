@@ -116,11 +116,11 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
             <button onClick={() => { window.location.href = "/api/music/soundcloud/login"; }} className="min-h-11 px-4 rounded-xl bg-[#ff5500] text-white text-sm font-semibold active:opacity-80">{accounts.length ? "+ افزودن حساب" : "ورود با ساندکلاود"}</button>
           </div>
           <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
-            <label htmlFor="sc-url" className="block text-xs font-medium mb-2 text-center">لینک آهنگ یا لیست ساندکلاود</label>
+            <label htmlFor="sc-url" className="block text-xs font-medium mb-2 text-center">لینک آهنگ، لیست یا پروفایل ساندکلاود (لینک پروفایل = لایک‌های عمومی‌اش)</label>
             <input id="sc-url" dir="ltr" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://soundcloud.com/…" className={field} />
             <div className="mt-2 flex justify-end"><button disabled={!!busy || !/soundcloud\.com\//i.test(url)} onClick={() => void run("url", { what: "url", url })} className={btn}>{busy === "url" ? "…" : "↓ وارد کن"}</button></div>
           </div>
-          <p className="mt-3 text-[11px] text-[var(--color-text-dim)] leading-6 text-center">فقط آهنگ‌هایی که ساندکلاود به برنامه‌ها اجازهٔ پخش می‌دهد دانلود می‌شوند؛ بقیه رد می‌شوند.</p>
+          <p className="mt-3 text-[11px] text-[var(--color-text-dim)] leading-6 text-center">اگر صفحهٔ ورود ساندکلاود سفید ماند: آن صفحه فایل‌هایش را از sndcdn.com می‌گیرد و بدون VPN (یا با افزونهٔ مسدودکننده) باز نمی‌شود. وصل‌کردن حساب لازم نیست؛ لینک پروفایل یا لیست را بالا بچسبان.<br />فقط آهنگ‌هایی که ساندکلاود به برنامه‌ها اجازهٔ پخش می‌دهد دانلود می‌شوند؛ بقیه رد می‌شوند.</p>
         </>
       )}
     </Section>

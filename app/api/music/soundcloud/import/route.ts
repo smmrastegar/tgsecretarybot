@@ -22,7 +22,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     else if (b.what === "playlist" && b.urn) r = await scImport(await scPlaylistTracks(acc, b.urn), `SoundCloud: ${String(b.name ?? "playlist").slice(0, 80)}`, acc);
     else if (b.what === "url" && b.url) {
       const o = await scResolve(b.url.trim(), acc ?? accounts[0]?.id ?? null);
-      r = o.kind === "track" ? await scImport([o.track], null, acc) : await scImport(o.tracks, `SoundCloud: ${o.title.slice(0, 80)}`, acc);
+      r = o.kind === "track" ? await scImport([o.track], null, acc)
+        : o.kind === "user" ? await scImport(o.tracks, `SoundCloud likes (${o.name.slice(0, 60)})`, null)
+        : await scImport(o.tracks, `SoundCloud: ${o.title.slice(0, 80)}`, acc);
     } else return NextResponse.json({ error: "nothing to import" }, { status: 400 });
     kickScDownloads();
     return NextResponse.json(r);

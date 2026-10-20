@@ -133,9 +133,11 @@ export async function scPlaylists(accountId: number): Promise<Array<{ urn: strin
 export async function scPlaylistTracks(accountId: number | null, urn: string, max = 500): Promise<RawTrack[]> { return collect(`/playlists/${urn}/tracks?limit=200&linked_partitioning=true`, await scToken(accountId), max); }
 
 /** A pasted soundcloud.com link: one song, or a playlist / set. */
-export async function scResolve(url: string, accountId: number | null): Promise<{ kind: "track"; track: RawTrack } | { kind: "playlist"; title: string; urn: string; tracks: RawTrack[] }> {
+export async function scResolve(url: string, accountId: number | null): Promise<{ kind: "track"; track: RawTrack } | { kind: "playlist"; title: string; urn: string; tracks: RawTrack[] } | { kind: "user"; name: string; tracks: RawTrack[] }> {
   const token = await scToken(accountId);
-  const o = await scGet<{ kind?: string; id?: number; urn?: string; title?: string; tracks?: RawTrack[] }>(`/resolve?url=${encodeURIComponent(url)}`, token);
+  const o = await scGet<{ kind?: string; id?: number; urn?: string; title?: string; username?: string; tracks?: RawTrack[] }>(`/resolve?url=${encodeURIComponent(url)}`, token);
+  // a profile link: that person's public likes (no sign-in needed)
+  if (o.kind === "user" || (o.username && !o.title)) return { kind: "user", name: o.username ?? "SoundCloud", tracks: await collect(`/users/${o.urn ?? `soundcloud:users:${o.id}`}/likes/tracks?limit=200&linked_partitioning=true`, token, 500) };
   if (o.kind === "playlist" || o.tracks) return { kind: "playlist", title: o.title ?? "SoundCloud playlist", urn: o.urn ?? `soundcloud:playlists:${o.id}`, tracks: o.tracks?.length ? o.tracks : await scPlaylistTracks(accountId, o.urn ?? `soundcloud:playlists:${o.id}`) };
   if (o.kind === "track" || o.id) return { kind: "track", track: o as RawTrack };
   throw new Error("this link is not a SoundCloud song or playlist");
