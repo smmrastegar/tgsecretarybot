@@ -42,7 +42,7 @@ async function artistHit(name: string): Promise<Hit | null> {
 
 export async function resolveSc(rawTitle: string, uploader: string): Promise<Fix> {
   const p: Parse = parseTitle(rawTitle);
-  const hay = `${tidyTitle(rawTitle)} ${uploader}`;
+  const titleWords = nameWords(tidyTitle(rawTitle)), upWords = new Set(nameWords(uploader));
   const fallbackTitle = p.latinTitle ?? p.readings[0]!.title;
   const guess = (): { title: string; artist: string } => ({ title: fallbackTitle, artist: p.readings.find((r) => r.artist)?.artist ?? uploader });
 
@@ -57,13 +57,14 @@ export async function resolveSc(rawTitle: string, uploader: string): Promise<Fix
       if (seen.has(t.id)) continue;
       const artists = t.artist.split(/,\s*/).filter(Boolean);
       const ts = Math.max(...p.readings.map((r) => sim(r.title, stripFeat(t.title).rest)), sim(fallbackTitle, stripFeat(t.title).rest));
-      const hayWords = nameWords(hay);
-      // the artist's name is in the upload's text — all of it, or (for a clearly matching title) its main word: "Namjoo" for "Mohsen Namjoo"
+      // the artist's name is in the upload's text — all of it, or (for a clearly matching title) its main word: "Namjoo" for "Mohsen Namjoo".
+      // The uploader's name counts only as whole words ("MusicKhane" is not "Khan", "ParhamGh" is not "Parham"); the title text may match loosely.
       const evidence = artists.some((a) => {
-        const aw = nameWords(a), full = wordOverlap(aw, hayWords);
-        if (full >= 0.85) return true;
-        const longest = Math.max(0, ...aw.filter((w) => hayWords.some((h) => h === w || wordOverlap([w], [h]) >= 0.85)).map((w) => w.length));
-        return ts >= 0.9 && full >= 0.5 && longest >= 5;
+        const aw = nameWords(a);
+        if (wordOverlap(aw, titleWords) >= 0.85 || sim(a, uploader) >= 0.9 || (aw.length > 0 && aw.every((w) => upWords.has(w)))) return true;
+        const longest = Math.max(0, ...aw.filter((w) => upWords.has(w) || titleWords.some((h) => h === w || wordOverlap([w], [h]) >= 0.85)).map((w) => w.length));
+        const covered = aw.filter((w) => upWords.has(w) || titleWords.some((h) => h === w || wordOverlap([w], [h]) >= 0.85)).length / Math.max(1, aw.length);
+        return ts >= 0.9 && covered >= 0.5 && longest >= 5;
       });
       const marker = MARK.test(t.title) === MARK.test(rawTitle);
       seen.set(t.id, { title: t.title, artists, score: ts, strong: ts >= 0.85 && evidence && marker && (!p.derived || MARK.test(t.title)) });
