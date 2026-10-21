@@ -3,7 +3,7 @@ import { requireUnscopedOr403 } from "@/lib/auth";
 import { getMusicTrack, getOrigMeta, listScReview, scMetaCounts, setTrackMeta, updateMusicTrack } from "@/lib/db";
 import { searchArtists } from "@/lib/music-artists";
 import { nameWords, wordSimilarity } from "@/lib/music-names";
-import { searchSpotifyTracks } from "@/lib/spotify";
+import { SpotifyRateLimited, searchSpotifyTracks } from "@/lib/spotify";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,7 +45,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (b.action === "search") {
       const q = String(b.q ?? "").trim().slice(0, 120);
       if (q.length < 2) return NextResponse.json({ artists: [], tracks: [] });
-      const [artists, tracks] = await Promise.all([searchArtists(q).catch(() => []), searchSpotifyTracks(q).catch(() => [])]);
+      let limited = 0;
+      const soft = (e: unknown) => { if (e instanceof SpotifyRateLimited) limited = e.retryAfterSeconds; return []; };
+      const [artists, tracks] = await Promise.all([searchArtists(q).catch(soft), searchSpotifyTracks(q).catch(soft)]);
+      if (limited) return NextResponse.json({ artists: [], tracks: [], limitedMinutes: Math.ceil(limited / 60) });
       return NextResponse.json({ artists: artists.slice(0, 6).map((a) => ({ name: a.name, followers: a.followers })), tracks: tracks.slice(0, 6).map((t) => ({ title: t.title, artist: t.artist })) });
     }
     if (!Number.isFinite(id)) return NextResponse.json({ error: "trackId required" }, { status: 400 });

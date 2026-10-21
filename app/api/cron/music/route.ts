@@ -89,7 +89,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   // Fallback: one "Track not found" track per tick via spotDL (runs in the
   // background; guarded by its own lock).
   void verifyStep().catch((err) => reportWarn("music", "verify step failed:", err));
-  void scMetaStep(6).catch((err) => reportWarn("music", "soundcloud names step failed:", err));
+  void scMetaStep(2).catch((err) => reportWarn("music", "soundcloud names step failed:", err));
   void scWatchStep().catch((err) => reportWarn("music", "soundcloud watch failed:", err));
   void soundcloudStep(2).catch((err) => reportWarn("music", "soundcloud step failed:", err));
   void intakeStep(1).catch((err) => reportWarn("music", "intake step failed:", err));

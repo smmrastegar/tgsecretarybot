@@ -260,7 +260,7 @@ export async function scWatchStep(): Promise<number> {
 }
 
 /** Cron step: clean the names of a few SoundCloud songs against Spotify (auto when sure, "review" for the owner otherwise). Never throws. */
-export async function scMetaStep(max = 5): Promise<number> {
+export async function scMetaStep(max = 2): Promise<number> {
   const s = await getAllSettings();
   if (Date.now() < Number(s.scMetaPauseUntil || 0)) return 0;
   if (Date.now() - Number(s.scMetaLock || 0) < 150_000) return 0;
@@ -276,7 +276,7 @@ export async function scMetaStep(max = 5): Promise<number> {
         else await setTrackMeta(t.id, { title: fix.title, artist: fix.artist, state: "auto" });
         done++;
       } catch (e) {
-        if (e instanceof SpotifyRateLimited) { await setSetting("scMetaPauseUntil", String(Date.now() + (e.retryAfterSeconds + 5) * 1000)); break; }
+        if (e instanceof SpotifyRateLimited) { await setSetting("scMetaPauseUntil", String(Date.now() + (e.retryAfterSeconds + 5) * 1000)); reportWarn("music", `Spotify is limiting searches for ${Math.round(e.retryAfterSeconds / 60)} min: SoundCloud name cleanup paused`); break; }
         reportWarn("music", `soundcloud names for track ${t.id} failed:`, e);
         await setTrackMeta(t.id, { state: "review", suggestions: [] }); // the owner sorts it out
         done++;

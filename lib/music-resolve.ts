@@ -25,7 +25,7 @@ async function artistHit(name: string): Promise<Hit | null> {
   const key = nameWords(name).join(" ");
   if (!key) return null;
   if (artistCache.has(key)) return artistCache.get(key)!;
-  await sleep(200);
+  await sleep(1200);
   const list = await searchArtists(name);
   let best: Hit | null = null, bestScore = 0;
   for (const a of list) {
@@ -47,10 +47,10 @@ export async function resolveSc(rawTitle: string, uploader: string): Promise<Fix
   const guess = (): { title: string; artist: string } => ({ title: fallbackTitle, artist: p.readings.find((r) => r.artist)?.artist ?? uploader });
 
   // 1) The song itself on Spotify (not for covers / remixes / podcasts: those are other recordings)
-  const queries = [...new Set(p.readings.slice(0, 3).flatMap((r) => [`${r.title} ${r.artist ?? ""}`.trim(), r.title]).concat(p.latinTitle ? [`${p.latinTitle} ${uploader}`] : []))].slice(0, 5);
+  const queries = [...new Set(p.readings.slice(0, 3).flatMap((r) => [`${r.title} ${r.artist ?? ""}`.trim(), r.title]).concat(p.latinTitle ? [`${p.latinTitle} ${uploader}`] : []))].slice(0, 2);
   const seen = new Map<string, { title: string; artists: string[]; score: number; strong: boolean }>();
   for (const q of queries) {
-    await sleep(250);
+    await sleep(1200);
     let list;
     try { list = await searchSpotifyTracks(q); } catch (e) { if (e instanceof SpotifyRateLimited) throw e; continue; }
     for (const t of list) {
@@ -78,7 +78,7 @@ export async function resolveSc(rawTitle: string, uploader: string): Promise<Fix
   const suggestions: MetaSuggestion[] = ranked.filter((r) => r.score >= 0.5).slice(0, 4).map((r) => ({ title: r.title, artist: r.artists.join(", "), source: "spotify-track" as const }));
   if (!p.derived) {
     const tried: Array<{ reading: Parse["readings"][number]; hits: Hit[]; all: boolean }> = [];
-    for (const r of p.readings.slice(0, 4)) {
+    for (const r of p.readings.slice(0, 2)) {
       if (!r.artist) continue;
       const names = [...splitNames(stripFeat(r.artist).rest || r.artist), ...p.feat];
       if (!names.length || names.length > 4) continue;

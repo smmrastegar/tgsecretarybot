@@ -132,7 +132,7 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
 
 type Sug = { title: string; artist: string; label: string; why: string | null };
 type Item = { id: number; origTitle: string; origArtist: string; suggestions: Sug[] };
-type Found = { artists: Array<{ name: string; followers: number }>; tracks: Array<{ title: string; artist: string }> };
+type Found = { artists: Array<{ name: string; followers: number }>; tracks: Array<{ title: string; artist: string }>; limitedMinutes?: number };
 
 // Songs the automatic check could not settle. One song at a time: pick the right "artist — song", or write it yourself.
 function ReviewPanel() {
@@ -225,7 +225,7 @@ function ReviewCard({ it, pos, total, done, skip }: { it: Item; pos: number; tot
           </div>
           {found && (
             <div className="space-y-2">
-              {found.artists.length === 0 && found.tracks.length === 0 && <div className="text-xs text-[var(--color-text-dim)]">در اسپاتیفای پیدا نشد. اگر خوانندهٔ جدید یا ناشناخته است، پایین دقیق بنویسش.</div>}
+              {found.limitedMinutes ? <div className="text-xs text-amber-300 leading-6">اسپاتیفای فعلاً جستجو را محدود کرده (حدود {fa(Math.ceil(found.limitedMinutes / 60))} ساعت دیگر باز می‌شود). تا آن موقع خواننده و آهنگ را خودت در دو فیلد پایین بنویس.</div> : found.artists.length === 0 && found.tracks.length === 0 && <div className="text-xs text-[var(--color-text-dim)]">در اسپاتیفای پیدا نشد. اگر خوانندهٔ جدید یا ناشناخته است، پایین دقیق بنویسش.</div>}
               {found.artists.length > 0 && <div className="text-[11px] text-[var(--color-text-dim)]">خواننده‌ها (برای پر کردن «خواننده» بزن):</div>}
               {found.artists.map((a) => <button key={a.name} onClick={() => setArtist(a.name)} className="block w-full text-start min-h-11 px-3 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)]" dir="auto">🎤 {a.name}</button>)}
               {found.tracks.length > 0 && <div className="text-[11px] text-[var(--color-text-dim)]">آهنگ‌ها (برای پر کردن هر دو فیلد بزن):</div>}
