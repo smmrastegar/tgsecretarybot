@@ -7,7 +7,7 @@ import path from "node:path";
 import { addScTrack, nextScMetaTracks, recordScSources, setTrackMeta, getAllSettings, getScTokens, listMusicPlaylists, listScAccounts, nextScTrack, saveScTokens, savePkce, setPlaylistTrack, createMusicPlaylist, setSetting, takePkce, updateMusicTrack, upsertScAccount, type ScTrackIn } from "./db";
 import { MUSIC_DIR } from "./music";
 import { ffmpegPath } from "./music-analysis";
-import { reportWarn } from "./report";
+import { reportInfo, reportWarn } from "./report";
 
 const API = "https://api.soundcloud.com";
 const AUTH = "https://secure.soundcloud.com";
@@ -228,6 +228,35 @@ export async function soundcloudStep(max = 2): Promise<number> {
   } catch (err) { reportWarn("music", "soundcloud step failed:", err); }
   finally { await setSetting("soundcloudStepLock", "0"); }
   return done;
+}
+
+/**
+ * Cron step: a slow watch over every connected account's SoundCloud likes — one request per account every few hours (setting
+ * `scWatchHours`, default 6; 0 turns it off). New likes join the same "SoundCloud likes (<name>)" playlist and are queued for download.
+ */
+export async function scWatchStep(): Promise<number> {
+  const s = await getAllSettings();
+  if (!(s.soundcloudClientId ?? "").trim()) return 0;
+  const hours = s.scWatchHours === undefined || s.scWatchHours === "" ? 6 : Number(s.scWatchHours);
+  if (!(hours > 0) || Date.now() - Number(s.scWatchAt || 0) < hours * 3_600_000) return 0;
+  if (Date.now() - Number(s.scWatchLock || 0) < 10 * 60_000) return 0;
+  await setSetting("scWatchLock", String(Date.now()));
+  let added = 0;
+  try {
+    for (const a of await listScAccounts()) {
+      try {
+        const rep = await scImport((await collect("/me/likes/tracks?limit=100&linked_partitioning=true", await scToken(a.id), 100)), `SoundCloud likes (${a.username ?? "SoundCloud"})`, a.id);
+        added += rep.added;
+      } catch (e) {
+        if (e instanceof ScRateLimited) break;
+        reportWarn("music", `SoundCloud likes watch (${a.username ?? a.id}) failed:`, e);
+      }
+    }
+    await setSetting("scWatchAt", String(Date.now()));
+    if (added > 0) reportInfo("music", `SoundCloud watch: ${added} new liked song(s)`);
+  } catch (err) { reportWarn("music", "soundcloud watch failed:", err); }
+  finally { await setSetting("scWatchLock", "0"); }
+  return added;
 }
 
 /** Cron step: clean the names of a few SoundCloud songs against Spotify (auto when sure, "review" for the owner otherwise). Never throws. */

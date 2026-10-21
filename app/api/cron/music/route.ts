@@ -5,7 +5,7 @@ import { fillMissingMeta, kickMusicQueue, repairLibrary, verifyLibraryLocal } fr
 import { verifyStep } from "@/lib/music-verify";
 import { analysisStep } from "@/lib/music-analysis";
 import { intakeStep } from "@/lib/music-intake";
-import { scMetaStep, soundcloudStep } from "@/lib/soundcloud";
+import { scMetaStep, scWatchStep, soundcloudStep } from "@/lib/soundcloud";
 import { spotdlFallbackStep } from "@/lib/music-spotdl";
 import { artistWatchStep } from "@/lib/music-artists";
 import { runSync, SYNC_EVERY_MS } from "@/lib/music-sync";
@@ -90,6 +90,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   // background; guarded by its own lock).
   void verifyStep().catch((err) => reportWarn("music", "verify step failed:", err));
   void scMetaStep(6).catch((err) => reportWarn("music", "soundcloud names step failed:", err));
+  void scWatchStep().catch((err) => reportWarn("music", "soundcloud watch failed:", err));
   void soundcloudStep(2).catch((err) => reportWarn("music", "soundcloud step failed:", err));
   void intakeStep(1).catch((err) => reportWarn("music", "intake step failed:", err));
   void analysisStep().catch((err) => reportWarn("music", "analysis step failed:", err));
