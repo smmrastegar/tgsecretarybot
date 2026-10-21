@@ -22,10 +22,11 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
   const [lists, setLists] = useState<Pl[] | null>(null);
   const [cid, setCid] = useState("");
   const [csec, setCsec] = useState("");
+  const [denied, setDenied] = useState(false); // a limited password cannot use it at all
 
   const load = useCallback(async () => {
     const r = await fetch("/api/music/soundcloud/config", { cache: "no-store" });
-    if (r.ok) { const j = (await r.json()) as Cfg; setCfg(j); setCid(j.clientId); }
+    if (r.ok) { const j = (await r.json()) as Cfg; setCfg(j); setCid(j.clientId); } else if (r.status === 403 || r.status === 401) setDenied(true);
   }, []);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -63,14 +64,14 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
     void load();
   }
 
-  if (!canManage) return null;
+  if (denied) return null;
   const accounts = cfg?.accounts ?? [];
   return (
     <Section icon="🟠" title="اتصال به ساندکلاود" summary={cfg ? (accounts.length ? accounts.map((a) => a.username ?? "حساب").join(" · ") : cfg.hasCredentials ? "حسابی وصل نیست؛ لینک آهنگ را مستقیم هم می‌شود وارد کرد" : "هنوز تنظیم نشده") : "…"}
       badge={accounts.length ? <Pill tone="ok">{fa(accounts.length)} حساب</Pill> : undefined}>
       {note && <div role="status" className="mb-3 rounded-xl border border-orange-400/50 text-orange-300 px-3 py-2.5 text-xs leading-6">{note}</div>}
 
-      {cfg && !cfg.hasCredentials && (
+      {canManage && cfg && !cfg.hasCredentials && (
         <div className="mb-4 space-y-2 text-xs text-[var(--color-text-dim)] leading-6">
           <p>یک‌بار: Client ID / Secret اپ ساندکلاود را بده و این آدرس را به‌عنوان Redirect URI در اپ ثبت کن:</p>
           <div dir="ltr" className="font-mono text-[11px] bg-[var(--color-surface-2)] rounded-lg px-3 py-2 select-all break-all">{cfg.redirectUri}</div>
@@ -89,7 +90,7 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
                   <div className="flex items-center gap-2">
                     <span aria-hidden className="grid place-items-center w-10 h-10 rounded-full text-base font-semibold shrink-0 bg-[var(--color-surface-2)]">{(a.username ?? "?").replace(/[^\p{L}\p{N}]/gu, "").charAt(0).toUpperCase() || "?"}</span>
                     <span className="min-w-0 flex-1 text-sm font-medium truncate" dir="auto">{a.username ?? "حساب ساندکلاود"}</span>
-                    <button onClick={() => void disconnect(a.id)} className="shrink-0 min-h-10 px-3 rounded-xl text-xs text-rose-300 border border-rose-500/30 active:bg-rose-500/10">قطع</button>
+                    {canManage && <button onClick={() => void disconnect(a.id)} className="shrink-0 min-h-10 px-3 rounded-xl text-xs text-rose-300 border border-rose-500/30 active:bg-rose-500/10">قطع</button>}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2 justify-end">
                     <button disabled={!!busy} onClick={() => void run(`likes${a.id}`, { accountId: a.id, what: "likes" })} className={btn}>{busy === `likes${a.id}` ? "…" : "♥ وارد کردن لایک‌ها"}</button>
