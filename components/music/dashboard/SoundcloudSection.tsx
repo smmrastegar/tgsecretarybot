@@ -131,7 +131,7 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
 }
 
 type Sug = { title: string; artist: string; label: string; why: string | null };
-type Item = { id: number; ready: boolean; origTitle: string; origArtist: string; suggestions: Sug[] };
+type Item = { id: number; ready: boolean; origTitle: string; origArtist: string; current?: { title: string; artist: string }; suggestions: Sug[] };
 type Found = { artists: Array<{ name: string; followers: number }>; tracks: Array<{ title: string; artist: string }>; limitedMinutes?: number };
 
 // Songs the automatic check could not settle. One song at a time: pick the right "artist — song", or write it yourself.
@@ -163,6 +163,7 @@ function ReviewPanel() {
           {help && (
             <p className="mt-1 mb-2 text-xs leading-6 text-[var(--color-text-dim)]">ساندکلاود معمولاً اسم خواننده را داخل اسم آهنگ می‌نویسد یا اسم آپلودکننده را به‌جای خواننده می‌گذارد. سیستم هر آهنگ را با اسپاتیفای تطبیق می‌دهد و اگر مطمئن باشد، خودش درست می‌کند. اینجا فقط آهنگ‌هایی هستند که مطمئن نشد. هر بار یک آهنگ می‌بینی: یکی از گزینه‌ها را بزن و «تأیید» را بزن؛ اگر هیچ‌کدام درست نبود، خودت بنویس. کاری که نکنی، همان اسم قبلی می‌ماند و آهنگ پخش می‌شود.</p>
           )}
+          <EditAny />
           {!cur
             ? <div className="text-xs text-[var(--color-text-dim)] py-3 text-center">{review ? "بقیه را رد کردی؛ دوباره باز کن." : "موردی برای بررسی نیست."}{skipped.length > 0 && <button onClick={() => setSkipped([])} className="mx-2 underline">برگرد به اولی</button>}</div>
             : <ReviewCard key={cur.id} it={cur} pos={review - todo.length + 1} total={review} done={async () => { await load(); }} skip={() => setSkipped((l) => [...l, cur.id])} />}
@@ -172,11 +173,11 @@ function ReviewPanel() {
   );
 }
 
-function ReviewCard({ it, pos, total, done, skip }: { it: Item; pos: number; total: number; done: () => Promise<void>; skip: () => void }) {
+function ReviewCard({ it, pos, total, done, skip, edit }: { it: Item; pos?: number; total?: number; done: () => Promise<void>; skip?: () => void; edit?: boolean }) {
   const [pick, setPick] = useState(0);
-  const [manual, setManual] = useState(it.suggestions.length === 0);
-  const [title, setTitle] = useState(it.suggestions[0]?.title ?? it.origTitle);
-  const [artist, setArtist] = useState(it.suggestions[0]?.artist ?? it.origArtist);
+  const [manual, setManual] = useState(edit || it.suggestions.length === 0);
+  const [title, setTitle] = useState(edit && it.current ? it.current.title : it.suggestions[0]?.title ?? it.origTitle);
+  const [artist, setArtist] = useState(edit && it.current ? it.current.artist : it.suggestions[0]?.artist ?? it.origArtist);
   const [q, setQ] = useState("");
   const [found, setFound] = useState<Found | null>(null);
   const [busy, setBusy] = useState(false);
@@ -193,7 +194,8 @@ function ReviewCard({ it, pos, total, done, skip }: { it: Item; pos: number; tot
   const chosen = manual ? { title, artist } : it.suggestions[pick] ?? { title, artist };
   return (
     <div className="space-y-3">
-      <div className="text-[11px] text-[var(--color-text-dim)]">آهنگ {fa(Math.max(1, pos))} از {fa(total)}</div>
+      {!edit && pos != null && total != null && <div className="text-[11px] text-[var(--color-text-dim)]">آهنگ {fa(Math.max(1, pos))} از {fa(total)}</div>}
+      {edit && it.current && <div dir="auto" className="text-[11px] text-[var(--color-text-dim)]">الان ثبت است: {it.current.artist} — {it.current.title}</div>}
       <div className="rounded-xl bg-[var(--color-surface-2)] p-3 text-xs leading-6">
         <div className="text-[var(--color-text-dim)] mb-1">این اسم در ساندکلاود ثبت شده:</div>
         <div dir="auto" className="text-sm font-medium break-words">{it.origTitle}</div>
@@ -249,9 +251,51 @@ function ReviewCard({ it, pos, total, done, skip }: { it: Item; pos: number; tot
         {busy ? "…" : "تأیید و برو بعدی ✓"}
       </button>
       <div className="flex gap-2">
-        <button disabled={busy} onClick={skip} className={`${btn} flex-1`}>بعداً</button>
-        <button disabled={busy} onClick={() => void post({ action: "keep" })} className={`${btn} flex-1`}>همین اسم قبلی بماند</button>
+        {skip && <button disabled={busy} onClick={skip} className={`${btn} flex-1`}>بعداً</button>}
+        <button disabled={busy} onClick={() => void post({ action: "keep" })} className={`${btn} flex-1`}>{edit ? "بستن، بدون تغییر" : "همین اسم قبلی بماند"}</button>
+        <button disabled={busy} onClick={() => { if (confirm("اسم خواننده و آهنگ به همان چیزی که در ساندکلاود بود برگردد؟")) void post({ action: "revert" }); }} className={`${btn} flex-1`}>برگشت به اسم اصلیِ آپلود</button>
       </div>
+    </div>
+  );
+}
+
+// Any SoundCloud song can be corrected again, whenever: find it by a piece of its name, then edit it like a review card.
+function EditAny() {
+  const [q, setQ] = useState("");
+  const [items, setItems] = useState<Item[] | null>(null);
+  const [sel, setSel] = useState<Item | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function find() {
+    if (q.trim().length < 2) return;
+    setBusy(true); setSel(null);
+    const r = await fetch(`/api/music/soundcloud/review?q=${encodeURIComponent(q.trim())}`, { cache: "no-store" });
+    setItems(r.ok ? ((await r.json()) as { items: Item[] }).items : []);
+    setBusy(false);
+  }
+  return (
+    <div className="mb-3 rounded-xl border border-[var(--color-border)] p-3">
+      <div className="text-xs font-medium mb-2">ویرایش هر آهنگ ساندکلاود، هر وقت خواستی</div>
+      <form onSubmit={(e) => { e.preventDefault(); void find(); }} className="flex gap-2">
+        <input dir="auto" value={q} onChange={(e) => setQ(e.target.value)} placeholder="بخشی از اسم آهنگ، خواننده یا آپلودکننده" aria-label="جستجوی آهنگ ساندکلاود" className={field} />
+        <button type="submit" disabled={busy || q.trim().length < 2} className={`${btn} shrink-0`}>{busy ? "…" : "پیدا کن"}</button>
+      </form>
+      {items && !sel && (
+        <div className="mt-2 max-h-[40vh] overflow-y-auto">
+          {items.length === 0 && <div className="text-xs text-[var(--color-text-dim)] py-2">آهنگی پیدا نشد.</div>}
+          {items.map((it) => (
+            <button key={it.id} onClick={() => setSel(it)} className="w-full text-start min-h-12 py-2 border-b border-[var(--color-border)] active:bg-[var(--color-surface-2)]">
+              <span dir="auto" className="block text-sm font-medium break-words">{it.current?.artist} — {it.current?.title}</span>
+              <span dir="auto" className="block text-[11px] text-[var(--color-text-dim)] break-words">اصل: {it.origTitle}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {sel && (
+        <div className="mt-3">
+          <ReviewCard key={sel.id} it={sel} edit done={async () => { setSel(null); setItems(null); }} />
+          <button onClick={() => setSel(null)} className="mt-2 text-xs underline underline-offset-4 min-h-9 text-[var(--color-text-dim)]">برگشت به نتیجه‌ها</button>
+        </div>
+      )}
     </div>
   );
 }

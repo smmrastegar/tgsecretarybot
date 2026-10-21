@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUnscopedOr403 } from "@/lib/auth";
-import { getMusicTrack, getOrigMeta, listScReview, scMetaCounts, setTrackMeta, updateMusicTrack } from "@/lib/db";
+import { getMusicTrack, getOrigMeta, listScReview, scMetaCounts, searchScTracks, setTrackMeta, updateMusicTrack } from "@/lib/db";
 import { searchArtists } from "@/lib/music-artists";
 import { nameWords, wordSimilarity } from "@/lib/music-names";
 import { SpotifyRateLimited, searchSpotifyTracks } from "@/lib/spotify";
@@ -28,10 +28,15 @@ function tidySuggestions(it: Awaited<ReturnType<typeof listScReview>>[number]) {
   return list.map((x) => ({ title: x.title, artist: x.artist, label: LABEL[x.source], why: x.note ?? null }));
 }
 
-export async function GET(): Promise<NextResponse> {
+const shape = (it: Awaited<ReturnType<typeof listScReview>>[number]) => ({ id: it.id, ready: it.ready, origTitle: it.origTitle ?? it.title, origArtist: it.origArtist ?? it.artist, current: { title: it.title, artist: it.artist }, suggestions: tidySuggestions(it) });
+
+// GET → the songs waiting for a decision; GET ?q=text → any SoundCloud song matching the text (every song can be edited again, any time)
+export async function GET(request: Request): Promise<NextResponse> {
   const guard = await requireUnscopedOr403();
   if (guard) return guard;
-  const items = (await listScReview(60)).map((it) => ({ id: it.id, ready: it.ready, origTitle: it.origTitle ?? it.title, origArtist: it.origArtist ?? it.artist, suggestions: tidySuggestions(it) }));
+  const text = (new URL(request.url).searchParams.get("q") ?? "").trim().slice(0, 100);
+  if (text) return NextResponse.json({ items: (await searchScTracks(text)).map(shape) }, { headers: { "Cache-Control": "no-store" } });
+  const items = (await listScReview(60)).map(shape);
   return NextResponse.json({ counts: await scMetaCounts(), items }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -64,7 +69,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (b.action === "revert") {
       const orig = await getOrigMeta(id);
       if (orig?.title) await updateMusicTrack(id, { title: orig.title, artist: orig.artist ?? undefined });
-      await setTrackMeta(id, { state: "review", suggestions: null });
+      await setTrackMeta(id, { state: "done", suggestions: null });
       return NextResponse.json({ ok: true });
     }
     return NextResponse.json({ error: "unknown action" }, { status: 400 });

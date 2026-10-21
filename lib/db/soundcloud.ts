@@ -108,10 +108,21 @@ export async function setTrackMeta(id: number, m: { title?: string; artist?: str
   );
 }
 
+const META_COLS = `id, title, artist, orig_title, orig_artist, meta_state, meta_suggestions, uploader, (status = 'ready' AND file_path IS NOT NULL) AS ready`;
+function metaItem(r: Row): MetaItem {
+  return { id: num(r, "id"), title: str(r, "title"), artist: str(r, "artist"), origTitle: strOrNull(r, "orig_title"), origArtist: strOrNull(r, "orig_artist") ?? strOrNull(r, "uploader"), state: str(r, "meta_state"), suggestions: Array.isArray(r.meta_suggestions) ? (r.meta_suggestions as MetaSuggestion[]) : [], coverUrl: null, ready: r.ready === true };
+}
+
 export async function listScReview(limit = 200): Promise<MetaItem[]> {
   await ensureSchema();
-  return ((await q().query(`SELECT id, title, artist, orig_title, orig_artist, meta_state, meta_suggestions, (status = 'ready' AND file_path IS NOT NULL) AS ready FROM music_tracks WHERE source = 'soundcloud' AND meta_state = 'review' ORDER BY id LIMIT $1`, [limit])) as Row[])
-    .map((r) => ({ id: num(r, "id"), title: str(r, "title"), artist: str(r, "artist"), origTitle: strOrNull(r, "orig_title"), origArtist: strOrNull(r, "orig_artist"), state: str(r, "meta_state"), suggestions: Array.isArray(r.meta_suggestions) ? (r.meta_suggestions as MetaSuggestion[]) : [], coverUrl: null, ready: r.ready === true }));
+  return ((await q().query(`SELECT ${META_COLS} FROM music_tracks WHERE source = 'soundcloud' AND meta_state = 'review' ORDER BY id LIMIT $1`, [limit])) as Row[]).map(metaItem);
+}
+
+/** Any SoundCloud song, found by a piece of its title / artist / uploader: the owner can always edit it again. */
+export async function searchScTracks(text: string, limit = 20): Promise<MetaItem[]> {
+  await ensureSchema();
+  const like = `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  return ((await q().query(`SELECT ${META_COLS} FROM music_tracks WHERE source = 'soundcloud' AND (title ILIKE $1 OR artist ILIKE $1 OR uploader ILIKE $1 OR orig_title ILIKE $1) ORDER BY id DESC LIMIT $2`, [like, limit])) as Row[]).map(metaItem);
 }
 
 export async function scMetaCounts(): Promise<Record<string, number>> {
