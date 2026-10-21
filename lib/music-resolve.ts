@@ -3,7 +3,7 @@
 // (or the uploader) is looked up among Spotify's artist profiles and only taken when the name matches closely. Everything else is left
 // for the owner to decide, with suggestions.
 import { mentions, parseTitle, stripFeat, tidyTitle, type Parse } from "./music-clean";
-import { nameWords, wordOverlap } from "./music-names";
+import { nameWords, wordOverlap, wordSimilarity } from "./music-names";
 import { searchSpotifyTracks, SpotifyRateLimited } from "./spotify";
 import { searchArtists } from "./music-artists";
 import type { MetaSuggestion } from "./db";
@@ -12,10 +12,21 @@ export type Fix =
   | { state: "auto-track" | "auto-artist"; title: string; artist: string; note: string }
   | { state: "review"; title: string; artist: string; note: string; suggestions: MetaSuggestion[] };
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** pause between Spotify calls (Spotify punishes bursts with hours-long limits); tests set it to 0 */
+export const pace = { ms: 1200 };
+const sleep = () => new Promise((r) => setTimeout(r, pace.ms));
 const sim = (a: string, b: string) => { const x = nameWords(a), y = nameWords(b); return x.length && y.length ? Math.min(wordOverlap(x, y), wordOverlap(y, x)) : 0; };
 const MARK = /\b(remix|live|acoustic|instrumental|piano version|cover|demo|rerub|rework|bootleg)\b/i;
 const splitNames = (s: string) => s.split(/\s*(?:,|&|\+|\bx\b|\band\b|،)\s*/i).map((x) => x.trim()).filter((x) => x && !/^\d+$/.test(x));
+
+/** Name similarity by whole words only (equal, or one letter off): "MusicKhane" is not "Khan", "ParhamGh" is not "Parham". */
+const sameWord = (x: string, y: string) => x === y || wordSimilarity(x, y) >= 0.9;
+const strictSim = (a: string, b: string): number => {
+  const x = nameWords(a), y = nameWords(b);
+  if (!x.length || !y.length) return 0;
+  const cov = (p: string[], q: string[]) => p.filter((w) => q.some((v) => sameWord(w, v))).length / p.length;
+  return Math.min(cov(x, y), cov(y, x));
+};
 
 type Hit = { id: string; name: string; followers: number };
 const artistCache = new Map<string, Hit | null>();
@@ -25,14 +36,14 @@ async function artistHit(name: string): Promise<Hit | null> {
   const key = nameWords(name).join(" ");
   if (!key) return null;
   if (artistCache.has(key)) return artistCache.get(key)!;
-  await sleep(1200);
+  await sleep();
   const list = await searchArtists(name);
   let best: Hit | null = null, bestScore = 0;
   for (const a of list) {
-    const s = sim(name, a.name);
+    const s = strictSim(name, a.name);
     // a single known first name / surname ("Namjoo") may stand for a well-known full name, never for an obscure one
     const w = nameWords(name), full = nameWords(a.name);
-    const subset = w.length >= 1 && (w.length >= 2 || w[0]!.length >= 5) && wordOverlap(w, full) >= 0.99 && a.followers >= 20000;
+    const subset = w.length >= 1 && (w.length >= 2 || w[0]!.length >= 5) && w.every((x) => full.some((v) => sameWord(x, v))) && a.followers >= 20000;
     const score = s >= 0.95 ? s + 0.05 : subset ? 0.9 : s >= 0.85 && a.followers >= 2000 ? s : 0;
     if (score > bestScore) { bestScore = score; best = { id: a.id, name: a.name, followers: a.followers }; }
   }
@@ -50,7 +61,7 @@ export async function resolveSc(rawTitle: string, uploader: string): Promise<Fix
   const queries = [...new Set(p.readings.slice(0, 3).flatMap((r) => [`${r.title} ${r.artist ?? ""}`.trim(), r.title]).concat(p.latinTitle ? [`${p.latinTitle} ${uploader}`] : []))].slice(0, 2);
   const seen = new Map<string, { title: string; artists: string[]; score: number; strong: boolean }>();
   for (const q of queries) {
-    await sleep(1200);
+    await sleep();
     let list;
     try { list = await searchSpotifyTracks(q); } catch (e) { if (e instanceof SpotifyRateLimited) throw e; continue; }
     for (const t of list) {
@@ -61,7 +72,7 @@ export async function resolveSc(rawTitle: string, uploader: string): Promise<Fix
       // The uploader's name counts only as whole words ("MusicKhane" is not "Khan", "ParhamGh" is not "Parham"); the title text may match loosely.
       const evidence = artists.some((a) => {
         const aw = nameWords(a);
-        if (wordOverlap(aw, titleWords) >= 0.85 || sim(a, uploader) >= 0.9 || (aw.length > 0 && aw.every((w) => upWords.has(w)))) return true;
+        if (wordOverlap(aw, titleWords) >= 0.85 || strictSim(a, uploader) >= 0.9 || (aw.length > 0 && aw.every((w) => upWords.has(w)))) return true;
         const longest = Math.max(0, ...aw.filter((w) => upWords.has(w) || titleWords.some((h) => h === w || wordOverlap([w], [h]) >= 0.85)).map((w) => w.length));
         const covered = aw.filter((w) => upWords.has(w) || titleWords.some((h) => h === w || wordOverlap([w], [h]) >= 0.85)).length / Math.max(1, aw.length);
         return ts >= 0.9 && covered >= 0.5 && longest >= 5;
@@ -91,14 +102,14 @@ export async function resolveSc(rawTitle: string, uploader: string): Promise<Fix
     if (good.length === 1 || (good.length > 1 && good[0]!.hits[0]!.followers > 3 * (good[1]!.hits[0]?.followers ?? 0))) {
       const t = good[0]!;
       const title = t.reading.version ? `${t.reading.title} (${t.reading.version})` : t.reading.title;
-      const unresolved = p.feat.filter((n) => !t.hits.some((h) => sim(h.name, n) >= 0.8)).filter((n) => /^[A-Za-z' .-]{3,30}$/.test(n));
+      const unresolved = p.feat.filter((n) => !t.hits.some((h) => strictSim(h.name, n) >= 0.8)).filter((n) => /^[A-Za-z' .-]{3,30}$/.test(n));
       return { state: "auto-artist", title: stripFeat(title).rest || title, artist: [...t.hits.map((h) => h.name), ...unresolved].join(", "), note: "artist profile on Spotify" };
     }
     for (const t of good.slice(0, 2)) suggestions.push({ title: t.reading.title, artist: t.hits.map((h) => h.name).join(", "), source: "spotify-artist" });
     // no artist in the title: the uploader may be the artist
     if (!tried.some((t) => t.hits.length)) {
       const h = await artistHit(uploader);
-      if (h && sim(h.name, uploader) >= 0.9) return { state: "auto-artist", title: fallbackTitle, artist: h.name, note: "uploader is the artist" };
+      if (h && strictSim(h.name, uploader) >= 0.9) return { state: "auto-artist", title: fallbackTitle, artist: h.name, note: "uploader is the artist" };
       if (h) suggestions.push({ title: fallbackTitle, artist: h.name, source: "spotify-artist", note: "uploader looks like this artist" });
     }
   }
