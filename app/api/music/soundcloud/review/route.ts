@@ -31,7 +31,7 @@ function tidySuggestions(it: Awaited<ReturnType<typeof listScReview>>[number]) {
 export async function GET(): Promise<NextResponse> {
   const guard = await requireUnscopedOr403();
   if (guard) return guard;
-  const items = (await listScReview(60)).map((it) => ({ id: it.id, origTitle: it.origTitle ?? it.title, origArtist: it.origArtist ?? it.artist, suggestions: tidySuggestions(it) }));
+  const items = (await listScReview(60)).map((it) => ({ id: it.id, ready: it.ready, origTitle: it.origTitle ?? it.title, origArtist: it.origArtist ?? it.artist, suggestions: tidySuggestions(it) }));
   return NextResponse.json({ counts: await scMetaCounts(), items }, { headers: { "Cache-Control": "no-store" } });
 }
 

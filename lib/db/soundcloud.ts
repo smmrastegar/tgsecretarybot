@@ -87,7 +87,7 @@ export async function listScAccountEntries(): Promise<Array<{ id: number; name: 
 
 // ---- cleaning the names of SoundCloud songs (see lib/music-resolve.ts)
 export type MetaSuggestion = { title: string; artist: string; source: "spotify-track" | "spotify-artist" | "parse"; note?: string };
-export type MetaItem = { id: number; title: string; artist: string; origTitle: string | null; origArtist: string | null; state: string; suggestions: MetaSuggestion[]; coverUrl: string | null };
+export type MetaItem = { ready: boolean; id: number; title: string; artist: string; origTitle: string | null; origArtist: string | null; state: string; suggestions: MetaSuggestion[]; coverUrl: string | null };
 
 export async function nextScMetaTracks(n: number): Promise<Array<{ id: number; title: string; artist: string }>> {
   await ensureSchema();
@@ -110,8 +110,8 @@ export async function setTrackMeta(id: number, m: { title?: string; artist?: str
 
 export async function listScReview(limit = 200): Promise<MetaItem[]> {
   await ensureSchema();
-  return ((await q().query(`SELECT id, title, artist, orig_title, orig_artist, meta_state, meta_suggestions FROM music_tracks WHERE source = 'soundcloud' AND meta_state = 'review' ORDER BY id LIMIT $1`, [limit])) as Row[])
-    .map((r) => ({ id: num(r, "id"), title: str(r, "title"), artist: str(r, "artist"), origTitle: strOrNull(r, "orig_title"), origArtist: strOrNull(r, "orig_artist"), state: str(r, "meta_state"), suggestions: Array.isArray(r.meta_suggestions) ? (r.meta_suggestions as MetaSuggestion[]) : [], coverUrl: null }));
+  return ((await q().query(`SELECT id, title, artist, orig_title, orig_artist, meta_state, meta_suggestions, (status = 'ready' AND file_path IS NOT NULL) AS ready FROM music_tracks WHERE source = 'soundcloud' AND meta_state = 'review' ORDER BY id LIMIT $1`, [limit])) as Row[])
+    .map((r) => ({ id: num(r, "id"), title: str(r, "title"), artist: str(r, "artist"), origTitle: strOrNull(r, "orig_title"), origArtist: strOrNull(r, "orig_artist"), state: str(r, "meta_state"), suggestions: Array.isArray(r.meta_suggestions) ? (r.meta_suggestions as MetaSuggestion[]) : [], coverUrl: null, ready: r.ready === true }));
 }
 
 export async function scMetaCounts(): Promise<Record<string, number>> {

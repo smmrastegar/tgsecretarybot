@@ -131,7 +131,7 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
 }
 
 type Sug = { title: string; artist: string; label: string; why: string | null };
-type Item = { id: number; origTitle: string; origArtist: string; suggestions: Sug[] };
+type Item = { id: number; ready: boolean; origTitle: string; origArtist: string; suggestions: Sug[] };
 type Found = { artists: Array<{ name: string; followers: number }>; tracks: Array<{ title: string; artist: string }>; limitedMinutes?: number };
 
 // Songs the automatic check could not settle. One song at a time: pick the right "artist — song", or write it yourself.
@@ -199,6 +199,9 @@ function ReviewCard({ it, pos, total, done, skip }: { it: Item; pos: number; tot
         <div dir="auto" className="text-sm font-medium break-words">{it.origTitle}</div>
         <div dir="auto" className="text-[var(--color-text-dim)] break-words">آپلودکننده: {it.origArtist}</div>
       </div>
+      {it.ready
+        ? <audio controls preload="none" src={`/api/music/stream/${it.id}`} className="w-full h-11" aria-label="پخش آهنگ" />
+        : <div className="text-[11px] text-[var(--color-text-dim)]">این آهنگ هنوز دانلود نشده؛ بعد از دانلود می‌توانی همین‌جا گوشش کنی.</div>}
 
       {!manual && (
         <fieldset className="space-y-2">
