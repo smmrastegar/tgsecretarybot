@@ -575,6 +575,14 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS orig_artist TEXT`;
     },
   },
+  {
+    // SoundCloud's uploader is kept apart from the (corrected) artist: it is shown as a second, searchable artist when it is not one of the song's credits.
+    id: "2026-10-21-002-track-uploader",
+    up: async (q) => {
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS uploader TEXT`;
+      await q`UPDATE music_tracks SET uploader = COALESCE(orig_artist, artist) WHERE source = 'soundcloud' AND uploader IS NULL`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

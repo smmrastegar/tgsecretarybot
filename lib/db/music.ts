@@ -1,6 +1,7 @@
 // Personal music library: tracks, playlists. See lib/music.ts for the
 // download / storage side.
 import { ensureSchema, hasDb, sql } from "./core";
+import { nameWords, wordSimilarity } from "../music-names";
 import { num, numOrNull, str, strOrNull, type Row } from "./row";
 
 export type MusicTrack = {
@@ -31,12 +32,26 @@ export type MusicTrack = {
   /** "spotify" (downloaded through the bots), "manual" (a file the owner sent by hand) or "soundcloud" — only "spotify" songs are ever re-downloaded / repaired through Spotify */
   source: "spotify" | "manual" | "soundcloud";
   soundcloudId: string | null;
+  /** SoundCloud only: the uploader's name when it is not one of the song's artists (a second, searchable artist) */
+  uploader: string | null;
 };
 
 const COLS = `id, spotify_id, spotify_url, title, artist, album, release_date, duration_s,
   (cover_path IS NOT NULL) AS has_cover, status, error, size_bytes, created_at::text AS created_at,
-  rating, play_count, skip_count, last_played_at::text AS last_played_at, mime, ready_at::text AS ready_at, spotify_duration_s, source, soundcloud_id,
+  rating, play_count, skip_count, last_played_at::text AS last_played_at, mime, ready_at::text AS ready_at, spotify_duration_s, source, soundcloud_id, uploader,
   (SELECT COALESCE(SUM(seconds), 0)::int FROM music_events e WHERE e.track_id = music_tracks.id) AS listen_s`;
+
+/** The uploader counts as a second artist only when its name is not (part of) the song's own artist credit. */
+export function secondArtist(uploader: string | null, artist: string | null): string | null {
+  const u = (uploader ?? "").trim();
+  if (!u) return null;
+  const uw = nameWords(u);
+  if (!uw.length) return u;
+  const parts = (artist ?? "").split(/,\s*/).filter(Boolean);
+  const same = (x: string, y: string) => x === y || wordSimilarity(x, y) >= 0.9;
+  const covered = (a: string[], b: string[]) => a.every((x) => b.some((y) => same(x, y)));
+  return parts.some((p) => { const aw = nameWords(p); return aw.length > 0 && (covered(uw, aw) || covered(aw, uw)); }) ? null : u;
+}
 
 function map(r: Row): MusicTrack {
   const status = str(r, "status");
@@ -64,6 +79,7 @@ function map(r: Row): MusicTrack {
     spotifyDurationS: numOrNull(r, "spotify_duration_s"),
     source: str(r, "source") === "manual" ? "manual" : str(r, "source") === "soundcloud" ? "soundcloud" : "spotify",
     soundcloudId: strOrNull(r, "soundcloud_id"),
+    uploader: secondArtist(strOrNull(r, "uploader"), strOrNull(r, "artist")),
   };
 }
 

@@ -46,6 +46,8 @@ export type Vibe = { key: string; name: string; trackIds: number[]; bpm: number;
 export type Page = { kind: "artist" | "album" | "playlist" | "liked" | "recent" | "top" | "vibe" | "offline" | "set"; key: string; title: string };
 
 export const artistsOf = (t: Track): string[] => (t.artist ?? "Unknown").split(/,\s*/).filter(Boolean);
+/** the credited artists plus the SoundCloud uploader as a second artist: used to group and find songs, not to show them */
+export const findableArtists = (t: Track): string[] => (t.uploader ? [...artistsOf(t), t.uploader] : artistsOf(t));
 const albumKey = (t: Track) => `${t.album ?? "Single"}|${artistsOf(t)[0] ?? ""}`;
 
 /* ---------- rows ---------- */
@@ -128,7 +130,7 @@ export function useCollections(tracks: Track[], playlists: Playlist[], byId: Map
     const artists = new Map<string, Track[]>();
     const albums = new Map<string, Track[]>();
     for (const t of ready) {
-      for (const a of artistsOf(t)) artists.set(a, [...(artists.get(a) ?? []), t]);
+      for (const a of findableArtists(t)) artists.set(a, [...(artists.get(a) ?? []), t]);
       albums.set(albumKey(t), [...(albums.get(albumKey(t)) ?? []), t]);
     }
     const lists = playlists.map((p) => ({ p, tracks: p.trackIds.map((id) => byId.get(id)).filter((t): t is Track => !!t && t.status === "ready") }));

@@ -24,7 +24,7 @@ type Track = {
   id: number; spotifyUrl: string; title: string | null; artist: string | null; album: string | null;
   durationS: number | null; hasCover: boolean; status: "queued" | "downloading" | "ready" | "failed";
   error: string | null; sizeBytes: number | null;
-  sources?: number[]; source?: "spotify" | "manual"; rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
+  sources?: number[]; uploader?: string | null; source?: "spotify" | "manual"; rating: number; playCount: number; skipCount: number; lastPlayedAt: string | null;
   releaseDate: string | null; mime: string | null; readyAt: string | null; createdAt: string; listenSeconds: number;
 };
 type Playlist = { id: number; name: string; trackIds: number[]; smart?: boolean };
@@ -256,7 +256,7 @@ export default function MusicPage() {
       list = ids.map((id) => byId.get(id)).filter((t): t is Track => !!t);
     }
     const s = q.trim().toLowerCase();
-    return s ? list.filter((t) => `${t.title ?? ""} ${t.artist ?? ""} ${t.album ?? ""}`.toLowerCase().includes(s)) : list;
+    return s ? list.filter((t) => `${t.title ?? ""} ${t.artist ?? ""} ${t.uploader ?? ""} ${t.album ?? ""}`.toLowerCase().includes(s)) : list;
   }, [tracks, playlists, view, q, byId]);
   const readyVisible = useMemo(() => visible.filter((t) => t.status === "ready"), [visible]);
 

@@ -51,7 +51,7 @@ function SearchViewImpl({ api, c }: { api: Api; c: Collections }) {
     if (!searching) return [] as Track[];
     const out: Array<{ t: Track; score: number }> = [];
     for (const t of c.ready) {
-      const title = norm(t.title ?? ""), artist = norm(t.artist ?? ""), album = norm(t.album ?? "");
+      const title = norm(t.title ?? ""), artist = norm(`${t.artist ?? ""} ${t.uploader ?? ""}`), album = norm(t.album ?? "");
       const genres = norm((api.desc[t.id]?.genres ?? []).join(" "));
       let score = 0, ok = true;
       for (const w of tokens) {

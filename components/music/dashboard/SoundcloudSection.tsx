@@ -198,6 +198,7 @@ function ReviewCard({ it, pos, total, done, skip }: { it: Item; pos: number; tot
         <div className="text-[var(--color-text-dim)] mb-1">این اسم در ساندکلاود ثبت شده:</div>
         <div dir="auto" className="text-sm font-medium break-words">{it.origTitle}</div>
         <div dir="auto" className="text-[var(--color-text-dim)] break-words">آپلودکننده: {it.origArtist}</div>
+        <div className="text-[11px] text-[var(--color-text-dim)]">اگر آپلودکننده جزو خواننده‌های آهنگ نباشد، به‌عنوان «خوانندهٔ دوم» نگه داشته می‌شود تا با جستجو و در لیست خواننده‌ها پیدایش کنی.</div>
       </div>
       {it.ready
         ? <audio controls preload="none" src={`/api/music/stream/${it.id}`} className="w-full h-11" aria-label="پخش آهنگ" />

@@ -57,8 +57,8 @@ export async function addScTrack(t: ScTrackIn): Promise<{ id: number | null; cre
   const gone = (await q().query(`SELECT 1 FROM music_removed WHERE spotify_id = $1`, [`sc:${t.scId}`])) as Row[];
   if (gone.length) return { id: null, created: false, removed: true };
   const ins = (await q().query(
-    `INSERT INTO music_tracks (spotify_id, spotify_url, title, artist, album, release_date, duration_s, status, source, soundcloud_id, source_cover_url)
-     VALUES (NULL, $1, $2, $3, 'Single', $4, $5, 'queued', 'soundcloud', $6, $7) ON CONFLICT (soundcloud_id) WHERE soundcloud_id IS NOT NULL DO NOTHING RETURNING id`,
+    `INSERT INTO music_tracks (spotify_id, spotify_url, title, artist, album, release_date, duration_s, status, source, soundcloud_id, source_cover_url, uploader)
+     VALUES (NULL, $1, $2, $3, 'Single', $4, $5, 'queued', 'soundcloud', $6, $7, $3) ON CONFLICT (soundcloud_id) WHERE soundcloud_id IS NOT NULL DO NOTHING RETURNING id`,
     [t.url, t.title, t.artist, t.releaseDate, t.durationS, t.scId, t.coverUrl],
   )) as Row[];
   if (ins[0]) return { id: num(ins[0], "id"), created: true };

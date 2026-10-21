@@ -12,6 +12,8 @@ export type Track = {
   releaseDate: string | null; mime: string | null; readyAt: string | null; createdAt: string; listenSeconds: number; sizeBytes: number | null;
   /** ids of the connected Spotify accounts this song came from (owner views only) */
   sources?: number[];
+  /** SoundCloud uploader that is not one of the song's artists: a second, searchable artist */
+  uploader?: string | null;
 };
 export type Playlist = { id: number; name: string; trackIds: number[] };
 
