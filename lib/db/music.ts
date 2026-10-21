@@ -34,6 +34,8 @@ export type MusicTrack = {
   soundcloudId: string | null;
   /** SoundCloud only: the uploader's name when it is not one of the song's artists (a second, searchable artist) */
   uploader: string | null;
+  /** SoundCloud only: the uploader's account name, always (for "everything uploaded by …") */
+  uploadedBy: string | null;
 };
 
 const COLS = `id, spotify_id, spotify_url, title, artist, album, release_date, duration_s,
@@ -80,6 +82,7 @@ function map(r: Row): MusicTrack {
     source: str(r, "source") === "manual" ? "manual" : str(r, "source") === "soundcloud" ? "soundcloud" : "spotify",
     soundcloudId: strOrNull(r, "soundcloud_id"),
     uploader: secondArtist(strOrNull(r, "uploader"), strOrNull(r, "artist")),
+    uploadedBy: str(r, "source") === "soundcloud" ? strOrNull(r, "uploader") : null,
   };
 }
 

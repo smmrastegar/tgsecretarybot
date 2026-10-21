@@ -14,6 +14,8 @@ export type Track = {
   sources?: number[];
   /** SoundCloud uploader that is not one of the song's artists: a second, searchable artist */
   uploader?: string | null;
+  /** SoundCloud uploader account (always set for SoundCloud songs): "everything uploaded by …" */
+  uploadedBy?: string | null;
 };
 export type Playlist = { id: number; name: string; trackIds: number[] };
 

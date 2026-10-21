@@ -58,6 +58,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   // A song with several artists asks which one to open; a single artist opens straight away.
   const [artistPick, setArtistPick] = useState<Track | null>(null);
   const openArtist = (name: string) => { setFull(false); setTab("library"); setStack([{ kind: "artist", key: name, title: name }]); };
+  const openUploader = (name: string) => { setFull(false); setTab("library"); setStack([{ kind: "uploader", key: name, title: name }]); };
   const goArtist = (t: Track) => { const list = artistsOf(t); if (list.length > 1) setArtistPick(t); else if (list[0]) openArtist(list[0]); };
   const [likeTs, setLikeTs] = useState<Track[] | null>(null);
   // multi-select: tick songs in any list, then act on all of them from the bar at the bottom
@@ -902,6 +903,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <button onClick={() => goArtist(now)} className="block max-w-full text-left text-[var(--dim)] mt-0.5">
                 <FitText max={15} min={12} lines={2}>{offline.has(now.id) && <><DownloadedBadge size={16} />{" "}</>}{now.artist}</FitText>
               </button>
+              {now.uploadedBy && <button onClick={() => openUploader(now.uploadedBy!)} className="block max-w-full text-left text-[12px] text-[var(--dim3)] mt-0.5 truncate">Uploaded by {now.uploadedBy} ›</button>}
               <div className="mt-1.5 flex items-start gap-2">
                 <div className="min-w-0 flex-1"><SourceChips ids={now.sources} /></div>
                 <div className="flex items-center shrink-0 -mr-1.5">
@@ -970,7 +972,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       </div>}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
       {menuT && <TrackMenu onSelect={() => startSelect(undefined, menuT.id)} onSpotify={canLike && (byId.get(menuT.id) ?? menuT).source !== "manual" && accounts.some((a) => isSpotifyAccountId(a.id)) ? () => setLikeTs([menuT]) : undefined} onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
-        onArtist={() => goArtist(menuT)}
+        onArtist={() => goArtist(menuT)} onUploader={(byId.get(menuT.id) ?? menuT).uploadedBy ? () => openUploader((byId.get(menuT.id) ?? menuT).uploadedBy!) : undefined}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}
       {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark chips={chipsFor(detailId)} t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}

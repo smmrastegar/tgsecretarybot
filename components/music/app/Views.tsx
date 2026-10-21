@@ -43,7 +43,7 @@ export type Api = {
 };
 export type Desc = { bpm: number; key: string; mode: string; energy: number; brightness: number; vibe: string | null; genres: string[]; moods?: Record<string, number>; vocal?: number };
 export type Vibe = { key: string; name: string; trackIds: number[]; bpm: number; energy: number; brightness: number; minorShare: number; genres: string[]; moods?: Record<string, number> };
-export type Page = { kind: "artist" | "album" | "playlist" | "liked" | "recent" | "top" | "vibe" | "offline" | "set"; key: string; title: string };
+export type Page = { kind: "artist" | "album" | "playlist" | "liked" | "recent" | "top" | "vibe" | "offline" | "set" | "uploader"; key: string; title: string };
 
 export const artistsOf = (t: Track): string[] => (t.artist ?? "Unknown").split(/,\s*/).filter(Boolean);
 /** the credited artists plus the SoundCloud uploader as a second artist: used to group and find songs, not to show them */
@@ -337,6 +337,7 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
     switch (page.kind) {
       case "artist": return c.artists.get(page.key) ?? [];
       case "album": return c.albums.get(page.key) ?? [];
+      case "uploader": return c.ready.filter((t) => (t.uploadedBy ?? "").toLowerCase() === page.key.toLowerCase());
       case "playlist": return c.lists.find((l) => String(l.p.id) === page.key)?.tracks ?? [];
       case "liked": return c.liked;
       case "recent": return c.recent;
@@ -352,8 +353,8 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
   const mins = Math.round(totalS / 60);
   const length = totalS ? (mins >= 60 ? `${Math.floor(mins / 60)} hr ${mins % 60} min` : `${mins} min`) : null;
   const year = (list.map((t) => (t.releaseDate ?? "").slice(0, 4)).filter((y) => /^\d{4}$/.test(y)).sort().pop()) ?? null;
-  const kindLabel = vb ? "Vibe" : page.kind === "artist" ? "Artist" : page.kind === "album" ? "Album" : page.kind === "liked" ? "Playlist" : "Playlist";
-  const byline = page.kind === "album" && list[0] ? artistsOf(list[0])[0] : page.kind === "artist" ? null : "Your library";
+  const kindLabel = vb ? "Vibe" : page.kind === "uploader" ? "Uploader" : page.kind === "artist" ? "Artist" : page.kind === "album" ? "Album" : page.kind === "liked" ? "Playlist" : "Playlist";
+  const byline = page.kind === "album" && list[0] ? artistsOf(list[0])[0] : page.kind === "artist" || page.kind === "uploader" ? null : "Your library";
   const meta = [kindLabel, year, `${list.length} ${list.length === 1 ? "song" : "songs"}`, length].filter(Boolean).join(" • ");
   const left = ids.filter((id) => !api.offline.has(id)).length;
   const allDown = left === 0 && ids.length > 0;
@@ -362,7 +363,7 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
     <div>
       {/* Spotify-style header: a tinted wash from the artwork colour, the cover centred, everything else left-aligned */}
       <div className="-mx-4 -mt-1 px-4 pt-4 pb-1" style={{ background: "linear-gradient(to bottom, rgba(var(--ac), .38), rgba(var(--ac), .10) 70%, transparent)" }}>
-        <div className="mx-auto w-[min(68vw,18rem)] aspect-square overflow-hidden shadow-2xl" style={{ borderRadius: page.kind === "artist" ? "9999px" : "6px" }}>
+        <div className="mx-auto w-[min(68vw,18rem)] aspect-square overflow-hidden shadow-2xl" style={{ borderRadius: page.kind === "artist" || page.kind === "uploader" ? "9999px" : "6px" }}>
           {page.kind === "liked" ? <span className="grid place-items-center w-full h-full bg-gradient-to-br from-rose-500 to-fuchsia-700 text-white"><HeartIcon size={72} filled /></span>
             : page.kind === "offline" ? <span className="grid place-items-center w-full h-full bg-gradient-to-br from-[#1ed760] to-emerald-800 text-black"><DownloadIcon size={84} /></span>
             : page.kind === "playlist" || page.kind === "top" || page.kind === "recent" || page.kind === "vibe" || page.kind === "set" ? <Mosaic tracks={list} tq={api.tq} size="100%" radius={0} />

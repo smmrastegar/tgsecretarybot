@@ -44,11 +44,11 @@ const Item = ({ icon, label, onClick, active }: { icon: ReactNode; label: string
   </button>
 );
 
-export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, onRate, onArtist, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
+export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, onRate, onArtist, onUploader, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
   onShare: () => void; onReport: () => void; onRadio: () => void; onSmart?: () => void; onSpotify?: () => void; onSelect?: () => void;
   offline: boolean; onOffline: () => void;
   t: Track; tq: string; onClose: () => void; onNext: () => void; onAdd: () => void; onRate: (r: number) => void;
-  onArtist: () => void; onAlbum: () => void; onDetails: () => void;
+  onArtist: () => void; onUploader?: () => void; onAlbum: () => void; onDetails: () => void;
 }) {
   const go = (f: () => void) => () => { f(); onClose(); };
   return (
@@ -66,6 +66,7 @@ export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, 
       <Item icon={<HeartIcon size={22} filled={t.rating > 0} />} label={t.rating > 0 ? "Remove from liked" : "Like"} active={t.rating > 0} onClick={go(() => onRate(1))} />
       <Item icon={<ThumbDownIcon size={22} filled={t.rating < 0} />} label={t.rating < 0 ? "Remove dislike" : "Dislike (skip in mixes)"} onClick={go(() => onRate(-1))} />
       <Item icon={<ChevronRightIcon size={22} />} label="Go to artist" onClick={go(onArtist)} />
+      {onUploader && t.uploadedBy && <Item icon={<ChevronRightIcon size={22} />} label={`More from uploader ${t.uploadedBy}`} onClick={go(onUploader)} />}
       {t.album && <Item icon={<ChevronRightIcon size={22} />} label="Go to album" onClick={go(onAlbum)} />}
       <Item icon={<ShareIcon size={22} />} label="Share" onClick={go(onShare)} />
       <Item icon={<DownloadIcon size={22} />} label={offline ? "Remove offline copy" : "Save for offline"} onClick={go(onOffline)} />
