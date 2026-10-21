@@ -298,7 +298,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
 
       {seg === "uploaders" && (
         <div className="mt-3">
-          <p className="text-[12px] text-[var(--dim)] leading-5 pb-2">Accounts that uploaded your SoundCloud songs. Their name is kept apart from the song's artist.</p>
+          <p className="text-[12px] text-[var(--dim)] leading-5 pb-2">Accounts that uploaded your SoundCloud songs. Their name is kept apart from the song&apos;s artist.</p>
           <div className="divide-y divide-[var(--bd0)]">
             {uploaders.map(([name, list]) => (
               <button key={name} onClick={() => api.open({ kind: "uploader", key: name, title: name })} className="w-full flex items-center gap-3 py-2.5 text-left" style={{ contentVisibility: "auto", containIntrinsicSize: "0 68px" }}>
