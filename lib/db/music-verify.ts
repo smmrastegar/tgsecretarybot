@@ -45,3 +45,9 @@ export async function verifyCounts(): Promise<Record<string, number>> {
   const rows = (await q().query(`SELECT status, COUNT(*)::int AS n FROM music_verify GROUP BY status`)) as Row[];
   return Object.fromEntries(rows.map((r) => [str(r, "status"), num(r, "n")]));
 }
+
+/** The owner listened and the file is fine: it leaves the suspicious list (the status stays "accepted" until the file itself changes). */
+export async function acceptVerify(trackId: number): Promise<void> {
+  await ensureSchema();
+  await q().query(`UPDATE music_verify SET status = 'accepted' WHERE track_id = $1`, [trackId]);
+}

@@ -11,8 +11,9 @@ export const SCOPES = "user-library-read user-library-modify playlist-read-priva
 // The redirect URI must match one registered in the Spotify app's dashboard exactly. It is deliberately NOT tied to
 // the public app URL: moving the site to a new domain must not break the Spotify sign-in until the new URI is
 // registered there and SPOTIFY_REDIRECT_BASE is switched.
-export function redirectUri(): string {
-  return `${(process.env.SPOTIFY_REDIRECT_BASE || "https://bot.text.bz").replace(/\/$/, "")}/api/music/spotify/callback`;
+export async function redirectUri(): Promise<string> {
+  const custom = ((await getAllSettings()).spotifyRedirectUri ?? "").trim(); // set when the site's address changes: the exact URI registered in the Spotify app
+  return custom || `${(process.env.SPOTIFY_REDIRECT_BASE || "https://bot.text.bz").replace(/\/$/, "")}/api/music/spotify/callback`;
 }
 
 export async function getSpotifyConfig(): Promise<{ clientId: string; clientSecret: string }> {
@@ -78,7 +79,7 @@ export async function authorizeUrl(state: string): Promise<string | null> {
   u.searchParams.set("response_type", "code");
   u.searchParams.set("client_id", c.clientId);
   u.searchParams.set("scope", SCOPES);
-  u.searchParams.set("redirect_uri", redirectUri());
+  u.searchParams.set("redirect_uri", await redirectUri());
   u.searchParams.set("state", state);
   u.searchParams.set("show_dialog", "true");
   return u.toString();
@@ -101,7 +102,7 @@ async function tokenCall(params: Record<string, string>, cfg?: { clientId: strin
 
 /** Finish a login: store (or refresh) this account's token. Returns its id. */
 export async function exchangeCode(code: string, allow?: number[]): Promise<number> {
-  const t = await tokenCall({ grant_type: "authorization_code", code, redirect_uri: redirectUri() });
+  const t = await tokenCall({ grant_type: "authorization_code", code, redirect_uri: await redirectUri() });
   if (!t.refresh_token) throw new Error("no refresh token returned");
   const me = await api<{ id: string; display_name?: string }>(t.access_token, "/me");
   if (allow) { // a limited numeric password may only refresh the permission of an account it already has

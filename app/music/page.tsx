@@ -430,6 +430,8 @@ export default function MusicPage() {
                     return (<>
                       <button disabled={busy} onClick={() => void fixTrack(s.trackId, "spotsaver")} className="px-3 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-50">{busy ? "…" : "↻ از SpotSaver"}</button>
                       <button disabled={busy} onClick={() => void fixTrack(s.trackId)} className="px-3 py-1 rounded-md border border-[var(--color-border)] disabled:opacity-50">{busy ? "…" : "↻ از ربات"}</button>
+                      <button disabled={busy} onClick={async () => { await fetch("/api/music/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackId: s.trackId, action: "accept" }) }); void loadVerify(); }} className="px-3 py-1 rounded-md border border-emerald-500/40 text-emerald-300 disabled:opacity-50">مهم نیست، درست است ✓</button>
+                      <audio controls preload="none" src={`/api/music/stream/${s.trackId}`} className="basis-full h-10" aria-label="گوش‌دادن به فایل" />
                       {st && !busy && <span className={`basis-full text-xs ${st.startsWith("✗") ? "text-rose-300" : "text-emerald-300"}`}>{st}</span>}
                     </>);
                   })()}

@@ -13,7 +13,7 @@ export async function GET(): Promise<NextResponse> {
   // A numeric password limited to some accounts only sees those accounts.
   const st = await pinState(await getCurrentSession());
   const accounts = (await listSpotifyAccounts()).filter((a) => !st.scope || st.scope.ids.includes(a.id));
-  return NextResponse.json({ hasCredentials: Boolean(c.clientId && c.clientSecret), clientId: st.scope ? "" : c.clientId, scoped: Boolean(st.scope), accounts, redirectUri: redirectUri() });
+  return NextResponse.json({ hasCredentials: Boolean(c.clientId && c.clientSecret), clientId: st.scope ? "" : c.clientId, scoped: Boolean(st.scope), accounts, redirectUri: await redirectUri() });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
