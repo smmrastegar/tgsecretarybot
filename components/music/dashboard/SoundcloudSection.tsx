@@ -130,44 +130,54 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
   );
 }
 
-type Sug = { title: string; artist: string; source: string; note?: string };
-type Item = { id: number; title: string; artist: string; origTitle: string | null; origArtist: string | null; suggestions: Sug[] };
+type Sug = { title: string; artist: string; label: string; why: string | null };
+type Item = { id: number; origTitle: string; origArtist: string; suggestions: Sug[] };
 type Found = { artists: Array<{ name: string; followers: number }>; tracks: Array<{ title: string; artist: string }> };
 
-// Songs whose real artist could not be settled automatically: look up the Spotify artist, or type a new one.
+// Songs the automatic check could not settle. One song at a time: pick the right "artist — song", or write it yourself.
 function ReviewPanel() {
   const [data, setData] = useState<{ counts: Record<string, number>; items: Item[] } | null>(null);
   const [open, setOpen] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [skipped, setSkipped] = useState<number[]>([]);
   const load = useCallback(async () => {
     const r = await fetch("/api/music/soundcloud/review", { cache: "no-store" });
     if (r.ok) setData((await r.json()) as { counts: Record<string, number>; items: Item[] });
   }, []);
   useEffect(() => { void load(); }, [load]);
   const c = data?.counts ?? {};
-  const total = Object.values(c).reduce((a, b) => a + b, 0);
-  if (!data || total === 0) return null;
-  const waiting = (c.new ?? 0), review = c.review ?? 0, fixed = (c.auto ?? 0) + (c.manual ?? 0);
+  if (!data || Object.values(c).reduce((a, b) => a + b, 0) === 0) return null;
+  const todo = data.items.filter((i) => !skipped.includes(i.id));
+  const waiting = c.new ?? 0, review = c.review ?? 0, fixed = (c.auto ?? 0) + (c.manual ?? 0);
+  const cur = todo[0];
   return (
     <div className="mb-4 rounded-2xl border border-[var(--color-border)] p-3">
       <button onClick={() => setOpen((v) => !v)} className="w-full min-h-11 flex items-center gap-2 text-sm font-medium" aria-expanded={open}>
-        <span className="flex-1 text-start">اصلاح نام خواننده و آهنگ‌ها{review ? ` · ${fa(review)} مورد نیازمند بررسی` : ""}</span>
+        <span className="flex-1 text-start">درست‌کردن اسم خواننده‌ها{review ? ` · ${fa(review)} آهنگ منتظر تو` : " · همه‌چیز مرتب است"}</span>
         <span aria-hidden>{open ? "▴" : "▾"}</span>
       </button>
-      <p className="text-[11px] text-[var(--color-text-dim)] leading-6">{fa(fixed)} اصلاح‌شده{c.done ? ` · ${fa(c.done)} بدون تغییر` : ""}{waiting ? ` · ${fa(waiting)} در صف بررسی خودکار` : ""}</p>
+      <p className="text-[11px] text-[var(--color-text-dim)] leading-6">{fa(fixed)} آهنگ خودکار درست شد{c.done ? ` · ${fa(c.done)} بدون تغییر` : ""}{waiting ? ` · ${fa(waiting)} هنوز در صف بررسی خودکار` : ""}</p>
       {open && (
-        <div className="mt-3 space-y-3">
-          {data.items.length === 0 && <div className="text-xs text-[var(--color-text-dim)] py-2">موردی برای بررسی دستی نیست.</div>}
-          {data.items.map((it) => <ReviewRow key={`${it.id}|${it.title}|${it.artist}`} it={it} done={load} />)}
+        <div className="mt-3">
+          <button onClick={() => setHelp((v) => !v)} className="text-xs text-[var(--color-text-dim)] underline underline-offset-4 min-h-9">این بخش چیست؟</button>
+          {help && (
+            <p className="mt-1 mb-2 text-xs leading-6 text-[var(--color-text-dim)]">ساندکلاود معمولاً اسم خواننده را داخل اسم آهنگ می‌نویسد یا اسم آپلودکننده را به‌جای خواننده می‌گذارد. سیستم هر آهنگ را با اسپاتیفای تطبیق می‌دهد و اگر مطمئن باشد، خودش درست می‌کند. اینجا فقط آهنگ‌هایی هستند که مطمئن نشد. هر بار یک آهنگ می‌بینی: یکی از گزینه‌ها را بزن و «تأیید» را بزن؛ اگر هیچ‌کدام درست نبود، خودت بنویس. کاری که نکنی، همان اسم قبلی می‌ماند و آهنگ پخش می‌شود.</p>
+          )}
+          {!cur
+            ? <div className="text-xs text-[var(--color-text-dim)] py-3 text-center">{review ? "بقیه را رد کردی؛ دوباره باز کن." : "موردی برای بررسی نیست."}{skipped.length > 0 && <button onClick={() => setSkipped([])} className="mx-2 underline">برگرد به اولی</button>}</div>
+            : <ReviewCard key={cur.id} it={cur} pos={review - todo.length + 1} total={review} done={async () => { await load(); }} skip={() => setSkipped((l) => [...l, cur.id])} />}
         </div>
       )}
     </div>
   );
 }
 
-function ReviewRow({ it, done }: { it: Item; done: () => Promise<void> }) {
-  const [title, setTitle] = useState(it.title);
-  const [artist, setArtist] = useState(it.artist);
-  const [q, setQ] = useState(`${it.origArtist ?? it.artist} ${it.title}`.trim());
+function ReviewCard({ it, pos, total, done, skip }: { it: Item; pos: number; total: number; done: () => Promise<void>; skip: () => void }) {
+  const [pick, setPick] = useState(0);
+  const [manual, setManual] = useState(it.suggestions.length === 0);
+  const [title, setTitle] = useState(it.suggestions[0]?.title ?? it.origTitle);
+  const [artist, setArtist] = useState(it.suggestions[0]?.artist ?? it.origArtist);
+  const [q, setQ] = useState("");
   const [found, setFound] = useState<Found | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -180,36 +190,63 @@ function ReviewRow({ it, done }: { it: Item; done: () => Promise<void> }) {
     } catch { setErr("اتصال برقرار نشد"); }
     setBusy(false);
   }
-  const chip = "min-h-9 px-3 rounded-full border border-[var(--color-border)] text-xs active:bg-[var(--color-surface-2)]";
+  const chosen = manual ? { title, artist } : it.suggestions[pick] ?? { title, artist };
   return (
-    <div className="rounded-xl bg-[var(--color-surface-2)] p-3 space-y-2">
-      <div dir="ltr" className="text-xs leading-6 text-[var(--color-text-dim)] break-words">
-        <div>اصل: <span className="text-[var(--color-text)]">{it.origTitle ?? it.title}</span></div>
-        <div>آپلودکننده: <span className="text-[var(--color-text)]">{it.origArtist ?? it.artist}</span></div>
+    <div className="space-y-3">
+      <div className="text-[11px] text-[var(--color-text-dim)]">آهنگ {fa(Math.max(1, pos))} از {fa(total)}</div>
+      <div className="rounded-xl bg-[var(--color-surface-2)] p-3 text-xs leading-6">
+        <div className="text-[var(--color-text-dim)] mb-1">این اسم در ساندکلاود ثبت شده:</div>
+        <div dir="auto" className="text-sm font-medium break-words">{it.origTitle}</div>
+        <div dir="auto" className="text-[var(--color-text-dim)] break-words">آپلودکننده: {it.origArtist}</div>
       </div>
-      {it.suggestions.length > 0 && (
-        <div className="flex flex-wrap gap-2" dir="ltr">
-          {it.suggestions.map((s, i) => <button key={i} onClick={() => { setTitle(s.title); setArtist(s.artist); }} className={chip}>{s.artist} — {s.title}</button>)}
-        </div>
+
+      {!manual && (
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-medium mb-2">کدام درست است؟ (خواننده — آهنگ)</legend>
+          {it.suggestions.map((s, i) => (
+            <label key={i} className={`flex items-start gap-3 rounded-xl border p-3 min-h-14 cursor-pointer ${pick === i ? "border-[var(--color-accent,#1db954)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)]"}`}>
+              <input type="radio" name={`pick${it.id}`} checked={pick === i} onChange={() => setPick(i)} className="mt-1.5 shrink-0" />
+              <span className="min-w-0 flex-1">
+                <span dir="auto" className="block text-sm font-medium break-words">{s.artist}</span>
+                <span dir="auto" className="block text-sm text-[var(--color-text-dim)] break-words">{s.title}</span>
+                <span className="block text-[11px] text-[var(--color-text-dim)] mt-1">{i === 0 ? "پیشنهاد اصلی · " : ""}{s.label}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
       )}
-      <input dir="ltr" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Song title" aria-label="Song title" className={field} />
-      <input dir="ltr" value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="Artist" aria-label="Artist" className={field} />
-      <div className="flex gap-2">
-        <input dir="ltr" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Spotify" aria-label="Search Spotify" className={field} />
-        <button disabled={busy || q.trim().length < 2} onClick={() => void post({ action: "search", q })} className={`${btn} shrink-0`}>جستجو</button>
-      </div>
-      {found && (
-        <div className="space-y-2" dir="ltr">
-          {found.artists.length === 0 && found.tracks.length === 0 && <div className="text-xs text-[var(--color-text-dim)]">چیزی پیدا نشد؛ نام دقیق را بالا بنویس.</div>}
-          {found.artists.length > 0 && <div className="flex flex-wrap gap-2">{found.artists.map((a) => <button key={a.name} onClick={() => setArtist(a.name)} className={chip}>🎤 {a.name}</button>)}</div>}
-          {found.tracks.length > 0 && <div className="flex flex-wrap gap-2">{found.tracks.map((t, i) => <button key={i} onClick={() => { setTitle(t.title); setArtist(t.artist); }} className={chip}>{t.artist} — {t.title}</button>)}</div>}
+
+      {manual ? (
+        <div className="space-y-2">
+          <div className="text-xs font-medium">خودت بنویس یا از اسپاتیفای پیدا کن</div>
+          <div className="flex gap-2">
+            <input dir="auto" value={q} onChange={(e) => setQ(e.target.value)} placeholder="نام خواننده یا آهنگ را بنویس" aria-label="جستجو در اسپاتیفای" className={field} />
+            <button disabled={busy || q.trim().length < 2} onClick={() => void post({ action: "search", q })} className={`${btn} shrink-0`}>جستجو</button>
+          </div>
+          {found && (
+            <div className="space-y-2">
+              {found.artists.length === 0 && found.tracks.length === 0 && <div className="text-xs text-[var(--color-text-dim)]">در اسپاتیفای پیدا نشد. اگر خوانندهٔ جدید یا ناشناخته است، پایین دقیق بنویسش.</div>}
+              {found.artists.length > 0 && <div className="text-[11px] text-[var(--color-text-dim)]">خواننده‌ها (برای پر کردن «خواننده» بزن):</div>}
+              {found.artists.map((a) => <button key={a.name} onClick={() => setArtist(a.name)} className="block w-full text-start min-h-11 px-3 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)]" dir="auto">🎤 {a.name}</button>)}
+              {found.tracks.length > 0 && <div className="text-[11px] text-[var(--color-text-dim)]">آهنگ‌ها (برای پر کردن هر دو فیلد بزن):</div>}
+              {found.tracks.map((t, i) => <button key={i} onClick={() => { setTitle(t.title); setArtist(t.artist); }} className="block w-full text-start min-h-11 px-3 py-1 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)]" dir="auto">{t.artist} — {t.title}</button>)}
+            </div>
+          )}
+          <label className="block text-[11px] text-[var(--color-text-dim)]">خواننده<input dir="auto" value={artist} onChange={(e) => setArtist(e.target.value)} className={`${field} mt-1 text-[var(--color-text)]`} /></label>
+          <label className="block text-[11px] text-[var(--color-text-dim)]">اسم آهنگ<input dir="auto" value={title} onChange={(e) => setTitle(e.target.value)} className={`${field} mt-1 text-[var(--color-text)]`} /></label>
+          {it.suggestions.length > 0 && <button onClick={() => setManual(false)} className="text-xs underline underline-offset-4 min-h-9 text-[var(--color-text-dim)]">برگرد به گزینه‌ها</button>}
         </div>
+      ) : (
+        <button onClick={() => { setManual(true); setTitle(chosen.title); setArtist(chosen.artist); }} className="text-xs underline underline-offset-4 min-h-9 text-[var(--color-text-dim)]">هیچ‌کدام درست نیست؛ خودم می‌نویسم</button>
       )}
+
       {err && <div role="alert" className="text-xs text-rose-300">{err}</div>}
-      <div className="flex flex-wrap gap-2 justify-end">
-        <button disabled={busy} onClick={() => void post({ action: "revert" })} className={btn}>اصلِ آپلود</button>
-        <button disabled={busy} onClick={() => void post({ action: "keep" })} className={btn}>همین‌طور بماند</button>
-        <button disabled={busy || !title.trim() || !artist.trim()} onClick={() => void post({ action: "apply", title, artist })} className="min-h-11 px-4 rounded-xl bg-[var(--color-accent,#1db954)] text-black text-sm font-semibold disabled:opacity-50">ذخیره</button>
+      <button disabled={busy || !chosen.title.trim() || !chosen.artist.trim()} onClick={() => void post({ action: "apply", title: chosen.title, artist: chosen.artist })} className="w-full min-h-12 rounded-xl bg-[var(--color-accent,#1db954)] text-black text-sm font-semibold disabled:opacity-50">
+        {busy ? "…" : "تأیید و برو بعدی ✓"}
+      </button>
+      <div className="flex gap-2">
+        <button disabled={busy} onClick={skip} className={`${btn} flex-1`}>بعداً</button>
+        <button disabled={busy} onClick={() => void post({ action: "keep" })} className={`${btn} flex-1`}>همین اسم قبلی بماند</button>
       </div>
     </div>
   );

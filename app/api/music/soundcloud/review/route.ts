@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUnscopedOr403 } from "@/lib/auth";
 import { getMusicTrack, getOrigMeta, listScReview, scMetaCounts, setTrackMeta, updateMusicTrack } from "@/lib/db";
 import { searchArtists } from "@/lib/music-artists";
+import { nameWords, wordSimilarity } from "@/lib/music-names";
 import { searchSpotifyTracks } from "@/lib/spotify";
 
 export const runtime = "nodejs";
@@ -9,10 +10,27 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // SoundCloud songs whose real artist could not be settled automatically: the owner fixes them by hand.
+// A Spotify song only counts as a suggestion when every word of its title really appears in the upload's text (exact or a one-letter
+// spelling difference) — "Mehraboonam" is not "Mehrab".
+const LABEL = { "spotify-track": "در اسپاتیفای هست", "spotify-artist": "خواننده‌اش در اسپاتیفای هست", parse: "حدس از روی اسم" } as const;
+const RANK = { "spotify-track": 0, "spotify-artist": 1, parse: 2 } as const;
+function tidySuggestions(it: Awaited<ReturnType<typeof listScReview>>[number]) {
+  const have = nameWords(`${it.origTitle ?? it.title} ${it.origArtist ?? it.artist}`);
+  const covers = (title: string) => { const w = nameWords(title); return w.length > 0 && w.every((x) => have.some((h) => h === x || wordSimilarity(x, h) >= 0.9)); };
+  const seen = new Set<string>();
+  const list = [...it.suggestions, { title: it.title, artist: it.artist, source: "parse" as const }]
+    .filter((x) => x.title.trim() && x.artist.trim() && (x.source !== "spotify-track" || covers(x.title)))
+    .sort((a, b) => RANK[a.source] - RANK[b.source])
+    .filter((x) => { const k = `${x.title}|${x.artist}`.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
+    .slice(0, 5);
+  return list.map((x) => ({ title: x.title, artist: x.artist, label: LABEL[x.source], why: x.note ?? null }));
+}
+
 export async function GET(): Promise<NextResponse> {
   const guard = await requireUnscopedOr403();
   if (guard) return guard;
-  return NextResponse.json({ counts: await scMetaCounts(), items: await listScReview(60) }, { headers: { "Cache-Control": "no-store" } });
+  const items = (await listScReview(60)).map((it) => ({ id: it.id, origTitle: it.origTitle ?? it.title, origArtist: it.origArtist ?? it.artist, suggestions: tidySuggestions(it) }));
+  return NextResponse.json({ counts: await scMetaCounts(), items }, { headers: { "Cache-Control": "no-store" } });
 }
 
 // POST { action: "apply" | "keep" | "revert" | "search", trackId?, title?, artist?, q? }
