@@ -81,6 +81,8 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
         </div>
       )}
 
+      <ReviewPanel />
+
       {cfg?.hasCredentials && (
         <>
           {accounts.length > 0 && (
@@ -125,5 +127,90 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
         </>
       )}
     </Section>
+  );
+}
+
+type Sug = { title: string; artist: string; source: string; note?: string };
+type Item = { id: number; title: string; artist: string; origTitle: string | null; origArtist: string | null; suggestions: Sug[] };
+type Found = { artists: Array<{ name: string; followers: number }>; tracks: Array<{ title: string; artist: string }> };
+
+// Songs whose real artist could not be settled automatically: look up the Spotify artist, or type a new one.
+function ReviewPanel() {
+  const [data, setData] = useState<{ counts: Record<string, number>; items: Item[] } | null>(null);
+  const [open, setOpen] = useState(false);
+  const load = useCallback(async () => {
+    const r = await fetch("/api/music/soundcloud/review", { cache: "no-store" });
+    if (r.ok) setData((await r.json()) as { counts: Record<string, number>; items: Item[] });
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const c = data?.counts ?? {};
+  const total = Object.values(c).reduce((a, b) => a + b, 0);
+  if (!data || total === 0) return null;
+  const waiting = (c.new ?? 0), review = c.review ?? 0, fixed = (c.auto ?? 0) + (c.manual ?? 0);
+  return (
+    <div className="mb-4 rounded-2xl border border-[var(--color-border)] p-3">
+      <button onClick={() => setOpen((v) => !v)} className="w-full min-h-11 flex items-center gap-2 text-sm font-medium" aria-expanded={open}>
+        <span className="flex-1 text-start">اصلاح نام خواننده و آهنگ‌ها{review ? ` · ${fa(review)} مورد نیازمند بررسی` : ""}</span>
+        <span aria-hidden>{open ? "▴" : "▾"}</span>
+      </button>
+      <p className="text-[11px] text-[var(--color-text-dim)] leading-6">{fa(fixed)} اصلاح‌شده{c.done ? ` · ${fa(c.done)} بدون تغییر` : ""}{waiting ? ` · ${fa(waiting)} در صف بررسی خودکار` : ""}</p>
+      {open && (
+        <div className="mt-3 space-y-3">
+          {data.items.length === 0 && <div className="text-xs text-[var(--color-text-dim)] py-2">موردی برای بررسی دستی نیست.</div>}
+          {data.items.map((it) => <ReviewRow key={`${it.id}|${it.title}|${it.artist}`} it={it} done={load} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewRow({ it, done }: { it: Item; done: () => Promise<void> }) {
+  const [title, setTitle] = useState(it.title);
+  const [artist, setArtist] = useState(it.artist);
+  const [q, setQ] = useState(`${it.origArtist ?? it.artist} ${it.title}`.trim());
+  const [found, setFound] = useState<Found | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  async function post(body: Record<string, unknown>) {
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch("/api/music/soundcloud/review", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackId: it.id, ...body }) });
+      const j = (await r.json().catch(() => ({}))) as { error?: string } & Found;
+      if (!r.ok) setErr(j.error ?? "انجام نشد"); else if (body.action === "search") setFound(j); else await done();
+    } catch { setErr("اتصال برقرار نشد"); }
+    setBusy(false);
+  }
+  const chip = "min-h-9 px-3 rounded-full border border-[var(--color-border)] text-xs active:bg-[var(--color-surface-2)]";
+  return (
+    <div className="rounded-xl bg-[var(--color-surface-2)] p-3 space-y-2">
+      <div dir="ltr" className="text-xs leading-6 text-[var(--color-text-dim)] break-words">
+        <div>اصل: <span className="text-[var(--color-text)]">{it.origTitle ?? it.title}</span></div>
+        <div>آپلودکننده: <span className="text-[var(--color-text)]">{it.origArtist ?? it.artist}</span></div>
+      </div>
+      {it.suggestions.length > 0 && (
+        <div className="flex flex-wrap gap-2" dir="ltr">
+          {it.suggestions.map((s, i) => <button key={i} onClick={() => { setTitle(s.title); setArtist(s.artist); }} className={chip}>{s.artist} — {s.title}</button>)}
+        </div>
+      )}
+      <input dir="ltr" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Song title" aria-label="Song title" className={field} />
+      <input dir="ltr" value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="Artist" aria-label="Artist" className={field} />
+      <div className="flex gap-2">
+        <input dir="ltr" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Spotify" aria-label="Search Spotify" className={field} />
+        <button disabled={busy || q.trim().length < 2} onClick={() => void post({ action: "search", q })} className={`${btn} shrink-0`}>جستجو</button>
+      </div>
+      {found && (
+        <div className="space-y-2" dir="ltr">
+          {found.artists.length === 0 && found.tracks.length === 0 && <div className="text-xs text-[var(--color-text-dim)]">چیزی پیدا نشد؛ نام دقیق را بالا بنویس.</div>}
+          {found.artists.length > 0 && <div className="flex flex-wrap gap-2">{found.artists.map((a) => <button key={a.name} onClick={() => setArtist(a.name)} className={chip}>🎤 {a.name}</button>)}</div>}
+          {found.tracks.length > 0 && <div className="flex flex-wrap gap-2">{found.tracks.map((t, i) => <button key={i} onClick={() => { setTitle(t.title); setArtist(t.artist); }} className={chip}>{t.artist} — {t.title}</button>)}</div>}
+        </div>
+      )}
+      {err && <div role="alert" className="text-xs text-rose-300">{err}</div>}
+      <div className="flex flex-wrap gap-2 justify-end">
+        <button disabled={busy} onClick={() => void post({ action: "revert" })} className={btn}>اصلِ آپلود</button>
+        <button disabled={busy} onClick={() => void post({ action: "keep" })} className={btn}>همین‌طور بماند</button>
+        <button disabled={busy || !title.trim() || !artist.trim()} onClick={() => void post({ action: "apply", title, artist })} className="min-h-11 px-4 rounded-xl bg-[var(--color-accent,#1db954)] text-black text-sm font-semibold disabled:opacity-50">ذخیره</button>
+      </div>
+    </div>
   );
 }

@@ -120,3 +120,9 @@ export async function scMetaCounts(): Promise<Record<string, number>> {
   for (const r of (await q().query(`SELECT meta_state, count(*)::int AS n FROM music_tracks WHERE source = 'soundcloud' GROUP BY meta_state`)) as Row[]) out[str(r, "meta_state") || "new"] = num(r, "n");
   return out;
 }
+
+export async function getOrigMeta(id: number): Promise<{ title: string | null; artist: string | null } | null> {
+  await ensureSchema();
+  const r = (await q().query(`SELECT orig_title, orig_artist FROM music_tracks WHERE id = $1`, [id])) as Row[];
+  return r[0] ? { title: strOrNull(r[0], "orig_title"), artist: strOrNull(r[0], "orig_artist") } : null;
+}
