@@ -153,10 +153,10 @@ function ReviewPanel() {
   return (
     <div className="mb-4 rounded-2xl border border-[var(--color-border)] p-3">
       <button onClick={() => setOpen((v) => !v)} className="w-full min-h-11 flex items-center gap-2 text-sm font-medium" aria-expanded={open}>
-        <span className="flex-1 text-start">درست‌کردن اسم خواننده‌ها{review ? ` · ${fa(review)} آهنگ منتظر تو` : " · همه‌چیز مرتب است"}</span>
+        <span className="flex-1 text-start">درست‌کردن اسم خواننده‌ها{review ? `، ${fa(review)} آهنگ منتظر تو` : "، همه‌چیز مرتب است"}</span>
         <span aria-hidden>{open ? "▴" : "▾"}</span>
       </button>
-      <p className="text-[11px] text-[var(--color-text-dim)] leading-6">{fa(fixed)} آهنگ خودکار درست شد{c.done ? ` · ${fa(c.done)} بدون تغییر` : ""}{waiting ? ` · ${fa(waiting)} هنوز در صف بررسی خودکار` : ""}</p>
+      <p className="text-[11px] text-[var(--color-text-dim)] leading-6">{fa(fixed)} آهنگ خودکار درست شد{c.done ? `، ${fa(c.done)} بدون تغییر` : ""}{waiting ? `، ${fa(waiting)} هنوز در صف بررسی خودکار` : ""}</p>
       {open && (
         <div className="mt-3">
           <button onClick={() => setHelp((v) => !v)} className="text-xs text-[var(--color-text-dim)] underline underline-offset-4 min-h-9">این بخش چیست؟</button>
@@ -207,9 +207,9 @@ function ReviewCard({ it, pos, total, done, skip }: { it: Item; pos: number; tot
             <label key={i} className={`flex items-start gap-3 rounded-xl border p-3 min-h-14 cursor-pointer ${pick === i ? "border-[var(--color-accent,#1db954)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)]"}`}>
               <input type="radio" name={`pick${it.id}`} checked={pick === i} onChange={() => setPick(i)} className="mt-1.5 shrink-0" />
               <span className="min-w-0 flex-1">
-                <span dir="auto" className="block text-sm font-medium break-words">{s.artist}</span>
-                <span dir="auto" className="block text-sm text-[var(--color-text-dim)] break-words">{s.title}</span>
-                <span className="block text-[11px] text-[var(--color-text-dim)] mt-1">{i === 0 ? "پیشنهاد اصلی · " : ""}{s.label}</span>
+                <span dir="auto" className="block text-sm font-medium break-words"><span className="text-[11px] font-normal text-[var(--color-text-dim)]">خواننده: </span>{s.artist}</span>
+                <span dir="auto" className="block text-sm text-[var(--color-text-dim)] break-words"><span className="text-[11px]">آهنگ: </span>{s.title}</span>
+                <span className="block text-[11px] text-[var(--color-text-dim)] mt-1">{i === 0 ? (s.label.startsWith("حدس") ? "حدس اول، " : "پیشنهاد اصلی، ") : ""}{s.label}</span>
               </span>
             </label>
           ))}

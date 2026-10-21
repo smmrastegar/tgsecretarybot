@@ -17,10 +17,12 @@ const RANK = { "spotify-track": 0, "spotify-artist": 1, parse: 2 } as const;
 function tidySuggestions(it: Awaited<ReturnType<typeof listScReview>>[number]) {
   const have = nameWords(`${it.origTitle ?? it.title} ${it.origArtist ?? it.artist}`);
   const covers = (title: string) => { const w = nameWords(title); return w.length > 0 && w.every((x) => have.some((h) => h === x || wordSimilarity(x, h) >= 0.9)); };
+  const named = (artist: string) => { const w = nameWords(artist.split(/,\s*/)[0] ?? artist); return w.length > 0 && w.every((x) => have.some((h) => h === x || wordSimilarity(x, h) >= 0.9)); };
   const seen = new Set<string>();
   const list = [...it.suggestions, { title: it.title, artist: it.artist, source: "parse" as const }]
     .filter((x) => x.title.trim() && x.artist.trim() && (x.source !== "spotify-track" || covers(x.title)))
-    .sort((a, b) => RANK[a.source] - RANK[b.source])
+    // the ones whose artist is named in the upload's own text come first, then Spotify matches, then guesses
+    .sort((a, b) => Number(!named(a.artist)) - Number(!named(b.artist)) || RANK[a.source] - RANK[b.source])
     .filter((x) => { const k = `${x.title}|${x.artist}`.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
     .slice(0, 5);
   return list.map((x) => ({ title: x.title, artist: x.artist, label: LABEL[x.source], why: x.note ?? null }));
