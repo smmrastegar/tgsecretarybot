@@ -23,6 +23,16 @@ export async function getSpotifyConfig(): Promise<{ clientId: string; clientSecr
   };
 }
 
+/**
+ * Public-catalogue calls (search, albums, artists) may use their own Spotify app (settings spotifyCatalogClientId / spotifyCatalogClientSecret):
+ * Spotify rate-limits per app, so a long limit on that traffic never blocks sign-ins and likes of the main app. Falls back to the main app.
+ */
+export async function getCatalogConfig(): Promise<{ clientId: string; clientSecret: string }> {
+  const s = await getAllSettings();
+  const id = (s.spotifyCatalogClientId ?? "").trim(), secret = (s.spotifyCatalogClientSecret ?? "").trim();
+  return id && secret ? { clientId: id, clientSecret: secret } : getSpotifyConfig();
+}
+
 export async function saveSpotifyCredentials(clientId: string, clientSecret: string): Promise<void> {
   await setSetting("spotifyClientId", clientId.trim());
   if (clientSecret.trim()) await setSetting("spotifyClientSecret", clientSecret.trim());
@@ -74,8 +84,8 @@ export async function authorizeUrl(state: string): Promise<string | null> {
   return u.toString();
 }
 
-async function tokenCall(params: Record<string, string>): Promise<{ access_token: string; refresh_token?: string; scope?: string }> {
-  const c = await getSpotifyConfig();
+async function tokenCall(params: Record<string, string>, cfg?: { clientId: string; clientSecret: string }): Promise<{ access_token: string; refresh_token?: string; scope?: string }> {
+  const c = cfg ?? await getSpotifyConfig();
   const res = await fetch("https://accounts.spotify.com/api/token", {
     method: "POST",
     headers: {
@@ -178,11 +188,14 @@ export { listSpotifyAccounts };
 
 /** Token for public catalogue data (no user): client-credentials grant. */
 export async function appToken(): Promise<string> {
-  const t = await tokenCall({ grant_type: "client_credentials" });
+  const t = await tokenCall({ grant_type: "client_credentials" }, await getCatalogConfig());
   return t.access_token;
 }
 
 let catalogTok: { v: string; until: number } | null = null;
+// Catalogue calls are spaced out and stop completely while Spotify says "limited": bursts are what earn a many-hours ban.
+const CATALOG_GAP_MS = 400;
+let catalogNext = 0, catalogBlockedUntil = 0;
 
 /**
  * GET a public catalogue endpoint (artists, albums…): the app token first (cached), then a linked
@@ -190,6 +203,10 @@ let catalogTok: { v: string; until: number } | null = null;
  */
 export async function catalogGet<T>(pathOrUrl: string): Promise<T> {
   const url = pathOrUrl.startsWith("http") ? pathOrUrl : `https://api.spotify.com/v1${pathOrUrl}`;
+  if (Date.now() < catalogBlockedUntil) throw new SpotifyRateLimited(Math.ceil((catalogBlockedUntil - Date.now()) / 1000));
+  const slot = Math.max(Date.now(), catalogNext);
+  catalogNext = slot + CATALOG_GAP_MS;
+  if (slot > Date.now()) await new Promise((r) => setTimeout(r, slot - Date.now()));
   if (!catalogTok || catalogTok.until < Date.now()) catalogTok = { v: await appToken(), until: Date.now() + 50 * 60_000 };
   let r = await spGet(catalogTok.v, url);
   if (r.status === 401 || r.status === 403) {
@@ -197,7 +214,7 @@ export async function catalogGet<T>(pathOrUrl: string): Promise<T> {
     const tok = acc ? await accessToken(acc.id).catch(() => "") : "";
     if (tok) r = await spGet(tok, url);
   }
-  if (r.status === 429) throw new SpotifyRateLimited(r.retryAfter || 30);
+  if (r.status === 429) { catalogBlockedUntil = Date.now() + (r.retryAfter || 30) * 1000; throw new SpotifyRateLimited(r.retryAfter || 30); }
   if (r.status !== 200) throw new Error(`spotify ${r.status}: ${r.message}`);
   return r.json as T;
 }
