@@ -129,13 +129,16 @@ export function useCollections(tracks: Track[], playlists: Playlist[], byId: Map
     const ready = tracks.filter((t) => t.status === "ready");
     const artists = new Map<string, Track[]>();
     const albums = new Map<string, Track[]>();
+    const uploaders = new Map<string, Track[]>(); // SoundCloud uploader accounts (keyed by their name as first seen)
+    const upKey = new Map<string, string>();
     for (const t of ready) {
+      if (t.uploadedBy) { const k = upKey.get(t.uploadedBy.toLowerCase()) ?? t.uploadedBy; upKey.set(k.toLowerCase(), k); uploaders.set(k, [...(uploaders.get(k) ?? []), t]); }
       for (const a of findableArtists(t)) artists.set(a, [...(artists.get(a) ?? []), t]);
       albums.set(albumKey(t), [...(albums.get(albumKey(t)) ?? []), t]);
     }
     const lists = playlists.map((p) => ({ p, tracks: p.trackIds.map((id) => byId.get(id)).filter((t): t is Track => !!t && t.status === "ready") }));
     return {
-      ready, artists, albums, lists,
+      ready, artists, albums, uploaders, lists,
       liked: ready.filter((t) => t.rating > 0),
       recent: [...ready].filter((t) => t.lastPlayedAt).sort((a, b) => ts(b.lastPlayedAt) - ts(a.lastPlayedAt)),
       top: [...ready].filter((t) => t.playCount > 0).sort((a, b) => b.playCount - a.playCount || b.listenSeconds - a.listenSeconds),
@@ -189,7 +192,7 @@ type Sort = "recent" | "az" | "plays" | "artist";
 const SORTS: Array<[Sort, string]> = [["recent", "Recently added"], ["az", "Title A–Z"], ["plays", "Most played"], ["artist", "Artist"]];
 
 export function LibraryView({ api, c }: { api: Api; c: Collections }) {
-  const [seg, setSeg] = useState<"songs" | "artists" | "albums" | "playlists">("songs");
+  const [seg, setSeg] = useState<"songs" | "artists" | "albums" | "uploaders" | "playlists">("songs");
   const [sort, setSort] = useState<Sort>("recent");
   const [grid, setGrid] = useState(false);
   const [likedOnly, setLikedOnly] = useState(false);
@@ -211,6 +214,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
     return [...base].sort(cmp[sort]);
   }, [c, sort, likedOnly, savedOnly, accSel, accMode, api.offline, api.offlineMode]);
   const artists = useMemo(() => [...c.artists.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])), [c.artists]);
+  const uploaders = useMemo(() => [...c.uploaders.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])), [c.uploaders]);
   const albums = useMemo(() => [...c.albums.entries()].sort((a, b) => a[0].localeCompare(b[0])), [c.albums]);
   const segBtn = (k: typeof seg, label: string) => (
     <button key={k} onClick={() => setSeg(k)} className={`px-4 py-2 rounded-full text-[14px] font-semibold whitespace-nowrap transition ${seg === k ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>{label}</button>
@@ -218,7 +222,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
   return (
     <div>
       <div className="flex gap-2 mt-4 overflow-x-auto -mx-4 px-4 [scrollbar-width:none]">
-        {segBtn("songs", "Songs")}{segBtn("artists", "Artists")}{segBtn("albums", "Albums")}{segBtn("playlists", "Playlists")}
+        {segBtn("songs", "Songs")}{segBtn("artists", "Artists")}{segBtn("albums", "Albums")}{uploaders.length > 0 && segBtn("uploaders", "Uploaders")}{segBtn("playlists", "Playlists")}
       </div>
 
       {seg === "songs" && (
@@ -289,6 +293,21 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
               <ChevronRightIcon size={18} className="text-[var(--dim3)]" />
             </button>
           ))}
+        </div>
+      )}
+
+      {seg === "uploaders" && (
+        <div className="mt-3">
+          <p className="text-[12px] text-[var(--dim)] leading-5 pb-2">Accounts that uploaded your SoundCloud songs. Their name is kept apart from the song's artist.</p>
+          <div className="divide-y divide-[var(--bd0)]">
+            {uploaders.map(([name, list]) => (
+              <button key={name} onClick={() => api.open({ kind: "uploader", key: name, title: name })} className="w-full flex items-center gap-3 py-2.5 text-left" style={{ contentVisibility: "auto", containIntrinsicSize: "0 68px" }}>
+                <span className="w-14 h-14 rounded-full overflow-hidden shrink-0 block"><Cover t={list[0]!} tq={api.tq} size="100%" radius={0} res={128} /></span>
+                <span className="min-w-0 flex-1"><span className="block text-[16px] font-medium truncate">{name}</span><span className="block text-[13px] text-[var(--dim)]">{list.length} {list.length === 1 ? "song" : "songs"}</span></span>
+                <ChevronRightIcon size={18} className="text-[var(--dim3)]" />
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
