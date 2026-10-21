@@ -565,6 +565,16 @@ export const MIGRATIONS: Migration[] = [
         )`;
     },
   },
+  {
+    // SoundCloud uploads carry the uploader as "artist" and messy titles: they are cleaned against Spotify's catalogue. The originals are kept.
+    id: "2026-10-21-001-track-meta-state",
+    up: async (q) => {
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS meta_state TEXT NOT NULL DEFAULT ''`;
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS meta_suggestions JSONB`;
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS orig_title TEXT`;
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS orig_artist TEXT`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

@@ -4,7 +4,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { addScTrack, recordScSources, getAllSettings, getScTokens, listMusicPlaylists, listScAccounts, nextScTrack, saveScTokens, savePkce, setPlaylistTrack, createMusicPlaylist, setSetting, takePkce, updateMusicTrack, upsertScAccount, type ScTrackIn } from "./db";
+import { addScTrack, nextScMetaTracks, recordScSources, setTrackMeta, getAllSettings, getScTokens, listMusicPlaylists, listScAccounts, nextScTrack, saveScTokens, savePkce, setPlaylistTrack, createMusicPlaylist, setSetting, takePkce, updateMusicTrack, upsertScAccount, type ScTrackIn } from "./db";
 import { MUSIC_DIR } from "./music";
 import { ffmpegPath } from "./music-analysis";
 import { reportWarn } from "./report";
@@ -227,5 +227,33 @@ export async function soundcloudStep(max = 2): Promise<number> {
     }
   } catch (err) { reportWarn("music", "soundcloud step failed:", err); }
   finally { await setSetting("soundcloudStepLock", "0"); }
+  return done;
+}
+
+/** Cron step: clean the names of a few SoundCloud songs against Spotify (auto when sure, "review" for the owner otherwise). Never throws. */
+export async function scMetaStep(max = 5): Promise<number> {
+  const s = await getAllSettings();
+  if (Date.now() < Number(s.scMetaPauseUntil || 0)) return 0;
+  if (Date.now() - Number(s.scMetaLock || 0) < 150_000) return 0;
+  await setSetting("scMetaLock", String(Date.now()));
+  let done = 0;
+  try {
+    const { resolveSc } = await import("./music-resolve");
+    const { SpotifyRateLimited } = await import("./spotify");
+    for (const t of await nextScMetaTracks(max)) {
+      try {
+        const fix = await resolveSc(t.title, t.artist);
+        if (fix.state === "review") await setTrackMeta(t.id, { state: "review", suggestions: fix.suggestions });
+        else await setTrackMeta(t.id, { title: fix.title, artist: fix.artist, state: "auto" });
+        done++;
+      } catch (e) {
+        if (e instanceof SpotifyRateLimited) { await setSetting("scMetaPauseUntil", String(Date.now() + (e.retryAfterSeconds + 5) * 1000)); break; }
+        reportWarn("music", `soundcloud names for track ${t.id} failed:`, e);
+        await setTrackMeta(t.id, { state: "review", suggestions: [] }); // the owner sorts it out
+        done++;
+      }
+    }
+  } catch (err) { reportWarn("music", "soundcloud name step failed:", err); }
+  finally { await setSetting("scMetaLock", "0"); }
   return done;
 }

@@ -84,3 +84,39 @@ export async function recordScSources(accountId: number, trackIds: number[]): Pr
 export async function listScAccountEntries(): Promise<Array<{ id: number; name: string }>> {
   return (await listScAccounts()).map((a) => ({ id: 1_000_000 + a.id, name: `${a.username ?? "SoundCloud"} (SoundCloud)` }));
 }
+
+// ---- cleaning the names of SoundCloud songs (see lib/music-resolve.ts)
+export type MetaSuggestion = { title: string; artist: string; source: "spotify-track" | "spotify-artist" | "parse"; note?: string };
+export type MetaItem = { id: number; title: string; artist: string; origTitle: string | null; origArtist: string | null; state: string; suggestions: MetaSuggestion[]; coverUrl: string | null };
+
+export async function nextScMetaTracks(n: number): Promise<Array<{ id: number; title: string; artist: string }>> {
+  await ensureSchema();
+  return ((await q().query(`SELECT id, title, artist FROM music_tracks WHERE source = 'soundcloud' AND meta_state = '' ORDER BY id LIMIT $1`, [n])) as Row[])
+    .map((r) => ({ id: num(r, "id"), title: str(r, "title"), artist: str(r, "artist") }));
+}
+
+/** Save cleaned names; the first time, the upload's own title / uploader are kept as orig_*. */
+export async function setTrackMeta(id: number, m: { title?: string; artist?: string; state: string; suggestions?: MetaSuggestion[] | null }): Promise<void> {
+  await ensureSchema();
+  await q().query(
+    `UPDATE music_tracks SET
+       orig_title = CASE WHEN orig_title IS NULL AND ($2::text IS NOT NULL OR $3::text IS NOT NULL) THEN title ELSE orig_title END,
+       orig_artist = CASE WHEN orig_artist IS NULL AND ($2::text IS NOT NULL OR $3::text IS NOT NULL) THEN artist ELSE orig_artist END,
+       title = COALESCE($2, title), artist = COALESCE($3, artist), meta_state = $4, meta_suggestions = $5::jsonb
+     WHERE id = $1`,
+    [id, m.title ?? null, m.artist ?? null, m.state, m.suggestions ? JSON.stringify(m.suggestions) : null],
+  );
+}
+
+export async function listScReview(limit = 200): Promise<MetaItem[]> {
+  await ensureSchema();
+  return ((await q().query(`SELECT id, title, artist, orig_title, orig_artist, meta_state, meta_suggestions FROM music_tracks WHERE source = 'soundcloud' AND meta_state = 'review' ORDER BY id LIMIT $1`, [limit])) as Row[])
+    .map((r) => ({ id: num(r, "id"), title: str(r, "title"), artist: str(r, "artist"), origTitle: strOrNull(r, "orig_title"), origArtist: strOrNull(r, "orig_artist"), state: str(r, "meta_state"), suggestions: Array.isArray(r.meta_suggestions) ? (r.meta_suggestions as MetaSuggestion[]) : [], coverUrl: null }));
+}
+
+export async function scMetaCounts(): Promise<Record<string, number>> {
+  await ensureSchema();
+  const out: Record<string, number> = {};
+  for (const r of (await q().query(`SELECT meta_state, count(*)::int AS n FROM music_tracks WHERE source = 'soundcloud' GROUP BY meta_state`)) as Row[]) out[str(r, "meta_state") || "new"] = num(r, "n");
+  return out;
+}
