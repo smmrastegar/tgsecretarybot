@@ -57,7 +57,14 @@ export async function resolveSc(rawTitle: string, uploader: string): Promise<Fix
       if (seen.has(t.id)) continue;
       const artists = t.artist.split(/,\s*/).filter(Boolean);
       const ts = Math.max(...p.readings.map((r) => sim(r.title, stripFeat(t.title).rest)), sim(fallbackTitle, stripFeat(t.title).rest));
-      const evidence = artists.some((a) => wordOverlap(nameWords(a), nameWords(hay)) >= 0.85);
+      const hayWords = nameWords(hay);
+      // the artist's name is in the upload's text — all of it, or (for a clearly matching title) its main word: "Namjoo" for "Mohsen Namjoo"
+      const evidence = artists.some((a) => {
+        const aw = nameWords(a), full = wordOverlap(aw, hayWords);
+        if (full >= 0.85) return true;
+        const longest = Math.max(0, ...aw.filter((w) => hayWords.some((h) => h === w || wordOverlap([w], [h]) >= 0.85)).map((w) => w.length));
+        return ts >= 0.9 && full >= 0.5 && longest >= 5;
+      });
       const marker = MARK.test(t.title) === MARK.test(rawTitle);
       seen.set(t.id, { title: t.title, artists, score: ts, strong: ts >= 0.85 && evidence && marker && (!p.derived || MARK.test(t.title)) });
     }
