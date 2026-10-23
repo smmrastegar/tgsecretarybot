@@ -76,13 +76,13 @@ function SearchViewImpl({ api, c }: { api: Api; c: Collections }) {
     if (!searching) return null;
     const first = norm(q).trim();
     const a = artists.find(([n]) => norm(n).startsWith(first)) ?? artists.find(([n]) => norm(n) === first);
-    if (a) return { kind: "artist" as const, name: a[0], tracks: a[1] };
+    if (a) return { kind: c.credited.has(a[0]) ? "artist" as const : "uploader" as const, name: a[0], tracks: a[1] };
     const al = albums.find(([, l]) => norm(l[0]!.album ?? "").startsWith(first));
     if (al) return { kind: "album" as const, name: al[1][0]!.album ?? "Singles", key: al[0], tracks: al[1] };
     if (songs[0]) return { kind: "song" as const, name: songs[0].title ?? "—", track: songs[0] };
-    if (artists[0]) return { kind: "artist" as const, name: artists[0][0], tracks: artists[0][1] };
+    if (artists[0]) return { kind: c.credited.has(artists[0][0]) ? "artist" as const : "uploader" as const, name: artists[0][0], tracks: artists[0][1] };
     return null;
-  }, [searching, q, artists, albums, songs]);
+  }, [searching, q, artists, albums, songs, c.credited]);
 
   // Browse tiles (nothing typed)
   const offlineCount = useMemo(() => c.ready.filter((t) => api.offline.has(t.id)).length, [c.ready, api.offline]);
@@ -100,9 +100,9 @@ function SearchViewImpl({ api, c }: { api: Api; c: Collections }) {
   );
   const show = (k: Filter) => filter === "all" || filter === k;
   const artistRow = ([n, l]: [string, Track[]]) => (
-    <button key={n} onClick={() => { remember(q); api.open({ kind: "artist", key: n, title: n }); }} className="w-full flex items-center gap-3 py-2 text-left">
+    <button key={n} onClick={() => { remember(q); api.open({ kind: c.credited.has(n) ? "artist" : "uploader", key: n, title: n }); }} className="w-full flex items-center gap-3 py-2 text-left">
       <span className="w-14 h-14 rounded-full overflow-hidden block shrink-0"><Cover t={l[0]!} tq={api.tq} size="100%" radius={0} res={128} /></span>
-      <span className="min-w-0 flex-1"><span className="block text-[16px] font-medium truncate">{n}</span><span className="block text-[13px] text-[var(--dim)]">Artist · {l.length} {l.length === 1 ? "song" : "songs"}</span></span>
+      <span className="min-w-0 flex-1"><span className="block text-[16px] font-medium truncate">{n}</span><span className="block text-[13px] text-[var(--dim)]">{c.credited.has(n) ? "Artist" : "Uploader"} · {l.length} {l.length === 1 ? "song" : "songs"}</span></span>
       <ChevronRightIcon size={18} className="text-[var(--dim3)]" />
     </button>
   );
@@ -183,9 +183,9 @@ function SearchViewImpl({ api, c }: { api: Api; c: Collections }) {
                     <span className="w-12 h-12 shrink-0 rounded-full grid place-items-center bg-[rgb(var(--ac))] text-[var(--acfg)]"><PlayIcon size={22} /></span>
                   </button>
                 ) : (
-                  <button onClick={() => { remember(q); api.open(top.kind === "artist" ? { kind: "artist", key: top.name, title: top.name } : { kind: "album", key: top.key, title: top.name }); }} className="flex items-center gap-4 w-full text-left">
-                    <span className={`w-24 h-24 overflow-hidden shrink-0 block shadow-lg ${top.kind === "artist" ? "rounded-full" : "rounded-lg"}`}><Cover t={top.tracks[0]!} tq={api.tq} size="100%" radius={0} /></span>
-                    <span className="min-w-0 flex-1"><span className="block text-[22px] font-extrabold leading-tight break-words">{top.name}</span><span className="block mt-1 text-[14px] text-[var(--dim)]">{top.kind === "artist" ? "Artist" : "Album"} · {top.tracks.length} {top.tracks.length === 1 ? "song" : "songs"}</span></span>
+                  <button onClick={() => { remember(q); api.open(top.kind === "album" ? { kind: "album", key: top.key, title: top.name } : { kind: top.kind, key: top.name, title: top.name }); }} className="flex items-center gap-4 w-full text-left">
+                    <span className={`w-24 h-24 overflow-hidden shrink-0 block shadow-lg ${top.kind === "album" ? "rounded-lg" : "rounded-full"}`}><Cover t={top.tracks[0]!} tq={api.tq} size="100%" radius={0} /></span>
+                    <span className="min-w-0 flex-1"><span className="block text-[22px] font-extrabold leading-tight break-words">{top.name}</span><span className="block mt-1 text-[14px] text-[var(--dim)]">{top.kind === "artist" ? "Artist" : top.kind === "uploader" ? "Uploader" : "Album"} · {top.tracks.length} {top.tracks.length === 1 ? "song" : "songs"}</span></span>
                     <ChevronRightIcon size={20} className="text-[var(--dim3)]" />
                   </button>
                 )}

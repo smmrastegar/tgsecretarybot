@@ -770,7 +770,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         /* Instant taps: no double-tap-zoom wait, no grey flash. */
         button, [role=button], a, select, summary, input[type=range] { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
         /* Bigger touch targets without changing the layout: every icon-only button reaches 8px past its drawing; text pills are at least 38px tall. */
-        button:has(> svg:only-child) { position: relative; min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; }
+        button:has(> svg:only-child) { min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; }
+        /* (unlayered CSS beats Tailwind utilities, so a button the page positions itself, like the search "clear" X, must be left alone) */
+        button:has(> svg:only-child):not(.absolute):not(.fixed):not(.sticky) { position: relative; }
         button:has(> svg:only-child)::after { content: ""; position: absolute; inset: -8px; }
         button.rounded-full:not(:has(> svg:only-child)) { min-height: 38px; }
         button:focus-visible, input:focus-visible { outline: 2px solid rgb(var(--ac)); outline-offset: 2px; }
@@ -903,7 +905,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <button onClick={() => goArtist(now)} className="block max-w-full text-left text-[var(--dim)] mt-0.5">
                 <FitText max={15} min={12} lines={2}>{offline.has(now.id) && <><DownloadedBadge size={16} />{" "}</>}{now.artist}</FitText>
               </button>
-              {now.uploadedBy && <button onClick={() => openUploader(now.uploadedBy!)} className="block max-w-full text-left text-[12px] text-[var(--dim3)] mt-0.5 truncate">Uploaded by {now.uploadedBy} ›</button>}
+              {now.uploadedBy && <button onClick={() => openUploader(now.uploadedBy!)} className="block max-w-full text-left text-[12px] text-[var(--dim2)] py-1.5 -mb-1 truncate">Uploaded by {now.uploadedBy} ›</button>}
               <div className="mt-1.5 flex items-start gap-2">
                 <div className="min-w-0 flex-1"><SourceChips ids={now.sources} /></div>
                 <div className="flex items-center shrink-0 -mr-1.5">

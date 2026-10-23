@@ -131,14 +131,16 @@ export function useCollections(tracks: Track[], playlists: Playlist[], byId: Map
     const albums = new Map<string, Track[]>();
     const uploaders = new Map<string, Track[]>(); // SoundCloud uploader accounts (keyed by their name as first seen)
     const upKey = new Map<string, string>();
+    const credited = new Set<string>(); // names that are a song's real artist (a name found only as an uploader is not)
     for (const t of ready) {
       if (t.uploadedBy) { const k = upKey.get(t.uploadedBy.toLowerCase()) ?? t.uploadedBy; upKey.set(k.toLowerCase(), k); uploaders.set(k, [...(uploaders.get(k) ?? []), t]); }
+      for (const a of artistsOf(t)) credited.add(a);
       for (const a of findableArtists(t)) artists.set(a, [...(artists.get(a) ?? []), t]);
       albums.set(albumKey(t), [...(albums.get(albumKey(t)) ?? []), t]);
     }
     const lists = playlists.map((p) => ({ p, tracks: p.trackIds.map((id) => byId.get(id)).filter((t): t is Track => !!t && t.status === "ready") }));
     return {
-      ready, artists, albums, uploaders, lists,
+      ready, artists, albums, uploaders, credited, lists,
       liked: ready.filter((t) => t.rating > 0),
       recent: [...ready].filter((t) => t.lastPlayedAt).sort((a, b) => ts(b.lastPlayedAt) - ts(a.lastPlayedAt)),
       top: [...ready].filter((t) => t.playCount > 0).sort((a, b) => b.playCount - a.playCount || b.listenSeconds - a.listenSeconds),
