@@ -232,11 +232,15 @@ async function callOpenRouter(
     let res: Response;
     try {
       await openRouterGate();
-      res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
+      const call = () => fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers, body: JSON.stringify(body) });
+      res = await call();
+      // "temporarily rate-limited upstream" (429) and brief provider hiccups (502/503) usually pass within a second or two: one polite retry
+      // is far cheaper than failing the whole message (a single-model list otherwise has nothing to fall back to).
+      if (res.status === 429 || res.status === 502 || res.status === 503) {
+        await new Promise((r) => setTimeout(r, 1500 + Math.floor(Math.random() * 700)));
+        await openRouterGate();
+        res = await call();
+      }
     } catch (err) {
       lastErr = err;
       if (err instanceof OpenRouterCircuitOpen) break; // credit gone: no point trying the other models

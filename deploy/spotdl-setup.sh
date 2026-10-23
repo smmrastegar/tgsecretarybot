@@ -12,6 +12,11 @@ mkdir -p "$TOOLS" "$HOME"
 
 say() { echo "$(date -Is) $*" >"$STATUS"; echo "$*"; }
 
+# A recorded FAIL is retried at most every 6 hours (it used to retry — and log a warning — every hour).
+if [[ -f "$STATUS" ]] && grep -q " FAIL" "$STATUS" 2>/dev/null && [[ -n "$(find "$STATUS" -mmin -360 2>/dev/null)" ]]; then
+  exit 0
+fi
+
 if [[ ! -x "$VENV/bin/spotdl" ]]; then
   command -v python3 >/dev/null || { say "FAIL python3 missing"; exit 1; }
   python3 -m venv "$VENV" 2>&1 || { say "FAIL venv (apt install python3-venv?)"; exit 1; }
@@ -21,6 +26,11 @@ fi
 # ffmpeg / deno: use system ones when present, else spotDL's own download.
 command -v ffmpeg >/dev/null || [[ -e "$HOME/.config/spotdl/ffmpeg" ]] || "$VENV/bin/spotdl" --download-ffmpeg 2>&1 | tail -1
 command -v deno >/dev/null || [[ -e "$HOME/.config/spotdl/deno" ]] || "$VENV/bin/spotdl" --download-deno 2>&1 | tail -1
+
+# YouTube changes often and yt-dlp is what breaks first: before (re)testing, bring it up to date.
+if [[ -x "$VENV/bin/pip" ]] && ! grep -q "^.* OK" "$STATUS" 2>/dev/null; then
+  "$VENV/bin/pip" install --quiet --upgrade yt-dlp 2>&1 | tail -1
+fi
 
 # Self-test once (and again after every upgrade attempt that changed nothing
 # is pointless, so only when no OK is recorded).
