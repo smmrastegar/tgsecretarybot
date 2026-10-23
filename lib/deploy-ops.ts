@@ -57,6 +57,8 @@ export async function deployStatus(logLines = 40): Promise<{
   caddyServesChatbot: boolean;
   /** NEXT_PUBLIC_APP_URL as this running process sees it (the deploy script mirrors deploy/public-url into .env) */
   publicUrl: string;
+  /** the Node.js version this process runs (compare with the latest security release) */
+  node: string;
   log: string;
 }> {
   const n = Math.min(Math.max(1, Math.trunc(logLines) || 40), 200);
@@ -89,6 +91,7 @@ export async function deployStatus(logLines = 40): Promise<{
     caddyfileReadable,
     caddyServesChatbot: caddyfile.includes("chatbot.bz"),
     publicUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
+    node: process.version,
     log: await tail(DEPLOY_LOG, n),
   };
 }
