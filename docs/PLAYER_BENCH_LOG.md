@@ -6,3 +6,7 @@ One row per day, produced by `scripts/player-bench.mjs` against a production bui
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-08 | 335 | 392 | 418 | 47 | 0 | 187 | 228 / 1 | 38 | 0 | 44 | 0.5 |
 | 2026-10-23 | 326 | 391 | 498 | 47 | 0 | 221 | 267 / 0 | 32 | 0 | 56 | 0.5 |
+| 2026-10-23 | 336 | 392 | 499 | 47 | 0 | 176 | 205 / 0 | 33 | 0 | 56 | 0.5 |
+
+Notes
+- 2026-10-23 (second row): rarely-opened sheets moved to `components/music/app/SheetsMore.tsx` (lazy chunk, warmed at idle). The "JS KB" column counts every script the session loads (the lazy chunk too), so it stays ≈ the same; the **player page chunk fell from 138.9 KB to 115.9 KB (−17 %)** — that is what blocks the first paint. List/full-player CPU in this run were lower than the first 23 Oct row, but run-to-run noise is ±10 %.

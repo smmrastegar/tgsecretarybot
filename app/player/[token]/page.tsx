@@ -22,7 +22,7 @@ import SafeBoundary from "@/components/ui/SafeBoundary";
 import { reportClient } from "@/lib/client-report";
 import { NetEpochCtx } from "@/components/music/app/shared";
 import { artistsOf, DetailView, DownloadedBadge, type Desc, type Vibe, HomeView, LibraryView, useCollections, type Api, type Page } from "@/components/music/app/Views";
-import { AccountPlaylistSheet, ArtistPickSheet, DownloadSheet, LyricsSheet, OptionSheet, QueueSheet, ReportSheet, SettingsSheet, SmartFromSongSheet, SpotifyLikeSheet, TrackMenu } from "@/components/music/app/Sheets";
+import { ArtistPickSheet, OptionSheet, TrackMenu } from "@/components/music/app/Sheets";
 import { matchesAccounts } from "@/lib/music-scope";
 
 // Private personal player. The URL's 256-bit token is the credential.
@@ -32,6 +32,11 @@ const FADES = [{ v: 0, label: "Off" }, { v: 3, label: "3 seconds" }, { v: 6, lab
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2].map((v) => ({ v, label: v === 1 ? "Normal (1×)" : `${v}×` }));
 
 // Rarely-opened screens load on demand to keep the first paint small.
+// The sheets people open now and then load on demand (their own chunk), keeping the first paint small. Rendered only when opened.
+const lazySheet = <K extends keyof typeof import("@/components/music/app/SheetsMore")>(name: K) =>
+  dynamic(() => import("@/components/music/app/SheetsMore").then((m) => m[name] as never), { ssr: false }) as (typeof import("@/components/music/app/SheetsMore"))[K];
+const AccountPlaylistSheet = lazySheet("AccountPlaylistSheet"), DownloadSheet = lazySheet("DownloadSheet"), LyricsSheet = lazySheet("LyricsSheet"), QueueSheet = lazySheet("QueueSheet"),
+  ReportSheet = lazySheet("ReportSheet"), SettingsSheet = lazySheet("SettingsSheet"), SmartFromSongSheet = lazySheet("SmartFromSongSheet"), SpotifyLikeSheet = lazySheet("SpotifyLikeSheet");
 const StatsView = dynamic(() => import("@/components/music/app/StatsView"), { ssr: false });
 const TrackDetail = dynamic(() => import("@/components/music/TrackDetail"), { ssr: false });
 
@@ -40,6 +45,13 @@ const MHome = memo(HomeView), MLibrary = memo(LibraryView), MSearch = SearchView
 export default function PlayerPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
   const tq = `t=${encodeURIComponent(token)}`;
+  // Warm the on-demand sheets once the first paint is done: they download in idle time (so the offline shell has them too) instead of on the first tap.
+  useEffect(() => {
+    const warm = () => { void import("@/components/music/app/SheetsMore").catch(() => {}); };
+    if (typeof window.requestIdleCallback === "function") { const id = window.requestIdleCallback(warm, { timeout: 8000 }); return () => window.cancelIdleCallback(id); }
+    const t = window.setTimeout(warm, 3000);
+    return () => window.clearTimeout(t);
+  }, []);
   const [allTracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [accounts, setAccounts] = useState<Array<{ id: number; name: string }>>([]);
