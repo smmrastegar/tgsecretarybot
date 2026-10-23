@@ -43,6 +43,7 @@
 - `feature_usage`: قابلیت خوابیده (dormant/empty) → پیشنهاد (راه‌اندازی/تعمیر/حذف) در گزارش.
 - `SELECT source, count(*) FROM system_errors WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY 1 ORDER BY 2 DESC` — خطای تکراری = آیتم `fix`.
 - `npm run audit:routes` (مسیر عمومی بدون گارد = خطای قرمز)، `npm audit --omit=dev`، `npm outdated`.
+- **نسخهٔ Node سرور:** `deploy_status` فیلد `node` را دارد؛ با آخرین انتشار امنیتی Node.js (nodejs.org/en/blog/vulnerability) مقایسه کن. خط ۲۴ باید روی آخرین patch باشد؛ اگر عقب بود: `apt-get install --only-upgrade nodejs` روی سرور و ری‌استارت سرویس. موردی که این هفته دیدیم: انتشار ۲۱ اکتبر ۲۰۲۶ (پچ ۲۴٫۲۲٫۱) — سرور روی همین نسخه بود.
 - موزیک: آهنگ‌های ناموفق، صف اصلاح نام ساندکلاود (`meta_state='review'`)، فایل‌های مشکوک (`music_verify`)، گزارش‌های پلیر (`music_reports`)، کرش‌های کلاینت (`system_errors` با `source='client'`).
 - بنچمارک پلیر: `scripts/player-bench.mjs` روی بیلد production → سطر تازه در `docs/PLAYER_BENCH_LOG.md`؛ هر شاخصی که بدتر شده = آیتم.
 
