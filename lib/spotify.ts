@@ -3,6 +3,7 @@
 // personal library. Client id/secret come from the owner's own Spotify
 // developer app; the refresh token is stored in settings.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { noteApi, outcomeOf } from "./api-health";
 import { reportWarn } from "./report";
 import { deleteSpotifyAccount, getAllSettings, getSpotifyRefreshToken, listSpotifyAccounts, setSetting, setSpotifyRefreshToken, upsertSpotifyAccount } from "./db";
 
@@ -254,6 +255,8 @@ async function spGet(token: string, url: string): Promise<{ status: number; json
   let json: unknown = null;
   try { json = JSON.parse(text); } catch { /* not json */ }
   const message = (json as { error?: { message?: string } } | null)?.error?.message ?? text.slice(0, 160);
+  const outcome = outcomeOf(res.status);
+  if (outcome) noteApi("spotify", outcome, { retryAfterS: Number(res.headers.get("retry-after") ?? 0) || undefined, error: `${res.status} ${message}` });
   return { status: res.status, json, message, retryAfter: Number(res.headers.get("retry-after") ?? 0) || 0 };
 }
 

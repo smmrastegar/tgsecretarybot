@@ -8,6 +8,7 @@ import { addScTrack, nextScMetaTracks, recordScSources, setTrackMeta, getAllSett
 import { MUSIC_DIR } from "./music";
 import { ffmpegPath } from "./music-analysis";
 import { reportInfo, reportWarn } from "./report";
+import { noteApi, outcomeOf } from "./api-health";
 
 const API = "https://api.soundcloud.com";
 const AUTH = "https://secure.soundcloud.com";
@@ -98,6 +99,8 @@ export async function scFinishSignIn(code: string, state: string): Promise<{ acc
 export async function scGet<T>(pathOrUrl: string, token: string): Promise<T> {
   const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${API}${pathOrUrl}`;
   const r = await fetch(url, { headers: { Authorization: `OAuth ${token}`, Accept: "application/json; charset=utf-8" }, signal: AbortSignal.timeout(30_000) });
+  const outcome = outcomeOf(r.status);
+  if (outcome) noteApi("soundcloud", outcome, { retryAfterS: Number(r.headers.get("retry-after") ?? 0) || undefined, error: `${r.status}` });
   if (r.status === 429) throw new ScRateLimited();
   const text = await r.text();
   if (!r.ok) { let m = text.slice(0, 160); try { const j = JSON.parse(text) as { message?: string; error?: string }; m = j.message ?? j.error ?? m; } catch { /* plain text */ } throw new Error(`soundcloud ${r.status}: ${m}`); }

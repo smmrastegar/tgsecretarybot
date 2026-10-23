@@ -583,6 +583,17 @@ export const MIGRATIONS: Migration[] = [
       await q`UPDATE music_tracks SET uploader = COALESCE(orig_artist, artist) WHERE source = 'soundcloud' AND uploader IS NULL`;
     },
   },
+  {
+    // Outcomes of the outside music APIs per Tehran day (how often Spotify / SoundCloud answered, said "limited", or failed).
+    id: "2026-10-23-001-api-health",
+    up: async (q) => {
+      await q`CREATE TABLE IF NOT EXISTS api_health_daily (
+        day DATE NOT NULL, provider TEXT NOT NULL,
+        ok INT NOT NULL DEFAULT 0, limited INT NOT NULL DEFAULT 0, error INT NOT NULL DEFAULT 0,
+        last_limited_at TIMESTAMPTZ, last_retry_after_s INT, last_error TEXT, last_ok_at TIMESTAMPTZ,
+        PRIMARY KEY (day, provider))`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

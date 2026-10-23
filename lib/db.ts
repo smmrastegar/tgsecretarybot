@@ -28,3 +28,4 @@ export * from "./db/music-artists";
 export * from "./db/music-pins";
 export * from "./db/music-intake";
 export * from "./db/soundcloud";
+export * from "./db/api-health";

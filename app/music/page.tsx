@@ -9,6 +9,7 @@ import ArtistsSection from "@/components/music/dashboard/ArtistsSection";
 import LinksCard from "@/components/music/dashboard/LinksCard";
 import Section, { Pill } from "@/components/music/dashboard/Section";
 import SoundcloudSection from "@/components/music/dashboard/SoundcloudSection";
+import ApiHealthCard from "@/components/music/dashboard/ApiHealthCard";
 import SpotifySection, { type SpCfg, type SpLib } from "@/components/music/dashboard/SpotifySection";
 import PinCard from "@/components/music/dashboard/PinCard";
 import SmartPlaylistCard from "@/components/music/dashboard/SmartPlaylistCard";
@@ -388,6 +389,7 @@ export default function MusicPage() {
         cid={cid} csec={csec} setCid={setCid} setCsec={setCsec} onSaveCreds={() => void saveCreds()} onSelect={setAcct} onDisconnect={(id) => void disconnectSp(id)}
         onSync={() => void syncNow()} onImport={(id, name) => void importSp(id, name)} onConnect={() => { window.location.href = "/api/music/spotify/login"; }} />
       <SoundcloudSection canManage={!focus} />
+      {!focus && <ApiHealthCard />}
       {!focus && (<>
 
       <section className="mb-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-center">

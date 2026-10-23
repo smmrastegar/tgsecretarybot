@@ -7,6 +7,7 @@
 // is sampled or estimated: every number is a count over that day.
 import { faNum, escRich } from "./telegram-rich";
 import {
+  apiHealthForDay,
   hasDb,
   listMetricsSnapshots,
   roadmapDigest,
@@ -64,6 +65,20 @@ export type DailyMetrics = {
   improvement: {
     done: Array<{ id: number; kind: string; title: string; commitSha: string | null }>;
     openCount: number;
+  };
+  /** the music library and the outside music APIs (absent in snapshots saved before the weekly-upgrade program) */
+  music?: {
+    songsAdded: number;
+    songsReady: number;
+    songsFailedNow: number;
+    libraryReady: number;
+    soundcloudSongs: number;
+    soundcloudAwaitingReview: number;
+    plays: number;
+    listenMinutes: number;
+    skips: number;
+    playerCrashes: number;
+    api: Array<{ provider: string; ok: number; limited: number; error: number }>;
   };
   derived: {
     forwardSuccessRate: number | null;
@@ -163,6 +178,21 @@ export async function collectDailyMetrics(day: string): Promise<DailyMetrics> {
     SELECT COUNT(*)::int AS calls, COALESCE(SUM(total_tokens),0)::bigint AS tokens,
            COALESCE(SUM(cost_usd),0)::float AS cost
       FROM ai_usage WHERE created_at >= $1 AND created_at < $2`);
+  const mus = await one(`
+    SELECT COUNT(*) FILTER (WHERE created_at >= $1 AND created_at < $2)::int AS added,
+           COUNT(*) FILTER (WHERE ready_at >= $1 AND ready_at < $2)::int AS ready_today,
+           COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_now,
+           COUNT(*) FILTER (WHERE status = 'ready')::int AS ready_all,
+           COUNT(*) FILTER (WHERE source = 'soundcloud')::int AS sc_all,
+           COUNT(*) FILTER (WHERE source = 'soundcloud' AND meta_state = 'review')::int AS sc_review
+      FROM music_tracks`);
+  const play = await one(`
+    SELECT COUNT(*) FILTER (WHERE completed OR seconds >= 30)::int AS plays,
+           COALESCE(SUM(seconds), 0)::int AS secs,
+           COUNT(*) FILTER (WHERE skipped)::int AS skips
+      FROM music_events WHERE at >= $1 AND at < $2`);
+  const crashes = await one(`SELECT COUNT(*)::int AS n FROM system_errors WHERE source = 'client' AND created_at >= $1 AND created_at < $2`);
+  const apis = await apiHealthForDay(day).catch(() => []);
   const hk = await one(`SELECT COALESCE(SUM(cost_usd),0)::float AS cost FROM hikerapi_usage WHERE called_at >= $1 AND called_at < $2`);
   const digest = await roadmapDigest(from, to, day).catch(() => ({
     done: [] as RoadmapItem[],
@@ -217,6 +247,19 @@ export async function collectDailyMetrics(day: string): Promise<DailyMetrics> {
     done: digest.done.map((d) => ({ id: d.id, kind: d.kind, title: d.title, commitSha: d.commitSha })),
     openCount: digest.openCount,
   };
+  const music = {
+    songsAdded: n(mus, "added"),
+    songsReady: n(mus, "ready_today"),
+    songsFailedNow: n(mus, "failed_now"),
+    libraryReady: n(mus, "ready_all"),
+    soundcloudSongs: n(mus, "sc_all"),
+    soundcloudAwaitingReview: n(mus, "sc_review"),
+    plays: n(play, "plays"),
+    listenMinutes: Math.round(n(play, "secs") / 60),
+    skips: n(play, "skips"),
+    playerCrashes: n(crashes, "n"),
+    api: apis.map((a) => ({ provider: a.provider, ok: a.ok, limited: a.limited, error: a.error })),
+  };
   const derived = {
     forwardSuccessRate:
       work.ruleMatches > 0 ? Math.round((work.ruleForwarded / work.ruleMatches) * 1000) / 10 : null,
@@ -226,7 +269,7 @@ export async function collectDailyMetrics(day: string): Promise<DailyMetrics> {
       work.messages > 0 ? Math.round((cost.aiCostUsd / work.messages) * 100000) / 100000 : null,
     stabilityScore: stabilityScore(reliability, work),
   };
-  return { day, from: f, to: t, work, reliability, cost, improvement, derived };
+  return { day, from: f, to: t, work, reliability, cost, improvement, music, derived };
 }
 
 // 0-100. Deliberately simple and explainable: errors and failed
@@ -334,6 +377,22 @@ export async function buildDailyReportHtml(m: DailyMetrics, opts?: {
     parts.push(
       `<p>منابع خطا: ${r.topErrorSources.map((s) => `<code>${escRich(s.source)}</code> ×${faNum(s.n)}`).join("، ")}</p>`,
     );
+  }
+  if (m.music) {
+    const mu = m.music;
+    parts.push(`<h5>🎧 موزیک و API‌ها</h5><table striped compact>${head}`);
+    parts.push(row("آهنگ تازه به کتابخانه", ["music", "songsAdded"], mu.songsAdded));
+    parts.push(row("پخش‌ها (دست‌کم ۳۰ ثانیه)", ["music", "plays"], mu.plays));
+    parts.push(row("دقیقهٔ گوش‌داده‌شده", ["music", "listenMinutes"], mu.listenMinutes));
+    parts.push(row("اسکیپ", ["music", "skips"], mu.skips, false));
+    parts.push(row("کرش پلیر", ["music", "playerCrashes"], mu.playerCrashes, false));
+    parts.push(`</table>`);
+    parts.push(`<p>کتابخانه: ${faNum(mu.libraryReady)} آهنگ آماده (${faNum(mu.soundcloudSongs)} ساندکلاود)` +
+      (mu.soundcloudAwaitingReview ? ` · ${faNum(mu.soundcloudAwaitingReview)} آهنگ ساندکلاود منتظر اصلاح نام` : "") +
+      (mu.songsFailedNow ? ` · ⚠️ ${faNum(mu.songsFailedNow)} دانلود ناموفق` : "") + `</p>`);
+    for (const a of mu.api) {
+      parts.push(`<p>${a.limited > 0 ? "🔴" : a.error > 0 ? "🟡" : "🟢"} ${a.provider === "spotify" ? "اسپاتیفای" : "ساندکلاود"}: ${faNum(a.ok)} درخواست موفق، ${faNum(a.limited)} محدودیت، ${faNum(a.error)} خطا</p>`);
+    }
   }
   parts.push(`<h5>💵 هزینه</h5><table striped compact>${head}`);
   parts.push(row("فراخوانی AI", ["cost", "aiCalls"], c.aiCalls, false));
