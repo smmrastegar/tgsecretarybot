@@ -5,3 +5,4 @@ One row per day, produced by `scripts/player-bench.mjs` against a production bui
 | Date | Home ms | Home cover KB | JS KB (decoded) | Font KB | CLS | List-play CPU ms/s | Full-player CPU ms/s (playing / paused) | Tap→audio ms | Scroll long frames | Seek hit px | Seek tap@50% (ideal 0.5) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-08 | 335 | 392 | 418 | 47 | 0 | 187 | 228 / 1 | 38 | 0 | 44 | 0.5 |
+| 2026-10-23 | 326 | 391 | 498 | 47 | 0 | 221 | 267 / 0 | 32 | 0 | 56 | 0.5 |
