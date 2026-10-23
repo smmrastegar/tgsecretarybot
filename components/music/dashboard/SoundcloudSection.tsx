@@ -204,7 +204,7 @@ function ReviewCard({ it, pos, total, done, skip, edit }: { it: Item; pos?: numb
         <div className="text-[11px] text-[var(--color-text-dim)]">اگر آپلودکننده جزو خواننده‌های آهنگ نباشد، به‌عنوان «خوانندهٔ دوم» نگه داشته می‌شود تا با جستجو و در لیست خواننده‌ها پیدایش کنی.</div>
       </div>
       {it.ready
-        ? <audio controls preload="none" src={`/api/music/stream/${it.id}`} className="w-full h-11" aria-label="پخش آهنگ" />
+        ? <audio controls preload="none" src={`/api/music/stream/${it.id}`} className="w-full h-11 [color-scheme:dark]" aria-label="پخش آهنگ" />
         : <div className="text-[11px] text-[var(--color-text-dim)]">این آهنگ هنوز دانلود نشده؛ بعد از دانلود می‌توانی همین‌جا گوشش کنی.</div>}
 
       {!manual && (
@@ -252,9 +252,9 @@ function ReviewCard({ it, pos, total, done, skip, edit }: { it: Item; pos?: numb
         {busy ? "…" : "تأیید و برو بعدی ✓"}
       </button>
       <div className="flex gap-2">
-        {skip && <button disabled={busy} onClick={skip} className={`${btn} flex-1`}>بعداً</button>}
-        <button disabled={busy} onClick={() => void post({ action: "keep" })} className={`${btn} flex-1`}>{edit ? "بستن، بدون تغییر" : "همین اسم قبلی بماند"}</button>
-        <button disabled={busy} onClick={async () => { if (await confirmDialog("اسم خواننده و آهنگ به همان چیزی که در ساندکلاود بود برگردد؟", { confirmLabel: "برگرد" })) void post({ action: "revert" }); }} className={`${btn} flex-1`}>برگشت به اسم اصلیِ آپلود</button>
+        {skip && <button disabled={busy} onClick={skip} className={`${btn} flex-1 px-2`}>بعداً</button>}
+        <button disabled={busy} onClick={() => void post({ action: "keep" })} className={`${btn} flex-1 px-2`}>{edit ? "بدون تغییر" : "همین بماند"}</button>
+        <button disabled={busy} onClick={async () => { if (await confirmDialog("اسم خواننده و آهنگ به همان چیزی که در ساندکلاود بود برگردد؟", { confirmLabel: "برگرد" })) void post({ action: "revert" }); }} className={`${btn} flex-1 px-2`}>اسم اصلی</button>
       </div>
     </div>
   );
@@ -277,7 +277,7 @@ function EditAny() {
     <div className="mb-3 rounded-xl border border-[var(--color-border)] p-3">
       <div className="text-xs font-medium mb-2">ویرایش هر آهنگ ساندکلاود، هر وقت خواستی</div>
       <form onSubmit={(e) => { e.preventDefault(); void find(); }} className="flex gap-2">
-        <input dir="auto" value={q} onChange={(e) => setQ(e.target.value)} placeholder="بخشی از اسم آهنگ، خواننده یا آپلودکننده" aria-label="جستجوی آهنگ ساندکلاود" className={field} />
+        <input dir="auto" value={q} onChange={(e) => setQ(e.target.value)} placeholder="اسم آهنگ یا خواننده…" aria-label="جستجوی آهنگ ساندکلاود" className={field} />
         <button type="submit" disabled={busy || q.trim().length < 2} className={`${btn} shrink-0`}>{busy ? "…" : "پیدا کن"}</button>
       </form>
       {items && !sel && (

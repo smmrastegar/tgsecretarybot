@@ -424,6 +424,7 @@ export function SettingsSheet({ fade, fades, onFade, accounts, scope, onScope, s
   const [refreshing, setRefreshing] = useState(false);
   const [usage, setUsage] = useState<string | null>(null);
   const [confirmOut, setConfirmOut] = useState(false);
+  const [confirmRm, setConfirmRm] = useState(false);
   const [wipe, setWipe] = useState(false);
   const refresh = () => { void navigator.storage?.estimate?.().then((e) => { if (e.usage != null) setUsage(mb(e.usage)); }).catch(() => {}); };
   useEffect(refresh, []);
@@ -474,7 +475,9 @@ export function SettingsSheet({ fade, fades, onFade, accounts, scope, onScope, s
         </div>
       </div>
       <Row label="Offline downloads" sub={`${downloaded} ${downloaded === 1 ? "song" : "songs"} on this phone${usage ? ` · app storage ${usage}` : ""}`}
-        right={<button disabled={downloaded === 0} onClick={async () => { if (confirm("Remove every downloaded song from this phone?")) { await onRemoveDownloads(); refresh(); } }} className={`${btn} disabled:opacity-35`}>Remove all</button>} />
+        right={confirmRm
+          ? <span className="flex gap-2"><button onClick={() => setConfirmRm(false)} className={btn}>Keep</button><button onClick={async () => { setConfirmRm(false); await onRemoveDownloads(); refresh(); }} className={`${btn} text-rose-400`}>Remove {downloaded}</button></span>
+          : <button disabled={downloaded === 0} onClick={() => setConfirmRm(true)} className={`${btn} disabled:opacity-35`}>Remove all</button>} />
       <Row label="Spectrum on the cover" sub="Turn off to save battery" right={<button role="switch" aria-checked={viz} onClick={onViz} className={`shrink-0 w-[52px] h-8 rounded-full relative transition-colors ${viz ? "bg-[rgb(var(--ac))]" : "bg-[var(--s2)]"}`}><span className={`absolute top-1/2 -translate-y-1/2 left-1 w-6 h-6 rounded-full shadow transition-transform duration-200 ${viz ? "translate-x-5 bg-[var(--acfg)]" : "translate-x-0 bg-[var(--dim)]"}`} /></button>} />
       {(installable || iosHint) && <Row label="Install as an app" sub={installable ? "Full screen with its own icon" : "In Safari: Share → Add to Home Screen"} right={installable ? <button onClick={onInstall} className={btn}>Install</button> : <span />} />}
       {!confirmOut ? (
