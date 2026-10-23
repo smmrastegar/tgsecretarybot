@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Section, { Pill } from "./Section";
+import { confirmDialog } from "@/components/ui/Dialogs";
 
 type Artist = { id: number; spotifyArtistId: string; name: string; imageUrl: string | null; lastCheckedAt: string | null; lastError: string | null; trackCount: number };
 type Hit = { id: string; name: string; followers: number; imageUrl: string | null; genres: string[] };
@@ -62,7 +63,7 @@ export default function ArtistsSection({ onChanged }: { onChanged: () => void })
     setBusy(null); report(a.name, j); await load(); onChanged();
   }
   async function unfollow(a: Artist) {
-    if (!confirm(`دنبال‌کردن «${a.name}» متوقف شود؟ آهنگ‌ها و پلی‌لیستش می‌مانند.`)) return;
+    if (!(await confirmDialog(`دنبال‌کردن «${a.name}» متوقف شود؟ آهنگ‌ها و پلی‌لیستش می‌مانند.`, { confirmLabel: "متوقف شود" }))) return;
     await fetch(`/api/music/artists?id=${a.id}`, { method: "DELETE" });
     await load();
   }

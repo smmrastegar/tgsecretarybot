@@ -16,6 +16,7 @@ import SmartPlaylistCard from "@/components/music/dashboard/SmartPlaylistCard";
 import MusicStats from "@/components/music/Stats";
 import TrackDetail from "@/components/music/TrackDetail";
 import { useListenTracker } from "@/components/music/useListenTracker";
+import { confirmDialog, DialogHost, promptDialog } from "@/components/ui/Dialogs";
 
 // Personal player: the owner's library on this server. One page — add
 // Spotify links, watch downloads progress, play with queue / shuffle /
@@ -90,6 +91,7 @@ function FocusShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen max-w-2xl mx-auto px-4 py-5">
       <div className="flex justify-end mb-2"><button onClick={() => void out()} className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-dim)]">خروج</button></div>
       {children}
+      <DialogHost />
     </div>
   );
 }
@@ -120,7 +122,7 @@ export default function MusicPage() {
   // per-track feedback for the "fix" buttons: "busy" while the request runs, then a confirmation line that stays on the row
   const [fixState, setFixState] = useState<Record<number, string>>({});
   async function fixTrack(trackId: number, via?: "spotsaver") {
-    if (!via && !confirm("از ربات تلگرام دوباره دانلود شود؟")) return;
+    if (!via && !(await confirmDialog("از ربات تلگرام دوباره دانلود شود؟", { confirmLabel: "دانلود دوباره" }))) return;
     setFixState((m) => ({ ...m, [trackId]: "busy" }));
     try {
       const r = await fetch(`/api/music/${trackId}${via ? "?via=spotsaver" : ""}`, { method: "POST" });
@@ -354,7 +356,7 @@ export default function MusicPage() {
   }
   // Playlists are managed here and show up in the private player.
   async function createPlaylistWith(ids: number[], suggested: string) {
-    const name = prompt("اسم پلی‌لیست جدید:", suggested);
+    const name = await promptDialog("اسم پلی‌لیست جدید:", suggested, { confirmLabel: "بساز" });
     if (!name?.trim()) return;
     const r = await fetch("/api/music/playlists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
     const { id } = (await r.json()) as { id: number };
@@ -367,10 +369,10 @@ export default function MusicPage() {
     setMsg(`${ids.length} آهنگ اضافه شد`); setSelecting(false); setSel(new Set()); void load();
   }
   async function renamePlaylist(pl: Playlist) {
-    const name = prompt("اسم جدید:", pl.name);
+    const name = await promptDialog("اسم جدید:", pl.name);
     if (name?.trim()) { await fetch(`/api/music/playlists/${pl.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }); void load(); }
   }
-  async function newPlaylist() { const name = prompt("اسم پلی‌لیست:"); if (name) { await fetch("/api/music/playlists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }); void load(); } }
+  async function newPlaylist() { const name = await promptDialog("اسم پلی‌لیست:", "", { confirmLabel: "بساز" }); if (name) { await fetch("/api/music/playlists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }); void load(); } }
   async function toggleIn(pl: Playlist, t: Track) { await fetch(`/api/music/playlists/${pl.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackId: t.id, present: !pl.trackIds.includes(t.id) }) }); void load(); }
   async function delPlaylist(pl: Playlist) { if (confirm(`پلی‌لیست «${pl.name}» حذف شود؟`)) { await fetch(`/api/music/playlists/${pl.id}`, { method: "DELETE" }); setView("all"); void load(); } }
 

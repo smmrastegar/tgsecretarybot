@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Section from "./Section";
+import { confirmDialog, promptDialog } from "@/components/ui/Dialogs";
 
 // Player links: any number of private links, each with its own playlists.
 // Creating a link never touches the others; a link can only be switched off
@@ -70,8 +71,8 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
               <button onClick={() => void patch(l.id, { canLikeSpotify: !(l.canLike ?? false) })} title="اجازهٔ اضافه کردن آهنگ به Liked Songs اسپاتیفای یکی از حساب‌ها، با دکمهٔ ＋ در پلیر" className={`px-3 py-1.5 rounded-md border ${l.canLike ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>＋ لایک در اسپاتیفای: {l.canLike ? "روشن" : "خاموش"}</button>
               {!l.legacy && <button onClick={() => setOpen(open === l.id ? null : l.id)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">پلی‌لیست‌ها {open === l.id ? "▴" : "▾"}</button>}
               {!l.legacy && <button onClick={() => void patch(l.id, { canCreate: !(l.canCreate ?? true) })} title="اجازه‌ی ساخت پلی‌لیست هوشمند از روی یک آهنگ، داخل پلیر" className={`px-3 py-1.5 rounded-md border ${(l.canCreate ?? true) ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>✨ ساخت پلی‌لیست در پلیر: {(l.canCreate ?? true) ? "روشن" : "خاموش"}</button>}
-              {!l.legacy && <button onClick={() => { const n = prompt("نام لینک:", l.name); if (n?.trim()) void patch(l.id, { name: n.trim() }); }} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">نام</button>}
-              <button onClick={() => { if (l.active && !confirm(`«${l.name}» غیرفعال شود؟ هر که این لینک را دارد دیگر وارد نمی‌شود (هر وقت خواستی دوباره فعالش کن).`)) return; void patch(l.id, { active: !l.active }); }}
+              {!l.legacy && <button onClick={async () => { const n = await promptDialog("نام لینک:", l.name); if (n?.trim()) void patch(l.id, { name: n.trim() }); }} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">نام</button>}
+              <button onClick={async () => { if (l.active && !(await confirmDialog(`«${l.name}» غیرفعال شود؟ هر که این لینک را دارد دیگر وارد نمی‌شود (هر وقت خواستی دوباره فعالش کن).`, { danger: true, confirmLabel: "غیرفعال شود" }))) return; void patch(l.id, { active: !l.active }); }}
                 className={`px-3 py-1.5 rounded-md border ${l.active ? "border-rose-500/40 text-rose-200" : "border-emerald-500/40 text-emerald-200"}`}>{l.active ? "غیرفعال کردن" : "فعال کردن"}</button>
             </div>
             {openAcc === l.id && (

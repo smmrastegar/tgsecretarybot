@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Section, { Pill } from "./Section";
+import { confirmDialog } from "@/components/ui/Dialogs";
 
 // SoundCloud next to Spotify: connect accounts, import likes / playlists, or paste any song or playlist link.
 type Cfg = { hasCredentials: boolean; clientId: string; accounts: Array<{ id: number; username: string | null }>; redirectUri: string };
@@ -59,7 +60,7 @@ export default function SoundcloudSection({ canManage }: { canManage: boolean })
     setNote(r.ok ? "ذخیره شد" : "ذخیره نشد"); setCsec(""); void load();
   }
   async function disconnect(id: number) {
-    if (!confirm("این حساب ساندکلاود قطع شود؟ آهنگ‌های دانلودشده می‌مانند.")) return;
+    if (!(await confirmDialog("این حساب ساندکلاود قطع شود؟ آهنگ‌های دانلودشده می‌مانند.", { danger: true, confirmLabel: "قطع شود" }))) return;
     await fetch("/api/music/soundcloud/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ disconnect: true, accountId: id }) });
     void load();
   }
@@ -253,7 +254,7 @@ function ReviewCard({ it, pos, total, done, skip, edit }: { it: Item; pos?: numb
       <div className="flex gap-2">
         {skip && <button disabled={busy} onClick={skip} className={`${btn} flex-1`}>بعداً</button>}
         <button disabled={busy} onClick={() => void post({ action: "keep" })} className={`${btn} flex-1`}>{edit ? "بستن، بدون تغییر" : "همین اسم قبلی بماند"}</button>
-        <button disabled={busy} onClick={() => { if (confirm("اسم خواننده و آهنگ به همان چیزی که در ساندکلاود بود برگردد؟")) void post({ action: "revert" }); }} className={`${btn} flex-1`}>برگشت به اسم اصلیِ آپلود</button>
+        <button disabled={busy} onClick={async () => { if (await confirmDialog("اسم خواننده و آهنگ به همان چیزی که در ساندکلاود بود برگردد؟", { confirmLabel: "برگرد" })) void post({ action: "revert" }); }} className={`${btn} flex-1`}>برگشت به اسم اصلیِ آپلود</button>
       </div>
     </div>
   );

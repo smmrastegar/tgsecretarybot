@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Section, { Pill } from "./Section";
+import { confirmDialog, promptDialog } from "@/components/ui/Dialogs";
 
 // Numeric passwords for signing in to the music pages on playlist.bz (they open the player only).
 // Several can exist; each is shown on request, can be copied, switched off and on, or removed.
@@ -50,7 +51,7 @@ export default function PinCard({ onMessage }: { onMessage: (m: string) => void 
     await load();
   }
   async function remove(p: Pin) {
-    if (!confirm(`رمز «${p.label || p.pin.replace(/./g, "•")}» حذف شود؟`)) return;
+    if (!(await confirmDialog(`رمز «${p.label || p.pin.replace(/./g, "•")}» حذف شود؟`, { danger: true, confirmLabel: "حذف" }))) return;
     await call("DELETE", undefined, `?id=${p.id}`);
     onMessage("رمز حذف شد"); await load();
   }
@@ -82,7 +83,7 @@ export default function PinCard({ onMessage }: { onMessage: (m: string) => void 
                 <button onClick={() => setOpenAcc(openAcc === p.id ? null : p.id)} className={`${btn} ${p.accountIds.length ? "border-[var(--color-accent)]" : ""}`}>👤 چه حساب‌هایی؟ {openAcc === p.id ? "▴" : "▾"}</button>
                 <button onClick={() => toggleShow(p.id)} className={btn}>{shown.has(p.id) ? "🙈 پنهان" : "👁 نمایش"}</button>
                 <button onClick={() => void copy(p)} className={btn}>⧉ کپی</button>
-                <button onClick={() => { const n = prompt("نام این رمز (مثلاً: ماشین، پرنیان):", p.label); if (n != null) void patch(p.id, { label: n }); }} className={btn}>نام</button>
+                <button onClick={async () => { const n = await promptDialog("نام این رمز (مثلاً: ماشین، پرنیان):", p.label); if (n != null) void patch(p.id, { label: n }); }} className={btn}>نام</button>
                 <button onClick={() => void patch(p.id, { active: !p.active })} className={`${btn} ${p.active ? "text-amber-200" : "text-emerald-200"}`}>{p.active ? "خاموش کردن" : "روشن کردن"}</button>
                 <button onClick={() => void remove(p)} className={`${btn} text-rose-300`}>حذف</button>
               </div>
