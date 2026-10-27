@@ -18,6 +18,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -33,6 +34,9 @@ public class PlaybackService extends Service {
     private static boolean playing;
     private static String title = "", artist = "", cover = "";
     private static Bitmap art;
+    /** Where the song is (ms, -1 unknown), how long it is, and the two buttons next to the transport: shuffle and like. The system moves the seek bar by itself between updates. */
+    private static long posMs = -1, durMs = 0, syncAt = 0;
+    private static boolean shuffleOn, liked;
     private static PlaybackService live;
     private MediaSession session;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -75,6 +79,15 @@ public class PlaybackService extends Service {
         if (coverChanged && !cv.isEmpty()) fetchArt(cv);
     }
 
+    /** Position / length / shuffle / like from the web player (called on song change, play/pause, seek, like and shuffle — not every second). */
+    static void sync(Context c, long pos, long dur, boolean shuffle, boolean like) {
+        try {
+            posMs = pos; durMs = dur; syncAt = SystemClock.elapsedRealtime(); shuffleOn = shuffle; liked = like;
+            final PlaybackService s = live;
+            if (s != null) s.main.post(() -> { if (live == s) s.refresh(); });
+        } catch (Throwable ignored) { }
+    }
+
     private static void fetchArt(final String url) {
         new Thread(() -> {
             try {
@@ -99,6 +112,8 @@ public class PlaybackService extends Service {
             @Override public void onPause() { MainActivity.command("pause"); }
             @Override public void onSkipToNext() { MainActivity.command("next"); }
             @Override public void onSkipToPrevious() { MainActivity.command("prev"); }
+            @Override public void onSeekTo(long pos) { MainActivity.command("seek:" + (pos / 1000.0)); }
+            @Override public void onCustomAction(String action, android.os.Bundle extras) { if ("shuffle".equals(action) || "like".equals(action)) MainActivity.command(action); }
         });
         session.setActive(true);
         try { startForeground(ID, build()); } catch (Throwable e) { stopSelf(); }
@@ -110,6 +125,8 @@ public class PlaybackService extends Service {
                 case "toggle": MainActivity.command("toggle"); break;
                 case "next": MainActivity.command("next"); break;
                 case "prev": MainActivity.command("prev"); break;
+                case "shuffle": MainActivity.command("shuffle"); break;
+                case "like": MainActivity.command("like"); break;
                 case "close": stopForeground(true); stopSelf(); break;
                 default: break;
             }
@@ -125,19 +142,25 @@ public class PlaybackService extends Service {
 
     private Notification build() {
         MediaMetadata.Builder md = new MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, title.isEmpty() ? "My Music" : title).putString(MediaMetadata.METADATA_KEY_ARTIST, artist);
-        if (art != null) md.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
+        if (art != null) { md.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art); md.putBitmap(MediaMetadata.METADATA_KEY_ART, art); }
+        if (durMs > 0) md.putLong(MediaMetadata.METADATA_KEY_DURATION, durMs); // gives the lock screen its seek bar and the 0:11 / 5:15 times
         session.setMetadata(md.build());
-        session.setPlaybackState(new PlaybackState.Builder()
-            .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS)
-            .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f).build());
+        PlaybackState.Builder ps = new PlaybackState.Builder()
+            .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS | PlaybackState.ACTION_SEEK_TO)
+            .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED, posMs >= 0 ? posMs : PlaybackState.PLAYBACK_POSITION_UNKNOWN, playing ? 1f : 0f, posMs >= 0 ? syncAt : SystemClock.elapsedRealtime())
+            .addCustomAction(new PlaybackState.CustomAction.Builder("shuffle", "Shuffle", shuffleOn ? R.drawable.ic_shuffle_on : R.drawable.ic_shuffle_off).build())
+            .addCustomAction(new PlaybackState.CustomAction.Builder("like", "Like", liked ? R.drawable.ic_heart_on : R.drawable.ic_heart_off).build());
+        session.setPlaybackState(ps.build());
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder n = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
         n.setSmallIcon(R.drawable.ic_stat_music).setContentTitle(title.isEmpty() ? "My Music" : title).setContentText(artist).setContentIntent(open)
             .setOngoing(playing).setShowWhen(false).setVisibility(Notification.VISIBILITY_PUBLIC)
+            .addAction(new Notification.Action.Builder(shuffleOn ? R.drawable.ic_shuffle_on : R.drawable.ic_shuffle_off, "Shuffle", act("shuffle", 4)).build())
             .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_previous, "Previous", act("prev", 1)).build())
             .addAction(new Notification.Action.Builder(playing ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play, playing ? "Pause" : "Play", act("toggle", 2)).build())
             .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_next, "Next", act("next", 3)).build())
-            .setStyle(new Notification.MediaStyle().setMediaSession(session.getSessionToken()).setShowActionsInCompactView(0, 1, 2));
+            .addAction(new Notification.Action.Builder(liked ? R.drawable.ic_heart_on : R.drawable.ic_heart_off, "Like", act("like", 5)).build())
+            .setStyle(new Notification.MediaStyle().setMediaSession(session.getSessionToken()).setShowActionsInCompactView(1, 2, 3));
         if (art != null) n.setLargeIcon(art);
         return n.build();
     }

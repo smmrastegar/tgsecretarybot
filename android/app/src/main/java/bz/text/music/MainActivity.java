@@ -287,6 +287,10 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void state(boolean playing, String title, String artist, String cover) {
             try { prefs.edit().putBoolean("playing", playing).apply(); PlaybackService.update(getApplicationContext(), playing, title, artist, cover); } catch (Throwable ignored) { }
         }
+        /** Position / length (seconds) and the shuffle / like state, for the lock-screen seek bar and its two extra buttons. */
+        @JavascriptInterface public void sync(double posS, double durS, boolean shuffle, boolean liked) {
+            try { PlaybackService.sync(getApplicationContext(), posS >= 0 ? Math.round(posS * 1000) : -1, durS > 0 ? Math.round(durS * 1000) : 0, shuffle, liked); } catch (Throwable ignored) { }
+        }
         @JavascriptInterface public String clipboard() {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
             if (cm == null || !cm.hasPrimaryClip()) return "";
@@ -294,7 +298,7 @@ public class MainActivity extends Activity {
             CharSequence t = it == null ? null : it.coerceToText(MainActivity.this);
             return t == null ? "" : t.toString();
         }
-        @JavascriptInterface public String version() { return "1.5.2"; }
+        @JavascriptInterface public String version() { return "1.5.3"; }
         /** The installed app's versionCode (the web player compares it with /downloads/app-version.json). */
         @JavascriptInterface public int versionCode() {
             try {

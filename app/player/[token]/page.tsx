@@ -386,7 +386,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const publishNow = (id: number, isPlaying: boolean) => {
     const t = byIdRef.current.get(id); if (!t) return;
     try { if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: t.title ?? "—", artist: t.artist ?? "", album: t.album ?? "", artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}?${tq}`, sizes: "640x640", type: "image/jpeg" }] : [] }); } catch { /* unsupported */ }
-    try { (window as unknown as { AndroidMusic?: { state: (p: boolean, t: string, a: string, c: string) => void } }).AndroidMusic?.state(isPlaying, t.title ?? "", t.artist ?? "", t.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}&w=320` : ""); } catch { /* not the app */ }
+    try { (window as unknown as { AndroidMusic?: { state: (p: boolean, t: string, a: string, c: string) => void } }).AndroidMusic?.state(isPlaying, t.title ?? "", t.artist ?? "", t.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}` : ""); } catch { /* not the app */ }
   };
   const advanceNow = () => {
     const a = audio.current; if (!a) return;
@@ -701,10 +701,29 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const n = (window as unknown as { AndroidMusic?: { state: (p: boolean, t: string, a: string, c: string) => void } }).AndroidMusic;
     if (!n) return;
     const t = cur != null ? byIdRef.current.get(cur) : null;
-    try { n.state(playing, t?.title ?? "", t?.artist ?? "", t?.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}&w=320` : ""); } catch { /* the app side hiccuped: never take the player down with it */ }
+    try { n.state(playing, t?.title ?? "", t?.artist ?? "", t?.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}` : ""); } catch { /* the app side hiccuped: never take the player down with it */ }
   }, [playing, cur, tq]);
+  // Lock-screen seek bar (position / length) and its shuffle + like buttons: sent on song change, play/pause, seek, shuffle and like (the system moves the bar by itself in between).
+  const liked = cur != null && (byIdRef.current.get(cur)?.rating ?? 0) > 0;
+  const syncNative = useCallback(() => {
+    const n = (window as unknown as { AndroidMusic?: { sync?: (pos: number, dur: number, shuffle: boolean, liked: boolean) => void } }).AndroidMusic;
+    const a = audio.current;
+    if (!n?.sync || !a) return;
+    try { n.sync(Number.isFinite(a.currentTime) ? a.currentTime : -1, Number.isFinite(a.duration) ? a.duration : 0, shuffle, liked); } catch { /* older app / hiccup */ }
+  }, [shuffle, liked]);
+  useEffect(() => { syncNative(); }, [syncNative, cur, playing, dur]);
+  useEffect(() => {
+    const a = audio.current; if (!a) return;
+    a.addEventListener("seeked", syncNative);
+    return () => a.removeEventListener("seeked", syncNative);
+  }, [syncNative]);
+  const nativeAct = useRef({ shuffle: () => {}, like: () => {} });
+  nativeAct.current = { shuffle: toggleShuffle, like: () => { const t = byIdRef.current.get(curRef.current ?? -1); if (t) fns.current.rate(t, 1); } };
   useEffect(() => {
     (window as unknown as { __nativeCmd?: (c: string) => void }).__nativeCmd = (c: string) => {
+      if (c.startsWith("seek:")) { const v = Number(c.slice(5)); if (audio.current && Number.isFinite(v)) audio.current.currentTime = Math.max(0, v); return; }
+      if (c === "shuffle") { nativeAct.current.shuffle(); return; }
+      if (c === "like") { nativeAct.current.like(); return; }
       if (c === "next") step(1); else if (c === "prev") step(-1);
       else if (c === "play") void audio.current?.play().catch(() => {}); else if (c === "pause") audio.current?.pause();
       else if (c === "toggle") { const a = audio.current; if (a) { if (a.paused) void a.play().catch(() => {}); else a.pause(); } }
@@ -804,12 +823,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         .glass { background: var(--glass); }
         /* Instant taps: no double-tap-zoom wait, no grey flash. */
         button, [role=button], a, select, summary, input[type=range] { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
-        /* Bigger touch targets without changing the layout: every icon-only button reaches 8px past its drawing; text pills are at least 38px tall. */
-        button:has(> svg:only-child) { min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; }
+        /* Bigger touch targets without changing the layout (icon buttons carry an aria-label; a pill with an icon AND a word must not be turned into a grid): every icon-only button reaches 8px past its drawing; text pills are at least 38px tall. */
+        button[aria-label]:has(> svg:only-child) { min-width: 40px; min-height: 40px; display: inline-grid; place-items: center; }
         /* (unlayered CSS beats Tailwind utilities, so a button the page positions itself, like the search "clear" X, must be left alone) */
-        button:has(> svg:only-child):not(.absolute):not(.fixed):not(.sticky) { position: relative; }
-        button:has(> svg:only-child)::after { content: ""; position: absolute; inset: -8px; }
-        button.rounded-full:not(:has(> svg:only-child)) { min-height: 38px; }
+        button[aria-label]:has(> svg:only-child):not(.absolute):not(.fixed):not(.sticky) { position: relative; }
+        button[aria-label]:has(> svg:only-child)::after { content: ""; position: absolute; inset: -8px; }
+        button.rounded-full:not([aria-label]:has(> svg:only-child)) { min-height: 38px; }
         button:focus-visible, input:focus-visible { outline: 2px solid rgb(var(--ac)); outline-offset: 2px; }
       `}</style>
 

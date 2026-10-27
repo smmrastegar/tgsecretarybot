@@ -3,7 +3,7 @@
 // The rarely-opened sheets (queue, lyrics, report, Spotify likes, account/smart playlists, downloads, settings). They live apart from
 // Sheets.tsx (the song menu and tiny pickers) so the player loads them on demand instead of with the first paint.
 import { isSpotifyAccountId } from "@/lib/music-scope";
-import { TitleLine } from "./SourceMarks";
+import { AccountBadge, TitleLine, accountCodes } from "./SourceMarks";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDownIcon, CheckIcon, ArrowUpIcon, CloseIcon } from "../Icons";
 import { Cover, type Track } from "./shared";
@@ -347,6 +347,7 @@ export function SettingsSheet({ fade, fades, onFade, accounts, scope, onScope, s
         right={<button disabled={refreshing} onClick={() => { setRefreshing(true); void onRefresh(); }} className={`${btn} disabled:opacity-60`}>{refreshing ? "Refreshing…" : "Refresh"}</button>} />
       {accounts.length > 0 && (() => {
         const ids = scope.ids.filter((id) => accounts.some((a) => a.id === id));
+        const codes = accountCodes(accounts);
         return (
           <div className="px-5 py-3.5 border-b border-[var(--bd0)]">
             <div className="text-[15px]">Songs from</div>
@@ -356,10 +357,9 @@ export function SettingsSheet({ fade, fades, onFade, accounts, scope, onScope, s
                 const on = ids.includes(a.id);
                 const letter = (a.name.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "?").toUpperCase();
                 return (
-                  <button key={a.id} role="checkbox" aria-checked={on} onClick={() => onScope({ ...scope, ids: on ? ids.filter((x) => x !== a.id) : [...ids, a.id] })}
-                    className={`inline-flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full text-[13px] font-semibold transition ${on ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>
-                    <span className={`grid place-items-center w-5 h-5 rounded-full text-[10px] font-bold ${on ? "bg-[var(--bg)] text-[var(--fg)]" : "bg-[var(--s2)]"}`}>{letter}</span>
-                    <span className="max-w-[10rem] truncate">{a.name}</span>
+                  <button key={a.id} title={a.name} aria-label={a.name} role="checkbox" aria-checked={on} onClick={() => onScope({ ...scope, ids: on ? ids.filter((x) => x !== a.id) : [...ids, a.id] })}
+                    className={`inline-flex items-center pl-2.5 pr-3 py-2 rounded-full text-[13px] font-semibold transition ${on ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>
+                    <AccountBadge account={a} code={codes.get(a.id) ?? letter} size={16} textClass="text-[13px]" />
                   </button>
                 );
               })}

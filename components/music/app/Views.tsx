@@ -1,6 +1,6 @@
 "use client";
 
-import { AccountsCtx, TitleLine } from "./SourceMarks";
+import { AccountBadge, AccountsCtx, TitleLine, accountCodes } from "./SourceMarks";
 import { memo, useContext, useMemo, useState } from "react";
 import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon, SkipOffIcon } from "../Icons";
 import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
@@ -206,6 +206,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
   const [savedOnly, setSavedOnly] = useState(false);
   // Filter by the Spotify account(s) a song came from: songs from ANY of the chosen accounts, or from ALL of them.
   const accounts = useContext(AccountsCtx);
+  const codes = useMemo(() => accountCodes(accounts), [accounts]);
   const [accSel, setAccSel] = useState<number[]>([]);
   const [accMode, setAccMode] = useState<"any" | "all">("any");
   // "Recently added" is a time-ordered list: tapping a song plays on in that order even if shuffle was on.
@@ -254,10 +255,9 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
                   const on = accSel.includes(a.id);
                   const letter = (a.name.replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "?").toUpperCase();
                   return (
-                    <button key={a.id} onClick={() => setAccSel((s) => (on ? s.filter((x) => x !== a.id) : [...s, a.id]))} role="checkbox" aria-checked={on}
-                      className={`shrink-0 inline-flex items-center gap-1.5 pl-1.5 pr-3 py-1.5 rounded-full text-[13px] font-semibold transition ${on ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>
-                      <span className={`grid place-items-center w-5 h-5 rounded-full text-[10px] font-bold ${on ? "bg-[var(--bg)] text-[var(--fg)]" : "bg-[var(--s2)]"}`}>{letter}</span>
-                      <span className="whitespace-nowrap">{a.name}</span>
+                    <button key={a.id} title={a.name} aria-label={a.name} onClick={() => setAccSel((s) => (on ? s.filter((x) => x !== a.id) : [...s, a.id]))} role="checkbox" aria-checked={on}
+                      className={`shrink-0 inline-flex items-center pl-2.5 pr-3 py-2 rounded-full text-[13px] font-semibold transition ${on ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>
+                      <AccountBadge account={a} code={codes.get(a.id) ?? letter} size={16} textClass="text-[13px]" />
                     </button>
                   );
                 })}
