@@ -2,7 +2,7 @@
 
 import { TitleLine } from "./SourceMarks";
 import { useRef, useState, type ReactNode } from "react";
-import { CheckIcon, SparkIcon, DownloadIcon, FlagIcon, ShareIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon, PlusIcon } from "../Icons";
+import { CheckIcon, SparkIcon, DownloadIcon, FlagIcon, ShareIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon, PlusIcon, SkipOffIcon } from "../Icons";
 import { Cover, type Track } from "./shared";
 
 export function Sheet({ onClose, title, children }: { onClose: () => void; title?: string; children: ReactNode }) {
@@ -41,11 +41,11 @@ export const Item = ({ icon, label, onClick, active }: { icon: ReactNode; label:
   </button>
 );
 
-export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, onRate, onArtist, onUploader, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
+export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, onRate, onArtist, onUploader, onSkip, skipped, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
   onShare: () => void; onReport: () => void; onRadio: () => void; onSmart?: () => void; onSpotify?: () => void; onSelect?: () => void;
   offline: boolean; onOffline: () => void;
   t: Track; tq: string; onClose: () => void; onNext: () => void; onAdd: () => void; onRate: (r: number) => void;
-  onArtist: () => void; onUploader?: () => void; onAlbum: () => void; onDetails: () => void;
+  onArtist: () => void; onUploader?: () => void; onSkip: () => void; skipped: boolean; onAlbum: () => void; onDetails: () => void;
 }) {
   const go = (f: () => void) => () => { f(); onClose(); };
   return (
@@ -61,6 +61,7 @@ export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, 
       <Item icon={<PlayNextIcon size={22} />} label="Play next" onClick={go(onNext)} />
       <Item icon={<QueueIcon size={22} />} label="Add to queue" onClick={go(onAdd)} />
       <Item icon={<HeartIcon size={22} filled={t.rating > 0} />} label={t.rating > 0 ? "Remove from liked" : "Like"} active={t.rating > 0} onClick={go(() => onRate(1))} />
+      <Item icon={<SkipOffIcon size={22} />} label={skipped ? "Take off skip (play it again)" : "Skip mode (keep in list, don't play)"} active={skipped} onClick={go(onSkip)} />
       <Item icon={<ThumbDownIcon size={22} filled={t.rating < 0} />} label={t.rating < 0 ? "Remove dislike" : "Dislike (skip in mixes)"} onClick={go(() => onRate(-1))} />
       <Item icon={<ChevronRightIcon size={22} />} label="Go to artist" onClick={go(onArtist)} />
       {onUploader && t.uploadedBy && <Item icon={<ChevronRightIcon size={22} />} label={`More from uploader ${t.uploadedBy}`} onClick={go(onUploader)} />}

@@ -2,7 +2,7 @@
 
 import { AccountsCtx, TitleLine } from "./SourceMarks";
 import { memo, useContext, useMemo, useState } from "react";
-import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon } from "../Icons";
+import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon, SkipOffIcon } from "../Icons";
 import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
 import { matchesAccounts } from "@/lib/music-scope";
 import { setByKey } from "./sets";
@@ -39,6 +39,9 @@ export type Api = {
   details: (t: Track) => void;
   download: (ids: number[], label: string) => void;
   offline: Set<number>;
+  /** songs on "skip mode": kept in lists, passed over by playback */
+  skipped: Set<number>;
+  toggleSkip: (id: number) => void;
   dl: { done: number; total: number } | null;
   analysis: { analyzed: number; ready: number };
 };
@@ -76,7 +79,7 @@ function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
     );
   }
   return (
-    <div className={`flex items-center gap-3 py-2 ${t.rating < 0 || (api.offlineMode && !api.offline.has(t.id)) ? "opacity-40" : ""}`} style={{ contentVisibility: "auto", containIntrinsicSize: "0 64px" }}>
+    <div className={`flex items-center gap-3 py-2 ${t.rating < 0 || api.skipped.has(t.id) || (api.offlineMode && !api.offline.has(t.id)) ? "opacity-40" : ""}`} style={{ contentVisibility: "auto", containIntrinsicSize: "0 64px" }}>
       <button onClick={() => api.play(ids, t.id)} className="flex items-center gap-3 min-w-0 flex-1 text-left" aria-label={`Play ${t.title ?? ""}`}>
         {index != null && <span className="w-5 text-center text-sm text-[var(--dim3)] tabular-nums shrink-0">{active ? <Eq on={api.playing} /> : index}</span>}
         <span className="relative shrink-0">
@@ -88,6 +91,7 @@ function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
           <span className="flex items-center gap-1.5 text-[13px] text-[var(--dim)] mt-0.5 min-w-0">{api.offline.has(t.id) && <DownloadedBadge />}<span dir="auto" className="truncate">{t.artist}{t.durationS ? ` · ${fmt(t.durationS)}` : ""}</span></span>
         </span>
       </button>
+      {api.skipped.has(t.id) && <button onClick={() => api.toggleSkip(t.id)} className="shrink-0 px-2 py-1 rounded-full bg-[var(--s2)] text-[11px] font-semibold text-[var(--dim2)] flex items-center gap-1" aria-label="Take off skip"><SkipOffIcon size={14} />On skip</button>}
       {t.rating > 0 && <HeartIcon size={16} filled className="text-rose-500 shrink-0" />}
       <button onClick={() => api.menu(t)} className="p-2.5 -mr-1.5 text-[var(--dim)] hover:text-[var(--fg)] shrink-0" aria-label="More options"><MoreIcon size={22} /></button>
     </div>
@@ -98,7 +102,7 @@ function TrackRowImpl({ t, api, ids, index, picked }: RowProps) {
 // playing" state changes — not on every progress tick or unrelated update.
 export const TrackRow = memo(TrackRowImpl, (a, b) => {
   const act = a.api.cur === a.t.id;
-  return a.t === b.t && a.picked === b.picked && a.ids === b.ids && a.index === b.index && a.api.tq === b.api.tq && a.api.offlineMode === b.api.offlineMode && a.api.offline.has(a.t.id) === b.api.offline.has(b.t.id) && a.api.play === b.api.play
+  return a.t === b.t && a.picked === b.picked && a.ids === b.ids && a.index === b.index && a.api.tq === b.api.tq && a.api.offlineMode === b.api.offlineMode && a.api.offline.has(a.t.id) === b.api.offline.has(b.t.id) && a.api.skipped.has(a.t.id) === b.api.skipped.has(b.t.id) && a.api.play === b.api.play
     && act === (b.api.cur === b.t.id) && (!act || a.api.playing === b.api.playing);
 });
 

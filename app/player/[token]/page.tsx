@@ -9,7 +9,7 @@ import dynamic from "next/dynamic";
 import { loadLyrics, removeLyrics, saveLyrics } from "@/components/music/app/lyricsCache";
 import BackLayer from "@/components/music/app/BackLayer";
 import { memo, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartIcon, CloseIcon, MoreIcon, SettingsIcon, SparkIcon, ChevronDownIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PlusIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
+import { ChartIcon, CloseIcon, SkipOffIcon, MoreIcon, SettingsIcon, SparkIcon, ChevronDownIcon, ShareIcon, HeartIcon, LyricsIcon, HomeIcon, InfoIcon, LibraryIcon, MoonIcon, NextIcon, PauseIcon, PlayIcon, PlusIcon, PrevIcon, QueueIcon, RepeatIcon, SearchIcon, ShuffleIcon, SunIcon, ThumbDownIcon, TimerIcon, VolumeIcon } from "@/components/music/Icons";
 
 import SeekBar from "@/components/music/app/SeekBar";
 import Spectrum from "@/components/music/Spectrum";
@@ -335,7 +335,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
 
   const smartMix = useCallback((ids: number[]) => {
     const now = Date.now();
-    const pool = ids.map((id) => byIdRef.current.get(id)).filter((t): t is Track => !!t && t.rating >= 0).map((t) => {
+    const pool = ids.map((id) => byIdRef.current.get(id)).filter((t): t is Track => !!t && t.rating >= 0 && !skipRef.current.has(t.id)).map((t) => {
       const recent = t.lastPlayedAt && now - Date.parse(t.lastPlayedAt.replace(" ", "T")) < 86400000 ? 0.3 : 1;
       const w = ((t.rating > 0 ? 3 : 1) * recent) / (1 + t.skipCount * 0.4);
       return { id: t.id, key: Math.pow(Math.random(), 1 / Math.max(w, 0.05)) };
@@ -348,6 +348,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   // With the screen locked the page is "hidden": React may not render or run effects until it is visible again, which is exactly when the music used
   // to resume ("it starts when I open the screen"). So the next song is chosen from refs and loaded straight inside the ended handler, from a copy
   // that was already downloaded while the previous song played (no network at the hand-over: Wi-Fi power-save and signal dips cannot stall it).
+  // Skip mode: songs marked here stay in every list, in their place, but playback jumps over them until the mark is removed (kept on this phone).
+  const [skipped, setSkipped] = useState<Set<number>>(() => new Set());
+  const skipRef = useRef(skipped); skipRef.current = skipped;
+  useEffect(() => {
+    try { const j = JSON.parse(localStorage.getItem("player.skipped") || "[]") as unknown; if (Array.isArray(j)) setSkipped(new Set(j.map(Number).filter(Number.isFinite))); } catch { /* none saved */ }
+  }, []);
   const queueRef = useRef<number[]>([]); queueRef.current = queue;
   const curRef = useRef<number | null>(null); curRef.current = cur;
   const repeatRef = useRef(repeat); repeatRef.current = repeat;
@@ -367,14 +373,15 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const q = queueRef.current, c = curRef.current;
     if (c == null || q.length === 0) return null;
     if (repeatRef.current === "one") return c;
+    const sk = skipRef.current, offNow = navigator.onLine === false; // truly offline: only what is saved on this phone; skip-marked songs are passed over
     let n = q.indexOf(c) + 1;
-    if (n >= q.length) { if (repeatRef.current === "all") n = 0; else return null; }
-    if (navigator.onLine === false) { // truly offline: only what is saved on this phone
-      let guard = q.length;
-      while (guard-- > 0 && !offlineRef.current.has(q[n]!)) { n = (n + 1) % q.length; if (n === 0 && repeatRef.current !== "all") return null; }
-      if (!offlineRef.current.has(q[n]!)) return null;
+    for (let guard = q.length; guard > 0; guard--) {
+      if (n >= q.length) { if (repeatRef.current === "all") n = 0; else return null; }
+      const id = q[n]!;
+      if (id === c || (!sk.has(id) && (!offNow || offlineRef.current.has(id)))) return id;
+      n += 1;
     }
-    return q[n]!;
+    return null;
   };
   const publishNow = (id: number, isPlaying: boolean) => {
     const t = byIdRef.current.get(id); if (!t) return;
@@ -438,23 +445,37 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const a = audio.current;
     if (dir === -1 && !auto) {
       if (a && a.currentTime > 3) { a.currentTime = 0; return; }
-      const back = history.current.pop();
+      let back = history.current.pop();
+      while (back != null && skipRef.current.has(back)) back = history.current.pop(); // "back" never lands on a song that is on skip
       if (back != null) { setCur(back); return; }
     }
     if (auto && repeat === "one") { if (a) { a.currentTime = 0; void a.play().catch(() => {}); } return; }
-    const i = queue.indexOf(cur); let n = i + dir;
-    if (n >= queue.length) { if (repeat === "all" || !auto) n = 0; else { setPlaying(false); return; } }
-    if (n < 0) n = queue.length - 1;
-    if (navigator.onLine === false) { // truly offline (the phone says so): skip what is not saved on this phone — a slow or failed library refresh must NOT stop the music
-      let guard = queue.length;
-      while (guard-- > 0 && !offline.has(queue[n]!)) { n += dir; if (n >= queue.length) n = 0; if (n < 0) n = queue.length - 1; }
-      if (!offline.has(queue[n]!)) { setPlaying(false); flash("No connection — the rest is not downloaded"); return; }
+    const i = queue.indexOf(cur); let n = i + dir, found = false;
+    const sk = skipRef.current, off = navigator.onLine === false; // truly offline (the phone says so): pass over what is not saved on this phone — a slow or failed library refresh must NOT stop the music; skip-marked songs are passed over too
+    for (let guard = queue.length; guard > 0; guard--) {
+      if (n >= queue.length) { if (repeat === "all" || !auto) n = 0; else { setPlaying(false); return; } }
+      if (n < 0) n = queue.length - 1;
+      const id = queue[n]!;
+      if (id === cur || (!sk.has(id) && (!off || offline.has(id)))) { found = true; break; }
+      n += dir;
     }
+    if (!found) { setPlaying(false); flash(off ? "No connection — the rest is not downloaded" : "Every other song here is on skip"); return; }
     // The next song IS this one (a queue of one with "repeat all"): setting the same id would change nothing and the music would just end.
     if (queue[n] === cur) { if (a) { a.currentTime = 0; void a.play().catch(() => {}); } return; }
     if (dir === 1) history.current.push(cur);
     setCur(queue[n]!);
   }, [cur, queue, repeat, offline]);
+
+  // Skip mode on/off for one song. Turning it on for the song that is playing moves on to the next one right away.
+  const toggleSkipMode = useCallback((id: number, advance = false) => {
+    const next = new Set(skipRef.current);
+    const on = !next.has(id);
+    if (on) next.add(id); else next.delete(id);
+    skipRef.current = next; setSkipped(next);
+    try { localStorage.setItem("player.skipped", JSON.stringify([...next])); } catch { /* private mode */ }
+    flash(on ? "On skip: it stays in the list but won't play" : "Back in play");
+    if (on && advance && id === curRef.current) step(1);
+  }, [step]);
 
   // A song that cannot load (no connection, file gone): say so and move on, instead of sitting silent. Gives up after 3 in a row.
   const audioFails = useRef(0);
@@ -730,8 +751,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       flash(`Radio: ${j.ids.length} songs in the same lane`);
     } catch { flash("Couldn't start radio"); }
   };
-  const fns = useRef({ play, smartMix, rate, radio: startRadio, download: requestDownload });
-  fns.current = { play, smartMix, rate, radio: startRadio, download: requestDownload };
+  const fns = useRef({ play, smartMix, rate, radio: startRadio, download: requestDownload, toggleSkip: toggleSkipMode });
+  fns.current = { play, smartMix, rate, radio: startRadio, download: requestDownload, toggleSkip: toggleSkipMode };
   const stable = useMemo(() => ({
     play: (ids: number[], startId?: number, sh?: boolean, inOrder?: boolean) => fns.current.play(ids, startId, sh, inOrder),
     smartMix: (ids: number[]) => fns.current.smartMix(ids),
@@ -740,9 +761,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     open: (p: Page) => setStack((s) => [...s, p]),
     details: (t: Track) => setDetailId(t.id),
     download: (ids: number[], label: string) => fns.current.download(ids, label),
+    toggleSkip: (id: number) => fns.current.toggleSkip(id),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, offlineMode: netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, ...stable }), [tq, saveAccountPlaylist, netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, stable]);
+  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, offlineMode: netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, skipped, ...stable }), [tq, saveAccountPlaylist, netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, skipped, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -924,6 +946,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
                 <div className="flex items-center shrink-0 -mr-1.5">
                   <button onClick={() => rate(now, 1)} className={`p-2 ${now.rating > 0 ? "text-rose-500" : "text-[var(--dim)]"}`} aria-label="Like"><HeartIcon size={26} filled={now.rating > 0} /></button>
                   {canLike && now.source !== "manual" && accounts.some((a) => isSpotifyAccountId(a.id)) && <button onClick={() => setLikeTs([now])} className="p-2 text-[var(--dim)]" aria-label="Add to a Spotify account's likes"><PlusIcon size={22} /></button>}
+                  <button onClick={() => toggleSkipMode(now.id, true)} className={`p-2 ${skipped.has(now.id) ? "text-[rgb(var(--ac))]" : "text-[var(--dim)]"}`} aria-label={skipped.has(now.id) ? "Take off skip" : "Skip this song from now on"} aria-pressed={skipped.has(now.id)}><SkipOffIcon size={22} /></button>
                   <button onClick={() => rate(now, -1)} className={`p-2 ${now.rating < 0 ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label="Dislike"><ThumbDownIcon size={22} filled={now.rating < 0} /></button>
                 </div>
               </div>
@@ -987,7 +1010,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       </div>}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
       {menuT && <TrackMenu onSelect={() => startSelect(undefined, menuT.id)} onSpotify={canLike && (byId.get(menuT.id) ?? menuT).source !== "manual" && accounts.some((a) => isSpotifyAccountId(a.id)) ? () => setLikeTs([menuT]) : undefined} onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
-        onArtist={() => goArtist(menuT)} onUploader={(byId.get(menuT.id) ?? menuT).uploadedBy ? () => openUploader((byId.get(menuT.id) ?? menuT).uploadedBy!) : undefined}
+        onSkip={() => toggleSkipMode(menuT.id, true)} skipped={skipped.has(menuT.id)} onArtist={() => goArtist(menuT)} onUploader={(byId.get(menuT.id) ?? menuT).uploadedBy ? () => openUploader((byId.get(menuT.id) ?? menuT).uploadedBy!) : undefined}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}
       {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark chips={chipsFor(detailId)} t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}
