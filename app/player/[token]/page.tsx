@@ -302,7 +302,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     return () => clearInterval(i);
   }, [tq]);
 
-  const play = useCallback((ids: number[], startId?: number, sh = false) => {
+  const play = useCallback((ids: number[], startId?: number, sh = false, inOrder = false) => {
     if (netDown) {
       const ok = ids.filter((x) => offline.has(x));
       if (ok.length === 0) { flash("No connection — download songs to play them offline"); return; }
@@ -311,7 +311,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     }
     if (ids.length === 0) return;
     const start = startId ?? (sh ? ids[Math.floor(Math.random() * ids.length)]! : ids[0]!);
-    const doShuffle = sh || shuffle;
+    if (inOrder && shuffle && !sh) { setShuffleState(false); try { localStorage.setItem("player.shuffle", "0"); } catch {} } // a time-ordered list is played in its order: the toggle turns off so it never disagrees with the queue
+    const doShuffle = sh || (shuffle && !inOrder);
     origQueue.current = ids;
     if (sh && !shuffle) { setShuffleState(true); try { localStorage.setItem("player.shuffle", "1"); } catch {} } // the Shuffle button on a page turns shuffle on, so the toggle never disagrees with the queue
     setQueue(doShuffle ? [start, ...ids.filter((x) => x !== start).sort(() => Math.random() - 0.5)] : ids);
@@ -732,7 +733,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const fns = useRef({ play, smartMix, rate, radio: startRadio, download: requestDownload });
   fns.current = { play, smartMix, rate, radio: startRadio, download: requestDownload };
   const stable = useMemo(() => ({
-    play: (ids: number[], startId?: number, sh?: boolean) => fns.current.play(ids, startId, sh),
+    play: (ids: number[], startId?: number, sh?: boolean, inOrder?: boolean) => fns.current.play(ids, startId, sh, inOrder),
     smartMix: (ids: number[]) => fns.current.smartMix(ids),
     rate: (t: Track, r: number) => fns.current.rate(t, r),
     menu: setMenuT,

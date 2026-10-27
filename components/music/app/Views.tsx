@@ -27,7 +27,8 @@ export type Api = {
   cur: number | null;
   playing: boolean;
   loading: boolean;
-  play: (ids: number[], startId?: number, shuffle?: boolean) => void;
+  /** `inOrder`: play the list exactly as given even when shuffle is on (turns shuffle off) — used for time-ordered lists such as "Recently added" */
+  play: (ids: number[], startId?: number, shuffle?: boolean, inOrder?: boolean) => void;
   smartMix: (ids: number[]) => void;
   menu: (t: Track) => void;
   rate: (t: Track, r: number) => void;
@@ -183,7 +184,7 @@ export function HomeView({ api, c }: { api: Api; c: Collections }) {
           {api.analysis.analyzed < api.analysis.ready && <div className="mt-2 text-[12px] text-[var(--dim3)]">Still listening to your library: {api.analysis.analyzed} of {api.analysis.ready} songs analysed.</div>}
         </>
       ) : api.analysis.ready > 0 && api.analysis.analyzed < api.analysis.ready && <div className="mt-6 text-[12px] text-[var(--dim3)]">Vibes appear once your library is analysed ({api.analysis.analyzed} of {api.analysis.ready} songs so far).</div>}
-      {c.added.length > 0 && (<><SectionTitle>Recently added</SectionTitle><Shelf>{c.added.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} ids={t.sources} subtitle={t.artist ?? ""} onClick={() => api.play(c.added.map((x) => x.id), t.id)} />)}</Shelf></>)}
+      {c.added.length > 0 && (<><SectionTitle>Recently added</SectionTitle><Shelf>{c.added.slice(0, 12).map((t) => <Card key={t.id} cover={<Cover t={t} tq={api.tq} size={144} radius={0} />} title={t.title ?? "—"} ids={t.sources} subtitle={t.artist ?? ""} onClick={() => api.play(c.added.map((x) => x.id), t.id, false, true)} />)}</Shelf></>)}
     </div>
   );
 }
@@ -203,6 +204,8 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
   const accounts = useContext(AccountsCtx);
   const [accSel, setAccSel] = useState<number[]>([]);
   const [accMode, setAccMode] = useState<"any" | "all">("any");
+  // "Recently added" is a time-ordered list: tapping a song plays on in that order even if shuffle was on.
+  const listApi = useMemo(() => (sort === "recent" ? { ...api, play: (ids: number[], id?: number, sh?: boolean) => api.play(ids, id, sh, !sh) } : api), [api, sort]);
   const songs = useMemo(() => {
     let base = likedOnly ? c.liked : c.ready;
     if (savedOnly || api.offlineMode) base = base.filter((t) => api.offline.has(t.id));
@@ -275,14 +278,14 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
           {grid ? (
             <div className="grid grid-cols-2 gap-4 mt-3">
               {songs.map((t) => (
-                <button key={t.id} onClick={() => api.play(songs.map((x) => x.id), t.id)} className="text-left active:scale-[.97] transition" style={{ contentVisibility: "auto", containIntrinsicSize: "0 200px" }}>
+                <button key={t.id} onClick={() => listApi.play(songs.map((x) => x.id), t.id)} className="text-left active:scale-[.97] transition" style={{ contentVisibility: "auto", containIntrinsicSize: "0 200px" }}>
                   <Cover t={t} tq={api.tq} size="100%" radius={12} className="aspect-square shadow-lg" res={320} />
                   <div className="mt-2 text-[15px] font-semibold"><TitleLine title={t.title} ids={t.sources} /></div>
                   <div className="text-[13px] text-[var(--dim)] truncate">{t.artist}</div>
                 </button>
               ))}
             </div>
-          ) : <div className="mt-1"><TrackList list={songs} api={api} /></div>}
+          ) : <div className="mt-1"><TrackList list={songs} api={listApi} /></div>}
         </>
       )}
 
