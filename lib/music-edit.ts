@@ -2,7 +2,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
-import { createManualTrack, getMusicTrack, updateMusicTrack } from "./db";
+import { createManualTrack, getMusicTrack, saveVerify, updateMusicTrack } from "./db";
 import { MUSIC_DIR } from "./music";
 import { probe } from "./music-intake";
 import { guessFromFileName } from "./music-names";
@@ -27,18 +27,18 @@ export async function saveCover(trackId: number, image: Uint8Array): Promise<str
 }
 
 /** A song uploaded by hand: names from the form (else the file's tags, else its name), cover from the form (else the one inside the file). */
-export async function addUploadedSong(file: { data: Uint8Array; name: string }, opts: { title?: string; artist?: string; album?: string; cover?: Uint8Array | null }): Promise<{ id: number; title: string; artist: string }> {
+export async function addUploadedSong(file: { data?: Uint8Array; path?: string; name: string }, opts: { title?: string; artist?: string; album?: string; cover?: Uint8Array | null }): Promise<{ id: number; title: string; artist: string }> {
   const ext = (/\.([a-z0-9]{2,5})$/i.exec(file.name)?.[1] ?? "").toLowerCase();
   if (!AUDIO_TYPES[ext]) throw new Error("supported: mp3, m4a, aac, ogg, opus, flac, wav");
   await fs.mkdir(MUSIC_DIR, { recursive: true });
   const tmp = path.join(MUSIC_DIR, `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`);
-  await fs.writeFile(tmp, file.data);
+  if (file.path) await fs.copyFile(file.path, tmp); else await fs.writeFile(tmp, file.data ?? new Uint8Array());
   try {
     const tags = await probe(tmp);
     const g = guessFromFileName(file.name);
     const title = (opts.title?.trim() || tags.title || g.title || file.name.replace(/\.[a-z0-9]+$/i, "")).slice(0, 200);
     const artist = (opts.artist?.trim() || tags.artist || g.artist || "Unknown").slice(0, 200);
-    const id = await createManualTrack({ spotifyId: null, title, artist, album: opts.album?.trim() || tags.album || "Single", releaseDate: tags.date?.slice(0, 10) ?? null, durationS: tags.durationS, filePath: tmp, mime: AUDIO_TYPES[ext]!, sizeBytes: file.data.length });
+    const id = await createManualTrack({ spotifyId: null, title, artist, album: opts.album?.trim() || tags.album || "Single", releaseDate: tags.date?.slice(0, 10) ?? null, durationS: tags.durationS, filePath: tmp, mime: AUDIO_TYPES[ext]!, sizeBytes: (await fs.stat(tmp)).size });
     const finalPath = path.join(MUSIC_DIR, `${id}.${ext}`);
     await fs.rename(tmp, finalPath);
     await updateMusicTrack(id, { filePath: finalPath });
@@ -58,4 +58,18 @@ export async function addUploadedSong(file: { data: Uint8Array; name: string }, 
     await attachPendingLyrics(id, title);
     return { id, title, artist };
   } catch (e) { await fs.unlink(tmp).catch(() => {}); throw e; }
+}
+
+/** Swap a song's audio for a better file (same song id: likes, plays, playlists, cover and lyrics stay). */
+export async function replaceSongAudio(trackId: number, staged: { path: string; ext: string; durationS: number | null }): Promise<void> {
+  const t = await getMusicTrack(trackId);
+  if (!t) throw new Error("no such song");
+  const dest = path.join(MUSIC_DIR, `${trackId}.${staged.ext}`);
+  const tmp = `${dest}.new`;
+  await fs.copyFile(staged.path, tmp);
+  await fs.rename(tmp, dest);
+  if (t.filePath && t.filePath !== dest) await fs.unlink(t.filePath).catch(() => {});
+  const size = (await fs.stat(dest)).size;
+  await saveVerify(trackId, "accepted", null, size, 99).catch(() => {}); // the owner chose this file: the automatic content check must not "fix" it back
+  await updateMusicTrack(trackId, { filePath: dest, mime: AUDIO_TYPES[staged.ext] ?? "audio/mpeg", sizeBytes: size, durationS: staged.durationS ?? t.durationS, status: "ready", error: null });
 }

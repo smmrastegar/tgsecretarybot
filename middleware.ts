@@ -113,5 +113,5 @@ export async function middleware(req: NextRequest) {
 export const config = {
   // Song / cover uploads (up to 120 MB) skip the middleware: Next buffers a request body for it and cuts it at 10 MB, which made every bigger
   // upload fail without an error. These routes check access themselves (and the middleware let them through anyway: /api/music is a public prefix).
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/music/add|api/music/waiting|api/music/[0-9]+/upload|api/music/[0-9]+/cover|api/music/[0-9]+/lyrics|api/music/lyrics-pending).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/music/add|api/music/waiting|api/music/stage|api/music/[0-9]+/replace|api/music/[0-9]+/upload|api/music/[0-9]+/cover|api/music/[0-9]+/lyrics|api/music/lyrics-pending).*)"],
 };

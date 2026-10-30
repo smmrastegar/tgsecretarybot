@@ -553,14 +553,14 @@ export async function handleIntakeText(m: Message, bot: Bot): Promise<boolean> {
 const AUDIO_MIME: Record<string, string> = { mp3: "audio/mpeg", m4a: "audio/mp4", aac: "audio/mp4", ogg: "audio/ogg", opus: "audio/ogg", flac: "audio/flac", wav: "audio/wav" };
 
 /** Attach an uploaded file to a waiting intake item: names as given, cover = the channel photo, else the one inside the file. Returns the new song id. */
-export async function finalizeUpload(rowId: number, upload: { data: Uint8Array; name: string }, title: string, artist: string): Promise<number> {
+export async function finalizeUpload(rowId: number, upload: { data?: Uint8Array; path?: string; name: string }, title: string, artist: string): Promise<number> {
   const row = await getIntake(rowId);
   if (!row || row.status !== "upload") throw new Error("this item is not waiting for a file");
   const ext = (/\.([a-z0-9]{2,5})$/i.exec(upload.name)?.[1] ?? "").toLowerCase();
   if (!AUDIO_MIME[ext]) throw new Error("supported: mp3, m4a, aac, ogg, opus, flac, wav");
   await fs.mkdir(INTAKE_DIR, { recursive: true });
   const src = path.join(INTAKE_DIR, `${row.id}.upload.${ext}`);
-  await fs.writeFile(src, upload.data);
+  if (upload.path) await fs.copyFile(upload.path, src); else await fs.writeFile(src, upload.data ?? new Uint8Array());
   const tags = await probe(src);
   let coverFile = await channelCoverFile(row);
   if (!coverFile) {

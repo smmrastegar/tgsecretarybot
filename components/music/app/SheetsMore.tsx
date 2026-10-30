@@ -417,15 +417,18 @@ export function SettingsSheet({ fade, fades, onFade, accounts, scope, onScope, s
 
 const field = "w-full rounded-xl bg-[var(--s1)] border border-[var(--bd)] px-4 py-3 text-[16px] outline-none focus:border-[rgb(var(--ac))]";
 const primary = "w-full py-3 rounded-full bg-[rgb(var(--ac))] text-[var(--acfg)] font-semibold disabled:opacity-40";
+const ghost = "w-full py-2.5 rounded-full bg-[var(--s2)] text-[14px] font-semibold active:scale-95 transition";
 
-/** POST a form with upload progress (fetch cannot report it). */
-function sendForm(url: string, form: FormData, onProgress: (pct: number) => void, method = "POST"): Promise<{ ok: boolean; status: number; json: Record<string, unknown> }> {
+type Handle = { abort?: () => void };
+/** POST a form with upload progress (fetch cannot report it); `handle.abort` cancels it. */
+function sendForm(url: string, form: FormData, onProgress: (pct: number) => void, method = "POST", handle?: Handle): Promise<{ ok: boolean; status: number; json: Record<string, unknown> }> {
   // (a failed answer always carries a readable `error`: the server's own words, else the HTTP status and what came back)
   return new Promise((resolve) => {
     const x = new XMLHttpRequest();
     x.open(method, url);
-    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
+    if (handle) handle.abort = () => x.abort();
     x.timeout = 15 * 60_000;
+    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
     x.onload = () => {
       let j: Record<string, unknown> = {};
       try { j = JSON.parse(x.responseText) as Record<string, unknown>; } catch { /* not json */ }
@@ -435,9 +438,67 @@ function sendForm(url: string, form: FormData, onProgress: (pct: number) => void
     };
     x.onerror = () => resolve({ ok: false, status: 0, json: { error: "The connection broke while uploading (network error). Try again on a steadier connection." } });
     x.ontimeout = () => resolve({ ok: false, status: 0, json: { error: "The upload took too long (15 min) and was stopped." } });
-    x.onabort = () => resolve({ ok: false, status: 0, json: { error: "The upload was cancelled." } });
+    x.onabort = () => resolve({ ok: false, status: -1, json: { error: "Cancelled" } });
     x.send(form);
   });
+}
+
+const dur = (s: number | null) => (s == null || !Number.isFinite(s) ? "—" : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`);
+
+type StagedMeta = { token: string; name: string; sizeBytes: number; durationS: number | null; tags: { title: string | null; artist: string | null; album: string | null } };
+
+/** An audio file goes to the server first (staged), where it can be listened to; it joins the library only after the owner confirms. */
+function useStager(tq: string) {
+  const [phase, setPhase] = useState<"idle" | "uploading" | "staged">("idle");
+  const [pct, setPct] = useState(0);
+  const [meta, setMeta] = useState<StagedMeta | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const handle = useRef<Handle>({});
+  useEffect(() => { const h = handle.current; return () => h.abort?.(); }, []); // closing the sheet stops an upload in progress
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    setErr(null); setPhase("uploading"); setPct(0);
+    const f = new FormData(); f.append("file", file);
+    const r = await sendForm(`/api/music/stage?${tq}`, f, setPct, "POST", handle.current);
+    if (r.ok) { setMeta(r.json as unknown as StagedMeta); setPhase("staged"); }
+    else { setPhase("idle"); setErr(r.status === -1 ? null : String(r.json.error ?? "Upload failed")); }
+  };
+  const cancel = () => handle.current.abort?.();
+  const reset = () => { setPhase("idle"); setMeta(null); setPct(0); };
+  const discard = async () => { const t = meta?.token; reset(); if (t) await fetch(`/api/music/stage/${t}?${tq}`, { method: "DELETE" }).catch(() => {}); };
+  return { phase, pct, meta, err, setErr, pick, cancel, reset, discard };
+}
+
+/** The picker for a staged upload: choose → progress (with Cancel) → listen → "Use this file" / "Choose another". */
+function StagedPicker({ st, tq, label, useLabel, busy, onUse, accept = "audio/*,.mp3,.m4a,.aac,.ogg,.opus,.flac,.wav" }: { st: ReturnType<typeof useStager>; tq: string; label: string; useLabel: string; busy?: boolean; onUse: (token: string) => void; accept?: string }) {
+  if (st.phase === "uploading") {
+    return (
+      <div className="space-y-2">
+        <div className="h-11 rounded-full bg-[var(--s2)] overflow-hidden relative">
+          <div className="h-full bg-[rgb(var(--ac))] transition-[width]" style={{ width: `${st.pct}%` }} />
+          <span className="absolute inset-0 grid place-items-center text-[14px] font-semibold text-white mix-blend-difference">{st.pct < 100 ? `Uploading ${st.pct}%` : "Saving…"}</span>
+        </div>
+        <button onClick={st.cancel} className={ghost}>Cancel upload</button>
+      </div>
+    );
+  }
+  if (st.phase === "staged" && st.meta) {
+    const m = st.meta;
+    return (
+      <div className="space-y-2">
+        <div className="text-[13px] text-[var(--dim2)] break-words" dir="auto">{m.name} · {dur(m.durationS)} · {Math.max(1, Math.round(m.sizeBytes / 1048576))} MB{m.tags.title ? ` · tag: ${m.tags.title}` : ""}</div>
+        <audio controls preload="metadata" src={`/api/music/stage/${m.token}?${tq}`} className="w-full h-11 [color-scheme:dark]" aria-label="Listen before adding" />
+        <button disabled={busy} onClick={() => onUse(m.token)} className={primary}>{busy ? "Working…" : useLabel}</button>
+        <div className="flex gap-2">
+          <label className={`${ghost} text-center cursor-pointer`}>Choose another file<input type="file" accept={accept} className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; if (f) { void st.discard().then(() => st.pick(f)); } }} /></label>
+          <button disabled={busy} onClick={() => void st.discard()} className={ghost}>Discard</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <label className={`${primary} block text-center cursor-pointer`}>{label}<input type="file" accept={accept} className="sr-only" onChange={(e) => void st.pick(e.target.files?.[0])} /></label>
+  );
 }
 
 export function EditSongSheet({ t, tq, onClose, onSaved }: { t: Track; tq: string; onClose: () => void; onSaved: (msg: string) => void }) {
@@ -449,6 +510,8 @@ export function EditSongSheet({ t, tq, onClose, onSaved }: { t: Track; tq: strin
   const [img, setImg] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [showAudio, setShowAudio] = useState(false);
+  const st = useStager(tq);
   const preview = useMemo(() => (img ? URL.createObjectURL(img) : null), [img]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
   const save = async () => {
@@ -469,6 +532,15 @@ export function EditSongSheet({ t, tq, onClose, onSaved }: { t: Track; tq: strin
         if (!l.ok) { setErr(String(l.json.error ?? "The lyrics could not be saved")); setBusy(false); return; }
       }
       onSaved("Saved"); onClose();
+    } catch { setErr("No connection"); setBusy(false); }
+  };
+  const replaceAudio = async (token: string) => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch(`/api/music/${t.id}/replace?${tq}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ staged: token }) });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) { setErr(j.error ?? "Could not replace the audio"); setBusy(false); return; }
+      st.reset(); onSaved("Audio replaced — reload the song to hear it"); onClose();
     } catch { setErr("No connection"); setBusy(false); }
   };
   return (
@@ -492,6 +564,16 @@ export function EditSongSheet({ t, tq, onClose, onSaved }: { t: Track; tq: strin
           <input type="file" accept="image/*" className="sr-only" onChange={(e) => setLyrImg(e.target.files?.[0] ?? null)} /></label>
         {err && <div role="alert" className="text-[13px] text-rose-400">{err}</div>}
         <button disabled={busy || !title.trim() || !artist.trim()} onClick={() => void save()} className={primary}>{busy ? "Saving…" : "Save"}</button>
+        <div className="pt-2 border-t border-[var(--bd0)] space-y-2">
+          <button onClick={() => setShowAudio((v) => !v)} className="text-[13px] font-semibold text-[var(--dim2)] underline underline-offset-4">{showAudio ? "Hide" : "Replace the audio with a better file…"}</button>
+          {showAudio && (
+            <div className="space-y-2">
+              <div className="text-[12px] text-[var(--dim)] leading-5">Upload the new file, listen to it, then confirm. Likes, plays, playlists, cover and lyrics of this song stay.</div>
+              <StagedPicker st={st} tq={tq} label="Choose the better file" useLabel="Replace this song's audio" busy={busy} onUse={(tok) => void replaceAudio(tok)} />
+              {st.err && <div role="alert" className="text-[13px] text-rose-400">{st.err}</div>}
+            </div>
+          )}
+        </div>
       </div>
     </Sheet>
   );
@@ -502,46 +584,43 @@ type Waiting = { id: number; fileName: string | null; sizeMb: number; title: str
 function WaitingRow({ w, tq, onDone }: { w: Waiting; tq: string; onDone: (msg: string) => void }) {
   const [title, setTitle] = useState(w.title);
   const [artist, setArtist] = useState(w.artist);
-  const [pct, setPct] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const pick = async (file: File | undefined) => {
-    if (!file) return;
-    setErr(null); setPct(0);
-    const f = new FormData(); f.append("file", file); f.append("title", title); f.append("artist", artist);
-    const r = await sendForm(`/api/music/waiting/${w.id}?${tq}`, f, setPct);
-    if (r.ok) onDone(`Added “${title}”`); else { setErr(String(r.json.error ?? "Upload failed")); setPct(null); }
+  const st = useStager(tq);
+  const commit = async (token: string) => {
+    setBusy(true); setErr(null);
+    const f = new FormData(); f.append("staged", token); f.append("title", title); f.append("artist", artist);
+    const r = await sendForm(`/api/music/waiting/${w.id}?${tq}`, f, () => {});
+    if (r.ok) { st.reset(); onDone(`Added “${title}”`); } else { setErr(String(r.json.error ?? "Could not add it")); setBusy(false); }
   };
   return (
     <div className="rounded-2xl bg-[var(--s1)] p-3 space-y-2">
       <div className="text-[12px] text-[var(--dim)] break-words" dir="auto">{w.fileName ?? "file"} · {w.sizeMb} MB (too big for the bot)</div>
       <input value={title} onChange={(e) => setTitle(e.target.value)} dir="auto" placeholder="Title" aria-label="Title" className={field} />
       <input value={artist} onChange={(e) => setArtist(e.target.value)} dir="auto" placeholder="Artist" aria-label="Artist" className={field} />
-      {err && <div role="alert" className="text-[13px] text-rose-400">{err}</div>}
-      {pct != null
-        ? <div className="h-9 rounded-full bg-[var(--s2)] overflow-hidden relative"><div className="h-full bg-[rgb(var(--ac))] transition-[width]" style={{ width: `${pct}%` }} /><span className="absolute inset-0 grid place-items-center text-[13px] font-semibold">{pct < 100 ? `Uploading ${pct}%` : "Processing…"}</span></div>
-        : <label className={`${primary} block text-center cursor-pointer ${!title.trim() || !artist.trim() ? "opacity-40 pointer-events-none" : ""}`}>Choose the file and upload<input type="file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.flac,.wav" className="sr-only" onChange={(e) => void pick(e.target.files?.[0])} /></label>}
+      {(err || st.err) && <div role="alert" className="text-[13px] text-rose-400">{err ?? st.err}</div>}
+      <StagedPicker st={st} tq={tq} label="Choose the file" useLabel="Add to library" busy={busy || !title.trim() || !artist.trim()} onUse={(tok) => void commit(tok)} />
     </div>
   );
 }
 
 export function AddSongsSheet({ tq, onClose, onDone }: { tq: string; onClose: () => void; onDone: (msg: string) => void }) {
   const [waiting, setWaiting] = useState<Waiting[] | null>(null);
-  const [file, setFile] = useState<File | null>(null);
   const [cover, setCover] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [artist, setArtist] = useState("");
   const [album, setAlbum] = useState("");
-  const [pct, setPct] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const st = useStager(tq);
   const load = async () => { try { const r = await fetch(`/api/music/waiting?${tq}`, { cache: "no-store" }); setWaiting(r.ok ? ((await r.json()) as { items: Waiting[] }).items : []); } catch { setWaiting([]); } };
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, when the sheet opens
-  const add = async () => {
-    if (!file) return;
-    setErr(null); setPct(0);
-    const f = new FormData(); f.append("file", file); f.append("title", title); f.append("artist", artist); f.append("album", album); if (cover) f.append("cover", cover);
-    const r = await sendForm(`/api/music/add?${tq}`, f, setPct);
-    if (r.ok) { onDone(`Added “${String(r.json.title ?? file.name)}”`); setFile(null); setCover(null); setTitle(""); setArtist(""); setAlbum(""); setPct(null); }
-    else { setErr(String(r.json.error ?? "Upload failed")); setPct(null); }
+  const add = async (token: string) => {
+    setBusy(true); setErr(null);
+    const f = new FormData(); f.append("staged", token); f.append("title", title); f.append("artist", artist); f.append("album", album); if (cover) f.append("cover", cover);
+    const r = await sendForm(`/api/music/add?${tq}`, f, () => {});
+    if (r.ok) { onDone(`Added “${String(r.json.title ?? "song")}”`); st.reset(); setCover(null); setTitle(""); setArtist(""); setAlbum(""); setBusy(false); }
+    else { setErr(String(r.json.error ?? "Could not add it")); setBusy(false); }
   };
   return (
     <Sheet onClose={onClose} title="Add songs">
@@ -549,25 +628,19 @@ export function AddSongsSheet({ tq, onClose, onDone }: { tq: string; onClose: ()
         {waiting && waiting.length > 0 && (
           <div className="space-y-2">
             <div className="text-[13px] font-semibold">Waiting for a file</div>
-            <div className="text-[12px] text-[var(--dim)] leading-5">Songs you sent to the channel that are over 20 MB. Check the name, then pick the same file.</div>
+            <div className="text-[12px] text-[var(--dim)] leading-5">Songs you sent to the channel that are over 20 MB. Check the name, pick the file, listen, then add it.</div>
             {waiting.map((w) => <WaitingRow key={w.id} w={w} tq={tq} onDone={(m) => { onDone(m); void load(); }} />)}
           </div>
         )}
         <div className="space-y-2">
           <div className="text-[13px] font-semibold">Upload a song</div>
-          <label className="block rounded-2xl border border-dashed border-[var(--bd)] px-4 py-4 text-center text-[14px] text-[var(--dim2)] cursor-pointer active:scale-[.99] transition">
-            {file ? `${file.name} · ${Math.max(1, Math.round(file.size / 1048576))} MB` : "Choose an audio file (mp3, m4a, flac, wav, ogg…)"}
-            <input type="file" accept="audio/*,.mp3,.m4a,.aac,.ogg,.opus,.flac,.wav" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-          </label>
           <input value={title} onChange={(e) => setTitle(e.target.value)} dir="auto" placeholder="Title (empty: read from the file)" aria-label="Title" className={field} />
           <input value={artist} onChange={(e) => setArtist(e.target.value)} dir="auto" placeholder="Artist (empty: read from the file)" aria-label="Artist" className={field} />
           <input value={album} onChange={(e) => setAlbum(e.target.value)} dir="auto" placeholder="Album (optional)" aria-label="Album" className={field} />
           <label className="flex items-center gap-2 text-[13px] text-[var(--dim2)] cursor-pointer"><span className="px-3 py-1.5 rounded-full bg-[var(--s2)] font-semibold">{cover ? "Change cover" : "Add a cover (optional)"}</span><span className="truncate min-w-0">{cover?.name ?? ""}</span>
             <input type="file" accept="image/*" className="sr-only" onChange={(e) => setCover(e.target.files?.[0] ?? null)} /></label>
-          {err && <div role="alert" className="text-[13px] text-rose-400">{err}</div>}
-          {pct != null
-            ? <div className="h-11 rounded-full bg-[var(--s2)] overflow-hidden relative"><div className="h-full bg-[rgb(var(--ac))] transition-[width]" style={{ width: `${pct}%` }} /><span className="absolute inset-0 grid place-items-center text-[14px] font-semibold">{pct < 100 ? `Uploading ${pct}%` : "Processing…"}</span></div>
-            : <button disabled={!file} onClick={() => void add()} className={primary}>Add to library</button>}
+          {(err || st.err) && <div role="alert" className="text-[13px] text-rose-400">{err ?? st.err}</div>}
+          <StagedPicker st={st} tq={tq} label="Choose an audio file" useLabel="Add to library" busy={busy} onUse={(tok) => void add(tok)} />
         </div>
       </div>
     </Sheet>
