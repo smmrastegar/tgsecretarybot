@@ -3,7 +3,7 @@
 const BUCKET = "player-audio";
 const keyOf = (id: number) => `/api/music/${id}/lyrics`;
 
-export type Lyrics = { synced: string | null; plain: string | null; found: boolean };
+export type Lyrics = { synced: string | null; plain: string | null; found: boolean; image?: boolean };
 const NONE: Lyrics = { synced: null, plain: null, found: false };
 
 async function bucket(): Promise<Cache | null> {

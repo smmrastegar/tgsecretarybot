@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { guardTrack } from "@/lib/music-token";
+import { canAccessTrack, editAccess, guardTrack, notFound } from "@/lib/music-token";
+import { setManualLyrics } from "@/lib/music-lyrics";
 import { getAllSettings, getMusicTrack, setSetting } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -33,4 +34,19 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   } catch { return NextResponse.json(out); }
   await setSetting(key, JSON.stringify(out));
   return NextResponse.json(out);
+}
+
+// POST multipart { text?, image? }: lyrics by hand — typed / pasted text and/or a picture of the lyrics page. The dashboard, or a player link that may edit.
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
+  const access = await editAccess(request);
+  if (!access) return notFound();
+  const id = Number((await ctx.params).id);
+  if (!Number.isFinite(id) || !(await getMusicTrack(id)) || !(await canAccessTrack(access, id))) return NextResponse.json({ error: "no such song" }, { status: 404 });
+  const form = await request.formData().catch(() => null);
+  const text = form?.has("text") ? String(form.get("text") ?? "") : undefined;
+  const img = form?.get("image");
+  try {
+    const out = await setManualLyrics(id, { text, image: img instanceof File && img.size > 0 ? new Uint8Array(await img.arrayBuffer()) : null });
+    return NextResponse.json({ ok: true, ...out });
+  } catch { return NextResponse.json({ error: "that file is not a readable picture" }, { status: 415 }); }
 }

@@ -16,6 +16,7 @@ import {
 import { MUSIC_DIR } from "./music";
 import { ffmpegPath } from "./music-analysis";
 import { lookupDeezer, lookupItunes, lookupLibrary, lookupSpotify, recognizeAudd, type Candidate } from "./music-lookup";
+import { attachPendingLyrics } from "./music-lyrics";
 import { cleanTagText, guessFromFileName, nameScore, nameWords, parseTitleArtist } from "./music-names";
 import { fileScore, PREVIEW_BAD, PREVIEW_OK, previewScore } from "./music-preview";
 import { pageMeta } from "./music-spotsaver";
@@ -429,6 +430,7 @@ async function finalize(row: IntakeRow, bot: Bot, force: boolean): Promise<strin
   let coverPath: string | null = null;
   if (coverFile) { coverPath = path.join(MUSIC_DIR, `${trackId}.cover.jpg`); await fs.copyFile(coverFile, coverPath); }
   await updateMusicTrack(trackId, { filePath: finalPath, coverPath });
+  await attachPendingLyrics(trackId, c.title);
   // The channel keeps one tidy copy: send it, then remove the original upload.
   try {
     let thumb: InputFile | undefined;
@@ -570,6 +572,7 @@ export async function finalizeUpload(rowId: number, upload: { data: Uint8Array; 
   if (coverFile) { coverPath = path.join(MUSIC_DIR, `${trackId}.cover.jpg`); await fs.copyFile(coverFile, coverPath); }
   await updateMusicTrack(trackId, { filePath: finalPath, coverPath });
   await updateIntake(row.id, { status: "confirmed", trackId });
+  await attachPendingLyrics(trackId, title); // an album booklet page uploaded earlier for this title
   // The channel keeps one tidy copy where Telegram allows it (a bot may upload up to 50 MB); the original is removed only then.
   try {
     if ((await fs.stat(finalPath)).size <= 49 * 1024 * 1024) {

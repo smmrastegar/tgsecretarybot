@@ -55,7 +55,8 @@ const parseLrc = (lrc: string): Line[] => {
 };
 
 export function LyricsSheet({ t, tq, pos, onSeek, onClose }: { t: Track; tq: string; pos: number; onSeek: (s: number) => void; onClose: () => void }) {
-  const [data, setData] = useState<{ synced: string | null; plain: string | null; found: boolean } | null>(null);
+  const [data, setData] = useState<{ synced: string | null; plain: string | null; found: boolean; image?: boolean } | null>(null);
+  const [zoom, setZoom] = useState(false);
   useEffect(() => {
     let live = true;
     setData(null);
@@ -75,7 +76,16 @@ export function LyricsSheet({ t, tq, pos, onSeek, onClose }: { t: Track; tq: str
         {lines.length > 0 && lines.map((l, i) => (
           <button key={i} data-active={i === active ? "1" : "0"} onClick={() => onSeek(l.t)} className={`block w-full py-1.5 text-[20px] font-bold leading-snug transition-colors ${i === active ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`}>{l.text || "♪"}</button>
         ))}
-        {data?.found && lines.length === 0 && <pre className="whitespace-pre-wrap font-[inherit] text-[17px] leading-relaxed text-[var(--dim2)]">{data.plain}</pre>}
+        {data?.found && lines.length === 0 && data.plain && <pre dir="auto" className="whitespace-pre-wrap font-[inherit] text-[17px] leading-relaxed text-[var(--dim2)]">{data.plain}</pre>}
+        {data?.image && (
+          <div className="mt-4">
+            <div className="text-[12px] text-[var(--dim)] mb-2">{zoom ? "Tap to fit the screen" : "Handwritten page — tap to zoom in"}</div>
+            <div className={`rounded-xl bg-black ${zoom ? "overflow-auto max-h-[70dvh]" : ""}`}>
+              {/* eslint-disable-next-line @next/next/no-img-element -- the owner's own lyrics page, served by our API */}
+              <img src={`/api/music/${t.id}/lyrics/image?${tq}`} alt="Lyrics page" onClick={() => setZoom((z) => !z)} className={`block rounded-xl ${zoom ? "max-w-none w-[220%]" : "w-full"}`} />
+            </div>
+          </div>
+        )}
       </div>
     </Sheet>
   );
@@ -424,6 +434,8 @@ export function EditSongSheet({ t, tq, onClose, onSaved }: { t: Track; tq: strin
   const [title, setTitle] = useState(t.title ?? "");
   const [artist, setArtist] = useState(t.artist ?? "");
   const [album, setAlbum] = useState(t.album ?? "");
+  const [lyrics, setLyrics] = useState("");
+  const [lyrImg, setLyrImg] = useState<File | null>(null);
   const [img, setImg] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -438,6 +450,13 @@ export function EditSongSheet({ t, tq, onClose, onSaved }: { t: Track; tq: strin
         const f = new FormData(); f.append("image", img);
         const c = await sendForm(`/api/music/${t.id}/cover?${tq}`, f, () => {});
         if (!c.ok) { setErr(String(c.json.error ?? "The picture could not be saved")); setBusy(false); return; }
+      }
+      if (lyrics.trim() || lyrImg) {
+        const f = new FormData();
+        if (lyrics.trim()) f.append("text", lyrics);
+        if (lyrImg) f.append("image", lyrImg);
+        const l = await sendForm(`/api/music/${t.id}/lyrics?${tq}`, f, () => {});
+        if (!l.ok) { setErr(String(l.json.error ?? "The lyrics could not be saved")); setBusy(false); return; }
       }
       onSaved("Saved"); onClose();
     } catch { setErr("No connection"); setBusy(false); }
@@ -458,6 +477,9 @@ export function EditSongSheet({ t, tq, onClose, onSaved }: { t: Track; tq: strin
         <label className="block text-[12px] text-[var(--dim)]">Title<input value={title} onChange={(e) => setTitle(e.target.value)} dir="auto" className={`${field} mt-1 text-[var(--fg)]`} /></label>
         <label className="block text-[12px] text-[var(--dim)]">Artist<input value={artist} onChange={(e) => setArtist(e.target.value)} dir="auto" className={`${field} mt-1 text-[var(--fg)]`} /></label>
         <label className="block text-[12px] text-[var(--dim)]">Album (songs with the same album are grouped together)<input value={album} onChange={(e) => setAlbum(e.target.value)} dir="auto" className={`${field} mt-1 text-[var(--fg)]`} /></label>
+        <label className="block text-[12px] text-[var(--dim)]">Lyrics (optional — paste text; leave empty to keep what is there)<textarea value={lyrics} onChange={(e) => setLyrics(e.target.value)} dir="auto" rows={4} className={`${field} mt-1 text-[var(--fg)] resize-y`} /></label>
+        <label className="flex items-center gap-2 text-[13px] text-[var(--dim2)] cursor-pointer"><span className="px-3 py-1.5 rounded-full bg-[var(--s2)] font-semibold">{lyrImg ? "Change lyrics picture" : "Add a picture of the lyrics"}</span><span className="truncate min-w-0">{lyrImg?.name ?? ""}</span>
+          <input type="file" accept="image/*" className="sr-only" onChange={(e) => setLyrImg(e.target.files?.[0] ?? null)} /></label>
         {err && <div role="alert" className="text-[13px] text-rose-400">{err}</div>}
         <button disabled={busy || !title.trim() || !artist.trim()} onClick={() => void save()} className={primary}>{busy ? "Saving…" : "Save"}</button>
       </div>

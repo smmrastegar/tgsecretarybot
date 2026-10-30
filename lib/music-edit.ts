@@ -6,6 +6,7 @@ import { createManualTrack, getMusicTrack, updateMusicTrack } from "./db";
 import { MUSIC_DIR } from "./music";
 import { probe } from "./music-intake";
 import { guessFromFileName } from "./music-names";
+import { attachPendingLyrics } from "./music-lyrics";
 
 export const AUDIO_TYPES: Record<string, string> = { mp3: "audio/mpeg", m4a: "audio/mp4", aac: "audio/mp4", ogg: "audio/ogg", opus: "audio/ogg", flac: "audio/flac", wav: "audio/wav" };
 export const MAX_UPLOAD = 120 * 1024 * 1024;
@@ -54,6 +55,7 @@ export async function addUploadedSong(file: { data: Uint8Array; name: string }, 
       });
       if (ok && (await fs.stat(emb).then((s) => s.size > 0).catch(() => false))) await updateMusicTrack(id, { coverPath: emb }); else await fs.unlink(emb).catch(() => {});
     }
+    await attachPendingLyrics(id, title);
     return { id, title, artist };
   } catch (e) { await fs.unlink(tmp).catch(() => {}); throw e; }
 }
