@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireUnscopedOr403 } from "@/lib/auth";
 import { deleteMusicTrack, getAllSettings, getMusicTrack, setSetting, setTrackMeta, updateMusicTrack } from "@/lib/db";
 import { canAccessTrack, editAccess, notFound } from "@/lib/music-token";
+import { background } from "@/lib/background";
+import { syncChannelCopy } from "@/lib/music-channel";
 import { kickMusicQueue, removeMusicFiles } from "@/lib/music";
 
 export const runtime = "nodejs";
@@ -48,7 +50,8 @@ export async function PATCH(request: Request, ctx: Ctx): Promise<Response> {
   const id = Number((await ctx.params).id);
   const t = Number.isFinite(id) ? await getMusicTrack(id) : null;
   if (!t || !(await canAccessTrack(access, id))) return NextResponse.json({ error: "no such song" }, { status: 404 });
-  const b = (await request.json().catch(() => ({}))) as { title?: string; artist?: string; album?: string };
+  const b = (await request.json().catch(() => ({}))) as { title?: string; artist?: string; album?: string; resync?: boolean };
+  if (b.resync === true && b.title === undefined && b.artist === undefined && b.album === undefined) { background("musicChannelSync", syncChannelCopy(id)); return NextResponse.json({ ok: true, resync: true }); }
   const title = typeof b.title === "string" ? b.title.trim().slice(0, 200) : undefined;
   const artist = typeof b.artist === "string" ? b.artist.trim().slice(0, 200) : undefined;
   const album = typeof b.album === "string" ? b.album.trim().slice(0, 200) : undefined;
@@ -56,5 +59,7 @@ export async function PATCH(request: Request, ctx: Ctx): Promise<Response> {
   if (t.source === "soundcloud" && (title !== undefined || artist !== undefined)) await setTrackMeta(id, { title, artist, state: "manual", suggestions: null }); // the automatic name cleanup leaves it alone from now on
   else await updateMusicTrack(id, { title, artist });
   if (album !== undefined) await updateMusicTrack(id, { album: album || null });
+  // the tidy copy in the Telegram channel follows the new names (in the background: it re-sends the audio)
+  if (b.resync === true || (title !== undefined && title !== t.title) || (artist !== undefined && artist !== t.artist)) background("musicChannelSync", syncChannelCopy(id));
   return NextResponse.json({ ok: true });
 }

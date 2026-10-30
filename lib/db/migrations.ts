@@ -614,6 +614,14 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE music_intake ADD COLUMN IF NOT EXISTS big_file_id TEXT`;
     },
   },
+  {
+    // Where a song's tidy copy sits in the intake channel, so renaming it in the player can rename it there too.
+    id: "2026-10-30-003-channel-copy",
+    up: async (q) => {
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS channel_chat BIGINT`;
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS channel_msg BIGINT`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

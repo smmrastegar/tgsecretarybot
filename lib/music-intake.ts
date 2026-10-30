@@ -10,7 +10,7 @@ import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "./config";
 import {
-  claimNextIntake, createManualTrack, expireBigWait, getAllSettings, getIntake, insertIntake, isAllowedUser, listBusinessConnections, photoBeforeIntake, saveIntakePhoto,
+  claimNextIntake, createManualTrack, expireBigWait, setChannelCopy, getAllSettings, getIntake, insertIntake, isAllowedUser, listBusinessConnections, photoBeforeIntake, saveIntakePhoto,
   setSetting, trackBySpotifyId, updateIntake, updateMusicTrack, type IntakeRow,
 } from "./db";
 import { MUSIC_DIR } from "./music";
@@ -443,7 +443,8 @@ async function finalize(row: IntakeRow, bot: Bot, force: boolean): Promise<strin
       const t = path.join(INTAKE_DIR, `${row.id}.thumb.jpg`);
       if (await runFfmpeg(["-i", coverFile, "-vf", "scale=320:320:force_original_aspect_ratio=decrease", "-q:v", "5", t], 30_000) && (await exists(t))) thumb = new InputFile(t);
     }
-    await bot.api.sendAudio(row.chatId, new InputFile(finalPath, `${c.artist} - ${c.title}.${ext}`), { title: c.title, performer: c.artist, duration: c.durationS ?? row.durationS ?? undefined, thumbnail: thumb, caption: `🎵 ${c.title}\n👤 ${c.artist}` });
+    const sent = await bot.api.sendAudio(row.chatId, new InputFile(finalPath, `${c.artist} - ${c.title}.${ext}`), { title: c.title, performer: c.artist, duration: c.durationS ?? row.durationS ?? undefined, thumbnail: thumb, caption: `🎵 ${c.title}\n👤 ${c.artist}` });
+    await setChannelCopy(trackId, row.chatId, sent.message_id);
     await bot.api.deleteMessage(row.chatId, row.messageId).catch((e) => reportWarn("music", "intake: original not deleted:", e));
   } catch (err) { reportWarn("music", `intake ${row.id}: channel copy failed (original kept):`, err); }
   await updateIntake(row.id, { status: "confirmed", trackId });
@@ -584,7 +585,8 @@ export async function finalizeUpload(rowId: number, upload: { data?: Uint8Array;
     try {
       if ((await fs.stat(finalPath)).size <= 49 * 1024 * 1024) {
         const bot = await getBot();
-        await bot.api.sendAudio(row.chatId, new InputFile(finalPath, `${artist} - ${title}.${ext}`), { title, performer: artist, duration: dur ?? undefined, caption: `🎵 ${title}\n👤 ${artist}` });
+        const sent = await bot.api.sendAudio(row.chatId, new InputFile(finalPath, `${artist} - ${title}.${ext}`), { title, performer: artist, duration: dur ?? undefined, caption: `🎵 ${title}\n👤 ${artist}` });
+        await setChannelCopy(trackId, row.chatId, sent.message_id);
         await bot.api.deleteMessage(row.chatId, row.messageId).catch(() => {});
       }
       if (row.cardChat && row.cardMessageId) await (await getBot()).api.deleteMessage(row.cardChat, row.cardMessageId).catch(() => {});

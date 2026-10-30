@@ -622,3 +622,27 @@ export async function listTracksForLookup(): Promise<Array<{ id: number; title: 
   const rows = (await q().query(`SELECT id, title, artist, album, spotify_id, duration_s, release_date, file_path, cover_path FROM music_tracks WHERE status = 'ready' AND file_path IS NOT NULL AND title IS NOT NULL`)) as Row[];
   return rows.map((r) => ({ id: num(r, "id"), title: str(r, "title"), artist: str(r, "artist"), album: strOrNull(r, "album"), spotifyId: strOrNull(r, "spotify_id"), durationS: numOrNull(r, "duration_s"), releaseDate: strOrNull(r, "release_date"), filePath: str(r, "file_path"), coverPath: strOrNull(r, "cover_path") }));
 }
+
+// ---- the song's tidy copy in the intake channel
+export async function setChannelCopy(trackId: number, chat: number | null, msg: number | null): Promise<void> {
+  await ensureSchema();
+  await q().query(`UPDATE music_tracks SET channel_chat = $2, channel_msg = $3 WHERE id = $1`, [trackId, chat, msg]);
+}
+
+export async function getChannelCopy(trackId: number): Promise<{ chat: number; msg: number } | null> {
+  await ensureSchema();
+  const r = (await q().query(`SELECT channel_chat, channel_msg FROM music_tracks WHERE id = $1`, [trackId])) as Row[];
+  return r[0] && r[0].channel_msg != null ? { chat: num(r[0], "channel_chat"), msg: num(r[0], "channel_msg") } : null;
+}
+
+/** Songs that came in through the channel but whose copy there is not known yet (older ones): matched by file size. */
+export async function listManualWithoutCopy(): Promise<Array<{ id: number; sizeBytes: number }>> {
+  await ensureSchema();
+  return ((await q().query(`SELECT id, size_bytes FROM music_tracks WHERE source = 'manual' AND status = 'ready' AND channel_msg IS NULL AND size_bytes IS NOT NULL`)) as Row[]).map((r) => ({ id: num(r, "id"), sizeBytes: num(r, "size_bytes") }));
+}
+
+export async function maxLoggedChannelMessage(chat: number): Promise<number> {
+  await ensureSchema();
+  const r = (await q().query(`SELECT COALESCE(MAX(message_id), 0) AS m FROM messages_log WHERE chat_id = $1`, [chat])) as Row[];
+  return r[0] ? num(r[0], "m") : 0;
+}

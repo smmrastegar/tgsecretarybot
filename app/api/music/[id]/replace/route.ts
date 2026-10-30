@@ -3,6 +3,8 @@ import { canAccessTrack, editAccess, notFound } from "@/lib/music-token";
 import { getMusicTrack } from "@/lib/db";
 import { replaceSongAudio } from "@/lib/music-edit";
 import { discardStaged, getStaged } from "@/lib/music-stage";
+import { background } from "@/lib/background";
+import { syncChannelCopy } from "@/lib/music-channel";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +19,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const b = (await request.json().catch(() => ({}))) as { staged?: string };
   const s = await getStaged(String(b.staged ?? ""));
   if (!s) return NextResponse.json({ error: "that upload is gone; choose the file again" }, { status: 404 });
-  try { await replaceSongAudio(id, s); await discardStaged(s.token); return NextResponse.json({ ok: true }); }
+  try { await replaceSongAudio(id, s); await discardStaged(s.token); background("musicChannelSync", syncChannelCopy(id)); return NextResponse.json({ ok: true }); }
   catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "could not replace the audio" }, { status: 400 }); }
 }
