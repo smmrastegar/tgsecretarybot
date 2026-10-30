@@ -53,8 +53,20 @@ if [[ ! -x "$BIN" ]]; then
     [[ -n "$c" && -x "$c" ]] && "$c" --version >/dev/null 2>&1 && { CMAKE="$c"; break; }
   done
   if [[ -z "$CMAKE" ]]; then say "FAIL no working cmake found"; report; exit 1; fi
-  if ! { nice -n 15 "$CMAKE" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=/usr/local .. && nice -n 15 "$CMAKE" --build . --target install -j2; } >>"$LOGF" 2>&1; then
-    say "FAIL build telegram-bot-api: $(tail -3 "$LOGF" | tr -d '\r' | tr '\n' ' ' | cut -c1-250)"; report; exit 1
+  # Run the build in the background and show its progress (the percentage cmake prints) in the status file every 30 s and in the System Log every 5 min.
+  : >"$LOGF.build"
+  { nice -n 15 "$CMAKE" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=/usr/local .. && nice -n 15 "$CMAKE" --build . --target install -j2; } >>"$LOGF.build" 2>&1 &
+  bpid=$!
+  ticks=0
+  while kill -0 "$bpid" 2>/dev/null; do
+    sleep 30; ticks=$((ticks + 1))
+    pct=$(grep -oE '^\[ *[0-9]+%\]' "$LOGF.build" 2>/dev/null | tail -1 | tr -d '[] ' || true)
+    say "building telegram-bot-api: ${pct:-starting} (started $(( ticks / 2 )) min ago)"
+    (( ticks % 10 == 0 )) && report
+  done
+  if ! wait "$bpid"; then
+    cat "$LOGF.build" >>"$LOGF" 2>/dev/null
+    say "FAIL build telegram-bot-api: $(tail -3 "$LOGF.build" | tr -d '\r' | tr '\n' ' ' | cut -c1-250)"; report; exit 1
   fi
   rm -rf "$SRC"
 fi
