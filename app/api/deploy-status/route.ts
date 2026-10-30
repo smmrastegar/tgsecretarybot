@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { config } from "@/lib/config";
+import { getAllSettings } from "@/lib/db";
 import { reportError, reportInfo, reportWarn } from "@/lib/report";
 
 export const runtime = "nodejs";
@@ -25,6 +26,13 @@ function authorized(request: Request): boolean {
   } catch {
     return false;
   }
+}
+
+// GET → what deploy scripts need from the app's settings (the local Bot API server's Telegram app id/hash). Same token as POST.
+export async function GET(request: Request): Promise<NextResponse> {
+  if (!authorized(request)) return NextResponse.json({ ok: false }, { status: 401 });
+  const s = await getAllSettings();
+  return NextResponse.json({ ok: true, botapi: { apiId: (s.tgBotApiId ?? "").trim(), apiHash: (s.tgBotApiHash ?? "").trim() } }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {

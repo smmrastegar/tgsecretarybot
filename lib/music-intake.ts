@@ -10,7 +10,7 @@ import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "./config";
 import {
-  claimNextIntake, createManualTrack, getAllSettings, getIntake, insertIntake, isAllowedUser, listBusinessConnections, photoBeforeIntake, saveIntakePhoto,
+  claimNextIntake, createManualTrack, expireBigWait, getAllSettings, getIntake, insertIntake, isAllowedUser, listBusinessConnections, photoBeforeIntake, saveIntakePhoto,
   setSetting, trackBySpotifyId, updateIntake, updateMusicTrack, type IntakeRow,
 } from "./db";
 import { MUSIC_DIR } from "./music";
@@ -230,7 +230,10 @@ async function analyzeVoice(row: IntakeRow, file: string): Promise<void> {
 }
 
 async function analyze(row: IntakeRow): Promise<void> {
-  if ((row.fileSize ?? 0) > MAX_BYTES) {
+  if ((row.fileSize ?? 0) > MAX_BYTES && !row.bigFileId) {
+    // With the large-file bot configured, park it quietly: that bot fetches it within a minute (and the owner is told only if it never does).
+    const { bigConfig } = await import("./big-bot");
+    if (await bigConfig()) { await updateIntake(row.id, { status: "bigwait", error: null }); return; }
     // Telegram lets a bot download only 20 MB: the song is not lost — it waits (named from its tags / file name, editable) for the file to be uploaded by hand.
     const k = knownFrom(row, { title: null, artist: null, album: null, date: null, durationS: null });
     await updateIntake(row.id, { status: "upload", error: null, tags: { title: k.title ?? k.text ?? null, artist: k.artist ?? null, upload: true } });
@@ -238,7 +241,7 @@ async function analyze(row: IntakeRow): Promise<void> {
     return;
   }
   await fs.mkdir(INTAKE_DIR, { recursive: true });
-  const f = await downloadTelegramFile(config.telegramBotToken, row.fileId);
+  const f = row.bigFileId ? await (await import("./big-bot")).downloadBigFile(row.bigFileId) : await downloadTelegramFile(config.telegramBotToken, row.fileId);
   const ext = (/\.([a-z0-9]{2,5})$/i.exec(row.fileName ?? f.name)?.[1] ?? "mp3").toLowerCase();
   const file = path.join(INTAKE_DIR, `${row.id}.${ext}`);
   await fs.writeFile(file, f.data);
@@ -266,6 +269,7 @@ async function analyze(row: IntakeRow): Promise<void> {
 export async function intakeStep(max = 2): Promise<number> {
   let n = 0;
   try {
+    for (const id of await expireBigWait()) await sendCard(id).catch(() => {}); // the large-file bot never delivered: ask for a hand upload
     for (; n < max; n++) {
       const row = await claimNextIntake();
       if (!row) break;

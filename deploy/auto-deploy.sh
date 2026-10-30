@@ -200,6 +200,21 @@ spotdl_selfheal() {
 }
 spotdl_selfheal || true
 
+# Telegram's local Bot API server for files over 20 MB (built in the background once the owner has saved the Telegram app id / hash
+# in the dashboard; see deploy/botapi-setup.sh). When it is already running the script is a fast no-op, so it runs every tick;
+# until then a failed or "idle" result is retried at most every 10 minutes.
+botapi_selfheal() {
+  local st=/var/lib/tgsb-tools/botapi.status
+  if ! grep -q " OK" "$st" 2>/dev/null; then
+    local gap=600
+    grep -q " idle" "$st" 2>/dev/null && gap=60 # nothing saved yet: look again soon, so a freshly saved id / hash starts the build quickly
+    [[ -f "$st" && $(( $(date +%s) - $(stat -c %Y "$st") )) -lt $gap ]] && return 0
+  fi
+  systemd-run --quiet --collect --unit=tgsb-botapi-setup -p RuntimeMaxSec=14400 \
+    bash "$APP_DIR/deploy/botapi-setup.sh" >>"$LOG" 2>&1 || true
+}
+botapi_selfheal || true
+
 # Whenever public/downloads/MyMusic.apk changes (a new Android build was committed) the app sends
 # it to the owner in Telegram (POST /api/deploy-apk dedups by hash and knows the owner's chat).
 # Checked every tick against a local hash so the app is only asked when the file is new; a failed

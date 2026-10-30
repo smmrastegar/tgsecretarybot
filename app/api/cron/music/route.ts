@@ -6,6 +6,7 @@ import { verifyStep } from "@/lib/music-verify";
 import { analysisStep } from "@/lib/music-analysis";
 import { intakeStep } from "@/lib/music-intake";
 import { apiProbeStep } from "@/lib/api-health";
+import { bigBotStep } from "@/lib/big-bot";
 import { scMetaStep, scWatchStep, soundcloudStep } from "@/lib/soundcloud";
 import { spotdlFallbackStep } from "@/lib/music-spotdl";
 import { artistWatchStep } from "@/lib/music-artists";
@@ -91,6 +92,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   // background; guarded by its own lock).
   void verifyStep().catch((err) => reportWarn("music", "verify step failed:", err));
   void scMetaStep(2).catch((err) => reportWarn("music", "soundcloud names step failed:", err));
+  void bigBotStep().catch((err) => reportWarn("music", "large-file bot step failed:", err));
   void apiProbeStep().catch((err) => reportWarn("music", "api probe failed:", err));
   void scWatchStep().catch((err) => reportWarn("music", "soundcloud watch failed:", err));
   void soundcloudStep(2).catch((err) => reportWarn("music", "soundcloud step failed:", err));

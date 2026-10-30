@@ -607,6 +607,13 @@ export const MIGRATIONS: Migration[] = [
       await q`UPDATE music_intake SET status = 'upload', error = NULL WHERE status = 'failed' AND error LIKE '%ربات فقط تا%'`;
     },
   },
+  {
+    // Large channel files: a second bot on a local Bot API server (no 20 MB limit) fetches them. Its file ids differ from the main bot's, so they are kept apart.
+    id: "2026-10-30-002-intake-big-file",
+    up: async (q) => {
+      await q`ALTER TABLE music_intake ADD COLUMN IF NOT EXISTS big_file_id TEXT`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;
