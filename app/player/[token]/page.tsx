@@ -147,7 +147,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     try { const f = Number(localStorage.getItem("player.fade")); if ([3, 6, 10].includes(f)) setFade(f); } catch {}
     // The visualizer routes audio through Web Audio, which iOS can suspend in
     // the background — so it defaults to off there.
-    try { const v = localStorage.getItem("player.viz"); setViz(v ? v === "1" : !/iphone|ipad|ipod/i.test(navigator.userAgent)); } catch {}
+    // (routing the audio through the analyser costs CPU/battery on phones: off by default there, one tap in Settings)
+    try { const v = localStorage.getItem("player.viz"); setViz(v ? v === "1" : !/iphone|ipad|ipod/i.test(navigator.userAgent) && !window.matchMedia("(pointer: coarse)").matches); } catch {}
     if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/player-sw.js", { scope: "/player/", updateViaCache: "none" }).catch(() => {});
     if ("caches" in window) void caches.open("player-audio").then((c) => c.keys()).then((ks) => setOffline(new Set(ks.map((k) => Number(new URL(k.url).pathname.split("/").pop())).filter(Number.isFinite)))).catch(() => {});
   }, []);
@@ -820,7 +821,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       <style>{`
         html, body { overscroll-behavior: none; }
         svg[aria-hidden] { display: block; }
-        @keyframes eq { 0%,100% { height: 25% } 50% { height: 100% } }
+        /* transform (compositor) instead of height (layout on every frame): the equaliser bars cost nothing while a song plays */
+        @keyframes eq { 0%,100% { transform: scaleY(.25) } 50% { transform: scaleY(1) } }
         @keyframes rise { from { transform: translateY(100%) } to { transform: none } }
         @keyframes fade { from { opacity: 0 } to { opacity: 1 } }
         input[type=range] { accent-color: rgb(var(--ac)); }

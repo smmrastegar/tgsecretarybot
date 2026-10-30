@@ -84,7 +84,7 @@ export function Eq({ on }: { on: boolean }) {
   return (
     <span className="inline-flex items-end gap-[2px] h-3.5 w-3.5" aria-hidden>
       {[0, 1, 2].map((i) => (
-        <span key={i} className="w-[3px] rounded-sm bg-[var(--fg)]" style={{ height: on ? undefined : "30%", animation: on ? `eq .9s ${i * 0.18}s ease-in-out infinite` : undefined }} />
+        <span key={i} className="w-[3px] h-full origin-bottom rounded-sm bg-[var(--fg)]" style={{ transform: on ? undefined : "scaleY(.3)", animation: on ? `eq .9s ${i * 0.18}s ease-in-out infinite` : undefined, willChange: on ? "transform" : undefined }} />
       ))}
     </span>
   );

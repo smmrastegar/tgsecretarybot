@@ -22,7 +22,7 @@ function chainFor(el: HTMLAudioElement): Chain | null {
   if (have) return have;
   try {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new AC();
+    const ctx = new AC({ latencyHint: "playback" }); // bigger buffers: fewer dropouts and less work while a song plays
     const src = ctx.createMediaElementSource(el);
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 1024;
