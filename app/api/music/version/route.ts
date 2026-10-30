@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { authorizeMusic, notFound } from "@/lib/music-token";
+import { musicAccess, notFound } from "@/lib/music-token";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +15,9 @@ function buildId(): string {
   return id;
 }
 export async function GET(request: Request): Promise<Response> {
-  if (!(await authorizeMusic(request))) return notFound();
-  return NextResponse.json({ build: buildId() }, { headers: { "Cache-Control": "no-store" } });
+  const access = await musicAccess(request);
+  if (!access) return notFound();
+  // Who this is, for Settings → About: the Main link, one of the extra links (by name), or the dashboard / numeric-password session.
+  const who = access.kind === "link" ? { name: access.name, kind: access.linkId === 0 ? "main" : "link" } : { name: "Dashboard login", kind: "session" };
+  return NextResponse.json({ build: buildId(), who }, { headers: { "Cache-Control": "no-store" } });
 }

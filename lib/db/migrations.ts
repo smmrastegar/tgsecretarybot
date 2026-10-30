@@ -633,6 +633,13 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE login_requests ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'dash'`;
     },
   },
+  {
+    // A new Telegram sign-up waits for the owner's approval: 'pending' (sees nothing) → 'approved' or 'denied'.
+    id: "2026-10-30-005-link-approval",
+    up: async (q) => {
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS approval TEXT NOT NULL DEFAULT 'approved'`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

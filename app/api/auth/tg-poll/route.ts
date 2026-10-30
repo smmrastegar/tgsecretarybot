@@ -20,9 +20,12 @@ export async function GET(request: Request): Promise<NextResponse> {
     // The player app asked: hand back the player link this Telegram account is entitled to (the owner also gets a dashboard session for playlist.bz).
     const p = await playerLinkForTelegram(r.user);
     (await cookies()).delete({ name: LOGIN_COOKIE, path: "/api/auth" });
-    if (!p.ok) return NextResponse.json({ status: p.reason });
+    if (!p.ok) {
+      if (p.created) await audit({ actorId: r.user.userId, actorName: r.user.username ?? null, action: "auth.player-telegram-request" });
+      return NextResponse.json({ status: p.reason });
+    }
     if (p.owner) await setSessionCookie(await createSession(r.user));
-    await audit({ actorId: r.user.userId, actorName: r.user.username ?? null, action: p.created ? "auth.player-telegram-new" : "auth.player-telegram" });
+    await audit({ actorId: r.user.userId, actorName: r.user.username ?? null, action: "auth.player-telegram" });
     return NextResponse.json({ status: "ok", token: p.token, owner: p.owner });
   }
   await setSessionCookie(await createSession(r.user));

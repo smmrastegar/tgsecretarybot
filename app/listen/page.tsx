@@ -32,10 +32,11 @@ function Launcher() {
   // "Continue with Telegram": the bot confirms who you are; the owner lands on the Main link, everyone else on a link of their own.
   const [tg, setTg] = useState<"idle" | "starting" | "waiting">("idle");
   const [tgUrl, setTgUrl] = useState("");
+  const [tgNote, setTgNote] = useState("");
   const tgNonce = useRef<string | null>(null);
   const tgDeadline = useRef(0);
 
-  const go = useCallback(async (raw: string) => {
+  const go = useCallback(async (raw: string, via: "auto" | "paste" | "telegram" = "auto") => {
     const tok = tokenFrom(raw);
     if (!tok) { setErr("That doesn't look like a player link."); setState("ask"); return; }
     setState("check"); setErr("");
@@ -45,6 +46,8 @@ function Launcher() {
       // Any other answer (even offline) is good enough: the player itself handles the rest.
     } catch { /* offline: trust the stored link */ }
     try { localStorage.setItem(KEY, tok); } catch { /* private mode */ }
+    // Settings → About shows how and when this phone signed in: written on a real sign-in (pasted link / Telegram), not on every reopen.
+    if (via !== "auto") { try { localStorage.setItem("listenLogin", JSON.stringify({ via, at: Date.now() })); } catch { /* private mode */ } }
     const nat = (window as unknown as { AndroidMusic?: { saveLink?: (t: string) => void } }).AndroidMusic;
     try { nat?.saveLink?.(tok); } catch { /* old app */ }
     // The Android app lives on playlist.bz now: move there (the link is kept by the app itself).
@@ -53,7 +56,7 @@ function Launcher() {
   }, []);
 
   async function startTelegram() {
-    setErr(""); setTg("starting");
+    setErr(""); setTgNote(""); setTg("starting");
     const tab = (window as unknown as { AndroidMusic?: unknown }).AndroidMusic ? null : window.open("", "_blank"); // keep the click's permission for a browser tab
     try {
       const r = await fetch("/api/auth/tg-start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ player: true }) });
@@ -73,7 +76,9 @@ function Launcher() {
       try {
         const r = await fetch(`/api/auth/tg-poll?nonce=${encodeURIComponent(tgNonce.current)}`, { cache: "no-store" });
         const d = (await r.json()) as { status?: string; token?: string };
-        if (d.status === "ok" && d.token) { stop = true; void go(d.token); return; }
+        if (d.status === "ok" && d.token) { stop = true; void go(d.token, "telegram"); return; }
+        if (d.status === "approval") { stop = true; setTgNote("Request sent. You'll get a Telegram message from the bot once it's approved — then tap Continue with Telegram again."); setTg("idle"); return; }
+        if (d.status === "denied") { stop = true; setErr("This request wasn't approved."); setTg("idle"); return; }
         if (d.status === "off") { stop = true; setErr("This account's link has been switched off."); setTg("idle"); return; }
         if (d.status === "closed") { stop = true; setErr("New sign-ups are closed right now. Ask the owner for a link."); setTg("idle"); return; }
         if (d.status === "expired" || d.status === "unknown") { stop = true; setErr("That request expired — try again."); setTg("idle"); }
@@ -101,7 +106,7 @@ function Launcher() {
     if (params.get("signedout") === "1") { try { nat?.saveLink?.(""); } catch { /* old app */ } }
     // One-time hop from the old address: nothing saved there means nothing to carry over, so go on to the new address.
     if (params.get("migrate") === "1" && !saved && !fromUrl) { try { nat?.markMigrated?.(); } catch { /* old app */ } window.location.replace("https://playlist.bz/listen"); return; }
-    if (fromUrl) void go(fromUrl);
+    if (fromUrl) void go(fromUrl, "paste");
     else if (saved && params.get("signedout") !== "1") void go(saved);
     else setState("ask");
     return () => window.removeEventListener("beforeinstallprompt", onPrompt);
@@ -109,7 +114,7 @@ function Launcher() {
   }, []);
 
   async function paste() {
-    try { const nat = (window as unknown as { AndroidMusic?: { clipboard?: () => string } }).AndroidMusic; const t = nat?.clipboard ? nat.clipboard() : await navigator.clipboard.readText(); setValue(t); if (tokenFrom(t)) void go(t); } catch { setErr("Couldn't read the clipboard — paste the link into the box instead."); }
+    try { const nat = (window as unknown as { AndroidMusic?: { clipboard?: () => string } }).AndroidMusic; const t = nat?.clipboard ? nat.clipboard() : await navigator.clipboard.readText(); setValue(t); if (tokenFrom(t)) void go(t, "paste"); } catch { setErr("Couldn't read the clipboard — paste the link into the box instead."); }
   }
 
   const S = { bg: "#0b0b0f", fg: "#ececf1", dim: "#a1a1aa", card: "rgba(255,255,255,.06)", bd: "rgba(255,255,255,.12)" };
@@ -128,7 +133,7 @@ function Launcher() {
             <textarea value={value} onChange={(e) => { setValue(e.target.value); setErr(""); }} rows={3} placeholder="https://…/player/…" aria-label="Player link" autoCapitalize="off" autoCorrect="off" spellCheck={false}
               style={{ width: "100%", boxSizing: "border-box", borderRadius: 16, background: S.card, border: `1px solid ${S.bd}`, color: S.fg, padding: "14px 16px", fontSize: 15, fontFamily: "ui-monospace, Menlo, monospace", resize: "none", outline: "none" }} />
             {err && <p role="alert" style={{ color: "#fca5a5", fontSize: 14, margin: "10px 2px 0" }}>{err}</p>}
-            <button onClick={() => void go(value)} disabled={!value.trim()} style={{ marginTop: 14, width: "100%", height: 54, borderRadius: 999, border: 0, background: S.fg, color: S.bg, fontSize: 17, fontWeight: 700, opacity: value.trim() ? 1 : 0.4 }}>Start listening</button>
+            <button onClick={() => void go(value, "paste")} disabled={!value.trim()} style={{ marginTop: 14, width: "100%", height: 54, borderRadius: 999, border: 0, background: S.fg, color: S.bg, fontSize: 17, fontWeight: 700, opacity: value.trim() ? 1 : 0.4 }}>Start listening</button>
             <button onClick={() => void paste()} style={{ marginTop: 10, width: "100%", height: 50, borderRadius: 999, border: `1px solid ${S.bd}`, background: "transparent", color: S.fg, fontSize: 16, fontWeight: 600 }}>Paste from clipboard</button>
             <p style={{ color: S.dim, fontSize: 13, textAlign: "center", marginTop: 18, lineHeight: 1.6 }}>The link is stored only on this phone. You can sign out any time (Settings inside the player) and use a different link.</p>
           </div>
@@ -146,7 +151,10 @@ function Launcher() {
                 </div>
               </div>
             ) : (
+              <>
+              {tgNote && <p role="status" style={{ margin: "0 2px 12px", fontSize: 14, lineHeight: 1.6, color: "#86efac" }}>{tgNote}</p>}
               <button onClick={() => void startTelegram()} disabled={tg === "starting"} style={{ width: "100%", height: 54, borderRadius: 999, border: 0, background: "#2AABEE", color: "#fff", fontSize: 17, fontWeight: 700, opacity: tg === "starting" ? 0.6 : 1 }}>{tg === "starting" ? "Opening Telegram…" : "Continue with Telegram"}</button>
+              </>
             )}
           </div>
         )}

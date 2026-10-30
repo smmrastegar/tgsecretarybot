@@ -556,6 +556,19 @@ function buildBot(): Bot {
       );
       return;
     }
+    if (data.startsWith("plink:")) {
+      // Owner approves / rejects a player sign-up request (sent when someone first continues with Telegram in the app).
+      try {
+        const { decidePlayerLink, isMusicOwner } = await import("../music-tg-login");
+        const m = /^plink:(ok|no):(\d+)$/.exec(data);
+        if (!m || !(await isMusicOwner(from.id))) { await ctx.answerCallbackQuery({ text: "فقط مدیر می‌تواند." }).catch(() => {}); return; }
+        const done = await decidePlayerLink(Number(m[2]), m[1] === "ok", true);
+        await ctx.answerCallbackQuery({ text: done ? (m[1] === "ok" ? "تأیید شد" : "رد شد") : "این درخواست پیدا نشد" }).catch(() => {});
+        if (done) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {});
+        if (done) await ctx.reply(m[1] === "ok" ? "✅ تأیید شد (کل کتابخانه). اگه باید چیزی کم بشه از داشبورد → لینک‌های خصوصی پلیر تنظیم کن." : "❌ رد شد.").catch(() => {});
+      } catch (err) { reportError("bot", "[plink_callback] failed:", err); }
+      return;
+    }
     if (data.startsWith("board:")) {
       await handleBoardAccessCallback(ctx, data, bot).catch((err) =>
         reportError("bot", "[board_callback] failed:", err),

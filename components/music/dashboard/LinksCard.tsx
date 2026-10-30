@@ -7,7 +7,7 @@ import { confirmDialog, promptDialog } from "@/components/ui/Dialogs";
 // Player links: any number of private links, each with its own playlists.
 // Creating a link never touches the others; a link can only be switched off
 // (and on again), never deleted.
-type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLike?: boolean; canEdit?: boolean; allLibrary?: boolean; tgLabel?: string | null; createdAt: string | null; lastUsedAt: string | null };
+type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLike?: boolean; canEdit?: boolean; allLibrary?: boolean; tgLabel?: string | null; approval?: "pending" | "approved" | "denied"; createdAt: string | null; lastUsedAt: string | null };
 type Acc = { id: number; name: string };
 type Pl = { id: number; name: string; smart: boolean; count: number };
 
@@ -55,8 +55,8 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
 
       <div className="mb-3 rounded-lg border border-[var(--color-border)] p-3 text-xs flex items-center gap-2 flex-wrap">
         <span className="font-medium">✈️ ورود با تلگرام در برنامه</span>
-        <span className="text-[var(--color-text-dim)] leading-6 flex-1 min-w-[12rem]">هر کس با تلگرام وارد شود یک لینک مخصوص خودش می‌گیرد: کپی لینک اصلی (کل کتابخانه، ویرایش و لایک اسپاتیفای خاموش) و تو خبر می‌شوی تا کمش کنی. خودت با تلگرام مستقیم لینک اصلی را می‌گیری.</span>
-        <button onClick={() => void patch(0, { tgSignup: !tgSignup })} className={`px-3 py-1.5 rounded-md border ${tgSignup ? "border-emerald-500/40 text-emerald-200" : "border-rose-500/40 text-rose-200"}`}>{tgSignup ? "ثبت‌نام تازه‌ها: باز" : "ثبت‌نام تازه‌ها: بسته"}</button>
+        <span className="text-[var(--color-text-dim)] leading-6 flex-1 min-w-[12rem]">هر کس با تلگرام درخواست بدهد، در ربات (و اینجا) برایت می‌آید و تا تأیید نکنی هیچ چیزی نمی‌بیند؛ تأیید در ربات = کل کتابخانه (ویرایش و لایک اسپاتیفای خاموش)، یا از اینجا اول انتخاب کن چه ببیند. خودت با تلگرام مستقیم لینک اصلی را می‌گیری.</span>
+        <button onClick={() => void patch(0, { tgSignup: !tgSignup })} className={`px-3 py-1.5 rounded-md border ${tgSignup ? "border-emerald-500/40 text-emerald-200" : "border-rose-500/40 text-rose-200"}`}>{tgSignup ? "درخواست تازه: می‌پذیرم" : "درخواست تازه: نمی‌پذیرم"}</button>
       </div>
 
       <div className="space-y-2">
@@ -64,13 +64,25 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
           <div key={l.id} className={`rounded-lg border p-3 text-xs ${l.active ? "border-[var(--color-border)]" : "border-[var(--color-border)] opacity-60"}`}>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-medium text-sm">{l.name}</span>
+              {l.approval === "pending" && <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200">⏳ منتظر تأیید تو</span>}
+              {l.approval === "denied" && <span className="px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-300">رد شده</span>}
               {l.tgLabel && <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-200" title="این لینک با ورود تلگرام ساخته شد">✈️ تلگرام</span>}
               <span className={`px-2 py-0.5 rounded-full ${l.active ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"}`}>{l.active ? "فعال" : "غیرفعال"}</span>
               <span className="text-[var(--color-text-dim)]">{l.playlistIds == null ? "همه‌ی آهنگ‌ها" : `${fa(l.playlistIds.length)} پلی‌لیست`}</span>
               {(l.accountIds?.length ?? 0) > 0 && <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-200">فقط آهنگ‌های: {l.accountIds!.map((id) => accts.find((a) => a.id === id)?.name ?? id).join(l.accountsMode === "all" ? " ∩ " : " ∪ ")}</span>}
               <span className="ms-auto text-[var(--color-text-dim)]">آخرین استفاده: {when(l.lastUsedAt)}</span>
             </div>
-            {!l.legacy && l.playlistIds && l.playlistIds.length === 0 && <div className="mt-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 px-3 py-2">هیچ پلی‌لیستی به این لینک داده نشده؛ پلیرش خالی است. روی «پلی‌لیست‌ها» بزن و حداقل یکی را انتخاب کن.</div>}
+            {l.approval === "pending" && (
+              <div className="mt-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-100 px-3 py-2 leading-6">
+                این آدم با تلگرام درخواست ورود داده و تا تأیید نکنی چیزی نمی‌بیند. اول «پلی‌لیست‌ها» را انتخاب کن (یا «کل کتابخانه»)، بعد تأیید کن.
+                <div className="mt-2 flex gap-2 flex-wrap">
+                  <button onClick={() => void patch(l.id, { allLibrary: true })} className={`px-3 py-1.5 rounded-md border ${l.allLibrary ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>کل کتابخانه</button>
+                  <button disabled={!l.allLibrary && (l.playlistIds?.length ?? 0) === 0} onClick={() => void patch(l.id, { approval: "approved" })} className="px-3 py-1.5 rounded-md bg-emerald-600 text-white disabled:opacity-40">✅ تأیید</button>
+                  <button onClick={() => void patch(l.id, { approval: "denied" })} className="px-3 py-1.5 rounded-md border border-rose-500/40 text-rose-200">❌ رد</button>
+                </div>
+              </div>
+            )}
+            {!l.legacy && l.approval !== "pending" && l.playlistIds && l.playlistIds.length === 0 && <div className="mt-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 px-3 py-2">هیچ پلی‌لیستی به این لینک داده نشده؛ پلیرش خالی است. روی «پلی‌لیست‌ها» بزن و حداقل یکی را انتخاب کن.</div>}
             <input readOnly dir="ltr" value={l.url} onFocus={(e) => e.currentTarget.select()} className="mt-2 w-full text-[11px] font-mono bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5" />
             <div className="mt-2 flex gap-2 flex-wrap justify-end">
               <button onClick={() => { void navigator.clipboard.writeText(l.url); onMessage(`لینک «${l.name}» کپی شد`); }} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">کپی</button>

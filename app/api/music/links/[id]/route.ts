@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUnscopedOr403 } from "@/lib/auth";
 import { setSetting, updatePlayerLink } from "@/lib/db";
+import { decidePlayerLink } from "@/lib/music-tg-login";
 import { setLegacyActive, setMainCanEdit, setMainCanLike, setMainScope } from "@/lib/music-token";
 
 export const runtime = "nodejs";
@@ -12,7 +13,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   const guard = await requireUnscopedOr403();
   if (guard) return guard;
   const id = Number((await ctx.params).id);
-  const b = (await request.json().catch(() => ({}))) as { name?: string; active?: boolean; playlistIds?: number[]; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLikeSpotify?: boolean; canEdit?: boolean; allLibrary?: boolean; tgSignup?: boolean };
+  const b = (await request.json().catch(() => ({}))) as { name?: string; active?: boolean; playlistIds?: number[]; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLikeSpotify?: boolean; canEdit?: boolean; allLibrary?: boolean; tgSignup?: boolean; approval?: "approved" | "denied" };
   const ids = Array.isArray(b.accountIds) ? b.accountIds.map(Number).filter((n) => Number.isFinite(n) && n >= 0) : undefined;
   if (id === 0) {
     if (typeof b.active === "boolean") await setLegacyActive(b.active);
@@ -22,6 +23,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     if (ids) await setMainScope(ids.length ? { ids, mode: b.accountsMode === "all" ? "all" : "any" } : null);
     return NextResponse.json({ ok: true });
   }
+  if (b.approval === "approved" || b.approval === "denied") await decidePlayerLink(id, b.approval === "approved", false);
   await updatePlayerLink(id, {
     name: typeof b.name === "string" && b.name.trim() ? b.name.trim() : undefined,
     active: typeof b.active === "boolean" ? b.active : undefined,

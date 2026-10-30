@@ -690,7 +690,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const removeDownloads = async () => { try { await caches.delete("player-audio"); } catch { /* ignore */ } setOffline(new Set()); flash("Downloads removed"); };
   const signOut = async (wipe: boolean) => {
     dlCtl.current?.abort();
-    try { localStorage.removeItem("listenLink"); } catch { /* ignore */ }
+    try { localStorage.removeItem("listenLink"); localStorage.removeItem("listenLogin"); } catch { /* ignore */ }
     try { if (wipe) await caches.delete("player-audio"); await caches.delete("player-shell-v2"); await caches.delete("player-shell-v1"); } catch { /* ignore */ }
     window.location.replace("/listen?signedout=1");
   };
@@ -1068,7 +1068,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
         onDone={(accId) => { const ids = new Set(likeTs.map((t) => t.id)); setTracks((all) => all.map((x) => (ids.has(x.id) ? { ...x, sources: [...new Set([...(x.sources ?? []), accId])] } : x))); if (selecting) endSelect(); }} />}
       {editT && <EditSongSheet t={editT} tq={tq} onClose={() => setEditT(null)} onSaved={(m) => { flash(m); void load(); }} />}
       {addOpen && <AddSongsSheet tq={tq} onClose={() => setAddOpen(false)} onDone={(m) => { flash(m); void load(); }} />}
-      {settingsOpen && <SettingsSheet fade={fade} fades={FADES} onFade={pickFade} accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsSheet tq={tq} fade={fade} fades={FADES} onFade={pickFade} accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
       {settingsOpen && <BackLayer onClose={() => setSettingsOpen(false)} />}
       {dl && <div className="fixed left-3 right-3 z-[60] max-w-2xl mx-auto rounded-2xl glass border border-[var(--bd)] px-4 py-3 flex items-center gap-3" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))" }} role="status">
         <div className="min-w-0 flex-1"><div className="text-[13px] font-semibold">Downloading {dl.done} of {dl.total}</div><div className="mt-1.5 h-1 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full bg-[rgb(var(--ac))] transition-[width]" style={{ width: `${(dl.done / dl.total) * 100}%` }} /></div></div>

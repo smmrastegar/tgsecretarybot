@@ -334,8 +334,8 @@ export function DownloadSheet({ label, count, bytes, onAllow, onClose }: { label
 }
 
 /** App settings: storage, visualizer, install, and "sign out" so a different link can be used. */
-export function SettingsSheet({ fade, fades, onFade, accounts, scope, onScope, shown, total, downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onRefresh, onSignOut, onClose }: {
-  fade: number; fades: Array<{ v: number; label: string }>; onFade: (v: number) => void;
+export function SettingsSheet({ tq, fade, fades, onFade, accounts, scope, onScope, shown, total, downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onRefresh, onSignOut, onClose }: {
+  tq: string; fade: number; fades: Array<{ v: number; label: string }>; onFade: (v: number) => void;
   accounts: Array<{ id: number; name: string }>; scope: { ids: number[]; mode: "any" | "all" }; onScope: (v: { ids: number[]; mode: "any" | "all" }) => void; shown: number; total: number;
   downloaded: number; viz: boolean; onViz: () => void; installable: boolean; iosHint: boolean; onInstall: () => void;
   onRemoveDownloads: () => Promise<void>; onRefresh: () => Promise<void>; onSignOut: (removeDownloads: boolean) => void; onClose: () => void;
@@ -345,6 +345,27 @@ export function SettingsSheet({ fade, fades, onFade, accounts, scope, onScope, s
   const [confirmOut, setConfirmOut] = useState(false);
   const [confirmRm, setConfirmRm] = useState(false);
   const [wipe, setWipe] = useState(false);
+  // About: which app / build this is, who the player is signed in as, and how and when that sign-in happened.
+  const [about, setAbout] = useState<{ app: string; build: string; who: string; kind: string; via: string; at: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const nat = (window as unknown as { AndroidMusic?: { version?: () => string; versionCode?: () => number } }).AndroidMusic;
+      let app = "Web player (browser)";
+      try { if (nat?.version) app = `Android app ${nat.version()}${nat.versionCode ? ` (${nat.versionCode()})` : ""}`; else if (window.matchMedia("(display-mode: standalone)").matches) app = "Web player (installed)"; } catch { /* ignore */ }
+      let login: { via?: string; at?: number } = {};
+      try { login = JSON.parse(localStorage.getItem("listenLogin") || "{}") as typeof login; } catch { /* none */ }
+      let j: { build?: string; who?: { name?: string; kind?: string } } = {};
+      try { j = (await (await fetch(`/api/music/version?${tq}`, { cache: "no-store" })).json()) as typeof j; } catch { /* offline */ }
+      if (!live) return;
+      setAbout({
+        app, build: (j.build ?? "").slice(0, 7), who: j.who?.name ?? "—", kind: j.who?.kind ?? "",
+        via: login.via === "telegram" ? "Telegram" : login.via === "paste" ? "Pasted link" : "—",
+        at: login.at ? new Date(login.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—",
+      });
+    })();
+    return () => { live = false; };
+  }, [tq]);
   const refresh = () => { void navigator.storage?.estimate?.().then((e) => { if (e.usage != null) setUsage(mb(e.usage)); }).catch(() => {}); };
   useEffect(refresh, []);
   const Row = ({ label, sub, right }: { label: string; sub?: string; right: ReactNode }) => (
@@ -353,6 +374,15 @@ export function SettingsSheet({ fade, fades, onFade, accounts, scope, onScope, s
   const btn = "px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--s2)] active:scale-95 transition";
   return (
     <Sheet onClose={onClose} title="Settings">
+      {about && (
+        <div className="px-5 py-3.5 border-b border-[var(--bd0)] text-[13px] leading-6">
+          <div className="text-[15px] mb-1">About</div>
+          <div className="flex justify-between gap-4"><span className="text-[var(--dim)]">Version</span><span className="text-right">{about.app}{about.build ? ` · web ${about.build}` : ""}</span></div>
+          <div className="flex justify-between gap-4"><span className="text-[var(--dim)]">Signed in as</span><span className="text-right">{about.who}{about.kind === "main" ? " (Main link)" : ""}</span></div>
+          <div className="flex justify-between gap-4"><span className="text-[var(--dim)]">Signed in with</span><span className="text-right">{about.via}</span></div>
+          <div className="flex justify-between gap-4"><span className="text-[var(--dim)]">Signed in on</span><span className="text-right">{about.at}</span></div>
+        </div>
+      )}
       <Row label="Refresh player" sub="Reload the app and your whole library. Downloaded songs stay."
         right={<button disabled={refreshing} onClick={() => { setRefreshing(true); void onRefresh(); }} className={`${btn} disabled:opacity-60`}>{refreshing ? "Refreshing…" : "Refresh"}</button>} />
       {accounts.length > 0 && (() => {
