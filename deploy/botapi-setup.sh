@@ -47,7 +47,13 @@ if [[ ! -x "$BIN" ]]; then
   if ! git clone --quiet --recurse-submodules --shallow-submodules --depth 1 https://github.com/tdlib/telegram-bot-api.git "$SRC" >>"$LOGF" 2>&1; then say "FAIL git clone telegram-bot-api"; report; exit 1; fi
   mkdir -p "$SRC/build"
   cd "$SRC/build" || exit 1
-  if ! { nice -n 15 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=/usr/local .. && nice -n 15 cmake --build . --target install -j2; } >>"$LOGF" 2>&1; then
+  # A pip-installed "cmake" shim in /usr/local/bin can shadow the real one and fail to start: use the first cmake that answers.
+  CMAKE=""
+  for c in /usr/bin/cmake /usr/local/bin/cmake "$(command -v cmake || true)"; do
+    [[ -n "$c" && -x "$c" ]] && "$c" --version >/dev/null 2>&1 && { CMAKE="$c"; break; }
+  done
+  if [[ -z "$CMAKE" ]]; then say "FAIL no working cmake found"; report; exit 1; fi
+  if ! { nice -n 15 "$CMAKE" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=/usr/local .. && nice -n 15 "$CMAKE" --build . --target install -j2; } >>"$LOGF" 2>&1; then
     say "FAIL build telegram-bot-api: $(tail -3 "$LOGF" | tr -d '\r' | tr '\n' ' ' | cut -c1-250)"; report; exit 1
   fi
   rm -rf "$SRC"
