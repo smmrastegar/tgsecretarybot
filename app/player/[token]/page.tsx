@@ -105,7 +105,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const origQueue = useRef<number[] | null>(null); // the queue in its natural order, to go back to when shuffle is switched off
   const [vol, setVol] = useState(1);
   const [speed, setSpeed] = useState(1);
-  const [sleepMin, setSleepMin] = useState(0);
+  const [sleepMin, setSleepMinState] = useState(0);
+  const sleepRef = useRef(0); // read when a song ends, so a phone that kept the page asleep still obeys it
+  const setSleepMin = useCallback((v: number) => { sleepRef.current = v; setSleepMinState(v); }, []);
+  const [again, setAgainState] = useState(false); // "this song once more" (lock screen): when it ends it plays one more time, then the normal order carries on
+  const againRef = useRef(false);
+  const setAgain = useCallback((v: boolean) => { againRef.current = v; setAgainState(v); }, []);
   const [full, setFull] = useState(false);
   const [sheet, setSheet] = useState<null | "queue" | "sleep" | "speed" | "lyrics">(null);
   const [menuT, setMenuT] = useState<Track | null>(null);
@@ -397,7 +402,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const advanceNow = () => {
     const a = audio.current; if (!a) return;
     tracker.flush(true);
-    if (sleepMin === -1) { setSleepMin(0); setPlaying(false); flash("Sleep timer: paused"); return; }
+    if (sleepRef.current === -1) { setSleepMin(0); setPlaying(false); flash("Paused after this song"); return; }
+    if (againRef.current) { setAgain(false); a.currentTime = 0; void a.play().catch(() => {}); return; }
     const id = nextAutoId();
     if (id == null) { setPlaying(false); return; }
     const prev = curRef.current;
@@ -725,25 +731,42 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, [playing, cur, tq]);
   // Lock-screen seek bar (position / length) and its shuffle + like buttons: sent on song change, play/pause, seek, shuffle and like (the system moves the bar by itself in between).
   const liked = cur != null && (byIdRef.current.get(cur)?.rating ?? 0) > 0;
+  useEffect(() => { if (againRef.current) setAgain(false); }, [cur, setAgain]); // "once more" belongs to the song it was set on
+  const curSkipped = cur != null && skipped.has(cur);
+  // The lock screen's left button is one play-mode control: 0 in order, 1 shuffle, 2 this song once more, 3 pause after this song.
+  const playMode = sleepMin === -1 ? 3 : again ? 2 : shuffle ? 1 : 0;
   const syncNative = useCallback(() => {
-    const n = (window as unknown as { AndroidMusic?: { sync?: (pos: number, dur: number, shuffle: boolean, liked: boolean) => void } }).AndroidMusic;
+    const n = (window as unknown as { AndroidMusic?: { sync?: (pos: number, dur: number, shuffle: boolean, liked: boolean) => void; mode?: (m: number, skip: boolean) => void } }).AndroidMusic;
     const a = audio.current;
     if (!n?.sync || !a) return;
-    try { n.sync(Number.isFinite(a.currentTime) ? a.currentTime : -1, Number.isFinite(a.duration) ? a.duration : 0, shuffle, liked); } catch { /* older app / hiccup */ }
-  }, [shuffle, liked]);
+    try { n.mode?.(playMode, curSkipped); n.sync(Number.isFinite(a.currentTime) ? a.currentTime : -1, Number.isFinite(a.duration) ? a.duration : 0, shuffle, liked); } catch { /* older app / hiccup */ }
+  }, [shuffle, liked, playMode, curSkipped]);
   useEffect(() => { syncNative(); }, [syncNative, cur, playing, dur]);
   useEffect(() => {
     const a = audio.current; if (!a) return;
     a.addEventListener("seeked", syncNative);
     return () => a.removeEventListener("seeked", syncNative);
   }, [syncNative]);
-  const nativeAct = useRef({ shuffle: () => {}, like: () => {} });
-  nativeAct.current = { shuffle: toggleShuffle, like: () => { const t = byIdRef.current.get(curRef.current ?? -1); if (t) fns.current.rate(t, 1); } };
+  const nativeAct = useRef({ shuffle: () => {}, like: () => {}, mode: () => {}, skip: () => {} });
+  nativeAct.current = {
+    shuffle: toggleShuffle,
+    like: () => { const t = byIdRef.current.get(curRef.current ?? -1); if (t) fns.current.rate(t, 1); },
+    // in order → shuffle → this song once more → pause after this song → in order (the last two fix themselves after they happen)
+    mode: () => {
+      if (playMode === 0) { toggleShuffle(); flash("Shuffle"); }
+      else if (playMode === 1) { setAgain(true); flash("Playing this song once more"); }
+      else if (playMode === 2) { setAgain(false); setSleepMin(-1); flash("Pausing after this song"); }
+      else { setSleepMin(0); if (shuffle) toggleShuffle(); flash("Playing in order"); }
+    },
+    skip: () => { const id = curRef.current; if (id != null) toggleSkipMode(id, true); },
+  };
   useEffect(() => {
     (window as unknown as { __nativeCmd?: (c: string) => void }).__nativeCmd = (c: string) => {
       if (c.startsWith("seek:")) { const v = Number(c.slice(5)); if (audio.current && Number.isFinite(v)) audio.current.currentTime = Math.max(0, v); return; }
       if (c === "shuffle") { nativeAct.current.shuffle(); return; }
       if (c === "like") { nativeAct.current.like(); return; }
+      if (c === "mode") { nativeAct.current.mode(); return; }
+      if (c === "skip") { nativeAct.current.skip(); return; }
       if (c === "next") step(1); else if (c === "prev") step(-1);
       else if (c === "play") void audio.current?.play().catch(() => {}); else if (c === "pause") audio.current?.pause();
       else if (c === "toggle") { const a = audio.current; if (a) { if (a.paused) void a.play().catch(() => {}); else a.pause(); } }
@@ -757,7 +780,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     if (sleepMin <= 0) return;
     const i = setInterval(() => { if (Date.now() >= sleepEnd.current) { audio.current?.pause(); setSleepMin(0); flash("Sleep timer: paused"); } }, 5000);
     return () => clearInterval(i);
-  }, [sleepMin]);
+  }, [sleepMin, setSleepMin]);
 
   const toggle = useCallback(() => { const a = audio.current; if (!a) return; if (a.paused) void a.play().catch(() => {}); else a.pause(); }, []);
   const seek = (v: number) => { if (audio.current) audio.current.currentTime = v; };
@@ -1002,7 +1025,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
               <button onClick={() => step(-1)} className="p-3" aria-label="Previous"><PrevIcon size={34} /></button>
               <button onClick={toggle} className="w-16 h-16 rounded-full grid place-items-center text-[var(--acfg)] active:scale-95 transition" style={{ background: "rgb(var(--ac))" }} aria-label={playing ? "Pause" : "Play"}>{playing ? <PauseIcon size={34} /> : <PlayIcon size={34} />}</button>
               <button onClick={() => step(1)} className="p-3" aria-label="Next"><NextIcon size={34} /></button>
-              <button onClick={() => setRepeat(repeat === "off" ? "all" : repeat === "all" ? "one" : "off")} className={`p-3 ${repeat !== "off" ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label={`Repeat ${repeat}`}><RepeatIcon size={24} one={repeat === "one"} /></button>
+              <button onClick={() => setRepeat(repeat === "off" ? "all" : repeat === "all" ? "one" : "off")} className={`p-3 ${repeat !== "off" || again ? "text-[var(--fg)]" : "text-[var(--dim3)]"}`} aria-label={`Repeat ${repeat}`}><RepeatIcon size={24} one={repeat === "one" || again} /></button>
             </div>
 
             <div className="mt-2 flex items-center gap-3 shrink-0 [@media(pointer:coarse)]:hidden">

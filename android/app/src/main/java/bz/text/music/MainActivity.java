@@ -318,6 +318,10 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void sync(double posS, double durS, boolean shuffle, boolean liked) {
             try { PlaybackService.sync(getApplicationContext(), posS >= 0 ? Math.round(posS * 1000) : -1, durS > 0 ? Math.round(durS * 1000) : 0, shuffle, liked); } catch (Throwable ignored) { }
         }
+        /** Play mode (0 in order, 1 shuffle, 2 this song once more, 3 pause after this song) and whether the current song is on skip, for the lock-screen buttons. */
+        @JavascriptInterface public void mode(int m, boolean skip) {
+            try { PlaybackService.mode(m, skip); } catch (Throwable ignored) { }
+        }
         @JavascriptInterface public String clipboard() {
             ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
             if (cm == null || !cm.hasPrimaryClip()) return "";
@@ -325,7 +329,7 @@ public class MainActivity extends Activity {
             CharSequence t = it == null ? null : it.coerceToText(MainActivity.this);
             return t == null ? "" : t.toString();
         }
-        @JavascriptInterface public String version() { return "1.5.4"; }
+        @JavascriptInterface public String version() { return "1.5.5"; }
         /** The installed app's versionCode (the web player compares it with /downloads/app-version.json). */
         @JavascriptInterface public int versionCode() {
             try {

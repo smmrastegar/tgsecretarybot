@@ -36,7 +36,9 @@ public class PlaybackService extends Service {
     private static Bitmap art;
     /** Where the song is (ms, -1 unknown), how long it is, and the two buttons next to the transport: shuffle and like. The system moves the seek bar by itself between updates. */
     private static long posMs = -1, durMs = 0, syncAt = 0;
-    private static boolean shuffleOn, liked;
+    private static boolean shuffleOn, liked, skipOn;
+    /** The left button is one "how it plays" control: 0 in order, 1 shuffle, 2 this song once more, 3 pause after this song. */
+    private static int mode;
     private static PlaybackService live;
     private MediaSession session;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -88,6 +90,14 @@ public class PlaybackService extends Service {
         } catch (Throwable ignored) { }
     }
 
+    /** Which of the four play modes is on, and whether the song on screen is on skip. */
+    static void mode(int m, boolean skip) {
+        mode = m; skipOn = skip;
+    }
+
+    private static int modeIcon() { return mode == 3 ? R.drawable.ic_mode_stop : mode == 2 ? R.drawable.ic_mode_again : (mode == 1 || (mode == 0 && shuffleOn)) ? R.drawable.ic_shuffle_on : R.drawable.ic_shuffle_off; }
+    private static String modeLabel() { return mode == 3 ? "Pause after this song" : mode == 2 ? "Repeat this song once" : mode == 1 ? "Shuffle" : "Play in order"; }
+
     private static void fetchArt(final String url) {
         new Thread(() -> {
             try {
@@ -113,7 +123,7 @@ public class PlaybackService extends Service {
             @Override public void onSkipToNext() { MainActivity.command("next"); }
             @Override public void onSkipToPrevious() { MainActivity.command("prev"); }
             @Override public void onSeekTo(long pos) { MainActivity.command("seek:" + (pos / 1000.0)); }
-            @Override public void onCustomAction(String action, android.os.Bundle extras) { if ("shuffle".equals(action) || "like".equals(action)) MainActivity.command(action); }
+            @Override public void onCustomAction(String action, android.os.Bundle extras) { if ("mode".equals(action) || "like".equals(action) || "skip".equals(action)) MainActivity.command(action); }
         });
         session.setActive(true);
         try { startForeground(ID, build()); } catch (Throwable e) { stopSelf(); }
@@ -125,7 +135,8 @@ public class PlaybackService extends Service {
                 case "toggle": MainActivity.command("toggle"); break;
                 case "next": MainActivity.command("next"); break;
                 case "prev": MainActivity.command("prev"); break;
-                case "shuffle": MainActivity.command("shuffle"); break;
+                case "mode": MainActivity.command("mode"); break;
+                case "skip": MainActivity.command("skip"); break;
                 case "like": MainActivity.command("like"); break;
                 case "close": stopForeground(true); stopSelf(); break;
                 default: break;
@@ -148,14 +159,16 @@ public class PlaybackService extends Service {
         PlaybackState.Builder ps = new PlaybackState.Builder()
             .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS | PlaybackState.ACTION_SEEK_TO)
             .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED, posMs >= 0 ? posMs : PlaybackState.PLAYBACK_POSITION_UNKNOWN, playing ? 1f : 0f, posMs >= 0 ? syncAt : SystemClock.elapsedRealtime())
-            .addCustomAction(new PlaybackState.CustomAction.Builder("shuffle", "Shuffle", shuffleOn ? R.drawable.ic_shuffle_on : R.drawable.ic_shuffle_off).build())
-            .addCustomAction(new PlaybackState.CustomAction.Builder("like", "Like", liked ? R.drawable.ic_heart_on : R.drawable.ic_heart_off).build());
+            // the first two are the ones every phone shows (left and right of the transport); a skip button follows for the phones that have room
+            .addCustomAction(new PlaybackState.CustomAction.Builder("mode", modeLabel(), modeIcon()).build())
+            .addCustomAction(new PlaybackState.CustomAction.Builder("like", "Like", liked ? R.drawable.ic_heart_on : R.drawable.ic_heart_off).build())
+            .addCustomAction(new PlaybackState.CustomAction.Builder("skip", skipOn ? "Back in play" : "Skip this song from now on", skipOn ? R.drawable.ic_skip_on : R.drawable.ic_skip_off).build());
         session.setPlaybackState(ps.build());
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder n = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
         n.setSmallIcon(R.drawable.ic_stat_music).setContentTitle(title.isEmpty() ? "My Music" : title).setContentText(artist).setContentIntent(open)
             .setOngoing(playing).setShowWhen(false).setVisibility(Notification.VISIBILITY_PUBLIC)
-            .addAction(new Notification.Action.Builder(shuffleOn ? R.drawable.ic_shuffle_on : R.drawable.ic_shuffle_off, "Shuffle", act("shuffle", 4)).build())
+            .addAction(new Notification.Action.Builder(modeIcon(), modeLabel(), act("mode", 4)).build())
             .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_previous, "Previous", act("prev", 1)).build())
             .addAction(new Notification.Action.Builder(playing ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play, playing ? "Pause" : "Play", act("toggle", 2)).build())
             .addAction(new Notification.Action.Builder(android.R.drawable.ic_media_next, "Next", act("next", 3)).build())
