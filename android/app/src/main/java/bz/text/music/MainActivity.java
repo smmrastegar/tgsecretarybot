@@ -186,6 +186,21 @@ public class MainActivity extends Activity {
         });
         w.setWebChromeClient(new WebChromeClient() {
             @Override public void onPermissionRequest(PermissionRequest r) { r.deny(); }
+            /** <input type="file"> in the page (upload a song, a cover): without this the WebView silently ignores the tap. The system file picker needs no storage permission. */
+            @Override public boolean onShowFileChooser(WebView v, android.webkit.ValueCallback<Uri[]> cb, FileChooserParams p) {
+                try {
+                    if (filePicker != null) filePicker.onReceiveValue(null);
+                    filePicker = cb;
+                    Intent i = p.createIntent();
+                    startActivityForResult(i, FILE_PICK);
+                    return true;
+                } catch (Throwable e) {
+                    filePicker = null;
+                    try { Toast.makeText(MainActivity.this, "No file picker available", Toast.LENGTH_LONG).show(); } catch (Throwable ignored) { }
+                    cb.onReceiveValue(null);
+                    return true;
+                }
+            }
         });
         return w;
     }
@@ -261,6 +276,18 @@ public class MainActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle o) { super.onSaveInstanceState(o); web.saveState(o); }
 
     // Deliberately no webView.onPause(): the music must keep playing with the screen off.
+    private static final int FILE_PICK = 4711;
+    private android.webkit.ValueCallback<Uri[]> filePicker;
+
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        if (req == FILE_PICK) {
+            android.webkit.ValueCallback<Uri[]> cb = filePicker; filePicker = null;
+            if (cb != null) cb.onReceiveValue(res == RESULT_OK ? WebChromeClient.FileChooserParams.parseResult(res, data) : null);
+            return;
+        }
+        super.onActivityResult(req, res, data);
+    }
+
     @Override protected void onResume() { super.onResume(); web.onResume(); web.resumeTimers(); }
 
     @Override public void onBackPressed() {
@@ -298,7 +325,7 @@ public class MainActivity extends Activity {
             CharSequence t = it == null ? null : it.coerceToText(MainActivity.this);
             return t == null ? "" : t.toString();
         }
-        @JavascriptInterface public String version() { return "1.5.3"; }
+        @JavascriptInterface public String version() { return "1.5.4"; }
         /** The installed app's versionCode (the web player compares it with /downloads/app-version.json). */
         @JavascriptInterface public int versionCode() {
             try {
