@@ -46,6 +46,16 @@ async function tail(path: string, lines: number): Promise<string> {
   return `(unreadable: ${r.stderr.trim() || "no such file"})`;
 }
 
+async function serverTools(): Promise<Record<string, string>> {
+  const first = (r: { ok: boolean; stdout: string }) => (r.ok ? r.stdout.split("\n")[0]!.trim().slice(0, 80) : "no");
+  const [docker, cmake, gperf, gpp, git, mem, disk, arch] = await Promise.all([
+    run("docker", ["--version"], 5_000), run("cmake", ["--version"], 5_000), run("gperf", ["--version"], 5_000), run("g++", ["--version"], 5_000), run("git", ["--version"], 5_000),
+    run("sh", ["-c", "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{print int(t/1024)\" MB total, \"int(a/1024)\" MB free\"}' /proc/meminfo"], 5_000),
+    run("sh", ["-c", "df -h / | tail -1 | awk '{print $4\" free of \"$2}'"], 5_000), run("uname", ["-m"], 5_000),
+  ]);
+  return { docker: first(docker), cmake: first(cmake), gperf: first(gperf), gpp: first(gpp), git: first(git), memory: first(mem), disk: first(disk), arch: first(arch) };
+}
+
 export async function deployStatus(logLines = 40): Promise<{
   sha: string;
   branch: string;
@@ -59,6 +69,8 @@ export async function deployStatus(logLines = 40): Promise<{
   publicUrl: string;
   /** the Node.js version this process runs (compare with the latest security release) */
   node: string;
+  /** what the server has for building / running extra services (docker, cmake, gperf, memory, free disk) */
+  tools: Record<string, string>;
   log: string;
 }> {
   const n = Math.min(Math.max(1, Math.trunc(logLines) || 40), 200);
@@ -92,6 +104,7 @@ export async function deployStatus(logLines = 40): Promise<{
     caddyServesChatbot: caddyfile.includes("chatbot.bz"),
     publicUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
     node: process.version,
+    tools: await serverTools(),
     log: await tail(DEPLOY_LOG, n),
   };
 }
