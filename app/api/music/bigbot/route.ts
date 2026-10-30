@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import { NextResponse } from "next/server";
 import { requireUnscopedOr403 } from "@/lib/auth";
 import { getAllSettings, setSetting } from "@/lib/db";
-import { bigBotInfo, localServerUp } from "@/lib/big-bot";
+import { bigBotChannelState, bigBotInfo, localServerUp } from "@/lib/big-bot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +19,7 @@ export async function GET(): Promise<NextResponse> {
     apiId: s.tgBotApiId ?? "", // the id is not a secret (the hash is)
     localServer: up,
     bot: up ? await bigBotInfo() : null,
+    channelRole: up ? await bigBotChannelState() : null,
     setupStatus: status,
   }, { headers: { "Cache-Control": "no-store" } });
 }

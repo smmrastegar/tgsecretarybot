@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Section, { Pill } from "./Section";
 
 // Files over 20 MB: a second bot + Telegram's local Bot API server. The secrets are typed here once; they are stored on the server and never shown again.
-type St = { has: { apiId: boolean; apiHash: boolean; token: boolean }; apiId: string; localServer: boolean; bot: { username: string } | null; setupStatus: string };
+type St = { has: { apiId: boolean; apiHash: boolean; token: boolean }; apiId: string; localServer: boolean; bot: { username: string } | null; channelRole: string | null; setupStatus: string };
 const field = "w-full min-h-11 text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl px-3";
 const btn = "min-h-11 px-4 rounded-xl border border-[var(--color-border)] text-sm active:bg-[var(--color-surface-2)] disabled:opacity-50";
 
@@ -23,7 +23,8 @@ export default function BigBotCard() {
   useEffect(() => { void load(); const i = setInterval(() => void load(), 20000); return () => clearInterval(i); }, [load]);
   if (denied || !st) return null;
   const complete = st.has.apiId && st.has.apiHash && st.has.token;
-  const state = !complete ? "تنظیم نشده" : st.localServer ? (st.bot ? `فعال — @${st.bot.username}` : "سرور محلی بالاست؛ توکن بات را بررسی کن") : "در حال ساخت سرور محلی…";
+  const needAdmin = complete && st.localServer && !!st.bot && st.channelRole !== "administrator";
+  const state = !complete ? "تنظیم نشده" : st.localServer ? (st.bot ? (needAdmin ? `@${st.bot.username} هنوز ادمین کانال نیست` : `فعال — @${st.bot.username}`) : "سرور محلی بالاست؛ توکن بات را بررسی کن") : "در حال ساخت سرور محلی…";
   async function save() {
     setBusy(true); setNote(null);
     try {
@@ -34,7 +35,7 @@ export default function BigBotCard() {
     setBusy(false);
   }
   return (
-    <Section icon="📦" title="فایل‌های حجیم (بیشتر از ۲۰MB)" summary={state} badge={complete && st.localServer && st.bot ? <Pill tone="ok">فعال</Pill> : complete ? <Pill tone="warn">در حال راه‌اندازی</Pill> : undefined}>
+    <Section icon="📦" title="فایل‌های حجیم (بیشتر از ۲۰MB)" summary={state} badge={complete && st.localServer && st.bot ? (needAdmin ? <Pill tone="warn">ادمین کانال کن</Pill> : <Pill tone="ok">فعال</Pill>) : complete ? <Pill tone="warn">در حال راه‌اندازی</Pill> : undefined}>
       <div className="space-y-3 text-xs leading-6 text-[var(--color-text-dim)]">
         <p>ربات تلگرام فقط تا ۲۰MB فایل می‌گیرد. برای فایل‌های بزرگ‌تر یک بات دوم (ادمین کانال My Music) از طریق سرور محلی Bot API کار می‌کند. هر سه مقدار را یک بار اینجا بزن؛ ذخیره می‌شوند و دوباره نمایش داده نمی‌شوند.</p>
         <ol className="list-decimal pr-5 space-y-1">

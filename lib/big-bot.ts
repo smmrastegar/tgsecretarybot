@@ -35,6 +35,18 @@ export async function bigBotInfo(): Promise<{ username: string } | null> {
   try { const me = await local<{ username?: string }>(c.token, "getMe", {}, 8000); return { username: me.username ?? "?" }; } catch { return null; }
 }
 
+/** What the large-file bot is in the intake channel: "administrator" is what it needs ("none" = it cannot see the channel at all). */
+export async function bigBotChannelState(): Promise<string | null> {
+  const c = await bigConfig();
+  const chat = await intakeChatId();
+  if (!c || !chat) return null;
+  try {
+    const me = await local<{ id: number }>(c.token, "getMe", {}, 8000);
+    const m = await local<{ status: string }>(c.token, "getChatMember", { chat_id: chat, user_id: me.id }, 8000);
+    return m.status;
+  } catch (e) { return /not found|kicked|forbidden|chat not/i.test(String(e)) ? "none" : null; }
+}
+
 /** A bot that was used on Telegram's public servers must be logged out there once before a local server may take it over. */
 async function ensureLoggedOutFromCloud(token: string): Promise<boolean> {
   const s = await getAllSettings();
@@ -62,6 +74,13 @@ export async function bigBotStep(): Promise<number> {
     if (!(await localServerUp())) return 0; // not installed yet (or still building): nothing to do
     if (!(await ensureLoggedOutFromCloud(c.token))) return 0;
     const s = await getAllSettings();
+    // say (once per change) whether the bot can actually see the channel: without admin rights Telegram sends it nothing
+    const state = await bigBotChannelState();
+    if (state && state !== s.tgBigBotChannel) {
+      await setSetting("tgBigBotChannel", state);
+      if (state === "administrator") reportInfo("music", "large-file bot: it is an administrator of the intake channel — large files will be fetched");
+      else reportWarn("music", `large-file bot: its role in the intake channel is "${state}" — make it an administrator of the channel (the 20 MB+ files reach it only then)`);
+    }
     const offset = Number(s.tgBigBotOffset || 0);
     const updates = await local<Array<{ update_id: number; channel_post?: Post }>>(c.token, "getUpdates", { offset: offset || undefined, limit: 50, timeout: 0, allowed_updates: ["channel_post"] });
     let last = offset;
