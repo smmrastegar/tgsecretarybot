@@ -7,7 +7,7 @@ import { confirmDialog, promptDialog } from "@/components/ui/Dialogs";
 // Player links: any number of private links, each with its own playlists.
 // Creating a link never touches the others; a link can only be switched off
 // (and on again), never deleted.
-type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLike?: boolean; canEdit?: boolean; createdAt: string | null; lastUsedAt: string | null };
+type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLike?: boolean; canEdit?: boolean; allLibrary?: boolean; tgLabel?: string | null; createdAt: string | null; lastUsedAt: string | null };
 type Acc = { id: number; name: string };
 type Pl = { id: number; name: string; smart: boolean; count: number };
 
@@ -23,12 +23,13 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
   const [pick, setPick] = useState<Set<number>>(new Set());
   const [open, setOpen] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tgSignup, setTgSignup] = useState(true);
 
   const load = useCallback(async () => {
     const r = await fetch("/api/music/links", { cache: "no-store" });
     if (!r.ok) return;
-    const j = (await r.json()) as { links: Link[]; playlists: Pl[]; accounts?: Acc[] };
-    setLinks(j.links); setPls(j.playlists); setAccts(j.accounts ?? []);
+    const j = (await r.json()) as { links: Link[]; playlists: Pl[]; accounts?: Acc[]; tgSignup?: boolean };
+    setTgSignup(j.tgSignup !== false); setLinks(j.links); setPls(j.playlists); setAccts(j.accounts ?? []);
   }, []);
   useEffect(() => { void load(); }, [load, refreshKey]);
 
@@ -52,11 +53,18 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
         آدرس‌ها یک کد ۲۵۶ بیتی‌اند، قابل حدس نیستند و ایندکس نمی‌شوند. لینک را فقط برای خودت و دستگاه‌های خودت بفرست.
       </p>
 
+      <div className="mb-3 rounded-lg border border-[var(--color-border)] p-3 text-xs flex items-center gap-2 flex-wrap">
+        <span className="font-medium">✈️ ورود با تلگرام در برنامه</span>
+        <span className="text-[var(--color-text-dim)] leading-6 flex-1 min-w-[12rem]">هر کس با تلگرام وارد شود یک لینک مخصوص خودش می‌گیرد: کپی لینک اصلی (کل کتابخانه، ویرایش و لایک اسپاتیفای خاموش) و تو خبر می‌شوی تا کمش کنی. خودت با تلگرام مستقیم لینک اصلی را می‌گیری.</span>
+        <button onClick={() => void patch(0, { tgSignup: !tgSignup })} className={`px-3 py-1.5 rounded-md border ${tgSignup ? "border-emerald-500/40 text-emerald-200" : "border-rose-500/40 text-rose-200"}`}>{tgSignup ? "ثبت‌نام تازه‌ها: باز" : "ثبت‌نام تازه‌ها: بسته"}</button>
+      </div>
+
       <div className="space-y-2">
         {links.map((l) => (
           <div key={l.id} className={`rounded-lg border p-3 text-xs ${l.active ? "border-[var(--color-border)]" : "border-[var(--color-border)] opacity-60"}`}>
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-medium text-sm">{l.name}</span>
+              {l.tgLabel && <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-200" title="این لینک با ورود تلگرام ساخته شد">✈️ تلگرام</span>}
               <span className={`px-2 py-0.5 rounded-full ${l.active ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"}`}>{l.active ? "فعال" : "غیرفعال"}</span>
               <span className="text-[var(--color-text-dim)]">{l.playlistIds == null ? "همه‌ی آهنگ‌ها" : `${fa(l.playlistIds.length)} پلی‌لیست`}</span>
               {(l.accountIds?.length ?? 0) > 0 && <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-200">فقط آهنگ‌های: {l.accountIds!.map((id) => accts.find((a) => a.id === id)?.name ?? id).join(l.accountsMode === "all" ? " ∩ " : " ∪ ")}</span>}
@@ -70,7 +78,9 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
               {accts.length > 0 && <button onClick={() => setOpenAcc(openAcc === l.id ? null : l.id)} title="این لینک فقط آهنگ‌های حساب‌های انتخابی را می‌بیند (در خود سرور اعمال می‌شود)" className={`px-3 py-1.5 rounded-md border ${(l.accountIds?.length ?? 0) > 0 ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>👤 آهنگ‌های چه کسی؟ {openAcc === l.id ? "▴" : "▾"}</button>}
               <button onClick={() => void patch(l.id, { canLikeSpotify: !(l.canLike ?? false) })} title="اجازهٔ اضافه کردن آهنگ به Liked Songs اسپاتیفای یکی از حساب‌ها، با دکمهٔ ＋ در پلیر" className={`px-3 py-1.5 rounded-md border ${l.canLike ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>＋ لایک در اسپاتیفای: {l.canLike ? "روشن" : "خاموش"}</button>
               <button onClick={() => void patch(l.id, { canEdit: !(l.canEdit ?? false) })} title="اجازهٔ ویرایش نام، خواننده و کاور آهنگ‌ها و افزودن/آپلود آهنگ، داخل خود پلیر" className={`px-3 py-1.5 rounded-md border ${l.canEdit ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>✏️ ویرایش و آپلود {l.canEdit ? "روشن" : "خاموش"}</button>
-              {!l.legacy && <button onClick={() => setOpen(open === l.id ? null : l.id)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">پلی‌لیست‌ها {open === l.id ? "▴" : "▾"}</button>}
+              {!l.legacy && l.allLibrary && <button onClick={() => { void patch(l.id, { allLibrary: false }).then(() => setOpen(l.id)); }} title="به‌جای کل کتابخانه، فقط پلی‌لیست‌هایی که انتخاب می‌کنی" className="px-3 py-1.5 rounded-md border border-[var(--color-accent)]">کم کردن: فقط پلی‌لیست‌های انتخابی ←</button>}
+              {!l.legacy && !l.allLibrary && l.tgLabel && <button onClick={() => void patch(l.id, { allLibrary: true })} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">برگشت به کل کتابخانه</button>}
+              {!l.legacy && !l.allLibrary && <button onClick={() => setOpen(open === l.id ? null : l.id)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">پلی‌لیست‌ها {open === l.id ? "▴" : "▾"}</button>}
               {!l.legacy && <button onClick={() => void patch(l.id, { canCreate: !(l.canCreate ?? true) })} title="اجازه‌ی ساخت پلی‌لیست هوشمند از روی یک آهنگ، داخل پلیر" className={`px-3 py-1.5 rounded-md border ${(l.canCreate ?? true) ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>✨ ساخت پلی‌لیست در پلیر: {(l.canCreate ?? true) ? "روشن" : "خاموش"}</button>}
               {!l.legacy && <button onClick={async () => { const n = await promptDialog("نام لینک:", l.name); if (n?.trim()) void patch(l.id, { name: n.trim() }); }} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">نام</button>}
               <button onClick={async () => { if (l.active && !(await confirmDialog(`«${l.name}» غیرفعال شود؟ هر که این لینک را دارد دیگر وارد نمی‌شود (هر وقت خواستی دوباره فعالش کن).`, { danger: true, confirmLabel: "غیرفعال شود" }))) return; void patch(l.id, { active: !l.active }); }}

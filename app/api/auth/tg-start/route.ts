@@ -13,18 +13,19 @@ let botUsername: string | undefined;
 // POST: begin "Login with Telegram". Returns the deep link that opens the bot;
 // the browser then polls /api/auth/tg-poll. The poll must come from the same
 // browser (httpOnly cookie holding a secret), so a leaked nonce is useless.
-export async function POST(): Promise<NextResponse> {
+export async function POST(request: Request): Promise<NextResponse> {
+  const player = ((await request.json().catch(() => ({}))) as { player?: unknown }).player === true;
   try {
-    return await start();
+    return await start(player);
   } catch (err) {
     reportError("auth", "tg-start failed:", err);
     return NextResponse.json({ error: `Could not start Telegram login: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 });
   }
 }
 
-async function start(): Promise<NextResponse> {
+async function start(player: boolean): Promise<NextResponse> {
   const nonce = newToken(), secret = newToken();
-  if (!(await createLoginRequest(sha256(nonce), sha256(secret)).catch(() => false))) {
+  if (!(await createLoginRequest(sha256(nonce), sha256(secret), 300, player ? "player" : "dash").catch(() => false))) {
     return NextResponse.json({ error: "Too many login attempts right now. Try again in a minute." }, { status: 429 });
   }
   const bot = getBot();
@@ -33,7 +34,7 @@ async function start(): Promise<NextResponse> {
   (await cookies()).set(LOGIN_COOKIE, secret, { httpOnly: true, secure: true, sameSite: "lax", path: "/api/auth", maxAge: 600 });
   return NextResponse.json({
     nonce, expiresIn: 300, bot: username,
-    url: `https://t.me/${username}?start=login_${nonce}`,
-    app: `tg://resolve?domain=${username}&start=login_${nonce}`,
+    url: `https://t.me/${username}?start=${player ? "plogin" : "login"}_${nonce}`,
+    app: `tg://resolve?domain=${username}&start=${player ? "plogin" : "login"}_${nonce}`,
   });
 }

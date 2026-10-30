@@ -622,6 +622,17 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS channel_msg BIGINT`;
     },
   },
+  {
+    // Sign in to the player with Telegram: everyone who does gets a link of their own (a copy of the Main link, whole library), which the owner then trims.
+    id: "2026-10-30-004-telegram-player-links",
+    up: async (q) => {
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS all_library BOOLEAN NOT NULL DEFAULT FALSE`;
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS tg_user_id BIGINT`;
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS tg_label TEXT`;
+      await q`CREATE UNIQUE INDEX IF NOT EXISTS player_links_tg_user_idx ON player_links (tg_user_id) WHERE tg_user_id IS NOT NULL`;
+      await q`ALTER TABLE login_requests ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'dash'`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

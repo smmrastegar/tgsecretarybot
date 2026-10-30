@@ -298,6 +298,19 @@ function buildBot(): Bot {
       return;
     }
 
+    // Player app "Continue with Telegram": t.me/<bot>?start=plogin_<nonce>. Anyone may approve it; what they get is decided when the app collects it.
+    if (arg.startsWith("plogin_") && from) {
+      const { approveLoginRequest } = await import("../db");
+      const { sha256 } = await import("../tg-login");
+      const ok = await approveLoginRequest(sha256(arg.slice("plogin_".length)), {
+        userId: from.id, username: from.username ?? null, firstName: from.first_name ?? null, lastName: from.last_name ?? null, photoUrl: null,
+      }, "player").catch(() => false);
+      await ctx.reply(ok
+        ? "✅ تأیید شد. به برنامه‌ی My Music برگرد؛ خودکار باز می‌شه."
+        : "این درخواست منقضی شده یا قبلاً استفاده شده. توی برنامه دوباره «ادامه با تلگرام» رو بزن.");
+      return;
+    }
+
     // Deep-link board login: t.me/<bot>?start=board_<shareToken>. The
     // person taps Start, we record their access request (verified by
     // their Telegram identity here), ping the owner to approve, and hand

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 // "My Music" launcher: the page the installed app opens. First run: paste your
@@ -29,6 +29,11 @@ function Launcher() {
   const [ios, setIos] = useState(false);
   const [standalone, setStandalone] = useState(false);
   const [native, setNative] = useState(false);
+  // "Continue with Telegram": the bot confirms who you are; the owner lands on the Main link, everyone else on a link of their own.
+  const [tg, setTg] = useState<"idle" | "starting" | "waiting">("idle");
+  const [tgUrl, setTgUrl] = useState("");
+  const tgNonce = useRef<string | null>(null);
+  const tgDeadline = useRef(0);
 
   const go = useCallback(async (raw: string) => {
     const tok = tokenFrom(raw);
@@ -46,6 +51,39 @@ function Launcher() {
     if (nat && window.location.hostname !== "playlist.bz") { window.location.replace(`https://playlist.bz/player/${tok}`); return; }
     window.location.replace(`/player/${tok}`);
   }, []);
+
+  async function startTelegram() {
+    setErr(""); setTg("starting");
+    const tab = (window as unknown as { AndroidMusic?: unknown }).AndroidMusic ? null : window.open("", "_blank"); // keep the click's permission for a browser tab
+    try {
+      const r = await fetch("/api/auth/tg-start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ player: true }) });
+      const d = (await r.json()) as { nonce?: string; url?: string; error?: string; expiresIn?: number };
+      if (!r.ok || !d.nonce || !d.url) throw new Error(d.error ?? `Error ${r.status}`);
+      tgNonce.current = d.nonce; setTgUrl(d.url); tgDeadline.current = Date.now() + (d.expiresIn ?? 300) * 1000;
+      if (tab) tab.location.href = d.url; else window.location.href = d.url;
+      setTg("waiting");
+    } catch (e) { tab?.close(); setErr(e instanceof Error ? e.message : String(e)); setTg("idle"); }
+  }
+  useEffect(() => {
+    if (tg !== "waiting") return;
+    let stop = false;
+    const tick = async () => {
+      if (stop || !tgNonce.current) return;
+      if (Date.now() > tgDeadline.current) { stop = true; setErr("Time ran out — try again."); setTg("idle"); return; }
+      try {
+        const r = await fetch(`/api/auth/tg-poll?nonce=${encodeURIComponent(tgNonce.current)}`, { cache: "no-store" });
+        const d = (await r.json()) as { status?: string; token?: string };
+        if (d.status === "ok" && d.token) { stop = true; void go(d.token); return; }
+        if (d.status === "off") { stop = true; setErr("This account's link has been switched off."); setTg("idle"); return; }
+        if (d.status === "closed") { stop = true; setErr("New sign-ups are closed right now. Ask the owner for a link."); setTg("idle"); return; }
+        if (d.status === "expired" || d.status === "unknown") { stop = true; setErr("That request expired — try again."); setTg("idle"); }
+      } catch { /* offline for a moment */ }
+    };
+    const i = setInterval(() => void tick(), 1500);
+    const vis = () => { if (document.visibilityState === "visible") void tick(); };
+    document.addEventListener("visibilitychange", vis);
+    return () => { stop = true; clearInterval(i); document.removeEventListener("visibilitychange", vis); };
+  }, [tg, go]);
 
   useEffect(() => {
     setStandalone(window.matchMedia("(display-mode: standalone)").matches || (navigator as unknown as { standalone?: boolean }).standalone === true);
@@ -93,6 +131,23 @@ function Launcher() {
             <button onClick={() => void go(value)} disabled={!value.trim()} style={{ marginTop: 14, width: "100%", height: 54, borderRadius: 999, border: 0, background: S.fg, color: S.bg, fontSize: 17, fontWeight: 700, opacity: value.trim() ? 1 : 0.4 }}>Start listening</button>
             <button onClick={() => void paste()} style={{ marginTop: 10, width: "100%", height: 50, borderRadius: 999, border: `1px solid ${S.bd}`, background: "transparent", color: S.fg, fontSize: 16, fontWeight: 600 }}>Paste from clipboard</button>
             <p style={{ color: S.dim, fontSize: 13, textAlign: "center", marginTop: 18, lineHeight: 1.6 }}>The link is stored only on this phone. You can sign out any time (Settings inside the player) and use a different link.</p>
+          </div>
+        )}
+        {state === "ask" && (
+          <div style={{ marginTop: 22 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, color: S.dim, fontSize: 13, margin: "0 0 14px" }}><span style={{ flex: 1, height: 1, background: S.bd }} />or<span style={{ flex: 1, height: 1, background: S.bd }} /></div>
+            {tg === "waiting" ? (
+              <div style={{ borderRadius: 16, background: S.card, border: `1px solid ${S.bd}`, padding: 16, fontSize: 14, lineHeight: 1.6 }}>
+                <b>Waiting for Telegram…</b>
+                <div style={{ color: S.dim, marginTop: 4 }}>Tap <b>Start</b> in the bot chat, then come back here. This opens by itself.</div>
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <a href={tgUrl} target="_blank" rel="noreferrer" style={{ flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 999, background: "#2AABEE", color: "#fff", fontWeight: 700, textDecoration: "none" }}>Open Telegram again</a>
+                  <button onClick={() => { setTg("idle"); tgNonce.current = null; }} style={{ padding: "11px 18px", borderRadius: 999, border: `1px solid ${S.bd}`, background: "transparent", color: S.fg, fontWeight: 600 }}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => void startTelegram()} disabled={tg === "starting"} style={{ width: "100%", height: 54, borderRadius: 999, border: 0, background: "#2AABEE", color: "#fff", fontSize: 17, fontWeight: 700, opacity: tg === "starting" ? 0.6 : 1 }}>{tg === "starting" ? "Opening Telegram…" : "Continue with Telegram"}</button>
+            )}
           </div>
         )}
         {state === "check" && <p style={{ textAlign: "center", color: S.dim }}>Checking link…</p>}

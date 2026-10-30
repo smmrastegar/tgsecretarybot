@@ -60,7 +60,7 @@ async function accessForToken(presented: string | null | undefined): Promise<Mus
   const link = await findActiveLinkByToken(p).catch(() => null);
   if (!link) return null;
   void touchPlayerLink(link.id).catch(() => {});
-  return { kind: "link", linkId: link.id, name: link.name, playlistIds: link.playlistIds, canCreate: link.canCreate, canLike: link.canLikeSpotify, canEdit: link.canEdit, scope: link.accountIds.length ? { ids: link.accountIds, mode: link.accountsMode } : null };
+  return { kind: "link", linkId: link.id, name: link.name, playlistIds: link.allLibrary ? null : link.playlistIds, canCreate: link.canCreate, canLike: link.canLikeSpotify, canEdit: link.canEdit, scope: link.accountIds.length ? { ids: link.accountIds, mode: link.accountsMode } : null };
 }
 
 export async function isValidPlayerToken(presented: string | null | undefined): Promise<boolean> {
