@@ -159,10 +159,9 @@ public class PlaybackService extends Service {
         PlaybackState.Builder ps = new PlaybackState.Builder()
             .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS | PlaybackState.ACTION_SEEK_TO)
             .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED, posMs >= 0 ? posMs : PlaybackState.PLAYBACK_POSITION_UNKNOWN, playing ? 1f : 0f, posMs >= 0 ? syncAt : SystemClock.elapsedRealtime())
-            // the first two are the ones every phone shows (left and right of the transport); a skip button follows for the phones that have room
+            // exactly two custom buttons, as before: left of the transport (play mode) and right of it (like). A third one made some lock screens rearrange the row.
             .addCustomAction(new PlaybackState.CustomAction.Builder("mode", modeLabel(), modeIcon()).build())
-            .addCustomAction(new PlaybackState.CustomAction.Builder("like", "Like", liked ? R.drawable.ic_heart_on : R.drawable.ic_heart_off).build())
-            .addCustomAction(new PlaybackState.CustomAction.Builder("skip", skipOn ? "Back in play" : "Skip this song from now on", skipOn ? R.drawable.ic_skip_on : R.drawable.ic_skip_off).build());
+            .addCustomAction(new PlaybackState.CustomAction.Builder("like", "Like", liked ? R.drawable.ic_heart_on : R.drawable.ic_heart_off).build());
         session.setPlaybackState(ps.build());
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder n = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);

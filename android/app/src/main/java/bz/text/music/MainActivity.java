@@ -329,7 +329,7 @@ public class MainActivity extends Activity {
             CharSequence t = it == null ? null : it.coerceToText(MainActivity.this);
             return t == null ? "" : t.toString();
         }
-        @JavascriptInterface public String version() { return "1.5.5"; }
+        @JavascriptInterface public String version() { return "1.5.6"; }
         /** The installed app's versionCode (the web player compares it with /downloads/app-version.json). */
         @JavascriptInterface public int versionCode() {
             try {
