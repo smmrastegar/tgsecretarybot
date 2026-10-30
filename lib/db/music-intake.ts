@@ -5,7 +5,7 @@ function q() {
   return sql() as unknown as { query: (t: string, p?: unknown[]) => Promise<unknown[]> };
 }
 
-export type IntakeStatus = "new" | "analyzing" | "pending" | "confirmed" | "rejected" | "failed";
+export type IntakeStatus = "new" | "analyzing" | "pending" | "confirmed" | "rejected" | "failed" | "upload";
 export type IntakeRow = {
   id: number; chatId: number; messageId: number; fileId: string; fileName: string | null; fileSize: number | null; durationS: number | null;
   tgTitle: string | null; tgPerformer: string | null; status: IntakeStatus; candidates: unknown[]; idx: number; coverIdx: number;
@@ -66,4 +66,30 @@ export async function updateIntake(id: number, patch: Partial<{ status: IntakeSt
   if (patch.error !== undefined) set("error", patch.error);
   await ensureSchema();
   await q().query(`UPDATE music_intake SET ${sets.join(", ")} WHERE id = $1`, params);
+}
+
+/** Songs the bot could not download (over Telegram's 20 MB limit): they wait here until the file is uploaded by hand. */
+export async function listUploadWaiting(): Promise<IntakeRow[]> {
+  await ensureSchema();
+  return ((await q().query(`SELECT * FROM music_intake WHERE status = 'upload' ORDER BY id`)) as Row[]).map(map);
+}
+
+/** Titles / artists of waiting items can be corrected before the file arrives. */
+export async function setWaitingNames(id: number, title: string, artist: string): Promise<void> {
+  await ensureSchema();
+  await q().query(`UPDATE music_intake SET tags = $2::jsonb, updated_at = NOW() WHERE id = $1 AND status = 'upload'`, [id, JSON.stringify({ title, artist, upload: true })]);
+}
+
+export async function saveIntakePhoto(chatId: number, messageId: number, fileId: string): Promise<void> {
+  await ensureSchema();
+  await q().query(`INSERT INTO music_intake_photos (chat_id, message_id, file_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [chatId, messageId, fileId]);
+}
+
+/** The photo posted in the channel shortly BEFORE this intake message (an album cover sent ahead of its songs). */
+export async function photoBeforeIntake(intakeId: number, withinMinutes = 30): Promise<{ messageId: number; fileId: string } | null> {
+  await ensureSchema();
+  const r = (await q().query(
+    `SELECT p.message_id, p.file_id FROM music_intake_photos p JOIN music_intake i ON i.id = $1 AND p.chat_id = i.chat_id AND p.message_id < i.message_id
+      WHERE p.created_at > i.created_at - make_interval(mins => $2) ORDER BY p.message_id DESC LIMIT 1`, [intakeId, withinMinutes])) as Row[];
+  return r[0] ? { messageId: num(r[0], "message_id"), fileId: str(r[0], "file_id") } : null;
 }

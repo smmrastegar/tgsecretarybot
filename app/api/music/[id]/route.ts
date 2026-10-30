@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUnscopedOr403 } from "@/lib/auth";
-import { deleteMusicTrack, getAllSettings, getMusicTrack, setSetting, updateMusicTrack } from "@/lib/db";
+import { deleteMusicTrack, getAllSettings, getMusicTrack, setSetting, setTrackMeta, updateMusicTrack } from "@/lib/db";
+import { canAccessTrack, editAccess, notFound } from "@/lib/music-token";
 import { kickMusicQueue, removeMusicFiles } from "@/lib/music";
 
 export const runtime = "nodejs";
@@ -37,5 +38,23 @@ export async function POST(request: Request, ctx: Ctx): Promise<NextResponse> {
   }
   await updateMusicTrack(id, { status: "queued", error: null });
   await kickMusicQueue().catch(() => {});
+  return NextResponse.json({ ok: true });
+}
+
+// PATCH { title, artist, album? }: fix a song's names. The dashboard, or a player link that may edit (the Main link by default).
+export async function PATCH(request: Request, ctx: Ctx): Promise<Response> {
+  const access = await editAccess(request);
+  if (!access) return notFound();
+  const id = Number((await ctx.params).id);
+  const t = Number.isFinite(id) ? await getMusicTrack(id) : null;
+  if (!t || !(await canAccessTrack(access, id))) return NextResponse.json({ error: "no such song" }, { status: 404 });
+  const b = (await request.json().catch(() => ({}))) as { title?: string; artist?: string; album?: string };
+  const title = typeof b.title === "string" ? b.title.trim().slice(0, 200) : undefined;
+  const artist = typeof b.artist === "string" ? b.artist.trim().slice(0, 200) : undefined;
+  const album = typeof b.album === "string" ? b.album.trim().slice(0, 200) : undefined;
+  if (title === "" || artist === "") return NextResponse.json({ error: "title and artist cannot be empty" }, { status: 400 });
+  if (t.source === "soundcloud" && (title !== undefined || artist !== undefined)) await setTrackMeta(id, { title, artist, state: "manual", suggestions: null }); // the automatic name cleanup leaves it alone from now on
+  else await updateMusicTrack(id, { title, artist });
+  if (album !== undefined) await updateMusicTrack(id, { album: album || null });
   return NextResponse.json({ ok: true });
 }

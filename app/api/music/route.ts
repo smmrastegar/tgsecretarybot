@@ -30,6 +30,7 @@ export async function GET(request: Request): Promise<Response> {
       const keep = (id: number) => !scope || scope.ids.includes(id);
       return NextResponse.json({
         canLike: canSpotifyLike(access),
+        canEdit: access.kind === "link" ? access.canEdit : !access.scope,
         tracks: tracks.map((t) => ({ ...t, sources: (src.get(t.id) ?? []).filter(keep) })), playlists,
         accounts: [...accts.filter((a) => keep(a.id)).map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })), ...scAccts.filter((a) => keep(a.id)), ...(keep(0) && tracks.some((t) => !(src.get(t.id)?.length)) ? [DIRECT_ACCOUNT] : [])],
       });

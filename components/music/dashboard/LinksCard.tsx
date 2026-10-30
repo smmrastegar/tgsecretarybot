@@ -7,7 +7,7 @@ import { confirmDialog, promptDialog } from "@/components/ui/Dialogs";
 // Player links: any number of private links, each with its own playlists.
 // Creating a link never touches the others; a link can only be switched off
 // (and on again), never deleted.
-type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLike?: boolean; createdAt: string | null; lastUsedAt: string | null };
+type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLike?: boolean; canEdit?: boolean; createdAt: string | null; lastUsedAt: string | null };
 type Acc = { id: number; name: string };
 type Pl = { id: number; name: string; smart: boolean; count: number };
 
@@ -69,6 +69,7 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
               <button onClick={() => window.open(l.url, "_blank", "noopener,noreferrer")} disabled={!l.active} className="px-3 py-1.5 rounded-md border border-[var(--color-border)] disabled:opacity-40">باز کردن</button>
               {accts.length > 0 && <button onClick={() => setOpenAcc(openAcc === l.id ? null : l.id)} title="این لینک فقط آهنگ‌های حساب‌های انتخابی را می‌بیند (در خود سرور اعمال می‌شود)" className={`px-3 py-1.5 rounded-md border ${(l.accountIds?.length ?? 0) > 0 ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>👤 آهنگ‌های چه کسی؟ {openAcc === l.id ? "▴" : "▾"}</button>}
               <button onClick={() => void patch(l.id, { canLikeSpotify: !(l.canLike ?? false) })} title="اجازهٔ اضافه کردن آهنگ به Liked Songs اسپاتیفای یکی از حساب‌ها، با دکمهٔ ＋ در پلیر" className={`px-3 py-1.5 rounded-md border ${l.canLike ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>＋ لایک در اسپاتیفای: {l.canLike ? "روشن" : "خاموش"}</button>
+              <button onClick={() => void patch(l.id, { canEdit: !(l.canEdit ?? false) })} title="اجازهٔ ویرایش نام، خواننده و کاور آهنگ‌ها و افزودن/آپلود آهنگ، داخل خود پلیر" className={`px-3 py-1.5 rounded-md border ${l.canEdit ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>✏️ ویرایش و آپلود {l.canEdit ? "روشن" : "خاموش"}</button>
               {!l.legacy && <button onClick={() => setOpen(open === l.id ? null : l.id)} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">پلی‌لیست‌ها {open === l.id ? "▴" : "▾"}</button>}
               {!l.legacy && <button onClick={() => void patch(l.id, { canCreate: !(l.canCreate ?? true) })} title="اجازه‌ی ساخت پلی‌لیست هوشمند از روی یک آهنگ، داخل پلیر" className={`px-3 py-1.5 rounded-md border ${(l.canCreate ?? true) ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>✨ ساخت پلی‌لیست در پلیر: {(l.canCreate ?? true) ? "روشن" : "خاموش"}</button>}
               {!l.legacy && <button onClick={async () => { const n = await promptDialog("نام لینک:", l.name); if (n?.trim()) void patch(l.id, { name: n.trim() }); }} className="px-3 py-1.5 rounded-md border border-[var(--color-border)]">نام</button>}

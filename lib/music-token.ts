@@ -32,10 +32,12 @@ export async function setLegacyActive(on: boolean): Promise<void> { await setSet
 export type AccountScope = { ids: number[]; mode: "any" | "all" };
 export type MusicAccess =
   | { kind: "session"; scope: AccountScope | null } // the dashboard login (scope null) or a numeric password limited to some accounts
-  | { kind: "link"; linkId: number; name: string; playlistIds: number[] | null; canCreate: boolean; canLike: boolean; scope: AccountScope | null }; // playlistIds null = the whole library (Main link)
+  | { kind: "link"; linkId: number; name: string; playlistIds: number[] | null; canCreate: boolean; canLike: boolean; canEdit: boolean; scope: AccountScope | null }; // playlistIds null = the whole library (Main link)
 
 const MAIN_SCOPE = "musicMainScope";
 const MAIN_LIKE = "musicMainCanLike";
+const MAIN_EDIT = "musicMainCanEdit"; // the Main link may edit names / covers and add songs unless switched off
+export async function setMainCanEdit(on: boolean): Promise<void> { await setSetting(MAIN_EDIT, on ? "1" : "0"); }
 export async function setMainCanLike(on: boolean): Promise<void> { await setSetting(MAIN_LIKE, on ? "1" : "0"); }
 export function parseScope(raw: unknown): AccountScope | null {
   try {
@@ -53,12 +55,12 @@ async function accessForToken(presented: string | null | undefined): Promise<Mus
   const s = await getAllSettings();
   const legacy = (s[KEY] ?? "").trim();
   if (legacy.length === p.length && (s[LEGACY_ACTIVE] ?? "1") !== "0") {
-    try { if (timingSafeEqual(Buffer.from(p), Buffer.from(legacy))) return { kind: "link", linkId: 0, name: "Main link", playlistIds: null, canCreate: true, canLike: (s[MAIN_LIKE] ?? "1") !== "0", scope: parseScope(s[MAIN_SCOPE]) }; } catch { /* fall through */ }
+    try { if (timingSafeEqual(Buffer.from(p), Buffer.from(legacy))) return { kind: "link", linkId: 0, name: "Main link", playlistIds: null, canCreate: true, canLike: (s[MAIN_LIKE] ?? "1") !== "0", canEdit: (s[MAIN_EDIT] ?? "1") !== "0", scope: parseScope(s[MAIN_SCOPE]) }; } catch { /* fall through */ }
   }
   const link = await findActiveLinkByToken(p).catch(() => null);
   if (!link) return null;
   void touchPlayerLink(link.id).catch(() => {});
-  return { kind: "link", linkId: link.id, name: link.name, playlistIds: link.playlistIds, canCreate: link.canCreate, canLike: link.canLikeSpotify, scope: link.accountIds.length ? { ids: link.accountIds, mode: link.accountsMode } : null };
+  return { kind: "link", linkId: link.id, name: link.name, playlistIds: link.playlistIds, canCreate: link.canCreate, canLike: link.canLikeSpotify, canEdit: link.canEdit, scope: link.accountIds.length ? { ids: link.accountIds, mode: link.accountsMode } : null };
 }
 
 export async function isValidPlayerToken(presented: string | null | undefined): Promise<boolean> {
@@ -75,6 +77,14 @@ export async function musicAccess(request: Request): Promise<MusicAccess | null>
   const s = await getCurrentSession().catch(() => null);
   if (s) { const st = await pinState(s).catch(() => ({ ok: false, scope: null })); return st.ok ? { kind: "session", scope: st.scope } : null; }
   return null;
+}
+
+/** Editing names / covers and adding or uploading songs: the unrestricted dashboard session, or a player link that was given the right (the Main link has it by default). */
+export async function editAccess(request: Request): Promise<MusicAccess | null> {
+  const a = await musicAccess(request);
+  if (!a) return null;
+  if (a.kind === "session") return a.scope ? null : a;
+  return a.canEdit ? a : null;
 }
 
 /** Backwards-compatible boolean. */

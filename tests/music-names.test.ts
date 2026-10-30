@@ -41,3 +41,15 @@ describe("parseTitleArtist", () => {
     expect(parseTitleArtist("Only a title")).toEqual({ title: "Only a title", artist: null });
   });
 });
+
+describe("cleanTagText", () => {
+  it("drops track numbers and download-site names", async () => {
+    const { cleanTagText } = await import("@/lib/music-names");
+    expect(cleanTagText("01 - Nemikaham")).toBe("Nemikaham");
+    expect(cleanTagText("Shadmehr Aghili - GahMusic.com")).toBe("Shadmehr Aghili");
+    expect(cleanTagText("Tars www.ahang.ir")).toBe("Tars");
+    expect(cleanTagText("Makhoola")).toBe("Makhoola");
+    expect(cleanTagText("  ")).toBeNull();
+    expect(cleanTagText(null)).toBeNull();
+  });
+});

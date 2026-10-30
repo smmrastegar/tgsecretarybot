@@ -36,10 +36,12 @@ export type MusicTrack = {
   uploader: string | null;
   /** SoundCloud only: the uploader's account name, always (for "everything uploaded by …") */
   uploadedBy: string | null;
+  /** version of the cover picture (set when it is replaced by hand) — added to cover URLs so caches never show the old one */
+  coverV: number | null;
 };
 
 const COLS = `id, spotify_id, spotify_url, title, artist, album, release_date, duration_s,
-  (cover_path IS NOT NULL) AS has_cover, status, error, size_bytes, created_at::text AS created_at,
+  (cover_path IS NOT NULL) AS has_cover, substring(cover_path from '\.cover\.([0-9]+)\.jpg$')::bigint AS cover_v, status, error, size_bytes, created_at::text AS created_at,
   rating, play_count, skip_count, last_played_at::text AS last_played_at, mime, ready_at::text AS ready_at, spotify_duration_s, source, soundcloud_id, uploader,
   (SELECT COALESCE(SUM(seconds), 0)::int FROM music_events e WHERE e.track_id = music_tracks.id) AS listen_s`;
 
@@ -83,6 +85,7 @@ function map(r: Row): MusicTrack {
     soundcloudId: strOrNull(r, "soundcloud_id"),
     uploader: secondArtist(strOrNull(r, "uploader"), strOrNull(r, "artist")),
     uploadedBy: str(r, "source") === "soundcloud" ? strOrNull(r, "uploader") : null,
+    coverV: numOrNull(r, "cover_v"),
   };
 }
 

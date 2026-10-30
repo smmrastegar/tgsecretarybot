@@ -39,6 +39,9 @@ export type Api = {
   details: (t: Track) => void;
   download: (ids: number[], label: string) => void;
   offline: Set<number>;
+  /** the Main link / dashboard may add songs and edit names */
+  canEdit: boolean;
+  addSongs: () => void;
   /** songs on "skip mode": kept in lists, passed over by playback */
   skipped: Set<number>;
   toggleSkip: (id: number) => void;

@@ -41,11 +41,11 @@ export const Item = ({ icon, label, onClick, active }: { icon: ReactNode; label:
   </button>
 );
 
-export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, onRate, onArtist, onUploader, onSkip, skipped, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
+export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, onRate, onArtist, onUploader, onSkip, skipped, onEdit, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
   onShare: () => void; onReport: () => void; onRadio: () => void; onSmart?: () => void; onSpotify?: () => void; onSelect?: () => void;
   offline: boolean; onOffline: () => void;
   t: Track; tq: string; onClose: () => void; onNext: () => void; onAdd: () => void; onRate: (r: number) => void;
-  onArtist: () => void; onUploader?: () => void; onSkip: () => void; skipped: boolean; onAlbum: () => void; onDetails: () => void;
+  onArtist: () => void; onUploader?: () => void; onSkip: () => void; skipped: boolean; onEdit?: () => void; onAlbum: () => void; onDetails: () => void;
 }) {
   const go = (f: () => void) => () => { f(); onClose(); };
   return (
@@ -66,6 +66,7 @@ export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, 
       <Item icon={<ChevronRightIcon size={22} />} label="Go to artist" onClick={go(onArtist)} />
       {onUploader && t.uploadedBy && <Item icon={<ChevronRightIcon size={22} />} label={`More from uploader ${t.uploadedBy}`} onClick={go(onUploader)} />}
       {t.album && <Item icon={<ChevronRightIcon size={22} />} label="Go to album" onClick={go(onAlbum)} />}
+      {onEdit && <Item icon={<InfoIcon size={22} />} label="Edit name, artist & cover…" onClick={go(onEdit)} />}
       <Item icon={<ShareIcon size={22} />} label="Share" onClick={go(onShare)} />
       <Item icon={<DownloadIcon size={22} />} label={offline ? "Remove offline copy" : "Save for offline"} onClick={go(onOffline)} />
       <Item icon={<FlagIcon size={22} />} label="Report a problem" onClick={go(onReport)} />

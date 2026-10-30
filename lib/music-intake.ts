@@ -10,13 +10,13 @@ import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "./config";
 import {
-  claimNextIntake, createManualTrack, getAllSettings, getIntake, insertIntake, isAllowedUser, listBusinessConnections,
+  claimNextIntake, createManualTrack, getAllSettings, getIntake, insertIntake, isAllowedUser, listBusinessConnections, photoBeforeIntake, saveIntakePhoto,
   setSetting, trackBySpotifyId, updateIntake, updateMusicTrack, type IntakeRow,
 } from "./db";
 import { MUSIC_DIR } from "./music";
 import { ffmpegPath } from "./music-analysis";
 import { lookupDeezer, lookupItunes, lookupLibrary, lookupSpotify, recognizeAudd, type Candidate } from "./music-lookup";
-import { guessFromFileName, nameScore, nameWords, parseTitleArtist } from "./music-names";
+import { cleanTagText, guessFromFileName, nameScore, nameWords, parseTitleArtist } from "./music-names";
 import { fileScore, PREVIEW_BAD, PREVIEW_OK, previewScore } from "./music-preview";
 import { pageMeta } from "./music-spotsaver";
 import { reportWarn } from "./report";
@@ -47,6 +47,9 @@ export async function maybeEnqueueIntake(msg: Message): Promise<boolean> {
     if (vid) { const { background } = await import("./background"); background("musicIntake", intakeStep(1)); }
     return true;
   }
+  // A picture posted in the channel (an album cover sent ahead of its songs) is remembered: the songs that follow can use it as their cover.
+  const pic = msg.photo?.length ? msg.photo[msg.photo.length - 1]! : d && (d.mime_type ?? "").startsWith("image/") ? d : null;
+  if (pic) { await saveIntakePhoto(msg.chat.id, msg.message_id, pic.file_id).catch(() => {}); return true; }
   const doc = d && ((d.mime_type ?? "").startsWith("audio/") || AUDIO_EXT.test(d.file_name ?? "")) ? d : null;
   const file = a ?? doc;
   if (!file) return false;
@@ -60,9 +63,9 @@ export async function maybeEnqueueIntake(msg: Message): Promise<boolean> {
 
 // ---------------------------------------------------------------- analysis
 
-type Tags = { title: string | null; artist: string | null; album: string | null; date: string | null; durationS: number | null };
+export type Tags = { title: string | null; artist: string | null; album: string | null; date: string | null; durationS: number | null };
 
-function probe(file: string): Promise<Tags> {
+export function probe(file: string): Promise<Tags> {
   return new Promise(async (resolve) => {
     const child = spawn(await ffmpegPath(), ["-hide_banner", "-i", file, "-f", "ffmetadata", "-"], { stdio: ["ignore", "pipe", "pipe"] });
     let out = "", err = "";
@@ -158,6 +161,31 @@ async function findCandidates(row: IntakeRow, file: string, known: Known, querie
     .filter((c) => !(c.audio != null && c.audio < PREVIEW_BAD && c.name < 0.6)).slice(0, 8);
 }
 
+/** The picture the owner posted just before this file (an album cover): saved next to the intake files and offered as a cover — first for songs no catalogue vouches for. */
+async function channelCoverFile(row: IntakeRow): Promise<string | null> {
+  const ph = await photoBeforeIntake(row.id).catch(() => null);
+  if (!ph) return null;
+  const out = path.join(INTAKE_DIR, `photo-${ph.messageId}.jpg`);
+  if (await exists(out)) return out;
+  try {
+    await fs.mkdir(INTAKE_DIR, { recursive: true });
+    const f = await downloadTelegramFile(config.telegramBotToken, ph.fileId);
+    await fs.writeFile(out, f.data);
+    return out;
+  } catch { return null; }
+}
+
+async function addChannelCover(row: IntakeRow, cands: Candidate[], fallback: Candidate | null): Promise<void> {
+  const file = await channelCoverFile(row);
+  if (!file) return;
+  const ref = `file:${file}`;
+  for (const c of [...cands, ...(fallback ? [fallback] : [])]) {
+    const vouched = c.source === "audd" || (c.audio ?? -1) >= PREVIEW_OK || (c.spotifyId != null && c.name >= 0.85);
+    if (c.covers.includes(ref)) continue;
+    if (vouched) c.covers.push(ref); else c.covers.unshift(ref);
+  }
+}
+
 /** The "I only know what the file says" fallback, always the last choice. */
 function tagsCandidate(known: Known, tags: Tags, hasEmbedded: boolean, durationS: number | null): Candidate | null {
   const title = known.title ?? known.text;
@@ -167,8 +195,8 @@ function tagsCandidate(known: Known, tags: Tags, hasEmbedded: boolean, durationS
 
 function knownFrom(row: IntakeRow, tags: Tags): Known {
   const g = guessFromFileName(row.fileName ?? "");
-  const title = tags.title ?? row.tgTitle ?? g.title;
-  const artist = tags.artist ?? row.tgPerformer ?? g.artist;
+  const title = cleanTagText(tags.title ?? row.tgTitle) ?? g.title;
+  const artist = cleanTagText(tags.artist ?? row.tgPerformer) ?? g.artist;
   return { title, artist, album: tags.album, text: [artist, title].filter(Boolean).join(" ") || (row.fileName ?? "").replace(/\.[a-z0-9]+$/i, "") };
 }
 
@@ -200,7 +228,13 @@ async function analyzeVoice(row: IntakeRow, file: string): Promise<void> {
 }
 
 async function analyze(row: IntakeRow): Promise<void> {
-  if ((row.fileSize ?? 0) > MAX_BYTES) { await updateIntake(row.id, { status: "failed", error: `فایل ${Math.round((row.fileSize ?? 0) / 1048576)}MB است؛ ربات فقط تا ۲۰MB می‌تواند فایل را از تلگرام بگیرد. نسخهٔ کم‌حجم‌تر (MP3) بفرست.` }); return; }
+  if ((row.fileSize ?? 0) > MAX_BYTES) {
+    // Telegram lets a bot download only 20 MB: the song is not lost — it waits (named from its tags / file name, editable) for the file to be uploaded by hand.
+    const k = knownFrom(row, { title: null, artist: null, album: null, date: null, durationS: null });
+    await updateIntake(row.id, { status: "upload", error: null, tags: { title: k.title ?? k.text ?? null, artist: k.artist ?? null, upload: true } });
+    await sendCard(row.id);
+    return;
+  }
   await fs.mkdir(INTAKE_DIR, { recursive: true });
   const f = await downloadTelegramFile(config.telegramBotToken, row.fileId);
   const ext = (/\.([a-z0-9]{2,5})$/i.exec(row.fileName ?? f.name)?.[1] ?? "mp3").toLowerCase();
@@ -215,6 +249,7 @@ async function analyze(row: IntakeRow): Promise<void> {
   const cands = await findCandidates(row, file, known, queriesFor(row, known), { spotify: true }, trace);
   const fallback = tagsCandidate(known, tags, hasEmbedded, tags.durationS ?? row.durationS);
   if (hasEmbedded) for (const c of cands) if (!c.covers.includes("embedded")) c.covers.push("embedded");
+  await addChannelCover(row, cands, fallback);
   if (fallback) {
     // A file whose own tags name BOTH the title and the artist already says what it is: those names lead, unless a catalogue entry
     // is clearly the same song (names agree, or the audio matched its preview) — then that richer entry stays first.
@@ -303,7 +338,15 @@ export async function sendCard(id: number): Promise<void> {
   const bot = await getBot();
   if (row.cardChat && row.cardMessageId) await bot.api.deleteMessage(row.cardChat, row.cardMessageId).catch(() => {});
   let sent: { message_id: number } | null = null;
-  if (row.status === "failed") {
+  if (row.status === "upload") {
+    const t = row.tags as { title?: string | null; artist?: string | null } | null;
+    const mb = Math.round((row.fileSize ?? 0) / 1048576);
+    const { getLegacyToken } = await import("./music-token");
+    const link = `${(process.env.PLAYER_APP_URL || "https://playlist.bz").replace(/\/$/, "")}/player/${await getLegacyToken()}#add`;
+    sent = await bot.api.sendMessage(chat,
+      `📦 <b>فایل ${mb}MB است</b> — ربات تلگرام نمی‌تواند بیشتر از ۲۰MB را بگیرد، اما آهنگ گم نشده.\n\n<b>${esc(t?.title ?? row.fileName ?? "بدون نام")}</b>\n👤 ${esc(t?.artist ?? "—")}\n\nنام را درست کن (✏️)، بعد فایل را از پلیر ← <b>Add songs</b> آپلود کن؛ نام و کاور همان‌جا هم قابل ویرایش است.`,
+      { parse_mode: "HTML", reply_markup: new InlineKeyboard().url("⬆️ باز کردن صفحهٔ آپلود در پلیر", link).row().text("✏️ ویرایش نام", `mi:${id}:edit`).text("🗑 رد کن", `mi:${id}:rej`) }).catch(() => null);
+  } else if (row.status === "failed") {
     sent = await bot.api.sendMessage(chat, `⚠️ آهنگ جدیدِ «${esc(row.fileName ?? "بدون نام")}» در My Music بررسی نشد:\n${esc(row.error ?? "")}`, {
       parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🔄 دوباره تلاش کن", `mi:${id}:retry`).text("🗑 رد کن", `mi:${id}:rej`),
     }).catch(() => null);
@@ -460,7 +503,7 @@ async function knownOf(row: IntakeRow): Promise<Known> {
 }
 
 /** New candidate list for known names (typed by the owner, or "not these": without Spotify). */
-async function rebuild(row: IntakeRow, known: Known, withSpotify: boolean): Promise<void> {
+async function rebuild(row: IntakeRow, known: Known, withSpotify: boolean, typed = false): Promise<void> {
   if (!row.localPath) throw new Error("file is gone");
   const queries = known.title && known.artist ? [`${known.title} ${known.artist}`, known.title] : [known.text];
   const cands = await findCandidates(row, row.localPath, known, queries, { spotify: withSpotify });
@@ -468,7 +511,9 @@ async function rebuild(row: IntakeRow, known: Known, withSpotify: boolean): Prom
   if (have) for (const c of cands) if (!c.covers.includes("embedded")) c.covers.push("embedded");
   // a voice clip is only ever a question: its answer must be a real song, never "just these names"
   const fallback = row.kind === "voice" ? null : tagsCandidate(known, { title: null, artist: null, album: null, date: null, durationS: null }, have, row.durationS);
-  if (fallback) cands.push(fallback);
+  await addChannelCover(row, cands, fallback);
+  // Names the owner typed are an answer, not a search: exactly those names lead the list (catalogue matches follow as alternatives).
+  if (fallback) { if (typed) cands.unshift(fallback); else cands.push(fallback); }
   await updateIntake(row.id, { candidates: cands, idx: 0, coverIdx: 0 });
 }
 
@@ -483,10 +528,57 @@ export async function handleIntakeText(m: Message, bot: Bot): Promise<boolean> {
   await setSetting("musicIntakeEdit", "");
   if (!row || row.status === "confirmed") return false;
   const p = parseTitleArtist(m.text);
+  if (row.status === "upload") { // nothing to search yet (the file is not here): just keep the names for the upload
+    await updateIntake(row.id, { tags: { title: p.title, artist: p.artist, upload: true } });
+    await sendCard(row.id);
+    return true;
+  }
   await bot.api.sendMessage(m.chat.id, "🔎 دارم با این نام می‌گردم…").catch(() => {});
   try {
-    await rebuild(row, { title: p.title, artist: p.artist, text: [p.artist, p.title].filter(Boolean).join(" ") }, true);
+    await rebuild(row, { title: p.title, artist: p.artist, text: [p.artist, p.title].filter(Boolean).join(" ") }, true, true);
     await sendCard(row.id);
   } catch (err) { await bot.api.sendMessage(m.chat.id, `⚠️ جستجو نشد: ${String(err instanceof Error ? err.message : err).slice(0, 200)}`).catch(() => {}); }
   return true;
+}
+
+// ---------------------------------------------------------------- a file uploaded by hand for a song the bot could not download
+
+const AUDIO_MIME: Record<string, string> = { mp3: "audio/mpeg", m4a: "audio/mp4", aac: "audio/mp4", ogg: "audio/ogg", opus: "audio/ogg", flac: "audio/flac", wav: "audio/wav" };
+
+/** Attach an uploaded file to a waiting intake item: names as given, cover = the channel photo, else the one inside the file. Returns the new song id. */
+export async function finalizeUpload(rowId: number, upload: { data: Uint8Array; name: string }, title: string, artist: string): Promise<number> {
+  const row = await getIntake(rowId);
+  if (!row || row.status !== "upload") throw new Error("this item is not waiting for a file");
+  const ext = (/\.([a-z0-9]{2,5})$/i.exec(upload.name)?.[1] ?? "").toLowerCase();
+  if (!AUDIO_MIME[ext]) throw new Error("supported: mp3, m4a, aac, ogg, opus, flac, wav");
+  await fs.mkdir(INTAKE_DIR, { recursive: true });
+  const src = path.join(INTAKE_DIR, `${row.id}.upload.${ext}`);
+  await fs.writeFile(src, upload.data);
+  const tags = await probe(src);
+  let coverFile = await channelCoverFile(row);
+  if (!coverFile) {
+    const embedded = path.join(INTAKE_DIR, `${row.id}.embedded.jpg`);
+    if (await runFfmpeg(["-i", src, "-an", "-frames:v", "1", embedded], 30_000) && (await exists(embedded))) coverFile = embedded;
+  }
+  const c = { title, artist } as Candidate;
+  const tidy = await tidyFile(src, ext, coverFile, c, path.join(INTAKE_DIR, `${row.id}.tidy`));
+  const dur = tags.durationS ?? row.durationS ?? null;
+  const trackId = await createManualTrack({ spotifyId: null, title, artist, album: "Single", releaseDate: tags.date?.slice(0, 10) ?? null, durationS: dur, filePath: tidy, mime: AUDIO_MIME[ext]!, sizeBytes: (await fs.stat(tidy)).size });
+  const finalPath = path.join(MUSIC_DIR, `${trackId}.${ext}`);
+  await fs.copyFile(tidy, finalPath);
+  let coverPath: string | null = null;
+  if (coverFile) { coverPath = path.join(MUSIC_DIR, `${trackId}.cover.jpg`); await fs.copyFile(coverFile, coverPath); }
+  await updateMusicTrack(trackId, { filePath: finalPath, coverPath });
+  await updateIntake(row.id, { status: "confirmed", trackId });
+  // The channel keeps one tidy copy where Telegram allows it (a bot may upload up to 50 MB); the original is removed only then.
+  try {
+    if ((await fs.stat(finalPath)).size <= 49 * 1024 * 1024) {
+      const bot = await getBot();
+      await bot.api.sendAudio(row.chatId, new InputFile(finalPath, `${artist} - ${title}.${ext}`), { title, performer: artist, duration: dur ?? undefined, caption: `🎵 ${title}\n👤 ${artist}` });
+      await bot.api.deleteMessage(row.chatId, row.messageId).catch(() => {});
+    }
+    if (row.cardChat && row.cardMessageId) await (await getBot()).api.deleteMessage(row.cardChat, row.cardMessageId).catch(() => {});
+  } catch (err) { reportWarn("music", `upload ${row.id}: channel copy failed (original kept):`, err); }
+  for (const p of [src, tidy, row.coverPath]) if (p && p !== finalPath) await fs.unlink(p).catch(() => {});
+  return trackId;
 }

@@ -594,6 +594,19 @@ export const MIGRATIONS: Migration[] = [
         PRIMARY KEY (day, provider))`;
     },
   },
+  {
+    // A player link may be allowed to edit song names / covers and to add or upload songs (the Main link is allowed by default, through a setting).
+    // Channel photos are remembered so a cover posted before an album's files can be offered as the cover of those songs.
+    id: "2026-10-30-001-link-edit-and-photos",
+    up: async (q) => {
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS can_edit BOOLEAN NOT NULL DEFAULT FALSE`;
+      await q`CREATE TABLE IF NOT EXISTS music_intake_photos (
+        chat_id BIGINT NOT NULL, message_id BIGINT NOT NULL, file_id TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (chat_id, message_id))`;
+      // songs refused only for being over Telegram's 20 MB bot limit now wait for an upload instead of being a dead end
+      await q`UPDATE music_intake SET status = 'upload', error = NULL WHERE status = 'failed' AND error LIKE '%ربات فقط تا%'`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

@@ -15,7 +15,7 @@ import SeekBar from "@/components/music/app/SeekBar";
 import Spectrum from "@/components/music/Spectrum";
 
 import { useListenTracker } from "@/components/music/useListenTracker";
-import { Cover, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
+import { Cover, coverQ, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
 import { SearchView } from "@/components/music/app/Search";
 import { isSpotifyAccountId } from "@/lib/music-scope";
 import SafeBoundary from "@/components/ui/SafeBoundary";
@@ -35,7 +35,7 @@ const SPEEDS = [0.75, 1, 1.25, 1.5, 2].map((v) => ({ v, label: v === 1 ? "Normal
 // The sheets people open now and then load on demand (their own chunk), keeping the first paint small. Rendered only when opened.
 const lazySheet = <K extends keyof typeof import("@/components/music/app/SheetsMore")>(name: K) =>
   dynamic(() => import("@/components/music/app/SheetsMore").then((m) => m[name] as never), { ssr: false }) as (typeof import("@/components/music/app/SheetsMore"))[K];
-const AccountPlaylistSheet = lazySheet("AccountPlaylistSheet"), DownloadSheet = lazySheet("DownloadSheet"), LyricsSheet = lazySheet("LyricsSheet"), QueueSheet = lazySheet("QueueSheet"),
+const AccountPlaylistSheet = lazySheet("AccountPlaylistSheet"), AddSongsSheet = lazySheet("AddSongsSheet"), EditSongSheet = lazySheet("EditSongSheet"), DownloadSheet = lazySheet("DownloadSheet"), LyricsSheet = lazySheet("LyricsSheet"), QueueSheet = lazySheet("QueueSheet"),
   ReportSheet = lazySheet("ReportSheet"), SettingsSheet = lazySheet("SettingsSheet"), SmartFromSongSheet = lazySheet("SmartFromSongSheet"), SpotifyLikeSheet = lazySheet("SpotifyLikeSheet");
 const StatsView = dynamic(() => import("@/components/music/app/StatsView"), { ssr: false });
 const TrackDetail = dynamic(() => import("@/components/music/TrackDetail"), { ssr: false });
@@ -66,6 +66,9 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     if (!want.length) return allTracks;
     return allTracks.filter((t) => matchesAccounts(t.sources, want, scope.mode));
   }, [allTracks, scope, accounts]);
+  const [canEdit, setCanEdit] = useState(false); // may edit names / covers and add songs (the Main link)
+  const [editT, setEditT] = useState<Track | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const [canLike, setCanLike] = useState(false); // may add songs to a Spotify account's Liked Songs (owner switch)
   // A song with several artists asks which one to open; a single artist opens straight away.
   const [artistPick, setArtistPick] = useState<Track | null>(null);
@@ -268,8 +271,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       if (r.status === 404) { setDenied(true); return; }
       if (!r.ok) { setNetDown(true); return; }
       setNetDown(r.headers.get("x-sw-cache") === "1"); // the service worker answered from its old copy
-      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string }>; canLike?: boolean };
-      setTracks(j.tracks.filter((t) => t.status === "ready")); setPlaylists(j.playlists); setAccounts(j.accounts ?? []); setCanLike(j.canLike === true);
+      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string }>; canLike?: boolean; canEdit?: boolean };
+      setTracks(j.tracks.filter((t) => t.status === "ready")); setPlaylists(j.playlists); setAccounts(j.accounts ?? []); setCanLike(j.canLike === true); setCanEdit(j.canEdit === true);
     } catch { setNetDown(true); } finally { setLoading(false); }
   }, [tq]);
   useEffect(() => { void load(); }, [load]);
@@ -354,6 +357,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   useEffect(() => {
     try { const j = JSON.parse(localStorage.getItem("player.skipped") || "[]") as unknown; if (Array.isArray(j)) setSkipped(new Set(j.map(Number).filter(Number.isFinite))); } catch { /* none saved */ }
   }, []);
+  // The bot card links here with #add: open the "Add songs" sheet (the Main link only).
+  useEffect(() => { if (canEdit && window.location.hash === "#add") { setAddOpen(true); try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch { /* ignore */ } } }, [canEdit]);
   const queueRef = useRef<number[]>([]); queueRef.current = queue;
   const curRef = useRef<number | null>(null); curRef.current = cur;
   const repeatRef = useRef(repeat); repeatRef.current = repeat;
@@ -385,8 +390,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   };
   const publishNow = (id: number, isPlaying: boolean) => {
     const t = byIdRef.current.get(id); if (!t) return;
-    try { if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: t.title ?? "—", artist: t.artist ?? "", album: t.album ?? "", artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}?${tq}`, sizes: "640x640", type: "image/jpeg" }] : [] }); } catch { /* unsupported */ }
-    try { (window as unknown as { AndroidMusic?: { state: (p: boolean, t: string, a: string, c: string) => void } }).AndroidMusic?.state(isPlaying, t.title ?? "", t.artist ?? "", t.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}` : ""); } catch { /* not the app */ }
+    try { if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: t.title ?? "—", artist: t.artist ?? "", album: t.album ?? "", artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}?${tq}${coverQ(t)}`, sizes: "640x640", type: "image/jpeg" }] : [] }); } catch { /* unsupported */ }
+    try { (window as unknown as { AndroidMusic?: { state: (p: boolean, t: string, a: string, c: string) => void } }).AndroidMusic?.state(isPlaying, t.title ?? "", t.artist ?? "", t.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}${coverQ(t)}` : ""); } catch { /* not the app */ }
   };
   const advanceNow = () => {
     const a = audio.current; if (!a) return;
@@ -554,7 +559,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     } else start(net);
     const t = byIdRef.current.get(cur);
     if ("mediaSession" in navigator && t) {
-      navigator.mediaSession.metadata = new MediaMetadata({ title: t.title ?? "—", artist: t.artist ?? "", album: t.album ?? "", artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}?${tq}`, sizes: "640x640", type: "image/jpeg" }] : [] });
+      navigator.mediaSession.metadata = new MediaMetadata({ title: t.title ?? "—", artist: t.artist ?? "", album: t.album ?? "", artwork: t.hasCover ? [{ src: `/api/music/cover/${t.id}?${tq}${coverQ(t)}`, sizes: "640x640", type: "image/jpeg" }] : [] });
     }
     return () => { dead = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- speed is applied by its own effect
@@ -701,7 +706,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     const n = (window as unknown as { AndroidMusic?: { state: (p: boolean, t: string, a: string, c: string) => void } }).AndroidMusic;
     if (!n) return;
     const t = cur != null ? byIdRef.current.get(cur) : null;
-    try { n.state(playing, t?.title ?? "", t?.artist ?? "", t?.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}` : ""); } catch { /* the app side hiccuped: never take the player down with it */ }
+    try { n.state(playing, t?.title ?? "", t?.artist ?? "", t?.hasCover ? `${location.origin}/api/music/cover/${t.id}?${tq}${coverQ(t)}` : ""); } catch { /* the app side hiccuped: never take the player down with it */ }
   }, [playing, cur, tq]);
   // Lock-screen seek bar (position / length) and its shuffle + like buttons: sent on song change, play/pause, seek, shuffle and like (the system moves the bar by itself in between).
   const liked = cur != null && (byIdRef.current.get(cur)?.rating ?? 0) > 0;
@@ -783,8 +788,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     toggleSkip: (id: number) => fns.current.toggleSkip(id),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, offlineMode: netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, skipped, ...stable }), [tq, saveAccountPlaylist, netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, skipped, stable]);
-  const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}`;
+  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, offlineMode: netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, skipped, canEdit, addSongs: () => setAddOpen(true), ...stable }), [tq, canEdit, saveAccountPlaylist, netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, skipped, stable]);
+  const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}${coverQ(t)}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
 
@@ -865,6 +870,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
             <h1 className="text-[28px] font-extrabold tracking-tight">{tab === "home" ? greeting() : tab === "search" ? "Search" : tab === "library" ? "Your Library" : "Stats"}</h1>
           )}
           <span className="flex items-center gap-2">
+            {canEdit && <button onClick={() => setAddOpen(true)} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center" aria-label="Add songs"><PlusIcon size={20} /></button>}
             <button onClick={() => setSettingsOpen(true)} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center" aria-label="Settings"><SettingsIcon size={20} /></button>
             <button onClick={flipTheme} className="w-10 h-10 rounded-full bg-[var(--s1)] grid place-items-center" aria-label="Toggle theme">{theme === "dark" ? <SunIcon size={20} /> : <MoonIcon size={20} />}</button>
           </span>
@@ -1021,6 +1027,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {artistPick && <ArtistPickSheet artists={artistsOf(artistPick)} counts={new Map([...c.artists.entries()].map(([k, v]) => [k, v.length]))} onPick={openArtist} onClose={() => setArtistPick(null)} />}
       {likeTs && <SpotifyLikeSheet ts={likeTs.map((t) => byId.get(t.id) ?? t)} accounts={accounts} tq={tq} onClose={() => setLikeTs(null)} onMessage={flash}
         onDone={(accId) => { const ids = new Set(likeTs.map((t) => t.id)); setTracks((all) => all.map((x) => (ids.has(x.id) ? { ...x, sources: [...new Set([...(x.sources ?? []), accId])] } : x))); if (selecting) endSelect(); }} />}
+      {editT && <EditSongSheet t={editT} tq={tq} onClose={() => setEditT(null)} onSaved={(m) => { flash(m); void load(); }} />}
+      {addOpen && <AddSongsSheet tq={tq} onClose={() => setAddOpen(false)} onDone={(m) => { flash(m); void load(); }} />}
       {settingsOpen && <SettingsSheet fade={fade} fades={FADES} onFade={pickFade} accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
       {settingsOpen && <BackLayer onClose={() => setSettingsOpen(false)} />}
       {dl && <div className="fixed left-3 right-3 z-[60] max-w-2xl mx-auto rounded-2xl glass border border-[var(--bd)] px-4 py-3 flex items-center gap-3" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))" }} role="status">
@@ -1029,7 +1037,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       </div>}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
       {menuT && <TrackMenu onSelect={() => startSelect(undefined, menuT.id)} onSpotify={canLike && (byId.get(menuT.id) ?? menuT).source !== "manual" && accounts.some((a) => isSpotifyAccountId(a.id)) ? () => setLikeTs([menuT]) : undefined} onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
-        onSkip={() => toggleSkipMode(menuT.id, true)} skipped={skipped.has(menuT.id)} onArtist={() => goArtist(menuT)} onUploader={(byId.get(menuT.id) ?? menuT).uploadedBy ? () => openUploader((byId.get(menuT.id) ?? menuT).uploadedBy!) : undefined}
+        onEdit={canEdit ? () => setEditT(byId.get(menuT.id) ?? menuT) : undefined} onSkip={() => toggleSkipMode(menuT.id, true)} skipped={skipped.has(menuT.id)} onArtist={() => goArtist(menuT)} onUploader={(byId.get(menuT.id) ?? menuT).uploadedBy ? () => openUploader((byId.get(menuT.id) ?? menuT).uploadedBy!) : undefined}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}
       {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark chips={chipsFor(detailId)} t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}

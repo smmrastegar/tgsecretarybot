@@ -19,8 +19,8 @@ export async function GET(): Promise<NextResponse> {
   const scAccts = await listScAccountEntries();
   return NextResponse.json({
     links: [
-      { id: 0, name: "Main link (everything)", url: url(await getLegacyToken()), active: await isLegacyActive(), playlistIds: null, legacy: true, canCreate: true, canLike: (await getAllSettings()).musicMainCanLike !== "0", accountIds: mainScope?.ids ?? [], accountsMode: mainScope?.mode ?? "any", createdAt: null, lastUsedAt: null },
-      ...links.map((l) => ({ id: l.id, name: l.name, url: url(l.token), active: l.active, playlistIds: l.playlistIds, legacy: false, canCreate: l.canCreate, canLike: l.canLikeSpotify, accountIds: l.accountIds, accountsMode: l.accountsMode, createdAt: l.createdAt, lastUsedAt: l.lastUsedAt })),
+      { id: 0, name: "Main link (everything)", url: url(await getLegacyToken()), active: await isLegacyActive(), playlistIds: null, legacy: true, canCreate: true, canLike: (await getAllSettings()).musicMainCanLike !== "0", canEdit: (await getAllSettings()).musicMainCanEdit !== "0", accountIds: mainScope?.ids ?? [], accountsMode: mainScope?.mode ?? "any", createdAt: null, lastUsedAt: null },
+      ...links.map((l) => ({ id: l.id, name: l.name, url: url(l.token), active: l.active, playlistIds: l.playlistIds, legacy: false, canCreate: l.canCreate, canLike: l.canLikeSpotify, canEdit: l.canEdit, accountIds: l.accountIds, accountsMode: l.accountsMode, createdAt: l.createdAt, lastUsedAt: l.lastUsedAt })),
     ],
     accounts: [...accts.map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })), ...scAccts, DIRECT_ACCOUNT],
     playlists: pls.map((p) => ({ id: p.id, name: p.name, smart: p.smart, count: p.trackIds.length })),

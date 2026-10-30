@@ -16,6 +16,8 @@ export type Track = {
   uploader?: string | null;
   /** SoundCloud uploader account (always set for SoundCloud songs): "everything uploaded by …" */
   uploadedBy?: string | null;
+  /** cover version (changes when the cover is replaced) */
+  coverV?: number | null;
 };
 export type Playlist = { id: number; name: string; trackIds: number[] };
 
@@ -29,9 +31,10 @@ export const ts = (iso: string | null | undefined): number => {
 
 export type Ctx = { tq: string };
 /** Small renditions for rows/tiles (server resizes + caches), full art for big views. */
-export const coverUrl = (t: Pick<Track, "id">, tq: string, size?: number | string, res?: 128 | 320) => {
+export const coverQ = (t: { coverV?: number | null }) => (t.coverV ? `&v=${t.coverV}` : "");
+export const coverUrl = (t: Pick<Track, "id"> & { coverV?: number | null }, tq: string, size?: number | string, res?: 128 | 320) => {
   const w = res ?? (typeof size === "number" ? (size <= 64 ? 128 : size <= 160 ? 320 : 0) : 0);
-  return `/api/music/cover/${t.id}?${tq}${w ? `&w=${w}` : ""}`;
+  return `/api/music/cover/${t.id}?${tq}${w ? `&w=${w}` : ""}${coverQ(t)}`;
 };
 
 /** Bumped whenever the connection comes back, so covers that failed to load try again. */

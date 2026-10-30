@@ -34,6 +34,18 @@ export function wordOverlap(want: string[], have: string[]): number {
   return hit / want.length;
 }
 
+/** A name read from a file's tags: "01 - Nemikaham" → "Nemikaham", "Shadmehr Aghili - GahMusic.com" → "Shadmehr Aghili" (track numbers and download-site names are not part of the name). */
+export function cleanTagText(v: string | null | undefined): string | null {
+  if (!v) return null;
+  let s = v.replace(/_/g, " ")
+    .replace(/\s*[-–—|•]?\s*\b(?:https?:\/\/)?(?:www\.)?[\w-]+\.(?:com|ir|net|org|info|biz|me|co)\b/gi, " ")
+    .replace(/\s*[-–—|•]\s*(?:gahmusic|radiojavan|ahangi|ahang|musictown|nex1music|bia2music|melovaz|mp3ban)\w*\s*$/i, " ")
+    .replace(/^\s*\d{1,3}\s*[-–—.)]\s*/, "")
+    .replace(/\s{2,}/g, " ").trim();
+  s = s.replace(/^[-–—|•\s]+|[-–—|•\s]+$/g, "").trim();
+  return s || null;
+}
+
 export type NameGuess = { title: string | null; artist: string | null; queries: string[] };
 
 /** "01 - Artist_Name - Song Title (320kbps) www.site.com.mp3" → { title, artist, queries } */
