@@ -450,7 +450,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     if (cur == null || queue.length === 0) return;
     const a = audio.current;
     if (dir === -1 && !auto) {
-      if (a && a.currentTime > 3) { a.currentTime = 0; return; }
+      if (a && a.currentTime > 3) { if (a.paused || document.hidden) { a.currentTime = 0; return; } const v = volRef.current; fadeOutThen(a, 50, () => { a.currentTime = 0; a.volume = v; }); return; }
       let back = history.current.pop();
       while (back != null && skipRef.current.has(back)) back = history.current.pop(); // "back" never lands on a song that is on skip
       if (back != null) { setCur(back); return; }
@@ -524,6 +524,15 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   const addQueue = (id: number) => { setQueue((q) => (q.includes(id) ? q : [...q, id])); flash("Added to queue"); if (cur == null) { setQueue([id]); setCur(id); setPlaying(true); } };
   const moveQ = (id: number, d: -1 | 1) => setQueue((q) => { const i = q.indexOf(id), j = i + d; if (i < 0 || j < 0 || j >= q.length || q[j] === cur) return q; const n = [...q]; [n[i], n[j]] = [n[j]!, n[i]!]; return n; });
 
+  // Cutting a playing song off in the middle of a wave makes an audible "tick". A 70 ms fade-out first (quadratic, so it is gentle at the end)
+  // makes a manual next / previous / tap silent-clean. (Not while the screen is off: timers may be throttled there, and a cut then is rare.)
+  const volRef = useRef(vol); volRef.current = vol;
+  const fadeOutThen = (a: HTMLAudioElement, ms: number, then: () => void) => {
+    const v0 = a.volume, t0 = performance.now();
+    const stepIt = () => { const k = Math.min(1, (performance.now() - t0) / ms); a.volume = Math.max(0, v0 * (1 - k) * (1 - k)); if (k < 1) setTimeout(stepIt, 8); else then(); };
+    stepIt();
+  };
+
   // Load the audio element only when the current track changes. A saved
   // offline copy wins over the network.
   useEffect(() => {
@@ -534,9 +543,14 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       publishNow(cur, !a.paused);
       return;
     }
+    // the song that is playing now fades out (70 ms) while the new one's source is being looked up
+    const faded: Promise<void> = a.paused || !a.src || document.hidden || a.volume <= 0.02 ? Promise.resolve() : new Promise<void>((res) => fadeOutThen(a, 70, res));
     const start = (src: string) => {
+      void faded.then(() => beginSrc(src));
+    };
+    const beginSrc = (src: string) => {
       if (dead) return;
-      loadedId.current = cur; a.src = src; a.playbackRate = speed;
+      loadedId.current = cur; a.src = src; a.volume = volRef.current; a.playbackRate = speed;
       const ra = resumeAt.current;
       if (ra && ra.id === cur) { // the song from the last visit: show it in the mini player, ready where it was, but do not play
         resumeAt.current = null;
