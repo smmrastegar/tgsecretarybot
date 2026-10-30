@@ -420,12 +420,22 @@ const primary = "w-full py-3 rounded-full bg-[rgb(var(--ac))] text-[var(--acfg)]
 
 /** POST a form with upload progress (fetch cannot report it). */
 function sendForm(url: string, form: FormData, onProgress: (pct: number) => void, method = "POST"): Promise<{ ok: boolean; status: number; json: Record<string, unknown> }> {
+  // (a failed answer always carries a readable `error`: the server's own words, else the HTTP status and what came back)
   return new Promise((resolve) => {
     const x = new XMLHttpRequest();
     x.open(method, url);
     x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
-    x.onload = () => { let j: Record<string, unknown> = {}; try { j = JSON.parse(x.responseText) as Record<string, unknown>; } catch { /* not json */ } resolve({ ok: x.status >= 200 && x.status < 300, status: x.status, json: j }); };
-    x.onerror = () => resolve({ ok: false, status: 0, json: { error: "No connection" } });
+    x.timeout = 15 * 60_000;
+    x.onload = () => {
+      let j: Record<string, unknown> = {};
+      try { j = JSON.parse(x.responseText) as Record<string, unknown>; } catch { /* not json */ }
+      const ok = x.status >= 200 && x.status < 300;
+      if (!ok && !j.error) j = { error: `The server answered HTTP ${x.status}${x.responseText ? `: ${x.responseText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 100)}` : " (empty answer)"}` };
+      resolve({ ok, status: x.status, json: j });
+    };
+    x.onerror = () => resolve({ ok: false, status: 0, json: { error: "The connection broke while uploading (network error). Try again on a steadier connection." } });
+    x.ontimeout = () => resolve({ ok: false, status: 0, json: { error: "The upload took too long (15 min) and was stopped." } });
+    x.onabort = () => resolve({ ok: false, status: 0, json: { error: "The upload was cancelled." } });
     x.send(form);
   });
 }

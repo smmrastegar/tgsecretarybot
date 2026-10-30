@@ -16,6 +16,7 @@ import {
 import { MUSIC_DIR } from "./music";
 import { ffmpegPath } from "./music-analysis";
 import { lookupDeezer, lookupItunes, lookupLibrary, lookupSpotify, recognizeAudd, type Candidate } from "./music-lookup";
+import { background } from "./background";
 import { attachPendingLyrics } from "./music-lyrics";
 import { cleanTagText, guessFromFileName, nameScore, nameWords, parseTitleArtist } from "./music-names";
 import { fileScore, PREVIEW_BAD, PREVIEW_OK, previewScore } from "./music-preview";
@@ -574,14 +575,17 @@ export async function finalizeUpload(rowId: number, upload: { data: Uint8Array; 
   await updateIntake(row.id, { status: "confirmed", trackId });
   await attachPendingLyrics(trackId, title); // an album booklet page uploaded earlier for this title
   // The channel keeps one tidy copy where Telegram allows it (a bot may upload up to 50 MB); the original is removed only then.
-  try {
-    if ((await fs.stat(finalPath)).size <= 49 * 1024 * 1024) {
-      const bot = await getBot();
-      await bot.api.sendAudio(row.chatId, new InputFile(finalPath, `${artist} - ${title}.${ext}`), { title, performer: artist, duration: dur ?? undefined, caption: `🎵 ${title}\n👤 ${artist}` });
-      await bot.api.deleteMessage(row.chatId, row.messageId).catch(() => {});
-    }
-    if (row.cardChat && row.cardMessageId) await (await getBot()).api.deleteMessage(row.cardChat, row.cardMessageId).catch(() => {});
-  } catch (err) { reportWarn("music", `upload ${row.id}: channel copy failed (original kept):`, err); }
-  for (const p of [src, tidy, row.coverPath]) if (p && p !== finalPath) await fs.unlink(p).catch(() => {});
+  // That upload can take minutes: it runs after the answer is sent, so the browser (and the proxy in front of it) never waits for Telegram.
+  background("musicUploadChannelCopy", async () => {
+    try {
+      if ((await fs.stat(finalPath)).size <= 49 * 1024 * 1024) {
+        const bot = await getBot();
+        await bot.api.sendAudio(row.chatId, new InputFile(finalPath, `${artist} - ${title}.${ext}`), { title, performer: artist, duration: dur ?? undefined, caption: `🎵 ${title}\n👤 ${artist}` });
+        await bot.api.deleteMessage(row.chatId, row.messageId).catch(() => {});
+      }
+      if (row.cardChat && row.cardMessageId) await (await getBot()).api.deleteMessage(row.cardChat, row.cardMessageId).catch(() => {});
+    } catch (err) { reportWarn("music", `upload ${row.id}: channel copy failed (original kept):`, err); }
+    for (const p of [src, tidy, row.coverPath]) if (p && p !== finalPath) await fs.unlink(p).catch(() => {});
+  });
   return trackId;
 }

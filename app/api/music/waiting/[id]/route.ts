@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { editAccess, notFound } from "@/lib/music-token";
 import { MAX_UPLOAD } from "@/lib/music-edit";
 import { finalizeUpload } from "@/lib/music-intake";
+import { reportInfo, reportWarn } from "@/lib/report";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,8 +18,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   if (!Number.isFinite(id) || !(file instanceof File)) return NextResponse.json({ error: "file required" }, { status: 400 });
   if (!title || !artist) return NextResponse.json({ error: "title and artist are required" }, { status: 400 });
   if (file.size > MAX_UPLOAD) return NextResponse.json({ error: "file too large (120 MB max)" }, { status: 413 });
+  const t0 = Date.now();
   try {
     const trackId = await finalizeUpload(id, { data: new Uint8Array(await file.arrayBuffer()), name: file.name }, title.slice(0, 200), artist.slice(0, 200));
+    reportInfo("music", `upload for waiting item ${id}: ${(file.size / 1048576).toFixed(1)} MB → song ${trackId} in ${Math.round((Date.now() - t0) / 1000)} s`);
     return NextResponse.json({ ok: true, id: trackId });
-  } catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 }); }
+  } catch (e) {
+    reportWarn("music", `upload for waiting item ${id} (${(file.size / 1048576).toFixed(1)} MB, ${file.name}) failed after ${Math.round((Date.now() - t0) / 1000)} s:`, e);
+    return NextResponse.json({ error: e instanceof Error && e.message ? e.message : "The server could not process this file" }, { status: 400 });
+  }
 }
