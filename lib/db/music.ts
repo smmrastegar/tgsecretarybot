@@ -101,8 +101,33 @@ export function parseSpotifyTrackUrl(raw: string): { id: string; url: string } |
 export async function listMusicTracks(): Promise<MusicTrack[]> {
   if (!hasDb()) return [];
   await ensureSchema();
-  const rows = (await q().query(`SELECT ${COLS} FROM music_tracks ORDER BY created_at DESC LIMIT 2000`)) as Row[];
+  // Hidden songs are out of the library for every view (the admin sees them under "Hidden songs").
+  const rows = (await q().query(`SELECT ${COLS} FROM music_tracks WHERE hidden_at IS NULL ORDER BY created_at DESC LIMIT 2000`)) as Row[];
   return rows.map(map);
+}
+
+export type HiddenTrack = MusicTrack & { hiddenAt: string; hiddenReason: string };
+
+export async function listHiddenTracks(): Promise<HiddenTrack[]> {
+  if (!hasDb()) return [];
+  await ensureSchema();
+  const rows = (await q().query(`SELECT ${COLS}, hidden_at::text AS hidden_at, COALESCE(hidden_reason, '') AS hidden_reason FROM music_tracks WHERE hidden_at IS NOT NULL ORDER BY hidden_at DESC LIMIT 1000`)) as Row[];
+  return rows.map((r) => ({ ...map(r), hiddenAt: str(r, "hidden_at"), hiddenReason: str(r, "hidden_reason") }));
+}
+
+export async function hiddenTrackIds(): Promise<Set<number>> {
+  if (!hasDb()) return new Set();
+  await ensureSchema();
+  return new Set(((await q().query(`SELECT id FROM music_tracks WHERE hidden_at IS NOT NULL`)) as Row[]).map((r) => num(r, "id")));
+}
+
+export async function setTrackHidden(id: number, reason: string | null): Promise<boolean> {
+  await ensureSchema();
+  const r = (await q().query(
+    reason == null ? `UPDATE music_tracks SET hidden_at = NULL, hidden_reason = NULL WHERE id = $1 RETURNING 1` : `UPDATE music_tracks SET hidden_at = NOW(), hidden_reason = $2 WHERE id = $1 RETURNING 1`,
+    reason == null ? [id] : [id, reason.slice(0, 300)],
+  )) as Row[];
+  return r.length > 0;
 }
 
 export async function getMusicTrack(id: number): Promise<(MusicTrack & { filePath: string | null; coverPath: string | null; mime: string | null }) | null> {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUnscopedOr403 } from "@/lib/auth";
-import { allowedTrackIds, canSpotifyLike, musicAccess, notFound } from "@/lib/music-token";
+import { allowedTrackIds, canSpotifyLike, isAdminAccess, musicAccess, notFound } from "@/lib/music-token";
 import { resolvedPlaylists } from "@/lib/music-playlists";
 import { addMusicTrack, applyLinkView, listMusicTracks, listScAccountEntries, listSpotifyAccounts, listTrackSources, parseSpotifyTrackUrl } from "@/lib/db";
 import { kickMusicQueue } from "@/lib/music";
@@ -32,6 +32,7 @@ export async function GET(request: Request): Promise<Response> {
       return NextResponse.json({
         canLike: canSpotifyLike(access),
         canEdit: access.kind === "link" ? access.canEdit : !access.scope,
+        admin: isAdminAccess(access),
         tracks: tracks.map((t) => ({ ...t, sources: (src.get(t.id) ?? []).filter(keep) })), playlists,
         accounts: [...accts.filter((a) => keep(a.id)).map((a) => ({ id: a.id, name: a.displayName ?? a.spotifyUserId })), ...scAccts.filter((a) => keep(a.id)), ...(keep(0) && tracks.some((t) => !(src.get(t.id)?.length)) ? [DIRECT_ACCOUNT] : [])]
           .map((a) => (codes[String(a.id)] ? { ...a, code: codes[String(a.id)] } : a)),

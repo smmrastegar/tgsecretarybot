@@ -36,7 +36,7 @@ const SPEEDS = [0.75, 1, 1.25, 1.5, 2].map((v) => ({ v, label: v === 1 ? "Normal
 const lazySheet = <K extends keyof typeof import("@/components/music/app/SheetsMore")>(name: K) =>
   dynamic(() => import("@/components/music/app/SheetsMore").then((m) => m[name] as never), { ssr: false }) as (typeof import("@/components/music/app/SheetsMore"))[K];
 const AccountPlaylistSheet = lazySheet("AccountPlaylistSheet"), AddSongsSheet = lazySheet("AddSongsSheet"), EditSongSheet = lazySheet("EditSongSheet"), DownloadSheet = lazySheet("DownloadSheet"), LyricsSheet = lazySheet("LyricsSheet"), QueueSheet = lazySheet("QueueSheet"),
-  ReportSheet = lazySheet("ReportSheet"), SettingsSheet = lazySheet("SettingsSheet"), SmartFromSongSheet = lazySheet("SmartFromSongSheet"), SpotifyLikeSheet = lazySheet("SpotifyLikeSheet");
+  ReportSheet = lazySheet("ReportSheet"), SettingsSheet = lazySheet("SettingsSheet"), SmartFromSongSheet = lazySheet("SmartFromSongSheet"), SpotifyLikeSheet = lazySheet("SpotifyLikeSheet"), HideSongSheet = lazySheet("HideSongSheet"), HiddenSongsSheet = lazySheet("HiddenSongsSheet");
 const StatsView = dynamic(() => import("@/components/music/app/StatsView"), { ssr: false });
 const TrackDetail = dynamic(() => import("@/components/music/TrackDetail"), { ssr: false });
 
@@ -67,6 +67,10 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     return allTracks.filter((t) => matchesAccounts(t.sources, want, scope.mode));
   }, [allTracks, scope, accounts]);
   const [canEdit, setCanEdit] = useState(false); // may edit names / covers and add songs (the Main link)
+  const [admin, setAdmin] = useState(false); // the owner (dashboard login / Main link): may hide songs and bring them back
+  const [hiddenN, setHiddenN] = useState(0);
+  const [hideT, setHideT] = useState<Track | null>(null);
+  const [hiddenOpen, setHiddenOpen] = useState(false);
   const [editT, setEditT] = useState<Track | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [canLike, setCanLike] = useState(false); // may add songs to a Spotify account's Liked Songs (owner switch)
@@ -277,8 +281,8 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       if (r.status === 404) { setDenied(true); return; }
       if (!r.ok) { setNetDown(true); return; }
       setNetDown(r.headers.get("x-sw-cache") === "1"); // the service worker answered from its old copy
-      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string; code?: string }>; canLike?: boolean; canEdit?: boolean };
-      setTracks(j.tracks.filter((t) => t.status === "ready")); setPlaylists(j.playlists); setAccounts(j.accounts ?? []); setCanLike(j.canLike === true); setCanEdit(j.canEdit === true);
+      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string; code?: string }>; canLike?: boolean; canEdit?: boolean; admin?: boolean };
+      setTracks(j.tracks.filter((t) => t.status === "ready")); setPlaylists(j.playlists); setAccounts(j.accounts ?? []); setCanLike(j.canLike === true); setCanEdit(j.canEdit === true); setAdmin(j.admin === true);
     } catch { setNetDown(true); } finally { setLoading(false); }
   }, [tq]);
   useEffect(() => { void load(); }, [load]);
@@ -488,6 +492,20 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     flash(on ? "On skip: it stays in the list but won't play" : "Back in play");
     if (on && advance && id === curRef.current) step(1);
   }, [step]);
+
+  // Admin: hidden songs — the count for the badges, and what happens right after a song is hidden (it stops playing, leaves the queue and every list).
+  const loadHiddenN = useCallback(async () => {
+    try { const r = await fetch(`/api/music/hidden?${tq}`, { cache: "no-store" }); if (r.ok) setHiddenN(((await r.json()) as { tracks: unknown[] }).tracks.length); } catch { /* offline */ }
+  }, [tq]);
+  useEffect(() => { if (admin) void loadHiddenN(); }, [admin, loadHiddenN]);
+  const onHidden = (id: number) => {
+    if (curRef.current === id) step(1);
+    setQueue((q) => q.filter((x) => x !== id));
+    setTracks((ts) => ts.filter((t) => t.id !== id));
+    setHiddenN((n) => n + 1);
+    flash("Hidden — it is under Settings → Hidden songs");
+    void load();
+  };
 
   // A song that cannot load (no connection, file gone): say so and move on, instead of sitting silent. Gives up after 3 in a row.
   const audioFails = useRef(0);
@@ -826,7 +844,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     toggleSkip: (id: number) => fns.current.toggleSkip(id),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, offlineMode: netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, skipped, canEdit, addSongs: () => setAddOpen(true), ...stable }), [tq, canEdit, saveAccountPlaylist, netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, skipped, stable]);
+  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, offlineMode: netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, skipped, canEdit, hidden: admin ? { count: hiddenN, open: () => setHiddenOpen(true) } : null, addSongs: () => setAddOpen(true), ...stable }), [tq, canEdit, admin, hiddenN, saveAccountPlaylist, netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, skipped, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}${coverQ(t)}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -1066,9 +1084,11 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {artistPick && <ArtistPickSheet artists={artistsOf(artistPick)} counts={new Map([...c.artists.entries()].map(([k, v]) => [k, v.length]))} onPick={openArtist} onClose={() => setArtistPick(null)} />}
       {likeTs && <SpotifyLikeSheet ts={likeTs.map((t) => byId.get(t.id) ?? t)} accounts={accounts} tq={tq} onClose={() => setLikeTs(null)} onMessage={flash}
         onDone={(accId) => { const ids = new Set(likeTs.map((t) => t.id)); setTracks((all) => all.map((x) => (ids.has(x.id) ? { ...x, sources: [...new Set([...(x.sources ?? []), accId])] } : x))); if (selecting) endSelect(); }} />}
+      {hideT && <HideSongSheet t={hideT} tq={tq} onClose={() => setHideT(null)} onHidden={onHidden} />}
+      {hiddenOpen && <HiddenSongsSheet tq={tq} onClose={() => setHiddenOpen(false)} onChanged={() => { void load(); void loadHiddenN(); }} onEdit={(t) => { setHiddenOpen(false); setEditT(t); }} onMessage={flash} />}
       {editT && <EditSongSheet t={editT} tq={tq} onClose={() => setEditT(null)} onSaved={(m) => { flash(m); void load(); }} />}
       {addOpen && <AddSongsSheet tq={tq} onClose={() => setAddOpen(false)} onDone={(m) => { flash(m); void load(); }} />}
-      {settingsOpen && <SettingsSheet tq={tq} fade={fade} fades={FADES} onFade={pickFade} accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsSheet hidden={admin ? { count: hiddenN, open: () => setHiddenOpen(true) } : null} tq={tq} fade={fade} fades={FADES} onFade={pickFade} accounts={accounts} scope={scope} onScope={setScope} shown={tracks.length} total={allTracks.length} downloaded={offline.size} viz={viz} onViz={flipViz} installable={!!installEvt} iosHint={isIosBrowser} onInstall={() => { void doInstall(); setSettingsOpen(false); }} onRemoveDownloads={removeDownloads} onRefresh={refreshAll} onSignOut={(w) => void signOut(w)} onClose={() => setSettingsOpen(false)} />}
       {settingsOpen && <BackLayer onClose={() => setSettingsOpen(false)} />}
       {dl && <div className="fixed left-3 right-3 z-[60] max-w-2xl mx-auto rounded-2xl glass border border-[var(--bd)] px-4 py-3 flex items-center gap-3" style={{ bottom: "calc(150px + env(safe-area-inset-bottom))" }} role="status">
         <div className="min-w-0 flex-1"><div className="text-[13px] font-semibold">Downloading {dl.done} of {dl.total}</div><div className="mt-1.5 h-1 rounded-full bg-[var(--s2)] overflow-hidden"><div className="h-full bg-[rgb(var(--ac))] transition-[width]" style={{ width: `${(dl.done / dl.total) * 100}%` }} /></div></div>
@@ -1076,7 +1096,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       </div>}
       {sheet === "lyrics" && now && <LyricsSheet t={now} tq={tq} pos={pos} onSeek={seek} onClose={() => setSheet(null)} />}
       {menuT && <TrackMenu onSelect={() => startSelect(undefined, menuT.id)} onSpotify={canLike && (byId.get(menuT.id) ?? menuT).source !== "manual" && accounts.some((a) => isSpotifyAccountId(a.id)) ? () => setLikeTs([menuT]) : undefined} onSmart={() => setSmartT(menuT)} onRadio={() => void startRadio(menuT)} onReport={() => setReportT(menuT)} onShare={() => void share(menuT)} offline={offline.has(menuT.id)} onOffline={() => void toggleOffline(menuT)} t={byId.get(menuT.id) ?? menuT} tq={tq} onClose={() => setMenuT(null)} onNext={() => playNext(menuT.id)} onAdd={() => addQueue(menuT.id)} onRate={(r) => rate(byId.get(menuT.id) ?? menuT, r)}
-        onEdit={canEdit ? () => setEditT(byId.get(menuT.id) ?? menuT) : undefined} onSkip={() => toggleSkipMode(menuT.id, true)} skipped={skipped.has(menuT.id)} onArtist={() => goArtist(menuT)} onUploader={(byId.get(menuT.id) ?? menuT).uploadedBy ? () => openUploader((byId.get(menuT.id) ?? menuT).uploadedBy!) : undefined}
+        onEdit={canEdit ? () => setEditT(byId.get(menuT.id) ?? menuT) : undefined} onHide={admin ? () => setHideT(byId.get(menuT.id) ?? menuT) : undefined} onSkip={() => toggleSkipMode(menuT.id, true)} skipped={skipped.has(menuT.id)} onArtist={() => goArtist(menuT)} onUploader={(byId.get(menuT.id) ?? menuT).uploadedBy ? () => openUploader((byId.get(menuT.id) ?? menuT).uploadedBy!) : undefined}
         onAlbum={() => { setFull(false); setTab("library"); setStack([{ kind: "album", key: `${menuT.album ?? "Single"}|${artistsOf(menuT)[0] ?? ""}`, title: menuT.album ?? "Singles" }]); }}
         onDetails={() => setDetailId(menuT.id)} />}
       {detailId != null && byId.get(detailId) && <TrackDetail lang="en" dark chips={chipsFor(detailId)} t={byId.get(detailId)!} tq={tq} onClose={() => setDetailId(null)} onRate={(r) => rate(byId.get(detailId)!, r)} live={detailId === cur ? { pos, dur, playing } : null} />}

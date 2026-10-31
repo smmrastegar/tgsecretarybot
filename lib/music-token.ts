@@ -7,7 +7,7 @@
 // "Main link" (everything) until it is switched off.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { getCurrentSession } from "./auth";
-import { applyLinkView, findActiveLinkByToken, getAllSettings, listMusicTracks, listTrackSources, setSetting, touchPlayerLink } from "./db";
+import { applyLinkView, findActiveLinkByToken, getAllSettings, hiddenTrackIds, listMusicTracks, listTrackSources, setSetting, touchPlayerLink } from "./db";
 import { resolvedPlaylists } from "./music-playlists";
 import { pinState } from "./pin-session";
 import { matchesAccounts } from "./music-scope";
@@ -118,7 +118,22 @@ export async function allowedTrackIds(access: MusicAccess): Promise<Set<number> 
   return ids;
 }
 
+/** The owner: the unrestricted dashboard login or the Main link. Only they may hide songs, see the hidden ones and bring them back. */
+export const isAdminAccess = (a: MusicAccess | null): boolean => !!a && ((a.kind === "session" && !a.scope) || (a.kind === "link" && a.linkId === 0 && !a.scope));
+export async function adminAccess(request: Request): Promise<MusicAccess | null> {
+  const a = await musicAccess(request);
+  return isAdminAccess(a) ? a : null;
+}
+
+const hiddenCache = { at: 0, ids: new Set<number>() };
+async function hiddenIds(): Promise<Set<number>> {
+  if (Date.now() - hiddenCache.at > 15_000) { hiddenCache.ids = await hiddenTrackIds().catch(() => hiddenCache.ids); hiddenCache.at = Date.now(); }
+  return hiddenCache.ids;
+}
+export const forgetHiddenCache = () => { hiddenCache.at = 0; allowedCache.clear(); };
+
 export async function canAccessTrack(access: MusicAccess, trackId: number): Promise<boolean> {
+  if (!isAdminAccess(access) && (await hiddenIds()).has(trackId)) return false; // a hidden song is not reachable by id either
   const allowed = await allowedTrackIds(access);
   return allowed == null || allowed.has(trackId);
 }

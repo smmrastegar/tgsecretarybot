@@ -658,6 +658,15 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS self_voice_cost BOOLEAN NOT NULL DEFAULT FALSE`;
     },
   },
+  {
+    // Hidden songs: kept (file, cover, history) but out of every list, playlist, search, mix and link until the admin restores them. The reason is asked for and stored.
+    id: "2026-10-31-003-track-hidden",
+    up: async (q) => {
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMPTZ`;
+      await q`ALTER TABLE music_tracks ADD COLUMN IF NOT EXISTS hidden_reason TEXT`;
+      await q`CREATE INDEX IF NOT EXISTS music_tracks_hidden_idx ON music_tracks (hidden_at) WHERE hidden_at IS NOT NULL`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

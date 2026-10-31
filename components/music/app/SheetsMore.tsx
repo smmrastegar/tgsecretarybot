@@ -334,8 +334,8 @@ export function DownloadSheet({ label, count, bytes, onAllow, onClose }: { label
 }
 
 /** App settings: storage, visualizer, install, and "sign out" so a different link can be used. */
-export function SettingsSheet({ tq, fade, fades, onFade, accounts, scope, onScope, shown, total, downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onRefresh, onSignOut, onClose }: {
-  tq: string; fade: number; fades: Array<{ v: number; label: string }>; onFade: (v: number) => void;
+export function SettingsSheet({ hidden, tq, fade, fades, onFade, accounts, scope, onScope, shown, total, downloaded, viz, onViz, installable, iosHint, onInstall, onRemoveDownloads, onRefresh, onSignOut, onClose }: {
+  hidden?: { count: number; open: () => void } | null; tq: string; fade: number; fades: Array<{ v: number; label: string }>; onFade: (v: number) => void;
   accounts: Array<{ id: number; name: string }>; scope: { ids: number[]; mode: "any" | "all" }; onScope: (v: { ids: number[]; mode: "any" | "all" }) => void; shown: number; total: number;
   downloaded: number; viz: boolean; onViz: () => void; installable: boolean; iosHint: boolean; onInstall: () => void;
   onRemoveDownloads: () => Promise<void>; onRefresh: () => Promise<void>; onSignOut: (removeDownloads: boolean) => void; onClose: () => void;
@@ -383,6 +383,7 @@ export function SettingsSheet({ tq, fade, fades, onFade, accounts, scope, onScop
           <div className="flex justify-between gap-4"><span className="text-[var(--dim)]">Signed in on</span><span className="text-right">{about.at}</span></div>
         </div>
       )}
+      {hidden && <Row label="Hidden songs" sub={hidden.count ? `${hidden.count} hidden — see why, edit, or bring them back.` : "Nothing is hidden. Hide a song from its ⋯ menu."} right={<button onClick={() => { hidden.open(); onClose(); }} className={btn}>Open</button>} />}
       <Row label="Refresh player" sub="Reload the app and your whole library. Downloaded songs stay."
         right={<button disabled={refreshing} onClick={() => { setRefreshing(true); void onRefresh(); }} className={`${btn} disabled:opacity-60`}>{refreshing ? "Refreshing…" : "Refresh"}</button>} />
       {accounts.length > 0 && (() => {
@@ -673,6 +674,79 @@ export function AddSongsSheet({ tq, onClose, onDone }: { tq: string; onClose: ()
           <StagedPicker st={st} tq={tq} label="Choose an audio file" useLabel="Add to library" busy={busy} onUse={(tok) => void add(tok)} />
         </div>
       </div>
+    </Sheet>
+  );
+}
+
+const HIDE_REASONS = ["Not good", "Duplicate", "Bad quality", "Wrong song / wrong file", "Don't like it", "Not suitable", "Other"];
+
+/** Admin: take a song out of the whole system, with a reason (asked every time). It stays under "Hidden songs" and can be edited or brought back. */
+export function HideSongSheet({ t, tq, onClose, onHidden }: { t: Track; tq: string; onClose: () => void; onHidden: (id: number) => void }) {
+  const [pick, setPick] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const reason = [pick, note.trim()].filter(Boolean).join(": ");
+  const submit = async () => {
+    if (!reason) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch(`/api/music/hidden?${tq}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: t.id, reason }) });
+      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `Error ${r.status}`);
+      onHidden(t.id); onClose();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setBusy(false); }
+  };
+  return (
+    <Sheet onClose={onClose} title="Hide this song">
+      <div className="px-5 pb-2 text-[13px] text-[var(--dim)]">It disappears from every list, playlist, search, mix and link. You can find it under <b>Hidden songs</b> to edit or bring it back.</div>
+      <div className="px-5 pb-3 font-semibold truncate">{t.title ?? "—"} <span className="font-normal text-[var(--dim)]">· {t.artist}</span></div>
+      <div className="px-5 text-[14px] mb-2">Why hide it?</div>
+      <div className="px-5 flex flex-wrap gap-2">
+        {HIDE_REASONS.map((r) => <button key={r} onClick={() => setPick(pick === r ? null : r)} className={`px-3.5 py-2 rounded-full text-[13px] font-semibold ${pick === r ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>{r}</button>)}
+      </div>
+      <div className="px-5 mt-3"><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note (optional)" maxLength={200} className="w-full rounded-xl bg-[var(--s1)] px-4 py-3 text-[15px] outline-none" /></div>
+      {err && <div className="px-5 mt-2 text-[13px] text-rose-400">{err}</div>}
+      <div className="px-5 mt-4 pb-4 flex gap-3">
+        <button onClick={onClose} className="flex-1 py-3 rounded-full bg-[var(--s1)] font-semibold">Cancel</button>
+        <button onClick={() => void submit()} disabled={!reason || busy} className="flex-1 py-3 rounded-full bg-rose-500 text-white font-semibold disabled:opacity-40">{busy ? "Hiding…" : "Hide"}</button>
+      </div>
+    </Sheet>
+  );
+}
+
+type HiddenTrack = Track & { hiddenAt: string; hiddenReason: string };
+
+/** Admin: every hidden song with its reason; edit it or bring it back. */
+export function HiddenSongsSheet({ tq, onClose, onChanged, onEdit, onMessage }: { tq: string; onClose: () => void; onChanged: () => void; onEdit: (t: Track) => void; onMessage: (m: string) => void }) {
+  const [rows, setRows] = useState<HiddenTrack[] | null>(null);
+  const load = async () => {
+    try { setRows(((await (await fetch(`/api/music/hidden?${tq}`, { cache: "no-store" })).json()) as { tracks: HiddenTrack[] }).tracks); } catch { setRows([]); }
+  };
+  useEffect(() => { void load(); // eslint-disable-next-line react-hooks/exhaustive-deps -- once on open
+  }, []);
+  const restore = async (t: HiddenTrack) => {
+    const r = await fetch(`/api/music/hidden?${tq}&id=${t.id}`, { method: "DELETE" });
+    onMessage(r.ok ? `“${t.title ?? "Song"}” is back in the library` : "Could not bring it back");
+    await load(); onChanged();
+  };
+  return (
+    <Sheet onClose={onClose} title={`Hidden songs${rows ? ` · ${rows.length}` : ""}`}>
+      {rows == null && <div className="px-5 py-6 text-[var(--dim)]">Loading…</div>}
+      {rows && rows.length === 0 && <div className="px-5 py-6 text-[var(--dim)]">Nothing is hidden.</div>}
+      {rows?.map((t) => (
+        <div key={t.id} className="flex items-start gap-3 px-5 py-3 border-b border-[var(--bd0)]">
+          <Cover t={t} tq={tq} size={48} radius={8} />
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold truncate">{t.title ?? "—"}</div>
+            <div className="text-[13px] text-[var(--dim)] truncate">{t.artist}</div>
+            <div className="mt-1 text-[12.5px] text-[var(--dim2)]">“{t.hiddenReason || "no reason"}” · {new Date(t.hiddenAt.replace(" ", "T").replace(/\+00$/, "Z")).toLocaleDateString(undefined, { dateStyle: "medium" })}</div>
+            <div className="mt-2 flex gap-2">
+              <button onClick={() => void restore(t)} className="px-3.5 py-1.5 rounded-full bg-[var(--fg)] text-[var(--bg)] text-[13px] font-semibold">Bring back</button>
+              <button onClick={() => onEdit(t)} className="px-3.5 py-1.5 rounded-full bg-[var(--s2)] text-[13px] font-semibold">Edit…</button>
+            </div>
+          </div>
+        </div>
+      ))}
     </Sheet>
   );
 }

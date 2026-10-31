@@ -10,6 +10,8 @@ import { setByKey } from "./sets";
 // Everything the views need from the player engine.
 export type Api = {
   tq: string;
+  /** admin only: how many songs are hidden, and open the list */
+  hidden?: { count: number; open: () => void } | null;
   /** can this link create playlists (dashboard switch) */
   canCreate: boolean;
   /** open the "save this account filter as a playlist" sheet */
@@ -245,6 +247,7 @@ export function LibraryView({ api, c }: { api: Api; c: Collections }) {
               {SORTS.map(([k, l]) => <option key={k} value={k} className="text-black">{l}</option>)}
             </select>
             <button onClick={() => setLikedOnly((v) => !v)} className={`ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold ${likedOnly ? "bg-rose-500/20 text-rose-500" : "bg-[var(--s1)] text-[var(--dim2)]"}`}><HeartIcon size={14} filled={likedOnly} /> Liked</button>
+            {api.hidden && api.hidden.count > 0 && <button onClick={api.hidden.open} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold bg-[var(--s1)] text-[var(--dim2)]">Hidden · {api.hidden.count}</button>}
             {api.offline.size > 0 && !api.offlineMode && <button onClick={() => setSavedOnly((v) => !v)} aria-pressed={savedOnly} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-semibold ${savedOnly ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}><DownloadIcon size={14} /> Saved</button>}
             <span className="flex-1" />
             <button onClick={() => api.startSelect(songs.map((t) => t.id))} className="p-2 text-[var(--dim2)]" aria-label="Select songs"><CheckIcon size={22} /></button>

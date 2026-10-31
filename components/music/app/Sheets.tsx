@@ -2,7 +2,7 @@
 
 import { TitleLine } from "./SourceMarks";
 import { useRef, useState, type ReactNode } from "react";
-import { CheckIcon, SparkIcon, DownloadIcon, FlagIcon, ShareIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon, PlusIcon, SkipOffIcon } from "../Icons";
+import { CheckIcon, SparkIcon, DownloadIcon, FlagIcon, ShareIcon, HeartIcon, InfoIcon, PlayNextIcon, QueueIcon, ThumbDownIcon, ChevronRightIcon, PlusIcon, SkipOffIcon, CloseIcon } from "../Icons";
 import { Cover, type Track } from "./shared";
 
 export function Sheet({ onClose, title, children }: { onClose: () => void; title?: string; children: ReactNode }) {
@@ -41,11 +41,11 @@ export const Item = ({ icon, label, onClick, active }: { icon: ReactNode; label:
   </button>
 );
 
-export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, onRate, onArtist, onUploader, onSkip, skipped, onEdit, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
+export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, onRate, onArtist, onUploader, onSkip, skipped, onEdit, onHide, onAlbum, onDetails, offline, onOffline, onShare, onReport, onRadio, onSmart }: {
   onShare: () => void; onReport: () => void; onRadio: () => void; onSmart?: () => void; onSpotify?: () => void; onSelect?: () => void;
   offline: boolean; onOffline: () => void;
   t: Track; tq: string; onClose: () => void; onNext: () => void; onAdd: () => void; onRate: (r: number) => void;
-  onArtist: () => void; onUploader?: () => void; onSkip: () => void; skipped: boolean; onEdit?: () => void; onAlbum: () => void; onDetails: () => void;
+  onArtist: () => void; onUploader?: () => void; onSkip: () => void; skipped: boolean; onEdit?: () => void; onHide?: () => void; onAlbum: () => void; onDetails: () => void;
 }) {
   const go = (f: () => void) => () => { f(); onClose(); };
   return (
@@ -71,6 +71,7 @@ export function TrackMenu({ onSelect, onSpotify, t, tq, onClose, onNext, onAdd, 
       <Item icon={<DownloadIcon size={22} />} label={offline ? "Remove offline copy" : "Save for offline"} onClick={go(onOffline)} />
       <Item icon={<FlagIcon size={22} />} label="Report a problem" onClick={go(onReport)} />
       <Item icon={<InfoIcon size={22} />} label="Details & stats" onClick={go(onDetails)} />
+      {onHide && <Item icon={<CloseIcon size={22} />} label="Hide from the library…" onClick={go(onHide)} />}
     </Sheet>
   );
 }
