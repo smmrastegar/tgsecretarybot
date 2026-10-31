@@ -1,19 +1,25 @@
 import { Buffer } from "node:buffer";
 import { config } from "./config";
-import { recordAiUsage } from "./db";
+import { getAllSettings, recordAiUsage } from "./db";
 import { noteOpenRouterStatus, openRouterGate } from "./openrouter-guard";
 
 import { reportError, reportWarn } from "./report";
-const OPENROUTER_STT_MODEL = "google/gemini-2.5-flash";
+// Quality first. Persian is where the models differ most: Gemini hears it far better than Whisper-turbo (which only wins on speed).
+// Settings (key/value, no deploy needed): sttOrder = "best" (default) | "fast" (Groq turbo first); sttModel = the OpenRouter audio model.
+const OPENROUTER_BEST_MODEL = "google/gemini-2.5-pro";
+const OPENROUTER_FALLBACK_MODEL = "google/gemini-2.5-flash";
+const OPENROUTER_PRICE: Record<string, [number, number]> = { "google/gemini-2.5-pro": [1.25, 10], "google/gemini-2.5-flash": [0.3, 2.5] }; // USD per million tokens (in, out)
 const GROQ_TRANSCRIBE_URL =
   "https://api.groq.com/openai/v1/audio/transcriptions";
-const GROQ_MODEL = "whisper-large-v3-turbo";
+const GROQ_FAST_MODEL = "whisper-large-v3-turbo";
+const GROQ_BEST_MODEL = "whisper-large-v3"; // the full model: slower than turbo, clearly more accurate
 
 // Per-fetch timeouts. Without these the upstream can stall the whole
 // serverless invocation (we've seen voices "freeze mid-processing" when
 // either Telegram's file CDN or the STT provider gets slow).
 const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 15_000;
 const STT_API_TIMEOUT_MS = 25_000;
+const STT_PRO_TIMEOUT_MS = 55_000; // the strongest model takes longer on a long voice note
 
 async function fetchWithTimeout(
   url: string,
@@ -106,22 +112,29 @@ export async function transcribeAudio(
   args: TranscribeArgs,
 ): Promise<{ text: string; durationSeconds?: number; provider: string }> {
   const errors: string[] = [];
+  const s = await getAllSettings().catch(() => ({} as Record<string, string>));
+  const fast = s.sttOrder === "fast";
+  const orModel = (s.sttModel ?? "").trim() || OPENROUTER_BEST_MODEL;
 
-  if (config.groqApiKey) {
-    try {
-      return await transcribeViaGroq(args);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Groq: ${msg}`);
-      reportWarn("stt", "[stt] Groq failed:", msg);
+  // Order of attempts: best → (best Gemini, lighter Gemini, full Whisper); fast → (Whisper turbo, then Gemini).
+  const steps: Array<[string, () => Promise<{ text: string; durationSeconds?: number; provider: string }>]> = [];
+  if (fast) {
+    if (config.groqApiKey) steps.push(["Groq", () => transcribeViaGroq(args, GROQ_FAST_MODEL)]);
+    if (config.openrouterApiKey) steps.push(["OpenRouter", () => transcribeViaOpenRouter(args, orModel)]);
+  } else {
+    if (config.openrouterApiKey) {
+      steps.push([`OpenRouter ${orModel}`, () => transcribeViaOpenRouter(args, orModel)]);
+      if (orModel !== OPENROUTER_FALLBACK_MODEL) steps.push([`OpenRouter ${OPENROUTER_FALLBACK_MODEL}`, () => transcribeViaOpenRouter(args, OPENROUTER_FALLBACK_MODEL)]);
     }
+    if (config.groqApiKey) steps.push(["Groq", () => transcribeViaGroq(args, GROQ_BEST_MODEL)]);
   }
-  if (config.openrouterApiKey) {
+  for (const [name, run] of steps) {
     try {
-      return await transcribeViaOpenRouter(args);
+      return await run();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`OpenRouter: ${msg}`);
+      errors.push(`${name}: ${msg}`);
+      reportWarn("stt", `[stt] ${name} failed:`, msg);
     }
   }
 
@@ -131,6 +144,7 @@ export async function transcribeAudio(
 
 async function transcribeViaOpenRouter(
   args: TranscribeArgs,
+  model: string,
 ): Promise<{ text: string; provider: string }> {
   const { data, mime } = await downloadTelegramFile(args.botToken, args.fileId);
   const base64 = Buffer.from(data).toString("base64");
@@ -149,7 +163,7 @@ async function transcribeViaOpenRouter(
     ? ` The audio is in ${LANG_NAMES[args.language] ?? args.language}. Write the transcript in that language and its native script — never translate or transliterate it.`
     : "";
   const body = {
-    model: OPENROUTER_STT_MODEL,
+    model,
     messages: [
       {
         role: "user",
@@ -157,7 +171,7 @@ async function transcribeViaOpenRouter(
           {
             type: "text",
             text:
-              "Transcribe this audio into plain text, verbatim." +
+              "Transcribe this audio into plain text, word for word. Do not summarise, shorten, correct or skip anything; keep names, numbers and every sentence, and add normal punctuation." +
               langHint +
               " Output ONLY the transcript, in the same language as the audio. No commentary, no labels, no quotes, no markdown.",
           },
@@ -169,7 +183,7 @@ async function transcribeViaOpenRouter(
       },
     ],
     temperature: 0,
-    max_tokens: 4000,
+    max_tokens: 8000, // room for the pro model's own thinking tokens as well as the transcript
   };
 
   await openRouterGate();
@@ -184,7 +198,7 @@ async function transcribeViaOpenRouter(
       },
       body: JSON.stringify(body),
     },
-    STT_API_TIMEOUT_MS,
+    model.includes("pro") ? STT_PRO_TIMEOUT_MS : STT_API_TIMEOUT_MS,
   );
 
   await noteOpenRouterStatus(res.status);
@@ -209,11 +223,12 @@ async function transcribeViaOpenRouter(
   if (json.usage) {
     const pt = json.usage.prompt_tokens ?? 0;
     const ct = json.usage.completion_tokens ?? 0;
-    const cost = (pt / 1_000_000) * 0.3 + (ct / 1_000_000) * 2.5;
+    const [inP, outP] = OPENROUTER_PRICE[model] ?? OPENROUTER_PRICE[OPENROUTER_FALLBACK_MODEL]!;
+    const cost = (pt / 1_000_000) * inP + (ct / 1_000_000) * outP;
     await recordAiUsage({
       chatId: args.chatId ?? null,
       businessConnectionId: args.businessConnectionId ?? null,
-      model: OPENROUTER_STT_MODEL,
+      model,
       purpose: "transcribe",
       promptTokens: pt,
       completionTokens: ct,
@@ -222,11 +237,12 @@ async function transcribeViaOpenRouter(
     }).catch((err) => reportError("stt", "[stt] usage record failed:", err));
   }
 
-  return { text, provider: "openrouter:gemini-2.5-flash" };
+  return { text, provider: `openrouter:${model.replace(/^google\//, "")}` };
 }
 
 async function transcribeViaGroq(
   args: TranscribeArgs,
+  model: string,
 ): Promise<{ text: string; durationSeconds?: number; provider: string }> {
   if (!config.groqApiKey) throw new Error("not configured");
   const { data, mime, name } = await downloadTelegramFile(
@@ -236,7 +252,7 @@ async function transcribeViaGroq(
 
   const form = new FormData();
   form.append("file", new Blob([data as BlobPart], { type: mime }), groqFileName(name, mime));
-  form.append("model", GROQ_MODEL);
+  form.append("model", model);
   form.append("response_format", "verbose_json");
   if (args.language) {
     form.append("language", args.language);
@@ -272,7 +288,7 @@ async function transcribeViaGroq(
   await recordAiUsage({
     chatId: args.chatId ?? null,
     businessConnectionId: args.businessConnectionId ?? null,
-    model: GROQ_MODEL,
+    model,
     purpose: "transcribe",
     promptTokens: 0,
     completionTokens: 0,
@@ -280,5 +296,5 @@ async function transcribeViaGroq(
     costUsd,
   }).catch((err) => reportError("stt", "[stt] usage record failed:", err));
 
-  return { text, durationSeconds: seconds, provider: "groq:whisper-turbo" };
+  return { text, durationSeconds: seconds, provider: `groq:${model}` };
 }
