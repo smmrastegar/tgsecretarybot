@@ -55,7 +55,7 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
 
       <div className="mb-3 rounded-lg border border-[var(--color-border)] p-3 text-xs flex items-center gap-2 flex-wrap">
         <span className="font-medium">✈️ ورود با تلگرام در برنامه</span>
-        <span className="text-[var(--color-text-dim)] leading-6 flex-1 min-w-[12rem]">هر کس با تلگرام درخواست بدهد، در ربات (و اینجا) برایت می‌آید و تا تأیید نکنی هیچ چیزی نمی‌بیند؛ تأیید در ربات = کل کتابخانه (ویرایش و لایک اسپاتیفای خاموش)، یا از اینجا اول انتخاب کن چه ببیند. خودت با تلگرام مستقیم لینک اصلی را می‌گیری.</span>
+        <span className="text-[var(--color-text-dim)] leading-6 flex-1 min-w-[12rem]">هر کس با تلگرام درخواست بدهد، در ربات (و اینجا) برایت می‌آید و تا تأیید نکنی هیچ چیزی نمی‌بیند؛ تأیید در ربات = فقط آهنگ‌های Direct (یا «کل کتابخانه»)، ویرایش و لایک اسپاتیفای خاموش؛ از اینجا هم می‌توانی دقیق انتخاب کنی. بعد از تأیید برنامه‌اش خودکار وارد می‌شود. خودت با تلگرام مستقیم لینک اصلی را می‌گیری.</span>
         <button onClick={() => void patch(0, { tgSignup: !tgSignup })} className={`px-3 py-1.5 rounded-md border ${tgSignup ? "border-emerald-500/40 text-emerald-200" : "border-rose-500/40 text-rose-200"}`}>{tgSignup ? "درخواست تازه: می‌پذیرم" : "درخواست تازه: نمی‌پذیرم"}</button>
       </div>
 
@@ -74,7 +74,7 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
             </div>
             {l.approval === "pending" && (
               <div className="mt-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-100 px-3 py-2 leading-6">
-                این آدم با تلگرام درخواست ورود داده و تا تأیید نکنی چیزی نمی‌بیند. اول «پلی‌لیست‌ها» را انتخاب کن (یا «کل کتابخانه»)، بعد تأیید کن.
+                این آدم با تلگرام درخواست ورود داده و تا تأیید نکنی چیزی نمی‌بیند. پیش‌فرض: فقط آهنگ‌های Direct. می‌توانی «👤 آهنگ‌های چه کسی؟» یا «پلی‌لیست‌ها» را عوض کنی، بعد تأیید کن؛ برنامه‌اش خودکار وارد می‌شود.
                 <div className="mt-2 flex gap-2 flex-wrap">
                   <button onClick={() => void patch(l.id, { allLibrary: true })} className={`px-3 py-1.5 rounded-md border ${l.allLibrary ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>کل کتابخانه</button>
                   <button disabled={!l.allLibrary && (l.playlistIds?.length ?? 0) === 0} onClick={() => void patch(l.id, { approval: "approved" })} className="px-3 py-1.5 rounded-md bg-emerald-600 text-white disabled:opacity-40">✅ تأیید</button>

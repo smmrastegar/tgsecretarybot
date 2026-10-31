@@ -75,12 +75,12 @@ export async function findLinkByTgUser(tgUserId: number): Promise<PlayerLink | n
   return r[0] ? toLink(r[0]) : null;
 }
 
-/** A new link request for a Telegram account: switched off and empty until the owner approves it; account scope and the like right are copied from the Main link. Safe to call twice at once (the unique index decides). */
+/** A new link request for a Telegram account: switched off until the owner approves it; the whole library narrowed to the given accounts (the default is just the "Direct" songs). Safe to call twice at once (the unique index decides). */
 export async function createTgLink(tgUserId: number, label: string, token: string, copy: { canLike: boolean; accountIds: number[]; accountsMode: "any" | "all" }): Promise<{ link: PlayerLink; created: boolean }> {
   await ensureSchema();
   const ins = (await q().query(
     `INSERT INTO player_links (name, token, active, approval, playlist_ids, all_library, tg_user_id, tg_label, can_edit, can_like_spotify, account_ids, accounts_mode)
-     VALUES ($1, $2, FALSE, 'pending', '{}', FALSE, $3, $4, FALSE, $5, $6::bigint[], $7) ON CONFLICT DO NOTHING RETURNING ${COLS}`,
+     VALUES ($1, $2, FALSE, 'pending', '{}', TRUE, $3, $4, FALSE, $5, $6::bigint[], $7) ON CONFLICT DO NOTHING RETURNING ${COLS}`,
     [label.slice(0, 80), token, tgUserId, label.slice(0, 120), copy.canLike, copy.accountIds, copy.accountsMode],
   )) as Row[];
   if (ins[0]) return { link: toLink(ins[0]), created: true };

@@ -23,7 +23,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     if (ids) await setMainScope(ids.length ? { ids, mode: b.accountsMode === "all" ? "all" : "any" } : null);
     return NextResponse.json({ ok: true });
   }
-  if (b.approval === "approved" || b.approval === "denied") await decidePlayerLink(id, b.approval === "approved", false);
+  if (b.approval === "approved" || b.approval === "denied") await decidePlayerLink(id, b.approval === "approved", "keep");
   await updatePlayerLink(id, {
     name: typeof b.name === "string" && b.name.trim() ? b.name.trim() : undefined,
     active: typeof b.active === "boolean" ? b.active : undefined,

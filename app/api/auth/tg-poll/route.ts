@@ -22,7 +22,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     (await cookies()).delete({ name: LOGIN_COOKIE, path: "/api/auth" });
     if (!p.ok) {
       if (p.created) await audit({ actorId: r.user.userId, actorName: r.user.username ?? null, action: "auth.player-telegram-request" });
-      return NextResponse.json({ status: p.reason });
+      return NextResponse.json(p.reason === "approval" ? { status: "approval", token: p.token } : { status: p.reason });
     }
     if (p.owner) await setSessionCookie(await createSession(r.user));
     await audit({ actorId: r.user.userId, actorName: r.user.username ?? null, action: "auth.player-telegram" });

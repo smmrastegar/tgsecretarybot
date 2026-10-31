@@ -7,6 +7,7 @@ import { useSearchParams } from "next/navigation";
 // player link once; it is remembered on this phone and playback starts from it.
 // "Sign out" inside the player forgets it again so a different link can be used.
 const KEY = "listenLink";
+const PENDING = "listenPending"; // the link token of a sign-up that is waiting for approval
 
 // Accepts the full URL (…/player/<token>) or just the token.
 function tokenFrom(raw: string): string | null {
@@ -32,7 +33,7 @@ function Launcher() {
   // "Continue with Telegram": the bot confirms who you are; the owner lands on the Main link, everyone else on a link of their own.
   const [tg, setTg] = useState<"idle" | "starting" | "waiting">("idle");
   const [tgUrl, setTgUrl] = useState("");
-  const [tgNote, setTgNote] = useState("");
+  const [waitTok, setWaitTok] = useState<string | null>(null); // a sign-up that waits for the owner's approval: the app checks by itself and goes in once it is approved
   const tgNonce = useRef<string | null>(null);
   const tgDeadline = useRef(0);
 
@@ -56,7 +57,7 @@ function Launcher() {
   }, []);
 
   async function startTelegram() {
-    setErr(""); setTgNote(""); setTg("starting");
+    setErr(""); setTg("starting");
     const tab = (window as unknown as { AndroidMusic?: unknown }).AndroidMusic ? null : window.open("", "_blank"); // keep the click's permission for a browser tab
     try {
       const r = await fetch("/api/auth/tg-start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ player: true }) });
@@ -67,6 +68,26 @@ function Launcher() {
       setTg("waiting");
     } catch (e) { tab?.close(); setErr(e instanceof Error ? e.message : String(e)); setTg("idle"); }
   }
+  // Waiting for the owner: ask now and then (and when the app comes back to the front); in as soon as it is approved.
+  useEffect(() => {
+    if (!waitTok) return;
+    let stop = false;
+    const tick = async () => {
+      if (stop) return;
+      try {
+        const r = await fetch(`/api/auth/link-status?t=${encodeURIComponent(waitTok)}`, { cache: "no-store" });
+        const d = (await r.json()) as { status?: string };
+        if (d.status === "approved") { stop = true; try { localStorage.removeItem(PENDING); } catch { /* ignore */ } void go(waitTok, "telegram"); }
+        else if (d.status === "denied" || d.status === "unknown") { stop = true; try { localStorage.removeItem(PENDING); } catch { /* ignore */ } setWaitTok(null); setErr(d.status === "denied" ? "This request wasn't approved." : "This request is no longer valid — tap Continue with Telegram again."); }
+      } catch { /* offline for a moment */ }
+    };
+    void tick();
+    const i = setInterval(() => void tick(), 4000);
+    const vis = () => { if (document.visibilityState === "visible") void tick(); };
+    document.addEventListener("visibilitychange", vis);
+    return () => { stop = true; clearInterval(i); document.removeEventListener("visibilitychange", vis); };
+  }, [waitTok, go]);
+
   useEffect(() => {
     if (tg !== "waiting") return;
     let stop = false;
@@ -77,7 +98,7 @@ function Launcher() {
         const r = await fetch(`/api/auth/tg-poll?nonce=${encodeURIComponent(tgNonce.current)}`, { cache: "no-store" });
         const d = (await r.json()) as { status?: string; token?: string };
         if (d.status === "ok" && d.token) { stop = true; void go(d.token, "telegram"); return; }
-        if (d.status === "approval") { stop = true; setTgNote("Request sent. You'll get a Telegram message from the bot once it's approved — then tap Continue with Telegram again."); setTg("idle"); return; }
+        if (d.status === "approval" && d.token) { stop = true; try { localStorage.setItem(PENDING, d.token); } catch { /* private mode */ } setWaitTok(d.token); setTg("idle"); return; }
         if (d.status === "denied") { stop = true; setErr("This request wasn't approved."); setTg("idle"); return; }
         if (d.status === "off") { stop = true; setErr("This account's link has been switched off."); setTg("idle"); return; }
         if (d.status === "closed") { stop = true; setErr("New sign-ups are closed right now. Ask the owner for a link."); setTg("idle"); return; }
@@ -106,7 +127,10 @@ function Launcher() {
     if (params.get("signedout") === "1") { try { nat?.saveLink?.(""); } catch { /* old app */ } }
     // One-time hop from the old address: nothing saved there means nothing to carry over, so go on to the new address.
     if (params.get("migrate") === "1" && !saved && !fromUrl) { try { nat?.markMigrated?.(); } catch { /* old app */ } window.location.replace("https://playlist.bz/listen"); return; }
-    if (fromUrl) void go(fromUrl, "paste");
+    let pending: string | null = null;
+    try { pending = localStorage.getItem(PENDING); } catch { /* ignore */ }
+    if (pending && !fromUrl && !saved) { setWaitTok(pending); setState("ask"); } // reopened while a request waits: carry on waiting
+    else if (fromUrl) void go(fromUrl, "paste");
     else if (saved && params.get("signedout") !== "1") void go(saved);
     else setState("ask");
     return () => window.removeEventListener("beforeinstallprompt", onPrompt);
@@ -152,7 +176,12 @@ function Launcher() {
               </div>
             ) : (
               <>
-              {tgNote && <p role="status" style={{ margin: "0 2px 12px", fontSize: 14, lineHeight: 1.6, color: "#86efac" }}>{tgNote}</p>}
+              {waitTok && (
+                <div role="status" style={{ margin: "0 0 12px", borderRadius: 16, background: S.card, border: `1px solid ${S.bd}`, padding: 14, fontSize: 14, lineHeight: 1.6 }}>
+                  <b style={{ color: "#86efac" }}>Waiting for approval…</b>
+                  <div style={{ color: S.dim, marginTop: 2 }}>Your request was sent. This opens by itself as soon as it is approved — you can leave the app open.</div>
+                </div>
+              )}
               <button onClick={() => void startTelegram()} disabled={tg === "starting"} style={{ width: "100%", height: 54, borderRadius: 999, border: 0, background: "#2AABEE", color: "#fff", fontSize: 17, fontWeight: 700, opacity: tg === "starting" ? 0.6 : 1 }}>{tg === "starting" ? "Opening Telegram…" : "Continue with Telegram"}</button>
               </>
             )}
