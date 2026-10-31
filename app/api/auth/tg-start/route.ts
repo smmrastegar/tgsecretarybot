@@ -14,18 +14,20 @@ let botUsername: string | undefined;
 // the browser then polls /api/auth/tg-poll. The poll must come from the same
 // browser (httpOnly cookie holding a secret), so a leaked nonce is useless.
 export async function POST(request: Request): Promise<NextResponse> {
-  const player = ((await request.json().catch(() => ({}))) as { player?: unknown }).player === true;
+  const body = (await request.json().catch(() => ({}))) as { player?: unknown; invite?: unknown };
+  const player = body.player === true;
+  const invite = player && typeof body.invite === "string" && body.invite.length >= 40 && body.invite.length <= 64 ? body.invite : null;
   try {
-    return await start(player);
+    return await start(player, invite);
   } catch (err) {
     reportError("auth", "tg-start failed:", err);
     return NextResponse.json({ error: `Could not start Telegram login: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 });
   }
 }
 
-async function start(player: boolean): Promise<NextResponse> {
+async function start(player: boolean, invite: string | null): Promise<NextResponse> {
   const nonce = newToken(), secret = newToken();
-  if (!(await createLoginRequest(sha256(nonce), sha256(secret), 300, player ? "player" : "dash").catch(() => false))) {
+  if (!(await createLoginRequest(sha256(nonce), sha256(secret), 300, player ? "player" : "dash", invite).catch(() => false))) {
     return NextResponse.json({ error: "Too many login attempts right now. Try again in a minute." }, { status: 429 });
   }
   const bot = getBot();

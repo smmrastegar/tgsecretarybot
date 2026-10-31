@@ -18,7 +18,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (r.status !== "approved" || !r.user) return NextResponse.json({ status: r.status });
   if (r.kind === "player") {
     // The player app asked: hand back the player link this Telegram account is entitled to (the owner also gets a dashboard session for playlist.bz).
-    const p = await playerLinkForTelegram(r.user);
+    const p = await playerLinkForTelegram(r.user, r.invite ?? null);
     (await cookies()).delete({ name: LOGIN_COOKIE, path: "/api/auth" });
     if (!p.ok) {
       if (p.created) await audit({ actorId: r.user.userId, actorName: r.user.username ?? null, action: "auth.player-telegram-request" });

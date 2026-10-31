@@ -7,7 +7,7 @@ import { confirmDialog, promptDialog } from "@/components/ui/Dialogs";
 // Player links: any number of private links, each with its own playlists.
 // Creating a link never touches the others; a link can only be switched off
 // (and on again), never deleted.
-type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLike?: boolean; canEdit?: boolean; allLibrary?: boolean; tgLabel?: string | null; approval?: "pending" | "approved" | "denied"; createdAt: string | null; lastUsedAt: string | null };
+type Link = { id: number; name: string; url: string; active: boolean; playlistIds: number[] | null; legacy: boolean; canCreate?: boolean; accountIds?: number[]; accountsMode?: "any" | "all"; canLike?: boolean; canEdit?: boolean; allLibrary?: boolean; tgLabel?: string | null; approval?: "pending" | "approved" | "denied"; invite?: { open: boolean; who: string } | null; createdAt: string | null; lastUsedAt: string | null };
 type Acc = { id: number; name: string };
 type Pl = { id: number; name: string; smart: boolean; count: number };
 
@@ -24,6 +24,14 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
   const [open, setOpen] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [tgSignup, setTgSignup] = useState(true);
+  // Invitation for one Telegram account
+  const [invWho, setInvWho] = useState("");
+  const [invName, setInvName] = useState("");
+  const [invScope, setInvScope] = useState<"direct" | "all" | "playlists">("direct");
+  const [invPick, setInvPick] = useState<Set<number>>(new Set());
+  const [invEdit, setInvEdit] = useState(false);
+  const [invUrl, setInvUrl] = useState("");
+  const [invErr, setInvErr] = useState("");
 
   const load = useCallback(async () => {
     const r = await fetch("/api/music/links", { cache: "no-store" });
@@ -43,6 +51,14 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
     setBusy(false);
     if (r.ok) { setName(""); setPick(new Set()); onMessage("لینک جدید ساخته شد؛ لینک‌های قبلی همان‌طور که بودند ماندند"); await load(); }
     else onMessage("ساخت لینک ناموفق بود");
+  }
+  async function invite() {
+    setBusy(true); setInvErr(""); setInvUrl("");
+    const r = await fetch("/api/music/links/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ who: invWho, name: invName, scope: invScope, playlistIds: [...invPick], canEdit: invEdit }) });
+    const j = (await r.json().catch(() => ({}))) as { inviteUrl?: string; error?: string };
+    setBusy(false);
+    if (r.ok && j.inviteUrl) { setInvUrl(j.inviteUrl); setInvWho(""); setInvName(""); onMessage("دعوت‌نامه ساخته شد؛ لینکش را برایش بفرست"); await load(); }
+    else setInvErr(j.error ?? "ساخت دعوت‌نامه ناموفق بود");
   }
   const toggleIn = (set: Set<number>, id: number) => { const n = new Set(set); if (n.has(id)) n.delete(id); else n.add(id); return n; };
 
@@ -66,6 +82,7 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
               <span className="font-medium text-sm">{l.name}</span>
               {l.approval === "pending" && <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200">⏳ منتظر تأیید تو</span>}
               {l.approval === "denied" && <span className="px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-300">رد شده</span>}
+              {l.invite?.open && <span className="px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-200" title="فقط همین اکانت تلگرام می‌تواند با این لینک وارد شود">📨 دعوت‌نامه برای {l.invite.who} · هنوز وارد نشده</span>}
               {l.tgLabel && <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-200" title="این لینک با ورود تلگرام ساخته شد">✈️ تلگرام</span>}
               <span className={`px-2 py-0.5 rounded-full ${l.active ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/15 text-rose-300"}`}>{l.active ? "فعال" : "غیرفعال"}</span>
               <span className="text-[var(--color-text-dim)]">{l.playlistIds == null ? "همه‌ی آهنگ‌ها" : `${fa(l.playlistIds.length)} پلی‌لیست`}</span>
@@ -127,6 +144,37 @@ export default function LinksCard({ onMessage, refreshKey }: { onMessage: (m: st
             )}
           </div>
         ))}
+      </div>
+
+      <div className="mt-4 pt-3 border-t border-[var(--color-border)]">
+        <div className="text-xs font-medium mb-1">📨 دعوت‌نامه برای یک اکانت تلگرام</div>
+        <p className="text-xs text-[var(--color-text-dim)] mb-2 leading-6">@username یا شناسهٔ عددی را بنویس و تعیین کن چه ببیند. لینکی که می‌سازد را برایش بفرست؛ فقط همان اکانت با تلگرام وارد می‌شود، بدون نیاز به تأیید، و همین تنظیمات را دارد. بعداً هم از همین فهرست عوضش می‌کنی.</p>
+        <div className="flex gap-2 flex-wrap">
+          <input value={invWho} onChange={(e) => setInvWho(e.target.value)} dir="ltr" placeholder="@username یا 123456789" className="flex-1 min-w-[10rem] text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2" />
+          <input value={invName} onChange={(e) => setInvName(e.target.value)} placeholder="نام (اختیاری)" className="flex-1 min-w-[8rem] text-sm bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-3 py-2" />
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+          {([["direct", "فقط Direct"], ["all", "کل کتابخانه"], ["playlists", "پلی‌لیست‌های انتخابی"]] as const).map(([k, t]) => (
+            <button key={k} onClick={() => setInvScope(k)} className={`px-3 py-1.5 rounded-md border ${invScope === k ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>{invScope === k ? "✓ " : ""}{t}</button>
+          ))}
+          <button onClick={() => setInvEdit(!invEdit)} className={`px-3 py-1.5 rounded-md border ${invEdit ? "border-[var(--color-accent)]" : "border-[var(--color-border)] opacity-70"}`}>✏️ ویرایش و آپلود {invEdit ? "روشن" : "خاموش"}</button>
+        </div>
+        {invScope === "playlists" && (
+          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+            {pls.map((p) => (
+              <button key={p.id} onClick={() => setInvPick((s) => toggleIn(s, p.id))} className={`px-3 py-1.5 rounded-md border ${invPick.has(p.id) ? "bg-[var(--color-accent)]/20 border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>{invPick.has(p.id) ? "✓ " : ""}{p.smart ? "✨ " : ""}{p.name} ({fa(p.count)})</button>
+            ))}
+          </div>
+        )}
+        <button onClick={() => void invite()} disabled={busy || !invWho.trim()} className="mt-3 text-xs px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white disabled:opacity-50">+ ساخت دعوت‌نامه</button>
+        {invErr && <div className="mt-2 text-xs text-rose-300">{invErr}</div>}
+        {invUrl && (
+          <div className="mt-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs">
+            <div className="mb-1">لینک دعوت (همین را برایش بفرست):</div>
+            <input readOnly dir="ltr" value={invUrl} onFocus={(e) => e.currentTarget.select()} className="w-full font-mono text-[11px] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-md px-2 py-1.5" />
+            <button onClick={() => { void navigator.clipboard.writeText(invUrl); onMessage("لینک دعوت کپی شد"); }} className="mt-2 px-3 py-1.5 rounded-md border border-[var(--color-border)]">کپی</button>
+          </div>
+        )}
       </div>
 
       <div className="mt-4 pt-3 border-t border-[var(--color-border)]">

@@ -640,6 +640,17 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS approval TEXT NOT NULL DEFAULT 'approved'`;
     },
   },
+  {
+    // Invitations: the owner makes a link for one Telegram account (by id or @username), settings chosen beforehand; that person walks in without approval.
+    id: "2026-10-31-001-link-invites",
+    up: async (q) => {
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS invite_token TEXT`;
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS invite_username TEXT`;
+      await q`ALTER TABLE player_links ADD COLUMN IF NOT EXISTS invite_claimed_at TIMESTAMPTZ`;
+      await q`CREATE UNIQUE INDEX IF NOT EXISTS player_links_invite_idx ON player_links (invite_token) WHERE invite_token IS NOT NULL`;
+      await q`ALTER TABLE login_requests ADD COLUMN IF NOT EXISTS invite TEXT`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

@@ -1,7 +1,8 @@
 // "Continue with Telegram" in the player app. The owner (an account connected to the bot, or the owner's notify chat) lands on the Main link.
 // Anyone else is a sign-up request: nothing is shown until the owner approves it in the bot (✅ whole library / ❌) or in the dashboard Links
 // card (where they also choose what that person sees). The person is told in Telegram when it is decided.
-import { createTgLink, findLinkByTgUser, getAllSettings, getPlayerLink, isAllowedUser, updatePlayerLink } from "./db";
+import { claimInvite, createTgLink, findLinkByInvite, findLinkByTgUser, findOpenInviteByUsername, getAllSettings, getPlayerLink, isAllowedUser, updatePlayerLink } from "./db";
+import type { PlayerLink } from "./db/player-links";
 import { getLegacyToken, isLegacyActive, newLinkToken } from "./music-token";
 import { DIRECT_ACCOUNT } from "./music-scope";
 import { getSettings } from "./settings";
@@ -11,7 +12,7 @@ import type { LoginUser } from "./db/login-requests";
 
 export type TgPlayerLogin =
   | { ok: true; owner: boolean; token: string }
-  | { ok: false; reason: "off" | "closed" | "denied"; created?: boolean }
+  | { ok: false; reason: "off" | "closed" | "denied" | "wrong"; created?: boolean }
   | { ok: false; reason: "approval"; token: string; created?: boolean }; // token: the app waits on it (it works once approved) and signs in by itself
 
 const label = (u: LoginUser) => [u.firstName, u.lastName].filter(Boolean).join(" ").trim() || (u.username ? `@${u.username}` : `tg:${u.userId}`);
@@ -23,10 +24,23 @@ export async function isMusicOwner(userId: number): Promise<boolean> {
   return !!notify && String(notify) === String(userId);
 }
 
-export async function playerLinkForTelegram(u: LoginUser): Promise<TgPlayerLogin> {
+export async function playerLinkForTelegram(u: LoginUser, invite: string | null = null): Promise<TgPlayerLogin> {
   if (await isMusicOwner(u.userId)) {
     if (!(await isLegacyActive())) return { ok: false, reason: "off" };
     return { ok: true, owner: true, token: await getLegacyToken() };
+  }
+  // An invitation made for this account (its link in the app, or an open one for this @username): no approval, the settings were chosen beforehand.
+  const uname = (u.username ?? "").toLowerCase();
+  const inv = invite ? await findLinkByInvite(invite) : uname ? await findOpenInviteByUsername(uname) : null;
+  if (inv) {
+    const mine = inv.tgUserId === u.userId || (inv.tgUserId == null && !!inv.inviteUsername && inv.inviteUsername === uname);
+    if (mine) {
+      const first = !inv.inviteClaimed;
+      const link = inv.tgUserId === u.userId && inv.inviteClaimed ? inv : await claimInvite(inv.id, u.userId);
+      if (first) void notifyClaimed(link).catch(() => {});
+      return link.active ? { ok: true, owner: false, token: link.token } : { ok: false, reason: "off" };
+    }
+    if (invite) return { ok: false, reason: "wrong" }; // someone else opened this person's invitation
   }
   const have = await findLinkByTgUser(u.userId);
   if (have) {
@@ -39,6 +53,11 @@ export async function playerLinkForTelegram(u: LoginUser): Promise<TgPlayerLogin
   const { link, created } = await createTgLink(u.userId, name, newLinkToken(), { canLike: false, accountIds: [DIRECT_ACCOUNT.id], accountsMode: "any" }); // a new person starts with only the Direct songs
   if (created) void notifyOwner(link.id, name).catch(() => {});
   return { ok: false, reason: "approval", token: link.token, created };
+}
+
+async function notifyClaimed(link: PlayerLink): Promise<void> {
+  const chat = (await getSettings().catch(() => null))?.ownerNotifyChatId;
+  if (chat) await getBot().api.sendMessage(chat, `✅ ${link.name} با دعوت‌نامه وارد پلیر شد.`);
 }
 
 async function notifyOwner(linkId: number, name: string): Promise<void> {

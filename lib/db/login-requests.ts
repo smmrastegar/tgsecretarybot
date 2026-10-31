@@ -8,12 +8,12 @@ function q() {
 export type LoginUser = { userId: number; username: string | null; firstName: string | null; lastName: string | null; photoUrl: null };
 
 /** Returns false when too many unexpired requests are pending (flood guard). */
-export async function createLoginRequest(nonceHash: string, secretHash: string, ttlSeconds = 300, kind: "dash" | "player" = "dash"): Promise<boolean> {
+export async function createLoginRequest(nonceHash: string, secretHash: string, ttlSeconds = 300, kind: "dash" | "player" = "dash", invite: string | null = null): Promise<boolean> {
   await ensureSchema();
   await q().query(`DELETE FROM login_requests WHERE expires_at < NOW() - interval '1 hour'`);
   const pending = (await q().query(`SELECT COUNT(*)::int AS n FROM login_requests WHERE status = 'pending' AND expires_at > NOW()`)) as Row[];
   if (Number(pending[0]?.n ?? 0) >= 50) return false;
-  await q().query(`INSERT INTO login_requests (nonce_hash, secret_hash, expires_at, kind) VALUES ($1, $2, NOW() + ($3 || ' seconds')::interval, $4)`, [nonceHash, secretHash, String(ttlSeconds), kind]);
+  await q().query(`INSERT INTO login_requests (nonce_hash, secret_hash, expires_at, kind, invite) VALUES ($1, $2, NOW() + ($3 || ' seconds')::interval, $4, $5)`, [nonceHash, secretHash, String(ttlSeconds), kind, invite]);
   return true;
 }
 
@@ -28,9 +28,9 @@ export async function approveLoginRequest(nonceHash: string, user: LoginUser, ki
 }
 
 /** Browser side: pending / approved (single use: flips to consumed) / expired / unknown. */
-export async function pollLoginRequest(nonceHash: string, secretHash: string): Promise<{ status: "pending" | "approved" | "expired" | "unknown"; user?: LoginUser; kind?: "dash" | "player" }> {
+export async function pollLoginRequest(nonceHash: string, secretHash: string): Promise<{ status: "pending" | "approved" | "expired" | "unknown"; user?: LoginUser; kind?: "dash" | "player"; invite?: string | null }> {
   await ensureSchema();
-  const rows = (await q().query(`SELECT status, tg_user, kind, secret_hash, expires_at < NOW() AS expired FROM login_requests WHERE nonce_hash = $1`, [nonceHash])) as Row[];
+  const rows = (await q().query(`SELECT status, tg_user, kind, invite, secret_hash, expires_at < NOW() AS expired FROM login_requests WHERE nonce_hash = $1`, [nonceHash])) as Row[];
   const r = rows[0];
   if (!r || r.secret_hash !== secretHash) return { status: "unknown" };
   if (r.expired === true || r.expired === "t") return { status: "expired" };
@@ -39,5 +39,5 @@ export async function pollLoginRequest(nonceHash: string, secretHash: string): P
   const taken = (await q().query(`UPDATE login_requests SET status = 'consumed' WHERE nonce_hash = $1 AND status = 'approved' RETURNING 1`, [nonceHash])) as Row[];
   if (taken.length === 0) return { status: "unknown" };
   const u = (typeof r.tg_user === "string" ? JSON.parse(r.tg_user) : r.tg_user) as LoginUser;
-  return { status: "approved", user: u, kind: r.kind === "player" ? "player" : "dash" };
+  return { status: "approved", user: u, kind: r.kind === "player" ? "player" : "dash", invite: r.invite ? String(r.invite) : null };
 }

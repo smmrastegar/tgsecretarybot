@@ -60,7 +60,7 @@ function Launcher() {
     setErr(""); setTg("starting");
     const tab = (window as unknown as { AndroidMusic?: unknown }).AndroidMusic ? null : window.open("", "_blank"); // keep the click's permission for a browser tab
     try {
-      const r = await fetch("/api/auth/tg-start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ player: true }) });
+      const r = await fetch("/api/auth/tg-start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ player: true, invite: params.get("invite") || undefined }) });
       const d = (await r.json()) as { nonce?: string; url?: string; error?: string; expiresIn?: number };
       if (!r.ok || !d.nonce || !d.url) throw new Error(d.error ?? `Error ${r.status}`);
       tgNonce.current = d.nonce; setTgUrl(d.url); tgDeadline.current = Date.now() + (d.expiresIn ?? 300) * 1000;
@@ -99,6 +99,7 @@ function Launcher() {
         const d = (await r.json()) as { status?: string; token?: string };
         if (d.status === "ok" && d.token) { stop = true; void go(d.token, "telegram"); return; }
         if (d.status === "approval" && d.token) { stop = true; try { localStorage.setItem(PENDING, d.token); } catch { /* private mode */ } setWaitTok(d.token); setTg("idle"); return; }
+        if (d.status === "wrong") { stop = true; setErr("This invitation is for a different Telegram account. Ask for your own invitation."); setTg("idle"); return; }
         if (d.status === "denied") { stop = true; setErr("This request wasn't approved."); setTg("idle"); return; }
         if (d.status === "off") { stop = true; setErr("This account's link has been switched off."); setTg("idle"); return; }
         if (d.status === "closed") { stop = true; setErr("New sign-ups are closed right now. Ask the owner for a link."); setTg("idle"); return; }
@@ -149,7 +150,7 @@ function Launcher() {
           {/* eslint-disable-next-line @next/next/no-img-element -- static app icon */}
           <img src="/icons/player-192.png" alt="" width={84} height={84} style={{ borderRadius: 22, boxShadow: "0 12px 40px -12px rgba(0,0,0,.8)" }} />
           <h1 style={{ fontSize: 28, fontWeight: 800, margin: "16px 0 4px" }}>My Music</h1>
-          <p style={{ color: S.dim, fontSize: 15, margin: 0 }}>{state === "ask" ? "Paste your player link to start listening." : "Opening your player…"}</p>
+          <p style={{ color: S.dim, fontSize: 15, margin: 0 }}>{state === "ask" ? (params.get("invite") ? "You've been invited. Continue with Telegram to start listening." : "Paste your player link to start listening.") : "Opening your player…"}</p>
         </div>
 
         {state === "ask" && (

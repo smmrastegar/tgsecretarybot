@@ -12,3 +12,12 @@ export function matchesAccounts(sources: number[] | undefined, ids: number[], mo
 /** SoundCloud accounts share the account lists with Spotify's: their ids are offset by this much (Spotify ids stay as they are). */
 export const SC_ID_BASE = 1_000_000;
 export const isSpotifyAccountId = (id: number): boolean => id > 0 && id < SC_ID_BASE;
+
+/** "@name", "name", "https://t.me/name" or a numeric id. */
+export function parseTelegramWho(raw: string): { tgUserId: number | null; username: string | null } | null {
+  const t = raw.trim().replace(/^https?:\/\/(t\.me|telegram\.me)\//i, "").replace(/^@/, "").replace(/[/?#].*$/, "");
+  if (/^\d{5,15}$/.test(t)) return { tgUserId: Number(t), username: null };
+  if (/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(t)) return { tgUserId: null, username: t.toLowerCase() };
+  return null;
+}
+

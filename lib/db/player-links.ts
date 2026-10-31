@@ -5,15 +5,16 @@ function q() {
   return sql() as unknown as { query: (t: string, p?: unknown[]) => Promise<unknown[]> };
 }
 
-export type PlayerLink = { id: number; name: string; token: string; active: boolean; playlistIds: number[]; createdAt: string; lastUsedAt: string | null; canCreate: boolean; accountIds: number[]; accountsMode: "any" | "all"; canLikeSpotify: boolean; canEdit: boolean; allLibrary: boolean; tgUserId: number | null; tgLabel: string | null; approval: "pending" | "approved" | "denied" };
+export type PlayerLink = { id: number; name: string; token: string; active: boolean; playlistIds: number[]; createdAt: string; lastUsedAt: string | null; canCreate: boolean; accountIds: number[]; accountsMode: "any" | "all"; canLikeSpotify: boolean; canEdit: boolean; allLibrary: boolean; tgUserId: number | null; tgLabel: string | null; approval: "pending" | "approved" | "denied"; inviteToken: string | null; inviteUsername: string | null; inviteClaimed: boolean };
 
-const COLS = `id, name, token, active, playlist_ids, created_at::text AS created_at, last_used_at::text AS last_used_at, can_create_playlists, account_ids, accounts_mode, can_like_spotify, can_edit, all_library, tg_user_id, tg_label, approval`;
+const COLS = `id, name, token, active, playlist_ids, created_at::text AS created_at, last_used_at::text AS last_used_at, can_create_playlists, account_ids, accounts_mode, can_like_spotify, can_edit, all_library, tg_user_id, tg_label, approval, invite_token, invite_username, invite_claimed_at IS NOT NULL AS invite_claimed`;
 const toLink = (r: Row): PlayerLink => ({
   id: num(r, "id"), name: str(r, "name"), token: str(r, "token"), active: r.active === true || r.active === "t",
   playlistIds: (Array.isArray(r.playlist_ids) ? r.playlist_ids : []).map(Number), createdAt: str(r, "created_at"),
   lastUsedAt: r.last_used_at ? str(r, "last_used_at") : null, canCreate: r.can_create_playlists !== false && r.can_create_playlists !== "f",
   accountIds: (Array.isArray(r.account_ids) ? r.account_ids : []).map(Number), accountsMode: r.accounts_mode === "all" ? "all" : "any", canLikeSpotify: r.can_like_spotify === true || r.can_like_spotify === "t", canEdit: r.can_edit === true || r.can_edit === "t",
   allLibrary: r.all_library === true || r.all_library === "t", tgUserId: r.tg_user_id == null ? null : Number(r.tg_user_id), tgLabel: r.tg_label ? str(r, "tg_label") : null,
+  inviteToken: r.invite_token ? str(r, "invite_token") : null, inviteUsername: r.invite_username ? str(r, "invite_username") : null, inviteClaimed: r.invite_claimed === true || r.invite_claimed === "t",
   approval: r.approval === "pending" ? "pending" : r.approval === "denied" ? "denied" : "approved",
 });
 
@@ -85,4 +86,45 @@ export async function createTgLink(tgUserId: number, label: string, token: strin
   )) as Row[];
   if (ins[0]) return { link: toLink(ins[0]), created: true };
   return { link: (await findLinkByTgUser(tgUserId))!, created: false };
+}
+
+export type InviteSettings = { name: string; playlistIds: number[]; allLibrary: boolean; accountIds: number[]; accountsMode: "any" | "all"; canEdit: boolean; canLike: boolean };
+
+/** An invitation for one Telegram account: already approved, with its settings chosen; it can only be claimed by that account (numeric id, or @username until the id is known). */
+export async function createInviteLink(who: { tgUserId: number | null; username: string | null }, token: string, inviteToken: string, s: InviteSettings): Promise<PlayerLink> {
+  await ensureSchema();
+  const r = (await q().query(
+    `INSERT INTO player_links (name, token, active, approval, playlist_ids, all_library, tg_user_id, tg_label, invite_token, invite_username, can_edit, can_like_spotify, account_ids, accounts_mode)
+     VALUES ($1, $2, TRUE, 'approved', $3::bigint[], $4, $5, $6, $7, $8, $9, $10, $11::bigint[], $12) RETURNING ${COLS}`,
+    [s.name.slice(0, 80), token, [...new Set(s.playlistIds.filter(Number.isFinite))], s.allLibrary, who.tgUserId, s.name.slice(0, 120), inviteToken, who.username, s.canEdit, s.canLike, s.accountIds, s.accountsMode],
+  )) as Row[];
+  return toLink(r[0]!);
+}
+
+export async function findLinkByInvite(inviteToken: string): Promise<PlayerLink | null> {
+  await ensureSchema();
+  const r = (await q().query(`SELECT ${COLS} FROM player_links WHERE invite_token = $1`, [inviteToken])) as Row[];
+  return r[0] ? toLink(r[0]) : null;
+}
+
+/** An invitation made for a @username that nobody has claimed yet. */
+export async function findOpenInviteByUsername(username: string): Promise<PlayerLink | null> {
+  await ensureSchema();
+  const r = (await q().query(`SELECT ${COLS} FROM player_links WHERE invite_username = $1 AND invite_claimed_at IS NULL AND tg_user_id IS NULL ORDER BY id LIMIT 1`, [username.toLowerCase()])) as Row[];
+  return r[0] ? toLink(r[0]) : null;
+}
+
+/** The account came in through its invitation: tie the link to it. If that account already had a link of its own (an earlier sign-up request), that link takes over the invitation's settings and the invitation is closed. Returns the link to use. */
+export async function claimInvite(inviteId: number, tgUserId: number): Promise<PlayerLink> {
+  await ensureSchema();
+  const own = await findLinkByTgUser(tgUserId);
+  if (own && own.id !== inviteId) {
+    await q().query(
+      `UPDATE player_links t SET active = TRUE, approval = 'approved', playlist_ids = i.playlist_ids, all_library = i.all_library, account_ids = i.account_ids, accounts_mode = i.accounts_mode, can_edit = i.can_edit, can_like_spotify = i.can_like_spotify
+       FROM player_links i WHERE t.id = $1 AND i.id = $2`, [own.id, inviteId]);
+    await q().query(`UPDATE player_links SET active = FALSE, invite_claimed_at = NOW(), name = name || ' (merged)' WHERE id = $1`, [inviteId]);
+    return (await findLinkByTgUser(tgUserId))!;
+  }
+  await q().query(`UPDATE player_links SET tg_user_id = $2, invite_claimed_at = COALESCE(invite_claimed_at, NOW()) WHERE id = $1`, [inviteId, tgUserId]);
+  return (await getPlayerLink(inviteId))!;
 }
