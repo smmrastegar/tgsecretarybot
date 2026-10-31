@@ -651,6 +651,13 @@ export const MIGRATIONS: Migration[] = [
       await q`ALTER TABLE login_requests ADD COLUMN IF NOT EXISTS invite TEXT`;
     },
   },
+  {
+    // The cost note under my own voice transcript, in chats made for voice-to-text (elsewhere it goes to the owner privately).
+    id: "2026-10-31-002-self-voice-cost",
+    up: async (q) => {
+      await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS self_voice_cost BOOLEAN NOT NULL DEFAULT FALSE`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

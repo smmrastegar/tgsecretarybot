@@ -15,7 +15,7 @@ let schemaPromise: Promise<void> | null = null;
 // network round-trip (~28s cold-start on a remote DB). When the DB
 // already records this exact version, we skip all of them. If you add
 // schema and forget to bump this, the new DDL won't run — so BUMP IT.
-const SCHEMA_VERSION = "2026-10-31.self-voice-cost";
+const SCHEMA_VERSION = "2026-08-28.rule-match-pattern";
 
 export function hasDb(): boolean {
   return Boolean(config.databaseUrl);
@@ -770,7 +770,6 @@ export async function ensureSchema(
     // global preference: you want it in the chats where you dictate,
     // not in every DM you ever open.
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS self_voice_transcript BOOLEAN NOT NULL DEFAULT FALSE`;
-    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS self_voice_cost BOOLEAN NOT NULL DEFAULT FALSE`; // the cost note under my own voice transcript, in this chat (otherwise it goes to me privately)
     // Follow-up reminders: when ON, a cron tick checks whether the
     // owner has left this person hanging — if there's a non-owner
     // message that's older than threshold_hours with no owner reply
