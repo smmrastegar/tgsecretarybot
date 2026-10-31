@@ -453,11 +453,11 @@ async function maybeTranscribeOwnVoice(args: {
     });
   }
   // What it cost, which model, running totals. NOT in the conversation (the other person would see it): a private message from the bot to the owner —
-  // except in the owner's own chat, where it goes right under the transcript.
+  // except in the owner's own chat, and in chats where the owner switched "cost under my voice" on (a chat made for voice-to-text), where it goes right under the transcript.
   try {
     const note = await transcriptNote(tr);
     const ownerId = msg.from?.id;
-    if (ownerId != null && msg.chat.id === ownerId) {
+    if (rule?.selfVoiceCost || (ownerId != null && msg.chat.id === ownerId)) {
       await bot.api.sendMessage(msg.chat.id, note, { business_connection_id: bcId, reply_parameters: { message_id: msg.message_id } });
     } else {
       const to = (await getSettings().catch(() => null))?.ownerNotifyChatId || ownerId;

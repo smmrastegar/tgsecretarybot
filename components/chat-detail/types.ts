@@ -121,6 +121,7 @@ export type Rule = {
   autoForwardLocation: boolean;
   autoExtractNotes: boolean;
   selfVoiceTranscript: boolean;
+  selfVoiceCost?: boolean;
   isBot: boolean;
   ignored: boolean;
   phoneNumber: string | null;

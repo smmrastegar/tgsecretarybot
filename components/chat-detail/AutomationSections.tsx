@@ -39,6 +39,7 @@ export function MediaAutomationSection({ chatId, rule, saving, patchAutomation }
     ["autoForwardLocation", "📍 location", "→ Notes + notes_inbox", rule.autoForwardLocation],
     ["autoExtractNotes", "📒 استخراج خودکار آدرس/تماس/نکات مهم با AI", undefined, rule.autoExtractNotes],
     ["selfVoiceTranscript", "🗣 ویسِ خودم → متنش ریپلای بشه زیر همون ویس", "بدون هدر — طرف مقابل هم می‌بینه", rule.selfVoiceTranscript],
+    ["selfVoiceCost", "💰 زیر متنِ ویسِ خودم، هزینه و مدل هم بیاد", "فقط برای چتی که مخصوص همین کاره (مثلاً اکانت پیاده‌سازی). در چت‌های دیگه هزینه خصوصی برای خودت می‌آد", rule.selfVoiceCost],
   ] : [];
   const on = items.filter((i) => i[3]).length;
   return (

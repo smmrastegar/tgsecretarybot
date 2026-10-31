@@ -49,6 +49,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       autoForwardLocation?: boolean;
       autoExtractNotes?: boolean;
       selfVoiceTranscript?: boolean;
+      selfVoiceCost?: boolean;
     };
   };
   const op = body.op;

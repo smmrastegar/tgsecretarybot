@@ -770,6 +770,7 @@ export async function ensureSchema(
     // global preference: you want it in the chats where you dictate,
     // not in every DM you ever open.
     await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS self_voice_transcript BOOLEAN NOT NULL DEFAULT FALSE`;
+    await q`ALTER TABLE chat_rules ADD COLUMN IF NOT EXISTS self_voice_cost BOOLEAN NOT NULL DEFAULT FALSE`; // the cost note under my own voice transcript, in this chat (otherwise it goes to me privately)
     // Follow-up reminders: when ON, a cron tick checks whether the
     // owner has left this person hanging — if there's a non-owner
     // message that's older than threshold_hours with no owner reply

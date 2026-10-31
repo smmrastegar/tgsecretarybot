@@ -117,6 +117,7 @@ export type ChatRule = {
   autoForwardLocation: boolean;
   autoExtractNotes: boolean;
   selfVoiceTranscript: boolean;
+  selfVoiceCost: boolean;
   isBot: boolean;
   ignored: boolean;
   phoneNumber: string | null;
@@ -197,6 +198,7 @@ export function rowToChatRule(r: Row): ChatRule {
     autoForwardLocation: bool(r, "auto_forward_location"),
     autoExtractNotes: bool(r, "auto_extract_notes"),
     selfVoiceTranscript: bool(r, "self_voice_transcript"),
+    selfVoiceCost: bool(r, "self_voice_cost"),
     isBot: bool(r, "is_bot"),
     ignored: bool(r, "ignored"),
     phoneNumber: strOrNull(r, "phone_number"),
@@ -233,7 +235,7 @@ export async function getChatRule(chatId: number): Promise<ChatRule | null> {
            last_auto_summary_at,
            auto_forward_voice, auto_forward_video, auto_forward_photo,
            auto_forward_location, auto_extract_notes,
-           self_voice_transcript,
+           self_voice_transcript, self_voice_cost,
            is_bot, ignored, phone_number,
            grace_skipped_at,
            summary_interval_hours, last_summary_run_at, analytics_share_token,
@@ -571,6 +573,7 @@ export type ChatAutomationPatch = {
   autoForwardLocation?: boolean;
   autoExtractNotes?: boolean;
   selfVoiceTranscript?: boolean;
+  selfVoiceCost?: boolean;
 };
 
 export async function setChatAutomation(
@@ -588,7 +591,7 @@ export async function setChatAutomation(
   await sql()`
     INSERT INTO chat_rules (chat_id, chat_type,
       auto_forward_voice, auto_forward_video, auto_forward_photo,
-      auto_forward_location, auto_extract_notes, self_voice_transcript, updated_at)
+      auto_forward_location, auto_extract_notes, self_voice_transcript, self_voice_cost, updated_at)
     VALUES (${chatId},
       COALESCE(
         (SELECT chat_type FROM messages_log WHERE chat_id = ${chatId} LIMIT 1),
@@ -600,6 +603,7 @@ export async function setChatAutomation(
       ${patch.autoForwardLocation ?? false},
       ${patch.autoExtractNotes ?? false},
       ${patch.selfVoiceTranscript ?? false},
+      ${patch.selfVoiceCost ?? false},
       NOW())
     ON CONFLICT (chat_id) DO UPDATE SET
       auto_forward_voice = COALESCE(${patch.autoForwardVoice ?? null}::boolean, chat_rules.auto_forward_voice),
@@ -608,6 +612,7 @@ export async function setChatAutomation(
       auto_forward_location = COALESCE(${patch.autoForwardLocation ?? null}::boolean, chat_rules.auto_forward_location),
       auto_extract_notes = COALESCE(${patch.autoExtractNotes ?? null}::boolean, chat_rules.auto_extract_notes),
       self_voice_transcript = COALESCE(${patch.selfVoiceTranscript ?? null}::boolean, chat_rules.self_voice_transcript),
+      self_voice_cost = COALESCE(${patch.selfVoiceCost ?? null}::boolean, chat_rules.self_voice_cost),
       updated_at = NOW()`;
 }
 
@@ -620,7 +625,7 @@ export async function bulkSetChatAutomation(
   const rows = await sql()`
     INSERT INTO chat_rules (chat_id, chat_type, chat_title,
       auto_forward_voice, auto_forward_video, auto_forward_photo,
-      auto_forward_location, auto_extract_notes, self_voice_transcript, updated_at)
+      auto_forward_location, auto_extract_notes, self_voice_transcript, self_voice_cost, updated_at)
     SELECT m.chat_id, MAX(m.chat_type), MAX(m.chat_title),
            ${patch.autoForwardVoice ?? false},
            ${patch.autoForwardVideo ?? false},
@@ -628,6 +633,7 @@ export async function bulkSetChatAutomation(
            ${patch.autoForwardLocation ?? false},
            ${patch.autoExtractNotes ?? false},
            ${patch.selfVoiceTranscript ?? false},
+           ${patch.selfVoiceCost ?? false},
            NOW()
     FROM messages_log m
     WHERE m.chat_id = ANY(${chatIds}::bigint[])
@@ -639,6 +645,7 @@ export async function bulkSetChatAutomation(
       auto_forward_location = COALESCE(${patch.autoForwardLocation ?? null}::boolean, chat_rules.auto_forward_location),
       auto_extract_notes = COALESCE(${patch.autoExtractNotes ?? null}::boolean, chat_rules.auto_extract_notes),
       self_voice_transcript = COALESCE(${patch.selfVoiceTranscript ?? null}::boolean, chat_rules.self_voice_transcript),
+      self_voice_cost = COALESCE(${patch.selfVoiceCost ?? null}::boolean, chat_rules.self_voice_cost),
       updated_at = NOW()
     RETURNING chat_id`;
   return rows.length;
