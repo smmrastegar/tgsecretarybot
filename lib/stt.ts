@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { config } from "./config";
-import { getAllSettings, recordAiUsage } from "./db";
+import { getAllSettings, recordAiUsage, transcribeUsageTotals } from "./db";
 import { noteOpenRouterStatus, openRouterGate } from "./openrouter-guard";
 
 import { reportError, reportWarn } from "./report";
@@ -108,16 +108,23 @@ type TranscribeArgs = {
   businessConnectionId?: string | null;
 };
 
+export type SttResult = {
+  text: string; durationSeconds?: number; provider: string;
+  model: string; costUsd: number; elapsedMs: number; /** attempts that failed before this one worked */ fallbacks: number; mode: "best" | "fast";
+};
+
 export async function transcribeAudio(
   args: TranscribeArgs,
-): Promise<{ text: string; durationSeconds?: number; provider: string }> {
+): Promise<SttResult> {
   const errors: string[] = [];
+  const t0 = Date.now();
   const s = await getAllSettings().catch(() => ({} as Record<string, string>));
   const fast = s.sttOrder === "fast";
   const orModel = (s.sttModel ?? "").trim() || OPENROUTER_BEST_MODEL;
 
   // Order of attempts: best → (best Gemini, lighter Gemini, full Whisper); fast → (Whisper turbo, then Gemini).
-  const steps: Array<[string, () => Promise<{ text: string; durationSeconds?: number; provider: string }>]> = [];
+  type Part = { text: string; durationSeconds?: number; provider: string; model: string; costUsd: number };
+  const steps: Array<[string, () => Promise<Part>]> = [];
   if (fast) {
     if (config.groqApiKey) steps.push(["Groq", () => transcribeViaGroq(args, GROQ_FAST_MODEL)]);
     if (config.openrouterApiKey) steps.push(["OpenRouter", () => transcribeViaOpenRouter(args, orModel)]);
@@ -130,7 +137,8 @@ export async function transcribeAudio(
   }
   for (const [name, run] of steps) {
     try {
-      return await run();
+      const r = await run();
+      return { ...r, elapsedMs: Date.now() - t0, fallbacks: errors.length, mode: fast ? "fast" : "best" };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`${name}: ${msg}`);
@@ -145,7 +153,7 @@ export async function transcribeAudio(
 async function transcribeViaOpenRouter(
   args: TranscribeArgs,
   model: string,
-): Promise<{ text: string; provider: string }> {
+): Promise<{ text: string; provider: string; model: string; costUsd: number }> {
   const { data, mime } = await downloadTelegramFile(args.botToken, args.fileId);
   const base64 = Buffer.from(data).toString("base64");
   const format = mimeToFormat(mime);
@@ -220,11 +228,12 @@ async function transcribeViaOpenRouter(
   const text = (json.choices?.[0]?.message?.content ?? "").trim();
   if (!text) throw new Error("empty transcript");
 
+  let cost = 0;
   if (json.usage) {
     const pt = json.usage.prompt_tokens ?? 0;
     const ct = json.usage.completion_tokens ?? 0;
     const [inP, outP] = OPENROUTER_PRICE[model] ?? OPENROUTER_PRICE[OPENROUTER_FALLBACK_MODEL]!;
-    const cost = (pt / 1_000_000) * inP + (ct / 1_000_000) * outP;
+    cost = (pt / 1_000_000) * inP + (ct / 1_000_000) * outP;
     await recordAiUsage({
       chatId: args.chatId ?? null,
       businessConnectionId: args.businessConnectionId ?? null,
@@ -237,13 +246,13 @@ async function transcribeViaOpenRouter(
     }).catch((err) => reportError("stt", "[stt] usage record failed:", err));
   }
 
-  return { text, provider: `openrouter:${model.replace(/^google\//, "")}` };
+  return { text, provider: `openrouter:${model.replace(/^google\//, "")}`, model, costUsd: cost };
 }
 
 async function transcribeViaGroq(
   args: TranscribeArgs,
   model: string,
-): Promise<{ text: string; durationSeconds?: number; provider: string }> {
+): Promise<{ text: string; durationSeconds?: number; provider: string; model: string; costUsd: number }> {
   if (!config.groqApiKey) throw new Error("not configured");
   const { data, mime, name } = await downloadTelegramFile(
     args.botToken,
@@ -296,5 +305,30 @@ async function transcribeViaGroq(
     costUsd,
   }).catch((err) => reportError("stt", "[stt] usage record failed:", err));
 
-  return { text, durationSeconds: seconds, provider: `groq:${model}` };
+  return { text, durationSeconds: seconds, provider: `groq:${model}`, model, costUsd };
+}
+
+const MODEL_LABEL: Record<string, string> = {
+  "google/gemini-2.5-pro": "Gemini 2.5 Pro (OpenRouter)",
+  "google/gemini-2.5-flash": "Gemini 2.5 Flash (OpenRouter)",
+  "whisper-large-v3": "Whisper large-v3 (Groq)",
+  "whisper-large-v3-turbo": "Whisper large-v3-turbo (Groq)",
+};
+const usd = (n: number) => `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`;
+
+/** A short follow-up message for a transcript: which model did it, what it cost, running totals, and a note when something fell back. Plain text. */
+export async function transcriptNote(tr: SttResult): Promise<string> {
+  const t = await transcribeUsageTotals().catch(() => null);
+  const lines = [
+    `💰 هزینهٔ این پیاده‌سازی: ${usd(tr.costUsd)}`,
+    `🤖 مدل: ${MODEL_LABEL[tr.model] ?? tr.model}`,
+    `⏱ زمان پردازش: ${(tr.elapsedMs / 1000).toFixed(1)} ثانیه${tr.durationSeconds ? ` · مدت صدا ${Math.round(tr.durationSeconds)} ثانیه` : ""}`,
+  ];
+  if (t) lines.push(`📊 مجموع: امروز ${usd(t.todayUsd)} (${t.todayN} بار) · این ماه ${usd(t.monthUsd)} (${t.monthN}) · از ابتدا ${usd(t.totalUsd)} (${t.totalN})`);
+  const notes: string[] = [];
+  if (tr.mode === "best" && tr.fallbacks > 0) notes.push("مدل اصلی خطا داد و با مدل بعدی انجام شد؛ اگه تکرار شد در گزارش خطاها ببین.");
+  if (tr.mode === "fast") notes.push("حالت «سریع» روشنه (Whisper turbo)؛ برای کیفیت بهتر در فارسی sttOrder رو به best برگردون.");
+  if (tr.costUsd === 0) notes.push("هزینه صفر ثبت شد (احتمالاً سرویس گزارش مصرف نداد).");
+  if (notes.length) lines.push("", ...notes.map((n) => `• ${n}`));
+  return lines.join("\n");
 }

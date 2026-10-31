@@ -5,7 +5,7 @@ import type { InlineKeyboardMarkup } from "grammy/types";
 import type { Message } from "grammy/types";
 import { config } from "../config";
 import { aiConversationReply, summarizeGroup } from "../classifier";
-import { sttConfigured, transcribeAudio } from "../stt";
+import { sttConfigured, transcribeAudio, transcriptNote } from "../stt";
 import { getRoutedMessage, markTranscribed } from "../media-router";
 import { getSettings } from "../settings";
 import { getChatRule, isAllowedUser, setBoardMemberStatus, getBoardMember, findThreadByInboxMessage, listChatThreaded, sql, upsertThreadSummary, ackChatFollowUp, addSmsAcceptSignature, createSmsBlockRule, deleteSmsDedup, expediteMonitoredAccountFetch, getMessageFullText, getNoteWatchMatch, getPrivateMessage, getSmsDedup, revealPrivateMessage, markNoteWatchMatchConfirmed, markNoteWatchMatchWrong, getEmail, setEmailSummary, createEmailPendingReply } from "../db";
@@ -795,12 +795,13 @@ export async function handleTranscribeCallback(
     // or noisy Persian clips (especially video notes) routinely come back
     // as English/Arabic. Always pass the configured language.
     const sttSettings = await getSettings();
-    const { text } = await transcribeAudio({
+    const tr = await transcribeAudio({
       botToken: config.telegramBotToken,
       fileId,
       language: sttSettings.sttLanguage || "fa",
       chatId: storageChatId,
     });
+    const text = tr.text;
     const transcript = (text ?? "").trim();
     if (!transcript) {
       await bot.api.sendMessage(
@@ -829,6 +830,8 @@ export async function handleTranscribeCallback(
         reply_to_message_id: storageMessageId,
       });
     }
+    // The next message: what this cost, with which model, and the running totals.
+    await bot.api.sendMessage(storageChatId, await transcriptNote(tr), { reply_to_message_id: storageMessageId, disable_notification: true }).catch(() => {});
     // Strip the button now that there's a transcript.
     await bot.api
       .editMessageReplyMarkup(storageChatId, storageMessageId, {

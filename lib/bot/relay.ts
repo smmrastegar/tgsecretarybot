@@ -3,7 +3,7 @@
 import { Bot, InputFile } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "../config";
-import { downloadTelegramFile, sttConfigured, transcribeAudio } from "../stt";
+import { downloadTelegramFile, sttConfigured, transcribeAudio, transcriptNote } from "../stt";
 import { defaultSecretary, getSecretaries, type Secretary } from "../secretaries";
 import { getSettings } from "../settings";
 import { findActiveSecretarySessionForSender, findLinkWithSenderMessage, findOnlyActiveSessionForSecretary, findSecretaryLinkForSenderMessage, findSessionByLinkedMessage, getChatRule, getSenderStats, hasDb, openSecretarySession, recentConversation, recordSecretaryLink, touchSecretarySession, type SecretarySession, findEnabledRelaysForSource, findSecretaryRelayLinkByRecipientMessage, findLatestInboundLinkForRecipient, recordSecretaryRelayLink, recordOwnerReaction } from "../db";
@@ -695,6 +695,8 @@ export async function maybeForwardToSecretary(args: {
               direction: "inbound",
               senderMessageId: msg.message_id,
             });
+            // The next message: cost, model and running totals (the secretary chat only — never the conversation itself).
+            await bot.api.sendMessage(secId, await transcriptNote(tr), { reply_parameters: { message_id: sent.message_id }, disable_notification: true }).catch(() => {});
           }
         } catch (err) {
           reportError("bot", "[secretary] auto-transcribe failed:", err);

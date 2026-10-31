@@ -389,3 +389,19 @@ export async function recentUpdateCounts(
     })),
   };
 }
+
+/** What voice-to-text has cost: today and this month (Tehran days), and in total. */
+export async function transcribeUsageTotals(): Promise<{ todayUsd: number; todayN: number; monthUsd: number; monthN: number; totalUsd: number; totalN: number }> {
+  const zero = { todayUsd: 0, todayN: 0, monthUsd: 0, monthN: 0, totalUsd: 0, totalN: 0 };
+  if (!hasDb()) return zero;
+  await ensureSchema();
+  const r = (await (sql() as unknown as { query: (t: string, p?: unknown[]) => Promise<Array<Record<string, unknown>>> }).query(
+    `SELECT
+       COALESCE(SUM(cost_usd) FILTER (WHERE (created_at AT TIME ZONE 'Asia/Tehran')::date = (NOW() AT TIME ZONE 'Asia/Tehran')::date), 0) AS today_usd,
+       COUNT(*) FILTER (WHERE (created_at AT TIME ZONE 'Asia/Tehran')::date = (NOW() AT TIME ZONE 'Asia/Tehran')::date) AS today_n,
+       COALESCE(SUM(cost_usd) FILTER (WHERE date_trunc('month', created_at AT TIME ZONE 'Asia/Tehran') = date_trunc('month', NOW() AT TIME ZONE 'Asia/Tehran')), 0) AS month_usd,
+       COUNT(*) FILTER (WHERE date_trunc('month', created_at AT TIME ZONE 'Asia/Tehran') = date_trunc('month', NOW() AT TIME ZONE 'Asia/Tehran')) AS month_n,
+       COALESCE(SUM(cost_usd), 0) AS total_usd, COUNT(*) AS total_n
+     FROM ai_usage WHERE purpose = 'transcribe'`))[0] ?? {};
+  return { todayUsd: Number(r.today_usd ?? 0), todayN: Number(r.today_n ?? 0), monthUsd: Number(r.month_usd ?? 0), monthN: Number(r.month_n ?? 0), totalUsd: Number(r.total_usd ?? 0), totalN: Number(r.total_n ?? 0) };
+}
