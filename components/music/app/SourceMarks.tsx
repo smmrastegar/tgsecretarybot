@@ -2,7 +2,7 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 
-export type SourceAccount = { id: number; name: string };
+export type SourceAccount = { id: number; name: string; code?: string }; // code: typed by the owner; without it the player works one out
 /** The connected Spotify accounts (owner views only; empty for everyone else, which hides the marks). */
 export const AccountsCtx = createContext<SourceAccount[]>([]);
 
@@ -23,7 +23,9 @@ export function shortCode(name: string): string {
 /** Codes for a whole list: when two accounts of the same app would get the same letters, the later ones take their first three letters, then a number. */
 export function accountCodes(list: SourceAccount[]): Map<number, string> {
   const out = new Map<number, string>(), taken = new Set<string>();
+  for (const a of list) { if (a.code) { taken.add(`${accountKind(a)}:${a.code}`); out.set(a.id, a.code); } } // what the owner typed always wins
   for (const a of list) {
+    if (out.has(a.id)) continue;
     const k = accountKind(a);
     let c = shortCode(a.name);
     if (taken.has(`${k}:${c}`)) c = words(a.name).join("").slice(0, 3).toUpperCase() || c;

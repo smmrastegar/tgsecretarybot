@@ -54,7 +54,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
   }, []);
   const [allTracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [accounts, setAccounts] = useState<Array<{ id: number; name: string }>>([]);
+  const [accounts, setAccounts] = useState<Array<{ id: number; name: string; code?: string }>>([]);
   // Settings → "Songs from": a standing account filter for the whole player (every list, search, mixes), remembered on this phone.
   const [scope, setScopeState] = useState<{ ids: number[]; mode: "any" | "all" }>({ ids: [], mode: "any" });
   useEffect(() => {
@@ -277,7 +277,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       if (r.status === 404) { setDenied(true); return; }
       if (!r.ok) { setNetDown(true); return; }
       setNetDown(r.headers.get("x-sw-cache") === "1"); // the service worker answered from its old copy
-      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string }>; canLike?: boolean; canEdit?: boolean };
+      const j = (await r.json()) as { tracks: Track[]; playlists: Playlist[]; accounts?: Array<{ id: number; name: string; code?: string }>; canLike?: boolean; canEdit?: boolean };
       setTracks(j.tracks.filter((t) => t.status === "ready")); setPlaylists(j.playlists); setAccounts(j.accounts ?? []); setCanLike(j.canLike === true); setCanEdit(j.canEdit === true);
     } catch { setNetDown(true); } finally { setLoading(false); }
   }, [tq]);
