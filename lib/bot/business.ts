@@ -5,7 +5,7 @@ import { Bot, InlineKeyboard, InputFile } from "grammy";
 import type { Message } from "grammy/types";
 import { config } from "../config";
 import { aiConversationReply, classify, describeMedia, extractActions, friendlyAutoReply, scanForWatchlistConcepts } from "../classifier";
-import { sttConfigured, transcribeAudio } from "../stt";
+import { sttConfigured, transcribeAudio, transcriptNote } from "../stt";
 import { generatePersonalPhoto, looksLikePhotoRequest } from "../image-gen";
 import { maybeRouteMedia } from "../media-router";
 import { ensureChatRuleWithDefaults } from "../chat-defaults";
@@ -431,14 +431,14 @@ async function maybeTranscribeOwnVoice(args: {
   if (!rule?.selfVoiceTranscript) return;
   if (!sttConfigured()) return;
   const settings = await getSettings();
-  const { text } = await transcribeAudio({
+  const tr = await transcribeAudio({
     botToken: config.telegramBotToken,
     fileId: media.file_id,
     language: settings.sttLanguage || "fa",
     chatId: msg.chat.id,
     businessConnectionId: bcId,
   });
-  const transcript = (text ?? "").trim();
+  const transcript = (tr.text ?? "").trim();
   if (!transcript) return;
   if (args.logId != null) {
     await saveTranscript(args.logId, transcript).catch(() => {});
@@ -451,6 +451,21 @@ async function maybeTranscribeOwnVoice(args: {
       business_connection_id: bcId,
       reply_parameters: { message_id: msg.message_id },
     });
+  }
+  // What it cost, which model, running totals. NOT in the conversation (the other person would see it): a private message from the bot to the owner —
+  // except in the owner's own chat, where it goes right under the transcript.
+  try {
+    const note = await transcriptNote(tr);
+    const ownerId = msg.from?.id;
+    if (ownerId != null && msg.chat.id === ownerId) {
+      await bot.api.sendMessage(msg.chat.id, note, { business_connection_id: bcId, reply_parameters: { message_id: msg.message_id } });
+    } else {
+      const to = (await getSettings().catch(() => null))?.ownerNotifyChatId || ownerId;
+      const who = [msg.chat.first_name, msg.chat.last_name].filter(Boolean).join(" ") || ("title" in msg.chat ? msg.chat.title : "") || String(msg.chat.id);
+      if (to) await bot.api.sendMessage(to, `🎙 پیاده‌سازی ویس تو در چت «${who}»\n\n${note}`, { disable_notification: true });
+    }
+  } catch (err) {
+    reportWarn("self-voice", "cost note failed:", err);
   }
 }
 
