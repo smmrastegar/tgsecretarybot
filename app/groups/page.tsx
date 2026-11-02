@@ -6,6 +6,7 @@ import Shell from "@/components/Shell";
 import { Card, PageTitle } from "@/components/Card";
 import Section, { Pill } from "@/components/ui/Section";
 import EmptyState from "@/components/ui/EmptyState";
+import ReaderBanner from "@/components/ReaderBanner";
 import { confirmDialog } from "@/components/ui/Dialogs";
 import { relTime } from "@/lib/format";
 
@@ -192,6 +193,8 @@ export default function GroupsPage() {
           </div>
         }
       />
+
+      <ReaderBanner />
 
       {msg && (
         <div className="mb-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm leading-6 text-center">
