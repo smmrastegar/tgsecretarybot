@@ -750,3 +750,57 @@ export function HiddenSongsSheet({ tq, onClose, onChanged, onEdit, onMessage }: 
     </Sheet>
   );
 }
+
+/** Share: a link to just this song (or its album / these songs) — public (anyone with the link) or private (they must sign in to My Music). Never the player itself. */
+export function ShareSheet({ title, ids, album, tq, onClose, onMessage }: { title: string; ids: number[]; album: { name: string; ids: number[] } | null; tq: string; onClose: () => void; onMessage: (m: string) => void }) {
+  const [whole, setWhole] = useState(false);
+  const [vis, setVis] = useState<"public" | "private">("public");
+  const [busy, setBusy] = useState(false);
+  const [url, setUrl] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const useIds = whole && album ? album.ids : ids;
+  const label = whole && album ? album.name : title;
+  const create = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch(`/api/music/share?${tq}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: label, kind: whole && album ? "album" : ids.length === 1 ? "track" : "list", trackIds: useIds, visibility: vis }) });
+      const j = (await r.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (!r.ok || !j.url) throw new Error(j.error ?? `Error ${r.status}`);
+      setUrl(j.url);
+      try { if (navigator.share) await navigator.share({ title: label, text: label, url: j.url }); } catch { /* cancelled: the link stays on screen */ }
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    setBusy(false);
+  };
+  const opt = (on: boolean) => `w-full text-left rounded-2xl px-4 py-3 border ${on ? "border-[var(--fg)] bg-[var(--s1)]" : "border-[var(--bd0)]"}`;
+  return (
+    <Sheet onClose={onClose} title="Share">
+      <div className="px-5 pb-3 font-semibold truncate">{label}</div>
+      {!url ? (
+        <div className="px-5 space-y-2.5">
+          {album && (
+            <div className="flex gap-2">
+              <button onClick={() => setWhole(false)} className={`flex-1 py-2.5 rounded-full text-[14px] font-semibold ${!whole ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>This song</button>
+              <button onClick={() => setWhole(true)} className={`flex-1 py-2.5 rounded-full text-[14px] font-semibold ${whole ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-[var(--s1)] text-[var(--dim2)]"}`}>Whole album · {album.ids.length}</button>
+            </div>
+          )}
+          <button onClick={() => setVis("public")} className={opt(vis === "public")}><div className="font-semibold">Public</div><div className="text-[13px] text-[var(--dim)]">Anyone with the link can listen to {useIds.length > 1 ? "these songs" : "this song"} — and nothing else.</div></button>
+          <button onClick={() => setVis("private")} className={opt(vis === "private")}><div className="font-semibold">Private</div><div className="text-[13px] text-[var(--dim)]">They have to sign in to My Music (Telegram or their own link) first. Still only {useIds.length > 1 ? "these songs" : "this song"}.</div></button>
+          {err && <div className="text-[13px] text-rose-400">{err}</div>}
+          <div className="flex gap-3 pt-2 pb-4">
+            <button onClick={onClose} className="flex-1 py-3 rounded-full bg-[var(--s1)] font-semibold">Cancel</button>
+            <button onClick={() => void create()} disabled={busy} className="flex-1 py-3 rounded-full bg-[var(--fg)] text-[var(--bg)] font-semibold disabled:opacity-50">{busy ? "Creating…" : "Create link"}</button>
+          </div>
+        </div>
+      ) : (
+        <div className="px-5 pb-4">
+          <div className="text-[13px] text-[var(--dim)] mb-2">{vis === "public" ? "Public link — anyone can listen." : "Private link — they must sign in."} It opens only {useIds.length > 1 ? "these songs" : "this song"}.</div>
+          <input readOnly dir="ltr" value={url} onFocus={(e) => e.currentTarget.select()} className="w-full rounded-xl bg-[var(--s1)] px-3 py-3 text-[13px] font-mono" />
+          <div className="mt-3 flex gap-3">
+            <button onClick={() => { void navigator.clipboard?.writeText(url).then(() => onMessage("Link copied")).catch(() => onMessage("Could not copy")); }} className="flex-1 py-3 rounded-full bg-[var(--s1)] font-semibold">Copy</button>
+            <button onClick={() => { void (navigator.share ? navigator.share({ title: label, url }).catch(() => {}) : navigator.clipboard?.writeText(url)); }} className="flex-1 py-3 rounded-full bg-[var(--fg)] text-[var(--bg)] font-semibold">Share…</button>
+          </div>
+        </div>
+      )}
+    </Sheet>
+  );
+}

@@ -15,7 +15,7 @@ import SeekBar from "@/components/music/app/SeekBar";
 import Spectrum from "@/components/music/Spectrum";
 
 import { useListenTracker } from "@/components/music/useListenTracker";
-import { Cover, coverQ, shareText, trackShareLines, type Playlist, type Track } from "@/components/music/app/shared";
+import { Cover, coverQ, type Playlist, type Track } from "@/components/music/app/shared";
 import { SearchView } from "@/components/music/app/Search";
 import { isSpotifyAccountId } from "@/lib/music-scope";
 import SafeBoundary from "@/components/ui/SafeBoundary";
@@ -36,7 +36,7 @@ const SPEEDS = [0.75, 1, 1.25, 1.5, 2].map((v) => ({ v, label: v === 1 ? "Normal
 const lazySheet = <K extends keyof typeof import("@/components/music/app/SheetsMore")>(name: K) =>
   dynamic(() => import("@/components/music/app/SheetsMore").then((m) => m[name] as never), { ssr: false }) as (typeof import("@/components/music/app/SheetsMore"))[K];
 const AccountPlaylistSheet = lazySheet("AccountPlaylistSheet"), AddSongsSheet = lazySheet("AddSongsSheet"), EditSongSheet = lazySheet("EditSongSheet"), DownloadSheet = lazySheet("DownloadSheet"), LyricsSheet = lazySheet("LyricsSheet"), QueueSheet = lazySheet("QueueSheet"),
-  ReportSheet = lazySheet("ReportSheet"), SettingsSheet = lazySheet("SettingsSheet"), SmartFromSongSheet = lazySheet("SmartFromSongSheet"), SpotifyLikeSheet = lazySheet("SpotifyLikeSheet"), HideSongSheet = lazySheet("HideSongSheet"), HiddenSongsSheet = lazySheet("HiddenSongsSheet");
+  ReportSheet = lazySheet("ReportSheet"), SettingsSheet = lazySheet("SettingsSheet"), ShareSheet = lazySheet("ShareSheet"), SmartFromSongSheet = lazySheet("SmartFromSongSheet"), SpotifyLikeSheet = lazySheet("SpotifyLikeSheet"), HideSongSheet = lazySheet("HideSongSheet"), HiddenSongsSheet = lazySheet("HiddenSongsSheet");
 const StatsView = dynamic(() => import("@/components/music/app/StatsView"), { ssr: false });
 const TrackDetail = dynamic(() => import("@/components/music/TrackDetail"), { ssr: false });
 
@@ -654,7 +654,12 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     play(tracks.map((t) => t.id), id);
     try { window.history.replaceState(window.history.state, "", window.location.pathname); } catch { /* ignore */ }
   }, [tracks, play]);
-  const share = async (t: Track) => { const m = await shareText(t.title ?? "Song", trackShareLines(t, tq)); if (m) flash(m); };
+  const [shareReq, setShareReq] = useState<{ title: string; ids: number[]; album: { name: string; ids: number[] } | null } | null>(null);
+  const share = (t: Track) => {
+    const alb = (t.album ?? "").trim().toLowerCase();
+    const same = alb ? tracks.filter((x) => (x.album ?? "").trim().toLowerCase() === alb).map((x) => x.id) : [];
+    setShareReq({ title: `${t.title ?? "Song"}${t.artist ? ` — ${t.artist}` : ""}`, ids: [t.id], album: same.length > 1 ? { name: t.album ?? "Album", ids: same } : null });
+  };
   // Attached to every problem report so a bug can be reproduced.
   const reportContext = () => {
     const a = audio.current;
@@ -844,7 +849,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
     toggleSkip: (id: number) => fns.current.toggleSkip(id),
     radio: (t: Track) => void fns.current.radio(t),
   }), []);
-  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, offlineMode: netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, skipped, canEdit, hidden: admin ? { count: hiddenN, open: () => setHiddenOpen(true) } : null, addSongs: () => setAddOpen(true), ...stable }), [tq, canEdit, admin, hiddenN, saveAccountPlaylist, netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, skipped, stable]);
+  const api: Api = useMemo(() => ({ tq, canCreate: vibeData.canCreate, saveAccountPlaylist, offlineMode: netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibes: vibeData.vibes, desc: vibeData.tracks, analysis: vibeData.progress, offline, dl, skipped, canEdit, share: (title: string, ids: number[]) => setShareReq({ title, ids, album: null }), hidden: admin ? { count: hiddenN, open: () => setHiddenOpen(true) } : null, addSongs: () => setAddOpen(true), ...stable }), [tq, canEdit, admin, hiddenN, saveAccountPlaylist, netDown, selecting, sel, toggleSel, startSelect, tracks, playlists, byId, cur, playing, loading, vibeData, offline, dl, skipped, stable]);
   const cover = (t: Track) => `/api/music/cover/${t.id}?${tq}${coverQ(t)}`;
   const page = stack[stack.length - 1];
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -1084,6 +1089,7 @@ export default function PlayerPage({ params }: { params: Promise<{ token: string
       {artistPick && <ArtistPickSheet artists={artistsOf(artistPick)} counts={new Map([...c.artists.entries()].map(([k, v]) => [k, v.length]))} onPick={openArtist} onClose={() => setArtistPick(null)} />}
       {likeTs && <SpotifyLikeSheet ts={likeTs.map((t) => byId.get(t.id) ?? t)} accounts={accounts} tq={tq} onClose={() => setLikeTs(null)} onMessage={flash}
         onDone={(accId) => { const ids = new Set(likeTs.map((t) => t.id)); setTracks((all) => all.map((x) => (ids.has(x.id) ? { ...x, sources: [...new Set([...(x.sources ?? []), accId])] } : x))); if (selecting) endSelect(); }} />}
+      {shareReq && <ShareSheet title={shareReq.title} ids={shareReq.ids} album={shareReq.album} tq={tq} onClose={() => setShareReq(null)} onMessage={flash} />}
       {hideT && <HideSongSheet t={hideT} tq={tq} onClose={() => setHideT(null)} onHidden={onHidden} />}
       {hiddenOpen && <HiddenSongsSheet tq={tq} onClose={() => setHiddenOpen(false)} onChanged={() => { void load(); void loadHiddenN(); }} onEdit={(t) => { setHiddenOpen(false); setEditT(t); }} onMessage={flash} />}
       {editT && <EditSongSheet t={editT} tq={tq} onClose={() => setEditT(null)} onSaved={(m) => { flash(m); void load(); }} />}

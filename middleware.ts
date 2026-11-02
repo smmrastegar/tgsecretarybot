@@ -3,6 +3,7 @@ import { SESSION_COOKIE_NAME, readSessionFromToken } from "./lib/session";
 
 const PUBLIC_PREFIXES = [
   "/login",
+  "/s", // share links: one song / album (public ones open for anyone; private ones check a My Music sign-in themselves)
   "/api/telegram",
   "/api/setup",
   "/api/auth",

@@ -3,13 +3,15 @@
 import { AccountBadge, AccountsCtx, TitleLine, accountCodes } from "./SourceMarks";
 import { memo, useContext, useMemo, useState } from "react";
 import { CheckIcon, ChevronRightIcon, GridIcon, HeartIcon, ListIcon, MoreIcon, PlayIcon, DownloadIcon, ShareIcon, ShuffleIcon, SparkIcon, SkipOffIcon } from "../Icons";
-import { Card, Cover, shareText, trackShareLines, Eq, fmt, Mosaic, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
+import { Card, Cover, Eq, fmt, Mosaic, SectionTitle, Shelf, ts, type Playlist, type Track } from "./shared";
 import { matchesAccounts } from "@/lib/music-scope";
 import { setByKey } from "./sets";
 
 // Everything the views need from the player engine.
 export type Api = {
   tq: string;
+  /** open the share sheet for these songs (a share link: public, or private = needs a My Music sign-in) */
+  share?: (title: string, ids: number[]) => void;
   /** admin only: how many songs are hidden, and open the list */
   hidden?: { count: number; open: () => void } | null;
   /** can this link create playlists (dashboard switch) */
@@ -416,7 +418,7 @@ export function DetailView({ page, api, c }: { page: Page; api: Api; c: Collecti
             className={`${iconBtn} ${api.dl ? "w-auto px-3 gap-1.5 text-[13px] font-semibold tabular-nums" : ""} ${allDown ? "text-[rgb(var(--ac))]" : ""}`}>
             {api.dl ? `${api.dl.done}/${api.dl.total}` : allDown ? <CheckIcon size={22} /> : <DownloadIcon size={22} />}
           </button>
-          <button onClick={() => void shareText(page.title, [`${page.title} — ${list.length} songs`, "", ...list.slice(0, 50).flatMap((t) => [...trackShareLines(t, api.tq), ""])])} className={iconBtn} aria-label="Share"><ShareIcon size={21} /></button>
+          <button onClick={() => api.share?.(page.title, ids)} className={iconBtn} aria-label="Share"><ShareIcon size={21} /></button>
           <button onClick={() => api.startSelect(ids)} className={iconBtn} aria-label="Select songs"><CheckIcon size={22} /></button>
           <span className="flex-1" />
           <button onClick={() => api.play(ids, undefined, true)} className={iconBtn} aria-label="Shuffle"><ShuffleIcon size={24} /></button>

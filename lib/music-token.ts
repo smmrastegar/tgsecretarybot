@@ -25,6 +25,8 @@ export async function getLegacyToken(): Promise<string> {
   await setSetting(KEY, t);
   return t;
 }
+/** A new address for the Main link: the old one stops working everywhere at once (use after it leaked). The owner gets the new one by signing in with Telegram. */
+export async function rotateLegacyToken(): Promise<void> { await setSetting(KEY, newLinkToken()); }
 export async function isLegacyActive(): Promise<boolean> { return ((await getAllSettings())[LEGACY_ACTIVE] ?? "1") !== "0"; }
 export async function setLegacyActive(on: boolean): Promise<void> { await setSetting(LEGACY_ACTIVE, on ? "1" : "0"); }
 
@@ -130,6 +132,7 @@ async function hiddenIds(): Promise<Set<number>> {
   if (Date.now() - hiddenCache.at > 15_000) { hiddenCache.ids = await hiddenTrackIds().catch(() => hiddenCache.ids); hiddenCache.at = Date.now(); }
   return hiddenCache.ids;
 }
+export const isHiddenTrack = async (id: number): Promise<boolean> => (await hiddenIds()).has(id);
 export const forgetHiddenCache = () => { hiddenCache.at = 0; allowedCache.clear(); };
 
 export async function canAccessTrack(access: MusicAccess, trackId: number): Promise<boolean> {

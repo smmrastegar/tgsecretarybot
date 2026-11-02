@@ -667,6 +667,26 @@ export const MIGRATIONS: Migration[] = [
       await q`CREATE INDEX IF NOT EXISTS music_tracks_hidden_idx ON music_tracks (hidden_at) WHERE hidden_at IS NOT NULL`;
     },
   },
+  {
+    // Share links: a link to ONE song / album / list (never to the player). Public = anyone with the link; private = viewer must be signed in to My Music.
+    id: "2026-11-02-001-music-shares",
+    up: async (q) => {
+      await q`
+        CREATE TABLE IF NOT EXISTS music_shares (
+          id             BIGSERIAL PRIMARY KEY,
+          token          TEXT NOT NULL UNIQUE,
+          kind           TEXT NOT NULL,
+          title          TEXT NOT NULL,
+          track_ids      BIGINT[] NOT NULL,
+          visibility     TEXT NOT NULL DEFAULT 'public',
+          link_id        BIGINT NOT NULL DEFAULT 0,
+          created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          revoked        BOOLEAN NOT NULL DEFAULT FALSE,
+          views          INT NOT NULL DEFAULT 0,
+          last_viewed_at TIMESTAMPTZ
+        )`;
+    },
+  },
 ];
 
 let ran: Promise<void> | null = null;

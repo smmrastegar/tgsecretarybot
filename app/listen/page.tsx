@@ -53,6 +53,9 @@ function Launcher() {
     try { nat?.saveLink?.(tok); } catch { /* old app */ }
     // The Android app lives on playlist.bz now: move there (the link is kept by the app itself).
     if (nat && window.location.hostname !== "playlist.bz") { window.location.replace(`https://playlist.bz/player/${tok}`); return; }
+    // Opened from a private share: back to it, now signed in.
+    const back = new URLSearchParams(window.location.search).get("next");
+    if (back && /^\/s\/[A-Za-z0-9_-]{16,64}$/.test(back)) { window.location.replace(back); return; }
     window.location.replace(`/player/${tok}`);
   }, []);
 

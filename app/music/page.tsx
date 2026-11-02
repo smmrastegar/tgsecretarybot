@@ -9,6 +9,7 @@ import ArtistsSection from "@/components/music/dashboard/ArtistsSection";
 import LinksCard from "@/components/music/dashboard/LinksCard";
 import AccountCodesCard from "@/components/music/dashboard/AccountCodesCard";
 import HiddenCard from "@/components/music/dashboard/HiddenCard";
+import SharesCard from "@/components/music/dashboard/SharesCard";
 import Section, { Pill } from "@/components/music/dashboard/Section";
 import SoundcloudSection from "@/components/music/dashboard/SoundcloudSection";
 import ApiHealthCard from "@/components/music/dashboard/ApiHealthCard";
@@ -419,6 +420,7 @@ export default function MusicPage() {
       <LinksCard onMessage={setMsg} refreshKey={linksKey + playlists.length} />
       <AccountCodesCard onMessage={setMsg} />
       <HiddenCard onMessage={setMsg} onChanged={() => void load()} />
+      <SharesCard onMessage={setMsg} />
       <PinCard onMessage={setMsg} />
       {verify && Object.keys(verify.counts).length > 0 && (
         <Section icon="🔍" title="درستیِ فایل آهنگ‌ها" summary={`${fa(verify.counts.ok ?? 0)} تأییدشده · ${fa(verify.counts.nopreview ?? 0)} بدون پیش‌نمایش`}
