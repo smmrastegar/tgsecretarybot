@@ -74,6 +74,8 @@ export async function maybeApplyMessageRules(args: {
   businessConnectionId: string | null;
   fromOwner: boolean;
   bot: Bot;
+  /** Only rules that name this chat as a source (never the "any chat" rules): used for messages the read-only group bot hears. */
+  scopedOnly?: boolean;
 }): Promise<void> {
   if (args.fromOwner) return;
   if (!args.messageText || !args.messageText.trim()) return;
@@ -102,6 +104,7 @@ export async function maybeApplyMessageRules(args: {
     // broad description ("any message with a code") can't grab numbers
     // out of unrelated conversations.
     const scoped = allRules.filter((r) => {
+      if (args.scopedOnly && !r.sourceChatIds) return false;
       if (r.sourceChatIds && !r.sourceChatIds.includes(args.chatId)) return false;
       // Exclusion list: an "any source" rule that must skip particular
       // chats (another rule owns them).

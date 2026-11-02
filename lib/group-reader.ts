@@ -3,8 +3,9 @@
 // Telegram only shows a bot all group messages when its privacy mode is off (BotFather → /setprivacy → Disable, then add the bot to the group
 // again) or when it is an admin there; otherwise it sees commands, mentions and replies to it.
 import type { Message } from "grammy/types";
-import { getAllSettings, isChatIgnored, logMessage, setSetting } from "./db";
-import { describeMessage } from "./bot/core";
+import { addRuleRecipient, createMessageRule, getAllSettings, isChatIgnored, logMessage, setSetting, updateMessageRule } from "./db";
+import { describeMessage, getBot } from "./bot/core";
+import { maybeApplyMessageRules } from "./bot/rules-apply";
 import { reportWarn } from "./report";
 
 const API = "https://api.telegram.org";
@@ -27,6 +28,49 @@ export async function readerInfo(): Promise<ReaderInfo | null> {
   try { const j = JSON.parse((await getAllSettings()).tgReaderInfo || "null") as ReaderInfo | null; return j; } catch { return null; }
 }
 
+/** Groups the reader bot has been seen in, and the forwarding rule made for each (if any). */
+export type ReaderChat = { title: string | null; type: string; seenAt: number; ruleId: number | null };
+export async function readerChats(): Promise<Record<string, ReaderChat>> {
+  try { return JSON.parse((await getAllSettings()).tgReaderChats || "{}") as Record<string, ReaderChat>; } catch { return {}; }
+}
+const saveChats = (c: Record<string, ReaderChat>) => setSetting("tgReaderChats", JSON.stringify(Object.fromEntries(Object.entries(c).sort((a, b) => b[1].seenAt - a[1].seenAt).slice(0, 60))));
+
+/** Forward everything the reader hears in a group to a recipient chat (the ticket-routing bot) with a header naming where it came from and where it goes. */
+export async function createReaderRoute(chatId: number, title: string | null, dest: string, recipientChatId: number): Promise<number> {
+  const info = await readerInfo();
+  const from = info?.username ? `@${info.username}` : "reader";
+  const rule = await createMessageRule({ name: `Reader: ${title ?? chatId} → ${dest}`, description: `هر پیامی که ربات خواننده در گروه «${title ?? chatId}» می‌بیند، با سربرگ تیکت و مقصد «${dest}» فوروارد می‌شود.` });
+  await updateMessageRule(rule.id, { sourceChatIds: String(chatId), matchAllFromSource: true, showRulePrefix: false, forwardHeader: `🎫 درخواست تیک جدید داریم\nاز ${from} ← مقصد: {dest} · {time}` });
+  await addRuleRecipient({ ruleId: rule.id, recipientChatId, recipientLabel: dest });
+  return rule.id;
+}
+
+/** A group the bot was added to or spoke in: remember it, and if the owner asked for "route the next group I add", set that up. */
+export async function setReaderChatRule(chatId: number, ruleId: number | null): Promise<void> {
+  const chats = await readerChats();
+  if (chats[String(chatId)]) { chats[String(chatId)]!.ruleId = ruleId; await saveChats(chats); }
+}
+
+async function noteChat(m: { id: number; title: string | null; type: string }): Promise<void> {
+  const chats = await readerChats();
+  const key = String(m.id);
+  const known = chats[key];
+  if (known && Date.now() - known.seenAt < 5 * 60_000) return; // already known and recent: no write per message
+  chats[key] = { title: m.title, type: m.type, seenAt: Date.now(), ruleId: known?.ruleId ?? null };
+  if (!known) {
+    try {
+      const auto = JSON.parse((await getAllSettings()).tgReaderAuto || "null") as { dest: string; recipient: number } | null;
+      if (auto?.dest && auto.recipient) {
+        chats[key]!.ruleId = await createReaderRoute(m.id, m.title, auto.dest, auto.recipient);
+        await setSetting("tgReaderAuto", ""); // one group only: it was asked for "this group"
+        const to = (await getAllSettings()).ownerNotifyChatId;
+        if (to) await getBot().api.sendMessage(to, `✅ گروه «${m.title ?? m.id}» به ربات تیکت وصل شد: هر پیامش با «مقصد: ${auto.dest}» فوروارد می‌شود.`).catch(() => {});
+      }
+    } catch (e) { reportWarn("reader", "auto route failed:", e); }
+  }
+  await saveChats(chats);
+}
+
 let busy = false, lastInfoAt = 0;
 
 /** Cron step (every minute): fetch what was written since last time and log it. Never throws. Returns how many messages were logged. */
@@ -47,10 +91,12 @@ export async function readerStep(): Promise<number> {
     let offset = Number(s.tgReaderOffset || 0);
     const chats = new Set<number>();
     for (let round = 0; round < 5; round++) { // up to 500 updates per tick
-      const ups = await tg<Array<{ update_id: number; message?: Message; channel_post?: Message }>>(token, "getUpdates", { offset: offset || undefined, limit: 100, timeout: 0, allowed_updates: ["message", "channel_post"] });
+      const ups = await tg<Array<{ update_id: number; message?: Message; channel_post?: Message; my_chat_member?: { chat: { id: number; type: string; title?: string }; new_chat_member: { status: string } } }>>(token, "getUpdates", { offset: offset || undefined, limit: 100, timeout: 0, allowed_updates: ["message", "channel_post", "my_chat_member"] });
       if (ups.length === 0) break;
       for (const u of ups) {
         offset = u.update_id + 1;
+        const mc = u.my_chat_member;
+        if (mc && mc.chat.type !== "private" && ["member", "administrator"].includes(mc.new_chat_member.status)) await noteChat({ id: mc.chat.id, title: mc.chat.title ?? null, type: mc.chat.type }).catch(() => {});
         const m = u.message ?? u.channel_post;
         if (!m || m.chat.type === "private") continue; // groups, supergroups and channels only
         if (await isChatIgnored(m.chat.id).catch(() => false)) continue;
@@ -58,12 +104,17 @@ export async function readerStep(): Promise<number> {
         if (!text || !text.trim()) continue;
         const title = "title" in m.chat && typeof m.chat.title === "string" ? m.chat.title : null;
         const sender = m.sender_chat?.title ?? ([m.from?.first_name, m.from?.last_name].filter(Boolean).join(" ").trim() || m.from?.username || "—");
-        await logMessage({
+        const logId = await logMessage({
           businessConnectionId: null, ownerUserId: null, chatId: m.chat.id, chatType: m.chat.type, chatTitle: title,
           senderId: m.from?.id ?? null, senderUsername: m.from?.username ?? null, senderName: sender, messageId: m.message_id,
           messageText: text, importance: 0, urgent: false, concernsOwner: false, reason: "read by the reader bot (log only)",
           alerted: false, autoReplied: false, fromOwner: false, source: "reader", messageThreadId: m.message_thread_id ?? null,
-        }).then(() => { logged++; chats.add(m.chat.id); }).catch((err) => reportWarn("reader", "log failed:", err));
+        }).then((id) => { logged++; chats.add(m.chat.id); return id; }).catch((err) => { reportWarn("reader", "log failed:", err); return 0; });
+        if (!logId) continue;
+        await noteChat({ id: m.chat.id, title, type: m.chat.type }).catch(() => {});
+        // Rules that name THIS group as their source (e.g. "forward everything to the ticket bot") run on it; the "any chat" rules never do.
+        await maybeApplyMessageRules({ logId, chatId: m.chat.id, chatTitle: title, messageThreadId: m.message_thread_id ?? null, senderName: sender, messageText: text, businessConnectionId: null, fromOwner: false, bot: getBot(), scopedOnly: true })
+          .catch((err) => reportWarn("reader", "rules failed:", err));
       }
       await setSetting("tgReaderOffset", String(offset)); // saved after every batch: a crash never re-reads or loses a batch
       if (ups.length < 100) break;

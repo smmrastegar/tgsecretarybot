@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUnscopedOr403 } from "@/lib/auth";
 import { getAllSettings, setSetting } from "@/lib/db";
-import { readerCheck, readerInfo } from "@/lib/group-reader";
+import { readerChats, readerCheck, readerInfo } from "@/lib/group-reader";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,8 +10,9 @@ export const dynamic = "force-dynamic";
 export async function GET(): Promise<NextResponse> {
   const guard = await requireUnscopedOr403();
   if (guard) return guard;
-  const on = !!((await getAllSettings()).tgReaderToken ?? "").trim();
-  return NextResponse.json({ on, info: on ? await readerInfo() : null }, { headers: { "Cache-Control": "no-store" } });
+  const s = await getAllSettings();
+  const on = !!(s.tgReaderToken ?? "").trim();
+  return NextResponse.json({ on, info: on ? await readerInfo() : null, chats: on ? await readerChats() : {}, auto: s.tgReaderAuto ? (JSON.parse(s.tgReaderAuto) as { dest?: string }).dest ?? null : null }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
